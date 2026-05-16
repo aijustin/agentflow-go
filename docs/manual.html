@@ -794,7 +794,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
         <p class="lead">YAML 是 AgentFlow 的产品界面。它让业务团队能审阅 Agent 能力、工具风险、审批策略和运行模式，而不是把这些策略散落在 Go 代码里。</p>
         <div class="callout"><strong>配置发现:</strong> 使用 <a href="../schemas/agentflow.scenario.schema.json">JSON Schema</a> 获得编辑器补全和枚举提示；运行 <code>agentctl schema</code> 可输出同一份契约；完整字段说明见 <a href="configuration-reference.md">配置参考</a>。</div>
         <div class="code-block"><div class="code-title"><span>scenario.yaml</span><button class="copy" type="button">复制</button></div><pre><code># yaml-language-server: $schema=../schemas/agentflow.scenario.schema.json
-    scenario:
+      scenario:
   name: support-assistant
   llms:
     default:
@@ -811,10 +811,22 @@ GOTOOLCHAIN=auto make release-check</code></pre>
       input_schema:
         type: object
         required: [query_id]
+  skills:
+    sql-review:
+      version: "1.0.0"
+      description: 为数据查询场景增加答复复核约束。
+      prompt_fragments:
+        - name: 数据边界
+          content: "回答时说明数据来源，不确定时要求人工复核。"
+      tool_policies:
+        - tool: sql.query
+          approval: risky
+          rate_cap: 3
   agents:
     assistant:
       llm: default
       tools: [sql.query]
+      skills: [sql-review]
       memory: session
       instructions: "只执行 allowlisted read-only 查询。"
   orchestration:

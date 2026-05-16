@@ -122,7 +122,7 @@ Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`re
 | `input_schema` | 对象 | 否 | 工具输入的 JSON Schema 片段。 |
 | `output_schema` | 对象 | 否 | 工具输出的 JSON Schema 片段。 |
 | `side_effect` | 枚举 | 否 | 用于治理判断的副作用等级。 |
-| `approval` | 枚举 | 否 | Tool 执行前的审批策略。 |
+| `approval` | 枚举 | 否 | 工具执行前的审批策略。 |
 | `llm` | 字符串 | 否 | 可选 LLM 配置覆盖。 |
 | `rate_cap` | 整数 | 否 | 单次运行内该工具的最大调用次数。 |
 | `metadata` | 字符串映射 | 否 | 运维侧自定义元数据。 |
@@ -145,6 +145,64 @@ Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`re
 | `external` | 调用外部系统。 |
 | `dangerous` | 高风险或不可逆动作。 |
 
+## Skill 配置
+
+Skill 定义在 `scenario.skills.<name>` 下。它是可复用的能力包，不是独立运行时 Actor。Agent 通过 `skills` 绑定 Skill 后，场景构建阶段会把 prompt 片段合并到 Agent 指令，将工具策略应用到对应 Tool，并把 Skill 的 workflow 子图展开到主 workflow 中。
+
+| 字段 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `source` | 字符串 | 否 | Skill 来源，例如本地路径、目录 ID 或内部 catalog 标识；会保存到 metadata 的 `source`。 |
+| `description` | 字符串 | 否 | Skill 的用途和边界说明。 |
+| `version` | 字符串 | 否 | Skill 包版本。 |
+| `compatible_agents` | 字符串数组 | 否 | 该 Skill 预期兼容的 Agent 名称；引用未知 Agent 会校验失败。 |
+| `prompt_fragments` | 数组 | 否 | 追加到 Agent `instructions` 后的 prompt 片段。 |
+| `prompt_fragments[].name` | 字符串 | 否 | prompt 片段名称，会作为段落标题写入。 |
+| `prompt_fragments[].content` | 字符串 | 是 | prompt 片段内容。 |
+| `tool_policies` | 数组 | 否 | Skill 对工具审批和调用上限的策略覆盖。 |
+| `tool_policies[].tool` | 字符串 | 是 | 来自 `scenario.tools` 的工具名称。 |
+| `tool_policies[].approval` | 枚举 | 否 | 覆盖该工具的审批策略，支持 `never`、`risky`、`always`。 |
+| `tool_policies[].rate_cap` | 整数 | 否 | 覆盖该工具单次运行内最大调用次数。 |
+| `workflow` | 对象 | 否 | 可复用 workflow 子图；展开时节点 ID 会加上 `<agent>.<skill>.` 前缀。 |
+| `metadata` | 字符串映射 | 否 | 运维侧自定义元数据。 |
+
+示例：
+
+```yaml
+scenario:
+  tools:
+    sql.query:
+      type: builtin.sql
+      approval: never
+  skills:
+    ticket-review:
+      source: ./skills/ticket-review
+      version: "1.0.0"
+      description: 工单答复复核能力包。
+      compatible_agents: [assistant]
+      prompt_fragments:
+        - name: 复核风格
+          content: 回答前先确认数据来源，并标注不确定信息。
+      tool_policies:
+        - tool: sql.query
+          approval: risky
+          rate_cap: 2
+      workflow:
+        nodes:
+          - id: inspect
+            kind: tool
+            ref: sql.query
+          - id: summarize
+            kind: transform
+            depends_on: [inspect]
+        edges:
+          - from: inspect
+            to: summarize
+  agents:
+    assistant:
+      skills: [ticket-review]
+      tools: [sql.query]
+```
+
 ## Agent 配置
 
 Agent 定义在 `scenario.agents.<name>` 下。
@@ -157,7 +215,7 @@ Agent 定义在 `scenario.agents.<name>` 下。
 | `llm` | 字符串 | 否 | 来自 `scenario.llms` 的配置名称。 |
 | `memory` | 字符串 | 否 | 来自 `scenario.memories` 的记忆名称。 |
 | `tools` | 字符串数组 | 否 | 来自 `scenario.tools` 的工具名称。 |
-| `skills` | 字符串数组 | 否 | 来自 `scenario.skills` 的 Skill 名称。 |
+| `skills` | 字符串数组 | 否 | 来自 `scenario.skills` 的 Skill 名称；绑定后会在场景构建阶段展开。 |
 | `sub_agents` | 字符串数组 | 否 | 可用于委派的 Agent。 |
 | `max_steps` | 整数 | 否 | Agent 级步骤上限。 |
 | `timeout` | duration | 否 | Agent 级超时时间。 |

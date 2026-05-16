@@ -587,7 +587,7 @@ scenario:
 | `llms` | Named LLM profiles. Agents and tools can bind to different profiles. |
 | `memories` | Named memory backends and scopes. In-memory and file-backed repositories are available. |
 | `tools` | Tool declarations, side-effect metadata, approval policy, optional LLM override, and per-run `rate_cap`. |
-| `skills` | Declarative prompt/policy/workflow packages. Skills are not runtime actors. |
+| `skills` | Declarative prompt/policy/workflow packages. Skills are not runtime actors; they expand into agent instructions, tool policies, and workflow subgraphs during scenario build. |
 | `agents` | Agent role, instructions, LLM binding, memory binding, tools, and skills. |
 | `orchestration` | Autonomous, fixed workflow, or hybrid HITL execution policy. |
 | `runtime` | Runtime limits, output thresholds, secrets, and operational settings. |

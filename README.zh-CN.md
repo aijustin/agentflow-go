@@ -587,7 +587,7 @@ scenario:
 | `llms` | 命名 LLM Profile。Agent 和 Tool 可以绑定不同 Profile。 |
 | `memories` | 命名 Memory 后端和作用域。当前支持内存和文件持久化仓库。 |
 | `tools` | Tool 声明、副作用等级、审批策略、可选 LLM 覆盖和每次运行的 `rate_cap`。 |
-| `skills` | 声明式 prompt/policy/workflow 包。Skill 不是独立运行时 Actor。 |
+| `skills` | 声明式 prompt/policy/workflow 包。Skill 不是独立运行时 Actor，会在场景构建阶段展开为 Agent 指令、工具策略和 workflow 子图。 |
 | `agents` | Agent 角色、指令、LLM 绑定、Memory 绑定、工具和技能。 |
 | `orchestration` | autonomous、fixed_workflow 或 hybrid 编排策略。 |
 | `runtime` | Runtime 限制、输出阈值、密钥和运行参数。 |

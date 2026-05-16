@@ -54,6 +54,32 @@ func Validate(s core.Scenario) error {
 			}
 		}
 	}
+	for name, skill := range s.Skills {
+		for _, agent := range skill.CompatibleAgents {
+			if _, ok := s.Agents[agent]; !ok {
+				return fmt.Errorf("config: skills.%s.compatible_agents references unknown agent %q", name, agent)
+			}
+		}
+		for _, policy := range skill.ToolPolicies {
+			if policy.Tool == "" {
+				return fmt.Errorf("config: skills.%s.tool_policies tool is required", name)
+			}
+			if _, ok := s.Tools[policy.Tool]; !ok {
+				return fmt.Errorf("config: skills.%s.tool_policies references unknown tool %q", name, policy.Tool)
+			}
+			if policy.Approval != "" && !containsString(supportedApprovalPolicies, string(policy.Approval)) {
+				return fmt.Errorf("config: skills.%s.tool_policies approval %q is unsupported", name, policy.Approval)
+			}
+			if policy.RateCap < 0 {
+				return fmt.Errorf("config: skills.%s.tool_policies rate_cap must be >= 0", name)
+			}
+		}
+		if skill.Workflow != nil {
+			if err := validateWorkflow(*skill.Workflow, s); err != nil {
+				return fmt.Errorf("config: skills.%s.workflow: %w", name, err)
+			}
+		}
+	}
 	for name, agent := range s.Agents {
 		if agent.LLM != "" {
 			if _, ok := s.LLMs[agent.LLM]; !ok {

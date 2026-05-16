@@ -282,10 +282,76 @@
       "additionalProperties": false,
       "properties": {
         "source": {
+          "type": "string",
+          "description": "Optional package source, such as a local path or catalog identifier. Stored as skill metadata."
+        },
+        "description": {
           "type": "string"
         },
         "version": {
           "type": "string"
+        },
+        "compatible_agents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          },
+          "description": "Agent names this skill is intended to augment."
+        },
+        "prompt_fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/promptFragment"
+          },
+          "description": "Prompt fragments appended to the agent instructions when the skill is attached."
+        },
+        "tool_policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/skillToolPolicy"
+          },
+          "description": "Tool policy overrides applied when an agent attaches this skill."
+        },
+        "workflow": {
+          "$ref": "#/$defs/workflow",
+          "description": "Reusable workflow nodes and edges expanded under the attaching agent and skill namespace."
+        },
+        "metadata": {
+          "$ref": "#/$defs/stringMap"
+        }
+      }
+    },
+    "promptFragment": {
+      "type": "object",
+      "required": ["content"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "skillToolPolicy": {
+      "type": "object",
+      "required": ["tool"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approval": {
+          "type": "string",
+          "enum": ["never", "risky", "always"]
+        },
+        "rate_cap": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

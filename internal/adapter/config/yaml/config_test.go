@@ -81,6 +81,23 @@ func TestScenarioJSONSchemaIncludesSupportedEnums(t *testing.T) {
 	assertEnum(t, definitions, "contextPolicy", "strategy", SupportedContextStrategies())
 }
 
+func TestScenarioJSONSchemaIncludesSkillPackageFields(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(ScenarioJSONSchema(), &schema); err != nil {
+		t.Fatalf("ScenarioJSONSchema should return valid JSON: %v", err)
+	}
+
+	definitions := schema["$defs"].(map[string]any)
+	skill := definitions["skill"].(map[string]any)
+	properties := skill["properties"].(map[string]any)
+
+	for _, property := range []string{"description", "compatible_agents", "prompt_fragments", "tool_policies", "workflow", "metadata"} {
+		if _, ok := properties[property]; !ok {
+			t.Fatalf("skill schema missing %q property", property)
+		}
+	}
+}
+
 func TestScenarioJSONSchemaMatchesRepositorySchemaFile(t *testing.T) {
 	schemaPath := filepath.Join("..", "..", "..", "..", "schemas", "agentflow.scenario.schema.json")
 	content, err := os.ReadFile(schemaPath)
@@ -168,6 +185,72 @@ scenario:
 	}
 }
 
+func TestLoadSkillPackageConfig(t *testing.T) {
+	scenario, err := Load([]byte(`
+scenario:
+  name: test
+  tools:
+    echo:
+      type: builtin.echo
+      approval: never
+  skills:
+    review:
+      source: ./skills/review
+      version: "1.2.3"
+      description: Review support answers before publishing.
+      compatible_agents: [assistant]
+      prompt_fragments:
+        - name: style
+          content: Be concise.
+      tool_policies:
+        - tool: echo
+          approval: risky
+          rate_cap: 2
+      workflow:
+        nodes:
+          - id: inspect
+            kind: tool
+            ref: echo
+            input:
+              message: review
+          - id: summarize
+            kind: transform
+            depends_on: [inspect]
+        edges:
+          - from: inspect
+            to: summarize
+      metadata:
+        owner: platform
+  agents:
+    assistant:
+      tools: [echo]
+      skills: [review]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	skill := scenario.Skills["review"]
+	if skill.Description != "Review support answers before publishing." || skill.Version != "1.2.3" {
+		t.Fatalf("unexpected skill metadata: %+v", skill)
+	}
+	if !reflect.DeepEqual(skill.CompatibleAgents, []string{"assistant"}) {
+		t.Fatalf("unexpected compatible agents: %+v", skill.CompatibleAgents)
+	}
+	if len(skill.PromptFragments) != 1 || skill.PromptFragments[0].Content != "Be concise." {
+		t.Fatalf("unexpected prompt fragments: %+v", skill.PromptFragments)
+	}
+	if len(skill.ToolPolicies) != 1 || skill.ToolPolicies[0].Approval != "risky" || skill.ToolPolicies[0].RateCap != 2 {
+		t.Fatalf("unexpected tool policies: %+v", skill.ToolPolicies)
+	}
+	if skill.Workflow == nil || len(skill.Workflow.Nodes) != 2 || string(skill.Workflow.Nodes[0].Input) == "" {
+		t.Fatalf("unexpected skill workflow: %+v", skill.Workflow)
+	}
+	if skill.Metadata["source"] != "./skills/review" || skill.Metadata["owner"] != "platform" {
+		t.Fatalf("unexpected skill metadata map: %+v", skill.Metadata)
+	}
+}
+
 func TestLoadRejectsUnknownToolReference(t *testing.T) {
 	_, err := Load([]byte(`
 scenario:
@@ -222,6 +305,38 @@ func TestLoadValidationErrors(t *testing.T) {
 	  agents:
 	    worker:
 	      skills: [missing]
+	`,
+		},
+		{
+			name: "skill policy references unknown tool",
+			body: `
+	scenario:
+	  name: test
+	  skills:
+	    review:
+	      tool_policies:
+	        - tool: missing
+	          approval: risky
+	  agents:
+	    worker:
+	      skills: [review]
+	`,
+		},
+		{
+			name: "skill workflow references unknown tool",
+			body: `
+	scenario:
+	  name: test
+	  skills:
+	    review:
+	      workflow:
+	        nodes:
+	          - id: inspect
+	            kind: tool
+	            ref: missing
+	  agents:
+	    worker:
+	      skills: [review]
 	`,
 		},
 		{

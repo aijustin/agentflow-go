@@ -67,8 +67,25 @@ type Tool struct {
 }
 
 type Skill struct {
-	Source  string `yaml:"source"`
-	Version string `yaml:"version"`
+	Source           string            `yaml:"source"`
+	Description      string            `yaml:"description"`
+	Version          string            `yaml:"version"`
+	CompatibleAgents []string          `yaml:"compatible_agents"`
+	PromptFragments  []PromptFragment  `yaml:"prompt_fragments"`
+	ToolPolicies     []SkillToolPolicy `yaml:"tool_policies"`
+	Workflow         *Workflow         `yaml:"workflow"`
+	Metadata         map[string]string `yaml:"metadata"`
+}
+
+type PromptFragment struct {
+	Name    string `yaml:"name"`
+	Content string `yaml:"content"`
+}
+
+type SkillToolPolicy struct {
+	Tool     string `yaml:"tool"`
+	Approval string `yaml:"approval"`
+	RateCap  int    `yaml:"rate_cap"`
 }
 
 type Agent struct {
@@ -233,7 +250,20 @@ func (d Document) ToCore() (core.Scenario, error) {
 		}
 	}
 	for name, skill := range d.Scenario.Skills {
-		s.Skills[name] = core.Skill{Name: name, Version: skill.Version, Metadata: map[string]string{"source": skill.Source}}
+		workflow, err := skill.workflowToCore()
+		if err != nil {
+			return core.Scenario{}, fmt.Errorf("skill %q workflow: %w", name, err)
+		}
+		s.Skills[name] = core.Skill{
+			Name:             name,
+			Description:      skill.Description,
+			Version:          skill.Version,
+			CompatibleAgents: skill.CompatibleAgents,
+			PromptFragments:  skill.promptFragmentsToCore(),
+			ToolPolicies:     skill.toolPoliciesToCore(),
+			Workflow:         workflow,
+			Metadata:         skillMetadata(skill.Source, skill.Metadata),
+		}
 	}
 	for name, agent := range d.Scenario.Agents {
 		outputSchema, err := marshalRaw(agent.OutputSchema)
@@ -262,6 +292,57 @@ func (d Document) ToCore() (core.Scenario, error) {
 		s.Orchestration.Workflow = &workflow
 	}
 	return s, nil
+}
+
+func (s Skill) workflowToCore() (*core.Workflow, error) {
+	if s.Workflow == nil {
+		return nil, nil
+	}
+	workflow, err := s.Workflow.toCore()
+	if err != nil {
+		return nil, err
+	}
+	return &workflow, nil
+}
+
+func (s Skill) promptFragmentsToCore() []core.PromptFragment {
+	if len(s.PromptFragments) == 0 {
+		return nil
+	}
+	out := make([]core.PromptFragment, 0, len(s.PromptFragments))
+	for _, fragment := range s.PromptFragments {
+		out = append(out, core.PromptFragment{Name: fragment.Name, Content: fragment.Content})
+	}
+	return out
+}
+
+func (s Skill) toolPoliciesToCore() []core.SkillToolPolicy {
+	if len(s.ToolPolicies) == 0 {
+		return nil
+	}
+	out := make([]core.SkillToolPolicy, 0, len(s.ToolPolicies))
+	for _, policy := range s.ToolPolicies {
+		out = append(out, core.SkillToolPolicy{
+			Tool:     policy.Tool,
+			Approval: core.ApprovalPolicy(policy.Approval),
+			RateCap:  policy.RateCap,
+		})
+	}
+	return out
+}
+
+func skillMetadata(source string, metadata map[string]string) map[string]string {
+	if len(metadata) == 0 && source == "" {
+		return nil
+	}
+	out := make(map[string]string, len(metadata)+1)
+	for key, value := range metadata {
+		out[key] = value
+	}
+	if source != "" {
+		out["source"] = source
+	}
+	return out
 }
 
 func (w Workflow) toCore() (core.Workflow, error) {
