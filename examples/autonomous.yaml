@@ -1,0 +1,25 @@
+scenario:
+  name: autonomous-echo
+  llms:
+    default:
+      provider: mock
+      model: test
+  memories:
+    session:
+      type: in_memory
+      scope: session
+  tools:
+    echo:
+      type: builtin.echo
+      approval: never
+  agents:
+    assistant:
+      llm: default
+      memory: session
+      tools: [echo]
+      instructions: "Answer the user clearly."
+  orchestration:
+    mode: autonomous
+    human_in_loop:
+      enabled: false
+

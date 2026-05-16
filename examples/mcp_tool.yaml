@@ -1,0 +1,28 @@
+scenario:
+  name: mcp-tool-example
+  llms:
+    default:
+      provider: mock
+      model: test
+      capabilities: [chat, tool_call]
+  tools:
+    docs.search:
+      type: mcp.tool
+      description: Search documentation through an MCP server registered by the host application.
+      approval: never
+      side_effect: read
+      input_schema:
+        type: object
+        required: [query]
+        properties:
+          query:
+            type: string
+  agents:
+    assistant:
+      llm: default
+      tools: [docs.search]
+      instructions: "Use docs.search when the answer depends on company documentation."
+  orchestration:
+    mode: autonomous
+    human_in_loop:
+      enabled: false

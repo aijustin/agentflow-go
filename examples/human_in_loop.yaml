@@ -1,0 +1,22 @@
+scenario:
+  name: human-in-loop-demo
+  llms:
+    default:
+      provider: mock
+      model: test
+  memories:
+    session:
+      type: in_memory
+      scope: session
+  agents:
+    assistant:
+      llm: default
+      memory: session
+      instructions: "Prepare an answer, then wait for approval before finalizing."
+  orchestration:
+    mode: autonomous
+    human_in_loop:
+      enabled: true
+      checkpoints:
+        - before_final_answer
+

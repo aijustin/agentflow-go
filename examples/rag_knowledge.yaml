@@ -1,0 +1,37 @@
+scenario:
+  name: rag-knowledge-example
+  llms:
+    chat:
+      provider: mock
+      model: test-chat
+      capabilities: [chat, tool_call]
+    embed:
+      provider: openai-compatible
+      model: text-embedding-3-small
+      capabilities: [embed]
+  tools:
+    knowledge.retrieve:
+      type: knowledge.retriever
+      description: Retrieve relevant documents from the configured knowledge vector store.
+      approval: never
+      side_effect: read
+      rate_cap: 8
+      input_schema:
+        type: object
+        required: [query]
+        properties:
+          query:
+            type: string
+          namespace:
+            type: string
+          limit:
+            type: integer
+  agents:
+    assistant:
+      llm: chat
+      tools: [knowledge.retrieve]
+      instructions: "Use knowledge.retrieve before answering questions about indexed internal documents."
+  orchestration:
+    mode: autonomous
+    human_in_loop:
+      enabled: false

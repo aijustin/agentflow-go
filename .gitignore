@@ -1,0 +1,14 @@
+/agentctl
+/agent-http
+/.!*!agentctl
+/.!*!agent-http
+/bin/
+/dist/
+/vendor/
+*.test
+coverage.out
+*.log
+.env
+.env.*
+.DS_Store
+.idea/

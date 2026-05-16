@@ -1,0 +1,974 @@
+# agentflow-go
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/aijustin/agentflow-go.svg)](https://pkg.go.dev/github.com/aijustin/agentflow-go)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+`agentflow-go` 是一个以场景 YAML 为配置中心的 Go Agent 框架，用于组合 Agent、Tool、Skill、LLM Gateway、上下文治理、Memory、Run State 和 Human-in-the-loop 编排能力。
+
+该项目既可以作为 Go 库被其他项目引入，也可以作为 CLI/HTTP 应用运行。业务场景通过 YAML 声明，再映射到 Agent、工具、LLM 配置、记忆后端、运行状态持久化和编排策略。
+
+## 快速演示
+
+```sh
+go run ./cmd/agentctl validate -f examples/autonomous.yaml
+go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json
+```
+
+发布前建议运行 `GOTOOLCHAIN=auto make release-check`。发版检查和 v0 兼容策略见 [docs/release-checklist.md](docs/release-checklist.md) 与 [docs/api-stability.md](docs/api-stability.md)。
+
+## 快速开始
+
+### 环境要求
+
+- Go 1.25.10+
+- macOS/Linux shell
+
+### 作为框架在其他 Go 项目中使用
+
+添加依赖：
+
+```sh
+go get github.com/aijustin/agentflow-go
+```
+
+引入根门面包：
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    agentflow "github.com/aijustin/agentflow-go"
+)
+
+func main() {
+    fw, err := agentflow.NewFromFile("scenario.yaml")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    result, err := fw.Run(context.Background(), agentflow.RunRequest{
+        RunID:  "run-1",
+        Agent:  "assistant",
+        Prompt: "hello",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Println(result.Output)
+}
+```
+
+如需接入自定义 LLM、Memory、RunState、EventSink 或 HumanGate，可使用 Option API：
+
+```go
+fw, err := agentflow.NewFromFile(
+    "scenario.yaml",
+    agentflow.WithLLMGateway(myLLMGateway),
+    agentflow.WithToolExecutor("repo_search", myToolExecutor),
+    agentflow.WithMemoryRepository("session", myMemoryRepo),
+    agentflow.WithRunStateRepository(myRunStateRepo),
+    agentflow.WithEventSink(myEventSink),
+)
+```
+
+常见 LLM Provider 的构造函数已从根包暴露：
+
+```go
+gateway := agentflow.NewOpenAICompatibleGateway([]llm.Profile{{
+  Name:      "default",
+  Provider:  "openai-compatible",
+  Model:     "qwen/qwen3.6-35b-a3b",
+  Endpoint:  "http://127.0.0.1:1234/v1",
+  APIKeyEnv: "AGENT_REALMODEL_API_KEY",
+}}, nil)
+
+fw, err := agentflow.NewFromFile("scenario.yaml", agentflow.WithLLMGateway(gateway))
+```
+
+如果需要同时接 OpenAI-compatible 聊天与 Embedding，可使用 `NewOpenAICompatibleProvider`，并显式声明 profile 能力：
+
+```go
+provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
+  {Name: "chat", Provider: "openai-compatible", Model: "qwen/qwen3.6-35b-a3b", Endpoint: "http://127.0.0.1:1234/v1"},
+  {Name: "embed", Provider: "openai-compatible", Model: "text-embedding-3-small", Endpoint: "http://127.0.0.1:1234/v1", Capabilities: []llm.Capability{llm.CapEmbed}},
+}, nil)
+```
+
+结构化输出：在 `agents.<name>.output_schema` 中配置 JSON Schema，并调用 `RunStructured`。LLM Gateway 需要实现 `llm.StructuredOutputter`：
+
+```go
+result, err := fw.RunStructured(ctx, agentflow.RunRequest{
+    RunID:  "run-json",
+    Agent:  "assistant",
+    Prompt: "return JSON",
+})
+fmt.Println(string(result.StructuredOutput))
+```
+
+流式输出：使用实现了 `llm.Streamer` 的 Gateway：
+
+```go
+chunks, err := fw.Stream(ctx, agentflow.RunRequest{
+    RunID:  "run-stream",
+    Agent:  "assistant",
+    Prompt: "stream the answer",
+})
+if err != nil {
+    log.Fatal(err)
+}
+for chunk := range chunks {
+    if chunk.Error != "" {
+        log.Fatal(chunk.Error)
+    }
+    fmt.Print(chunk.Content)
+}
+```
+
+当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 重试临时 LLM/工具错误，执行注册的 ToolExecutor，将工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。
+
+当 Agent 绑定 `memory` 时，Runtime 会在上下文准备前读取 conversation/session 记忆并注入 LLM 上下文，执行后追加用户输入、助手回复和工具观察结果。根门面会自动为 `in_memory` 类型创建内存仓库，除非调用方显式传入自定义仓库。
+
+启用内置 HMAC Token 的 HITL Gate：
+
+```go
+fw, err := agentflow.NewFromFile(
+    "human_in_loop.yaml",
+    agentflow.WithHITLTokenSecret([]byte("strong-secret"), nil),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+result, err := fw.Run(ctx, agentflow.RunRequest{RunID: "run-1", Prompt: "needs approval"})
+if err != nil {
+    log.Fatal(err)
+}
+
+if result.Token != "" {
+    err = fw.Resume(ctx, result.Token, core.DecisionApprove, nil)
+}
+```
+
+需要进程重启后仍能恢复运行时，可使用文件持久化适配器：
+
+```go
+runs, _ := agentflow.NewFileRunStateRepository("./data/runs")
+blobs, _ := agentflow.NewFileBlobStore("./data/blobs")
+memoryRepo, _ := agentflow.NewFileMemoryRepository("./data/memory")
+
+fw, err := agentflow.NewFromFile(
+    "scenario.yaml",
+    agentflow.WithRunStateRepository(runs),
+    agentflow.WithBlobStore(blobs),
+    agentflow.WithMemoryRepository("session", memoryRepo),
+)
+```
+
+生产环境需要 PostgreSQL RunState 时，可在应用侧注册 `database/sql` driver，并把初始化后的连接池传给根门面构造器：
+
+```go
+db, err := sql.Open("pgx", os.Getenv("AGENTFLOW_POSTGRES_DSN"))
+if err != nil {
+  log.Fatal(err)
+}
+runs, err := agentflow.NewPostgresRunStateRepository(db)
+if err != nil {
+  log.Fatal(err)
+}
+
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithRunStateRepository(runs),
+)
+```
+
+表结构契约和运维注意事项见 [docs/persistence/postgres-runstate.md](docs/persistence/postgres-runstate.md)。
+
+生产环境异步执行可使用队列和 Worker。PostgreSQL 队列适配器基于 `database/sql`，不强制绑定具体驱动：
+
+```go
+queue, err := agentflow.NewPostgresJobQueue(db)
+if err != nil {
+  log.Fatal(err)
+}
+
+runHandler, err := agentflow.NewFrameworkRunJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+if err != nil {
+  log.Fatal(err)
+}
+
+worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
+  WorkerID:    "worker-1",
+  Concurrency: 4,
+  LeaseTTL:    time.Minute,
+  JobTimeout:  5 * time.Minute,
+})
+```
+
+`agentflow.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz` 和 `/v1/runs` 下的异步 run 提交/状态/取消接口。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
+
+MCP Server 可以通过适配器变成普通受治理工具，无需改变 runtime core：
+
+```go
+mcpClient, err := agentflow.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
+if err != nil {
+  log.Fatal(err)
+}
+searchTool, err := agentflow.NewMCPToolExecutor(mcpClient, "search")
+if err != nil {
+  log.Fatal(err)
+}
+fw, err := agentflow.NewFromFile(
+  "examples/mcp_tool.yaml",
+  agentflow.WithToolExecutor("docs.search", searchTool),
+)
+```
+
+适配模型和安全注意事项见 [docs/mcp-tools.md](docs/mcp-tools.md)。
+
+读取内部 API 可注册受限 HTTP Tool Executor：
+
+```go
+httpTool, err := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{
+  AllowedHosts: []string{"https://status.example.internal"},
+})
+if err != nil {
+  log.Fatal(err)
+}
+fw, err := agentflow.NewFromFile(
+  "examples/http_tool.yaml",
+  agentflow.WithToolExecutor("http.status", httpTool),
+)
+```
+
+该执行器必须配置 host allowlist，默认只允许 `GET`/`HEAD`。详见 [docs/tools-http.md](docs/tools-http.md)。
+
+读取本地 runbook 或已检出的文档，可注册受限文件系统读取 Tool Executor：
+
+```go
+filesystemTool, err := agentflow.NewFilesystemToolExecutor(agentflow.FilesystemToolConfig{
+  AllowedRoots: []string{"/srv/agentflow/runbooks"},
+})
+if err != nil {
+  log.Fatal(err)
+}
+fw, err := agentflow.NewFromFile(
+  "examples/filesystem_tool.yaml",
+  agentflow.WithToolExecutor("fs.read", filesystemTool),
+)
+```
+
+该执行器必须配置 root allowlist，会拒绝路径逃逸和符号链接逃逸，并限制文件大小。详见 [docs/tools-filesystem.md](docs/tools-filesystem.md)。
+
+需要读取业务库、工单库或报表库时，可注册受限 SQL 查询 Tool Executor，并使用命名 allowlist 查询：
+
+```go
+sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
+  DB: db,
+  AllowedQueries: map[string]string{
+    "tickets.open": "SELECT id, title, status FROM tickets WHERE status = $1",
+  },
+  MaxRows: 20,
+})
+if err != nil {
+  log.Fatal(err)
+}
+fw, err := agentflow.NewFromFile(
+  "examples/sql_tool.yaml",
+  agentflow.WithToolExecutor("sql.query", sqlTool),
+)
+```
+
+该执行器默认只执行命名 `SELECT` 查询，拒绝多语句 SQL，带超时并限制返回行数。详见 [docs/tools-sql.md](docs/tools-sql.md)。
+
+SQL 工具可接入任意 `database/sql` 驱动，包括 PostgreSQL、MySQL 和 ClickHouse。宿主应用自行导入具体驱动并传入已打开的 `*sql.DB`；agentflow-go 不强制引入数据库驱动依赖。
+
+RAG 场景可组合 Embedder、VectorStore 和 Retriever Tool：
+
+```go
+store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{DB: db})
+if err != nil {
+  log.Fatal(err)
+}
+retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
+  Embedder:     provider,
+  Store:        store,
+  Profile:      "embed",
+  Namespace:    "tenant-a/docs",
+  DefaultLimit: 5,
+})
+if err != nil {
+  log.Fatal(err)
+}
+fw, err := agentflow.NewFromFile(
+  "examples/rag_knowledge.yaml",
+  agentflow.WithLLMGateway(provider),
+  agentflow.WithToolExecutor("knowledge.retrieve", retriever),
+)
+```
+
+公共契约和 pgvector 表结构见 [docs/knowledge-rag.md](docs/knowledge-rag.md) 与 [docs/persistence/pgvector.md](docs/persistence/pgvector.md)。
+
+本地企业栈可直接使用 [deploy/enterprise](deploy/enterprise) 中的 Compose 模板，包含 PostgreSQL+pgvector、Redis、MinIO 和 `agent-http`：
+
+```sh
+cd deploy/enterprise
+cp .env.example .env
+docker compose up --build
+```
+
+各服务和根门面构造器、生产迁移 SQL、Kubernetes base manifests 的映射见 [docs/deployment-enterprise.md](docs/deployment-enterprise.md)。
+
+大输出需要进入 S3-compatible 对象存储时，可单独配置 BlobStore：
+
+```go
+blobs, err := agentflow.NewS3BlobStore(agentflow.S3BlobStoreConfig{
+  Endpoint:        os.Getenv("AGENTFLOW_S3_ENDPOINT"),
+  Bucket:          os.Getenv("AGENTFLOW_S3_BUCKET"),
+  Region:          os.Getenv("AGENTFLOW_S3_REGION"),
+  Prefix:          "agentflow/outputs",
+  AccessKeyID:     os.Getenv("AGENTFLOW_S3_ACCESS_KEY_ID"),
+  SecretAccessKey: os.Getenv("AGENTFLOW_S3_SECRET_ACCESS_KEY"),
+})
+if err != nil {
+  log.Fatal(err)
+}
+
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithBlobStore(blobs),
+)
+```
+
+对象路径和安全注意事项见 [docs/persistence/s3-blobstore.md](docs/persistence/s3-blobstore.md)。
+
+企业级可观测和治理能力保持可选且低依赖：
+
+```go
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithEventSink(agentflow.NewSlogEventSink(logger)),
+  agentflow.WithAuditSink(agentflow.NewSlogAuditSink(logger)),
+  agentflow.WithToolGovernancePolicy(governance.ChainToolPolicies(
+    governance.NewToolBudgetPolicy(8),
+    governance.NewMaxSideEffectPolicy(core.SideEffectRead),
+  )),
+  agentflow.WithOutputRedactor(governance.NewJSONFieldRedactor("secret", "token")),
+)
+```
+
+治理策略会在工具执行前生效，输出脱敏会在运行时 step output 持久化前执行。
+
+底层扩展接口位于：
+
+- `github.com/aijustin/agentflow-go/pkg/core`
+- `github.com/aijustin/agentflow-go/pkg/llm`
+- `github.com/aijustin/agentflow-go/pkg/contextwindow`
+- `github.com/aijustin/agentflow-go/pkg/async`
+- `github.com/aijustin/agentflow-go/pkg/audit`
+- `github.com/aijustin/agentflow-go/pkg/governance`
+- `github.com/aijustin/agentflow-go/pkg/identity`
+- `github.com/aijustin/agentflow-go/pkg/knowledge`
+- `github.com/aijustin/agentflow-go/pkg/mcp`
+- `github.com/aijustin/agentflow-go/pkg/memory`
+- `github.com/aijustin/agentflow-go/pkg/runstate`
+- `github.com/aijustin/agentflow-go/pkg/security`
+
+内置工具适配器说明见 [docs/tools-http.md](docs/tools-http.md)、[docs/mcp-tools.md](docs/mcp-tools.md) 和 [docs/knowledge-rag.md](docs/knowledge-rag.md)。
+
+### 安装依赖
+
+```sh
+go mod download
+```
+
+### 校验示例场景
+
+```sh
+go run ./cmd/agentctl validate -f examples/autonomous.yaml
+```
+
+期望输出：
+
+```text
+ok
+```
+
+### 运行场景
+
+```sh
+go run ./cmd/agentctl run \
+  -f examples/autonomous.yaml \
+  --prompt "hello agent" \
+  --json
+```
+
+当前 CLI 未注入具体 LLM Gateway 时会回显 prompt。
+
+### 构建二进制
+
+```sh
+make build
+```
+
+会构建：
+
+- `agentctl`：用于校验、运行和恢复场景的 CLI。
+- `agent-http`：用于 Human-in-the-loop 恢复回调和浏览器调试台的 HTTP 服务。
+
+## CLI 使用
+
+### `agentctl validate`
+
+校验 YAML 结构、引用关系、编排模式和固定工作流图结构。
+
+```sh
+go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
+```
+
+### `agentctl run`
+
+运行一个场景。
+
+```sh
+go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "review this change"
+```
+
+常用参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `-f, --file` | 场景 YAML 文件，必填。 |
+| `--prompt` | 传给 Runtime 的用户输入。 |
+| `--run-id` | 可选 Run ID；不传会自动生成。 |
+| `--token-secret` | HITL Token 的 HMAC 密钥，本地演示默认 `dev-secret`；共享环境请使用强密钥。 |
+| `--token-ttl` | HITL Token 有效期，默认 `15m`。 |
+| `--state-dir` | 持久化 RunState 和 Blob 的目录；跨独立 CLI 进程 resume 时需要保持一致。 |
+| `--json` | 输出机器可读 JSON。 |
+
+### `agentctl resume`
+
+使用签名 Token 恢复暂停的 Human-in-the-loop 运行。
+
+```sh
+go run ./cmd/agentctl resume \
+  --token "$TOKEN" \
+  --decision approve \
+  --token-secret "strong-secret" \
+  --state-dir ./data/agentflow
+```
+
+支持的决策：
+
+- `approve`：继续。
+- `reject`：取消运行。
+- `amend`：携带修正数据继续。
+
+携带 amendment 的示例：
+
+```sh
+go run ./cmd/agentctl resume \
+  --token "$TOKEN" \
+  --decision amend \
+  --amendment '{"instruction":"make the answer shorter"}' \
+  --state-dir ./data/agentflow
+```
+
+当暂停的运行需要被另一个 CLI 进程或终端会话恢复时，请在 `run` 和 `resume` 中使用同一个 `--state-dir`。
+
+## HTTP/Webhook HITL 桥接与调试页面
+
+启动浏览器调试台和 HTTP resume bridge：
+
+```sh
+AGENT_TOKEN_SECRET=strong-secret go run ./cmd/agent-http
+```
+
+打开：
+
+```text
+http://localhost:18080
+```
+
+调试台默认监听 `127.0.0.1:18080`，可使用开发默认密钥。若将 `AGENT_HTTP_ADDR` 设置为 `:18080` 等非 loopback 监听地址，则必须显式提供 `AGENT_TOKEN_SECRET` 和 `AGENT_HTTP_API_KEY`。可选的 `AGENT_HTTP_AUDIT_FILE` 会把审计事件写成 JSONL。
+
+调试台支持：
+
+- 选择内置场景：autonomous mock、fixed workflow、human-in-loop、real local model、context governance。
+- 在浏览器中编辑场景 YAML。
+- 输入 prompt、运行时上下文 JSON，并执行场景。
+- 配置 OpenAI-compatible 本地模型端点进行真实模型调用。
+- 测试滑动窗口和摘要压缩等上下文治理能力。
+- 查看运行结果 JSON、RunSnapshot、StepOutputs、Token 和事件时间线。
+- 使用 `approve`、`reject` 或 `amend` 恢复 HITL checkpoint。
+
+Resume 接口：
+
+```sh
+curl -X POST http://localhost:18080 \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "'"$TOKEN"'",
+    "decision": "approve"
+  }'
+```
+
+响应：
+
+```json
+{"status":"ok"}
+```
+
+网络传递的 Token 使用 HMAC 签名。生产环境必须设置强 `AGENT_TOKEN_SECRET`，并使用持久化 RunState 仓库。
+
+## YAML 场景格式
+
+所有场景配置都位于一个 `scenario:` 根节点下。
+
+```yaml
+scenario:
+  name: autonomous-echo
+  llms:
+    default:
+      provider: mock
+      model: test
+  memories:
+    session:
+      type: in_memory
+      scope: session
+  tools:
+    echo:
+      type: builtin.echo
+      approval: never
+      rate_cap: 5
+  agents:
+    assistant:
+      llm: default
+      memory: session
+      tools: [echo]
+      timeout: 30s
+      retry_limit: 1
+      output_schema:
+        type: object
+        properties:
+          answer:
+            type: string
+      instructions: "Answer the user clearly."
+  orchestration:
+    mode: autonomous
+    human_in_loop:
+      enabled: false
+  runtime:
+    timeout: 2m
+    max_steps: 8
+    max_retries: 1
+    step_output_threshold: 65536
+```
+
+### 顶层配置段
+
+| 配置段 | 作用 |
+| --- | --- |
+| `llms` | 命名 LLM Profile。Agent 和 Tool 可以绑定不同 Profile。 |
+| `memories` | 命名 Memory 后端和作用域。当前支持内存和文件持久化仓库。 |
+| `tools` | Tool 声明、副作用等级、审批策略、可选 LLM 覆盖和每次运行的 `rate_cap`。 |
+| `skills` | 声明式 prompt/policy/workflow 包。Skill 不是独立运行时 Actor。 |
+| `agents` | Agent 角色、指令、LLM 绑定、Memory 绑定、工具和技能。 |
+| `orchestration` | autonomous、fixed_workflow 或 hybrid 编排策略。 |
+| `runtime` | Runtime 限制、输出阈值、密钥和运行参数。 |
+
+### LLM Profile 与上下文治理
+
+每个 LLM Profile 可定义提供商参数、输出限制、thinking/reasoning 选项、提供商扩展字段和上下文窗口策略：
+
+```yaml
+scenario:
+  llms:
+    default:
+      provider: openai-compatible
+      model: qwen/qwen3.6-35b-a3b
+      endpoint: http://127.0.0.1:1234/v1
+      api_key_env: AGENT_REALMODEL_API_KEY
+      context_window_tokens: 1400
+      max_output_tokens: 1024
+      temperature: 0
+      top_p: 0.8
+      thinking:
+        enabled: true
+        budget_tokens: 768
+      reasoning_effort: high
+      extra_body:
+        custom_provider_flag: true
+      context:
+        strategy: sliding_window_with_summary
+        max_input_tokens: 220
+        reserved_output_tokens: 1024
+        summary_tokens: 80
+        tool_result_max_tokens: 400
+        memory_recall_limit: 8
+        system_prompt_protection: true
+        compression:
+          enabled: true
+          trigger_ratio: 0.5
+```
+
+支持的上下文策略包括 `none`、`sliding_window`、`sliding_window_with_summary`。每次 LLM 调用前，Runtime 会发出 `ContextPrepared` 事件，包含裁剪前后 token 估算、丢弃消息数、是否生成摘要和当前输入预算。
+
+对于本地 Qwen reasoning 模型，应将 `max_output_tokens` 设置得足够大，因为一些 OpenAI-compatible 服务会把 reasoning output 计入 `max_tokens`。如果响应为空且 `finish_reason=length`，Runtime 会返回错误，避免把错误配置误判成成功的空回答。
+
+### 编排模式
+
+| 模式 | 说明 |
+| --- | --- |
+| `autonomous` | LLM 驱动的规划/执行。Orchestrator 负责工具调度和审批检查。 |
+| `fixed_workflow` | 确定性图工作流。执行前校验节点和边。 |
+| `hybrid` | 为固定流程 + 自主子步骤 + HITL Gate 的组合场景预留。 |
+
+### Human-in-the-loop
+
+通过 checkpoints 启用 HITL：
+
+```yaml
+scenario:
+  orchestration:
+    mode: autonomous
+    human_in_loop:
+      enabled: true
+      checkpoints:
+        - before_final_answer
+```
+
+Checkpoint 打开时，Runtime 会持久化 `RunSnapshot`，签发包含 `(RunID, Version)` 的 Token，并等待人工决策。
+
+## 库 API
+
+大多数应用只需要引入根门面：
+
+```go
+import agentflow "github.com/aijustin/agentflow-go"
+```
+
+公共包：
+
+| 包 | 作用 |
+| --- | --- |
+| root package | 框架门面：加载 YAML、校验、运行、恢复、注入扩展。 |
+| `pkg/async` | 异步执行所需的 Job Queue、Lease、Handler 和 Worker 契约。 |
+| `pkg/audit` | 合规记录所需的 Audit Event 模型和 Sink 契约。 |
+| `pkg/coordination` | 用于 Worker 和工作流协调的分布式租约契约。 |
+| `pkg/core` | Agent、Tool、Skill、Scenario、Workflow、HumanGate、Event 类型。 |
+| `pkg/llm` | 提供商无关的 LLM 能力接口和请求/响应类型。 |
+| `pkg/contextwindow` | 上下文窗口策略管理、token 估算、裁剪和压缩统计。 |
+| `pkg/identity` | Principal、角色、租户/工作区/项目作用域和 context helpers。 |
+| `pkg/memory` | Memory Namespace 和 Repository 契约。 |
+| `pkg/runstate` | RunSnapshot、CAS Repository 端口、Blob 引用和 Token 签名。 |
+| `pkg/security` | API Key 认证器、授权 action/resource 和 RBAC policy 契约。 |
+
+创建并保存运行快照：
+
+```go
+repo := runstateinmem.NewRepository()
+snapshot := runstate.RunSnapshot{
+    RunID:        "run-1",
+    ScenarioName: "demo",
+    Status:       runstate.RunStatusRunning,
+}
+if err := repo.Save(context.Background(), &snapshot, 0); err != nil {
+    log.Fatal(err)
+}
+```
+
+签发并验证 HITL Token：
+
+```go
+signer, err := runstate.NewTokenSigner([]byte("secret"))
+if err != nil {
+    log.Fatal(err)
+}
+token, err := signer.Sign(runstate.TokenPayload{RunID: "run-1", Version: 1})
+if err != nil {
+    log.Fatal(err)
+}
+payload, err := signer.Verify(token)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(payload.RunID)
+```
+
+获取 Redis 分布式租约，用于 Worker 协调：
+
+```go
+locker, err := agentflow.NewRedisLocker(agentflow.RedisLockerConfig{
+  Addr:      os.Getenv("AGENTFLOW_REDIS_ADDR"),
+  Password:  os.Getenv("AGENTFLOW_REDIS_PASSWORD"),
+  KeyPrefix: "agentflow:",
+})
+if err != nil {
+  log.Fatal(err)
+}
+lease, acquired, err := locker.Acquire(ctx, "run:123", "worker:alpha", 30*time.Second)
+if err != nil {
+  log.Fatal(err)
+}
+if acquired {
+  defer func() { _ = locker.Release(ctx, lease) }()
+}
+```
+
+租约语义和运维注意事项见 [docs/persistence/redis-locker.md](docs/persistence/redis-locker.md)。
+
+通过 async worker foundation 执行异步任务：
+
+```go
+queue := agentflow.NewInMemoryJobQueue()
+worker, err := async.NewWorker(
+  queue,
+  async.HandlerFunc(func(ctx context.Context, job async.Job) error {
+    return nil
+  }),
+  async.WorkerConfig{WorkerID: "worker-1", Concurrency: 4},
+)
+if err != nil {
+  log.Fatal(err)
+}
+```
+
+队列状态、Worker 行为和后续生产化切片见 [docs/async-runtime.md](docs/async-runtime.md)。
+
+暴露异步 run submit/status/cancel endpoints：
+
+```go
+queue := agentflow.NewInMemoryJobQueue()
+handler, err := agentflow.NewAsyncRunHTTPHandler(agentflow.AsyncRunHTTPHandlerConfig{
+  Queue:  queue,
+  Policy: security.NewDefaultRolePolicy(),
+  Audit:  auditSink,
+})
+if err != nil {
+  log.Fatal(err)
+}
+http.Handle("/v1/", middleware(handler))
+```
+
+使用 API Key 保护 HTTP handler，并把企业 Principal 注入 request context：
+
+```go
+auth, err := agentflow.NewStaticAPIKeyAuthenticator(map[string]identity.Principal{
+  os.Getenv("AGENTFLOW_SERVICE_API_KEY"): {
+    ID:    "svc-agent-runner",
+    Type:  identity.PrincipalService,
+    Scope: identity.Scope{TenantID: "tenant-1"},
+    Roles: []identity.Role{identity.RoleService},
+  },
+})
+if err != nil {
+  log.Fatal(err)
+}
+middleware, err := agentflow.NewAPIKeyMiddleware(agentflow.APIKeyMiddlewareConfig{Authenticator: auth})
+if err != nil {
+  log.Fatal(err)
+}
+handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  principal, _ := identity.RequirePrincipal(r.Context())
+  _ = principal
+}))
+```
+
+为 HTTP handler 添加授权检查：
+
+```go
+authz, err := agentflow.NewAuthorizationMiddleware(agentflow.AuthorizationMiddlewareConfig{
+  Policy:   security.NewDefaultRolePolicy(),
+  Action:   security.ActionRunSubmit,
+  Resource: security.Resource{Type: "run"},
+  Audit:    auditSink,
+})
+if err != nil {
+  log.Fatal(err)
+}
+handler = middleware(authz(handler))
+```
+
+使用 runtime 工具授权和审计记录运行框架：
+
+```go
+fw, err := agentflow.New(
+  scenario,
+  agentflow.WithSecurityPolicy(security.NewDefaultRolePolicy()),
+  agentflow.WithAuditSink(auditSink),
+)
+ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+  ID:    "svc-agent-runner",
+  Type:  identity.PrincipalService,
+  Scope: identity.Scope{TenantID: "tenant-1"},
+  Roles: []identity.Role{identity.RoleService},
+})
+result, err := fw.Run(ctx, agentflow.RunRequest{RunID: "run-1", Agent: "assistant", Prompt: "hello"})
+```
+
+将审计事件写入 append-only JSONL 文件：
+
+```go
+auditSink, err := agentflow.NewFileAuditSink("./data/audit/events.jsonl")
+if err != nil {
+  log.Fatal(err)
+}
+err = auditSink.Record(ctx, audit.Event{
+  Type:    audit.EventRunSubmitted,
+  RunID:   "run-1",
+  Outcome: "accepted",
+})
+```
+
+## 架构
+
+项目采用 DDD 风格分层和 Hexagonal Ports/Adapters：
+
+```text
+cmd/
+  agentctl/
+  agent-http/
+pkg/
+  core/
+  llm/
+  contextwindow/
+  memory/
+  runstate/
+internal/
+  application/
+    runtime/
+    orchestration/
+    scenario/
+  adapter/
+    config/yaml/
+    human/cli/
+    human/http/
+    llm/openai/
+    llm/anthropic/
+    llm/local/
+    llm/mock/
+    memory/inmem/
+    runstate/inmem/
+    blob/inmem/
+```
+
+设计边界：
+
+- `Skill = prompt fragments + tool whitelist/policy + 可内联的 workflow 子图`。
+- `Tool = 带 Schema 的执行单元`。
+- `Agent = 拥有 LLM 和 Memory 绑定的实体`。
+- `RunStateRepository` 与 Memory 分离，专门处理可恢复的运行快照。
+- 上下文治理按 LLM Profile 生效：不同 Agent/Tool 可以路由到具有不同窗口、输出、thinking 和压缩策略的 LLM Profile。
+- 自主执行支持 LLM 工具调用循环、工具白名单、审批拒绝、每次运行 rate cap、重试、工具结果回填和生命周期事件。
+- 结构化输出使用 Agent 级 `output_schema` 和 Provider 的 `StructuredOutputter`；流式输出使用 `Streamer`，并在结束后持久化累积的最终答案。
+- Memory 绑定已接入 Runtime 读写，用于 conversation/session 历史。
+- 固定工作流按图依赖和边执行，支持有限并行、条件跳过、重试、transform/agent/human-gate 节点和 CAS 安全输出保存。
+- Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图。
+- `sub_agents` 会在自主执行中作为虚拟 delegation tool 暴露给 supervisor Agent。
+- Skill prompt fragments 和 workflow segments 会在场景构建阶段展开为命名空间化的 workflow 节点。
+- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 可用于生产数据库持久化；S3-compatible BlobStore 可用于大输出对象存储；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约可用于长任务执行；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
+- 企业 identity context、API Key middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewAPIKeyMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
+- Audit event 契约和 noop/内存/文件 sink 可通过 `pkg/audit`、`NewNoopAuditSink`、`NewInMemoryAuditSink`、`NewFileAuditSink` 和 `WithAuditSink` 使用。
+- 企业认证/租户和可观测/治理设计见 [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md) 与 [docs/observability-governance.md](docs/observability-governance.md)。
+- 内存适配器是并发安全的，并按 run/session 命名空间隔离。
+
+## 测试
+
+默认单元测试：
+
+```sh
+make test
+```
+
+集成测试：
+
+```sh
+make test-integration
+```
+
+真实本地模型流程测试：
+
+```sh
+export AGENT_REALMODEL_BASE_URL="http://127.0.0.1:1234/v1"
+export AGENT_REALMODEL_MODEL="qwen/qwen3.6-35b-a3b"
+export AGENT_REALMODEL_API_KEY="..."
+make test-realmodel
+```
+
+并发内存适配器 Race 测试：
+
+```sh
+make test-race
+```
+
+静态检查和漏洞扫描：
+
+```sh
+make vet
+make lint
+make security
+```
+
+直接运行：
+
+```sh
+CGO_ENABLED=0 go test -ldflags="-w" ./...
+CGO_ENABLED=0 go test -ldflags="-w" -tags=integration ./...
+CGO_ENABLED=0 go test -ldflags="-w" -tags=realmodel -run TestRealModel -v .
+go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem ./internal/adapter/blob/inmem
+```
+
+在较旧的 Darwin 本地工具链 + `CGO_ENABLED=0` 环境中，`-ldflags="-w"` 可规避本地 `dyld` 测试二进制问题。
+
+## 当前状态
+
+已实现：
+
+- YAML loader 和 validator
+- Autonomous runtime engine
+- 已接入根门面的 Fixed-workflow runner
+- In-memory Memory、RunStateRepository、BlobStore
+- LLM 抽象，以及 OpenAI-compatible、Anthropic、local、router 和 mock 测试路径的根包构造函数
+- 注册工具和 OpenAI-compatible function calling 的自主工具调用循环
+- Runtime memory integration：注入历史并持久化用户/助手/工具观察结果
+- 固定工作流图调度：依赖、并行、重试、条件、transform/agent/human-gate 节点、CAS 安全输出保存
+- Workflow-level HITL pause/resume
+- 通过虚拟 sub-agent tools 实现多 Agent delegation baseline
+- Skill prompt/workflow expansion
+- 文件版 RunState、Blob、Memory 持久化适配器，以及 PostgreSQL RunState 和 S3-compatible BlobStore 持久化适配器
+- 用于 Worker 和工作流协调的 Redis 分布式租约适配器
+- 异步 Job Queue 和 Worker 契约、内存队列适配器，以及 HTTP submit/status/cancel handler
+- 企业 identity context、API Key middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization
+- Audit event 模型，以及 noop、内存和 JSONL 文件 sink，加上 framework audit wiring
+- 通过 `--state-dir` 支持 durable CLI resume
+- Runtime hardening：全局/Agent/Profile timeout、LLM/Tool retry、Tool rate cap、失败状态持久化、大输出 Blob 外置
+- 结构化输出和流式输出 Runtime 路径
+- 上下文治理：滑动窗口、启发式摘要压缩、丰富 LLM Profile 配置、`ContextPrepared` 事件
+- CLI 和 HTTP HITL 界面，包含可过期 CLI Token 和更安全的调试台密钥默认值
+- GitHub Actions CI、golangci-lint 配置、govulncheck/CodeQL 工作流、Dependabot、GoReleaser、Dockerfile、安全和社区文档
+- 单元测试和集成测试
+
+尚未达到生产完备：
+
+- Redis RunState 存储适配器
+- 生产级 Queue 适配器，以及执行 queued run jobs 的 framework handler
+- 超出工具调用循环的高级自主规划
+- 更完整的 Skill policy expansion
+- 各 Provider 在 streaming、tool calls、structured output、embeddings 上的完整特性对齐
+- HTTP 桥接除 HMAC Token 外的生产级认证层
+
+## 贡献
+
+参见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## License
+
+本项目使用 [Apache License 2.0](./LICENSE)。

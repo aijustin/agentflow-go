@@ -1,0 +1,34 @@
+scenario:
+  name: fixed-workflow-review
+  llms:
+    planner:
+      provider: mock
+      model: test
+  memories:
+    session:
+      type: in_memory
+      scope: session
+  tools:
+    repo_search:
+      type: builtin.repo_search
+      approval: never
+  agents:
+    reviewer:
+      llm: planner
+      memory: session
+      tools: [repo_search]
+      instructions: "Review repository changes."
+  orchestration:
+    mode: fixed_workflow
+    workflow:
+      nodes:
+        - id: inspect
+          kind: tool
+          ref: repo_search
+        - id: review
+          kind: agent
+          ref: reviewer
+      edges:
+        - from: inspect
+          to: review
+

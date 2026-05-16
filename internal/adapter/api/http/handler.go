@@ -1,0 +1,75 @@
+package http
+
+import (
+	"encoding/json"
+	"fmt"
+	nethttp "net/http"
+	"time"
+
+	asynchttp "github.com/aijustin/agentflow-go/internal/adapter/async/http"
+	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
+	"github.com/aijustin/agentflow-go/pkg/audit"
+	"github.com/aijustin/agentflow-go/pkg/security"
+)
+
+type HandlerConfig struct {
+	Queue          asyncpkg.Queue
+	Policy         security.Policy
+	Audit          audit.Sink
+	AuthMiddleware func(nethttp.Handler) nethttp.Handler
+	IDGenerator    func() string
+	Now            func() time.Time
+	MaxBodyBytes   int64
+	Version        string
+}
+
+type Handler struct {
+	mux     *nethttp.ServeMux
+	version string
+}
+
+func NewHandler(config HandlerConfig) (*Handler, error) {
+	if config.Queue == nil {
+		return nil, fmt.Errorf("api http: queue is nil")
+	}
+	runHandler, err := asynchttp.NewHandler(asynchttp.HandlerConfig{
+		Queue:        config.Queue,
+		Policy:       config.Policy,
+		Audit:        config.Audit,
+		IDGenerator:  config.IDGenerator,
+		Now:          config.Now,
+		MaxBodyBytes: config.MaxBodyBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var runs nethttp.Handler = runHandler
+	if config.AuthMiddleware != nil {
+		runs = config.AuthMiddleware(runs)
+	}
+	handler := &Handler{mux: nethttp.NewServeMux(), version: config.Version}
+	handler.mux.HandleFunc("/healthz", handler.handleHealth)
+	handler.mux.HandleFunc("/readyz", handler.handleHealth)
+	handler.mux.Handle("/v1/runs", runs)
+	handler.mux.Handle("/v1/runs/", runs)
+	return handler, nil
+}
+
+func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
+	handler.mux.ServeHTTP(w, r)
+}
+
+func (handler *Handler) handleHealth(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		w.Header().Set("Allow", nethttp.MethodGet)
+		nethttp.Error(w, "method not allowed", nethttp.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]string{"status": "ok", "version": handler.version})
+}
+
+func writeJSON(w nethttp.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}

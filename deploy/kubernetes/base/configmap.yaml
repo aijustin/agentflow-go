@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentflow-config
+  labels:
+    app.kubernetes.io/name: agentflow-go
+data:
+  AGENT_HTTP_ADDR: "0.0.0.0:18080"
+  AGENT_HTTP_TENANT_ID: "default"
+  AGENT_HTTP_PRINCIPAL_ID: "agent-http"

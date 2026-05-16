@@ -1,0 +1,32 @@
+scenario:
+  name: sql-tool-example
+  llms:
+    default:
+      provider: mock
+      model: test
+      capabilities: [chat, tool_call]
+  tools:
+    sql.query:
+      type: builtin.sql
+      description: Run an allowlisted read-only SQL query.
+      approval: never
+      side_effect: read
+      rate_cap: 5
+      input_schema:
+        type: object
+        required: [query_id]
+        properties:
+          query_id:
+            type: string
+          args:
+            type: array
+            items: {}
+  agents:
+    assistant:
+      llm: default
+      tools: [sql.query]
+      instructions: "Use sql.query only for allowlisted read-only lookups."
+  orchestration:
+    mode: autonomous
+    human_in_loop:
+      enabled: false
