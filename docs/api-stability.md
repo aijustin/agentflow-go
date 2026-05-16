@@ -1,56 +1,56 @@
-# API Stability and Migration Policy
+# API 稳定性与迁移策略
 
-This project is pre-v1. The goal is to keep the first public releases useful and predictable while leaving enough room to adjust early APIs from real user feedback.
+本项目当前处于 v1 之前阶段。目标是在第一批公开版本中保持可用、可预期，同时为早期用户反馈留下必要的 API 调整空间。
 
-## Stability Surface
+## 稳定性边界
 
-The intended public surface is:
+计划作为公共稳定表面的内容包括：
 
-- The root package `github.com/aijustin/agentflow-go`.
-- Packages under `pkg/`.
-- YAML scenario fields documented in examples and README.
-- CLI commands under `cmd/agentctl` for validation, run, resume, and version.
-- Production HTTP behavior documented under `docs/`.
+- 根包 `github.com/aijustin/agentflow-go`。
+- `pkg/` 下的包。
+- 示例和 README 中记录的 YAML 场景字段。
+- `cmd/agentctl` 下用于 validate、run、resume、version 的 CLI 命令。
+- `docs/` 中记录的生产 HTTP 行为。
 
-The following are not stable public APIs:
+以下内容不是稳定公共 API：
 
-- Packages under `internal/`.
-- Concrete adapter internals, test drivers, and helper functions.
-- Debug UI implementation details.
-- Deployment templates before they are explicitly marked production-stable.
+- `internal/` 下的包。
+- 具体适配器内部实现、测试驱动和辅助函数。
+- Debug UI 的实现细节。
+- 尚未明确标记为生产稳定的部署模板。
 
-## v0 Compatibility Rules
+## v0 兼容规则
 
-During v0, the project follows these rules:
+v0 阶段遵循以下规则：
 
-- Additive changes to public structs, options, scenario fields, and constructors are allowed in minor releases.
-- Breaking changes must be called out in `CHANGELOG.md` with a migration note.
-- Public constructors should prefer new option/config fields over changing existing behavior.
-- Public interfaces in `pkg/` should change only when the existing contract blocks a major enterprise use case.
-- Scenario YAML fields should keep backward-compatible defaults whenever possible.
-- `internal/` packages may change without migration guarantees.
+- 对公共结构体、选项、场景字段和构造函数的追加式变更，可以在小版本中发布。
+- 破坏性变更必须在 `CHANGELOG.md` 中标明，并附带迁移说明。
+- 公共构造函数应优先通过新的选项/配置字段扩展，而不是改变既有行为。
+- `pkg/` 中的公共接口只有在既有契约阻碍重要企业场景时才应变更。
+- 场景 YAML 字段应尽量保留向后兼容的默认值。
+- `internal/` 包可以变化，不提供迁移保证。
 
-## Deprecation Policy
+## 废弃策略
 
-When a public API needs replacement:
+当公共 API 需要替换时：
 
-- Keep the old API for at least one minor release when practical.
-- Mark the old API as deprecated in Go doc comments.
-- Add the replacement path to `CHANGELOG.md`.
-- Update README examples to use the new API.
+- 在可行情况下，旧 API 至少保留一个小版本。
+- 在 Go doc 注释中标记旧 API 已废弃。
+- 在 `CHANGELOG.md` 中给出替换路径。
+- 更新 README 示例，让新示例使用新的 API。
 
-## Migration Notes
+## 迁移说明
 
-Every breaking change should include:
+每个破坏性变更都应包含：
 
-- What changed.
-- Why it changed.
-- Who is affected.
-- Before and after examples when the migration is not mechanical.
-- Any data migration or scenario YAML migration steps.
+- 变更了什么。
+- 为什么变更。
+- 谁会受到影响。
+- 当迁移不是机械替换时，提供变更前后的示例。
+- 任何数据迁移或场景 YAML 迁移步骤。
 
-## Driver and Adapter Policy
+## 驱动与适配器策略
 
-The framework avoids forcing concrete infrastructure dependencies through the root module. Host applications provide their own database drivers, object storage credentials, HTTP clients, LLM gateways, and enterprise integrations, then pass stable interfaces or root facade configs into agentflow-go.
+框架避免通过根模块强行引入具体基础设施依赖。宿主应用负责提供自己的数据库驱动、对象存储凭证、HTTP 客户端、LLM gateway 和企业集成，然后通过稳定接口或根门面的配置传入 agentflow-go。
 
-This keeps the core module small while allowing teams to standardize adapters internally.
+这样可以保持核心模块足够小，同时允许团队在内部标准化自己的适配器。

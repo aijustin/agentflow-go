@@ -1,14 +1,14 @@
-# Knowledge and RAG
+# 知识库与 RAG
 
-The RAG foundation has three public contracts:
+RAG 基础由几个公共契约组成：
 
-- `llm.Embedder`: converts text into vectors.
-- `knowledge.Loader`: loads source documents.
-- `knowledge.Chunker`: splits source documents into citation-friendly chunks.
-- `knowledge.VectorStore`: stores and queries embedded documents.
-- `core.ToolExecutor`: exposes retrieval as a governed runtime tool.
+- `llm.Embedder`：将文本转换为向量。
+- `knowledge.Loader`：加载源文档。
+- `knowledge.Chunker`：将源文档拆分为便于引用的分块。
+- `knowledge.VectorStore`：存储和查询已向量化的文档。
+- `core.ToolExecutor`：将检索能力作为受治理的运行时工具暴露。
 
-The root package exposes production-ready wiring helpers for the common path:
+根包为常见路径提供生产可用的装配辅助函数：
 
 ```go
 provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
@@ -55,22 +55,22 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-The retriever tool accepts:
+检索工具接受：
 
 ```json
 {
-  "query": "How do approval policies work?",
+  "query": "审批策略如何工作？",
   "namespace": "tenant-a/docs",
   "limit": 5,
   "filter": {"source": "handbook"}
 }
 ```
 
-It returns a JSON payload with result IDs, content, scores, and metadata. The current pgvector adapter stores metadata and returns it with each hit, so callers can include document URLs, titles, versions, or citation IDs.
+它返回包含结果 ID、内容、得分和元数据的 JSON 载荷。当前 pgvector 适配器会存储元数据，并在每个命中结果中返回它，因此调用方可以包含文档 URL、标题、版本或引用 ID。
 
-## Ingestion Pipeline
+## 摄取流水线
 
-Use the filesystem loader, text splitter, and indexer to load documents into a vector store:
+使用文件系统加载器、文本切分器和索引器将文档加载到向量存储：
 
 ```go
 loader, err := agentflow.NewFileKnowledgeLoader(agentflow.FileKnowledgeLoaderConfig{
@@ -115,7 +115,7 @@ if err != nil {
 fmt.Printf("indexed %d documents into %d chunks\n", result.Documents, result.Chunks)
 ```
 
-HTTP sources use the same loader contract:
+HTTP 来源使用同一个加载器契约：
 
 ```go
 loader, err := agentflow.NewHTTPKnowledgeLoader(agentflow.HTTPKnowledgeLoaderConfig{
@@ -126,17 +126,17 @@ loader, err := agentflow.NewHTTPKnowledgeLoader(agentflow.HTTPKnowledgeLoaderCon
 })
 ```
 
-Chunk metadata includes `parent_id`, `chunk_index`, `chunk_count`, `chunk_start`, and `chunk_end`. The retriever response exposes these fields as a `citation` object so callers can render source references without parsing metadata manually.
+分块元数据包含 `parent_id`、`chunk_index`、`chunk_count`、`chunk_start` 和 `chunk_end`。检索响应会将这些字段作为 `citation` 对象暴露，因此调用方可以渲染来源引用，而不需要手动解析元数据。
 
-## Scenario Shape
+## 场景形态
 
-The runtime treats retrieval as a normal tool. Register the executor in Go and declare the tool in YAML:
+运行时将检索视为普通工具。在 Go 中注册执行器，并在 YAML 中声明工具：
 
 ```yaml
 tools:
   knowledge.retrieve:
     type: knowledge.retriever
-    description: Search approved knowledge collections for relevant context.
+    description: 搜索已获批知识集合中的相关上下文。
     side_effect: read
     approval: never
     input_schema:
@@ -149,8 +149,8 @@ tools:
           type: integer
 ```
 
-Agents use it through the standard autonomous tool loop. That means retrieval is covered by the same runtime audit, authorization, approval, rate-cap, timeout, retry, and redaction features as any other tool.
+Agent 通过标准自主工具循环使用它。这意味着检索与其他工具一样，会受到运行时审计、授权、审批、速率限制、超时、重试和脱敏能力覆盖。
 
-## Current Boundary
+## 当前边界
 
-This slice provides provider capability helpers, embedding support for OpenAI-compatible APIs and mock tests, file and HTTP document loading, text chunking, batch indexing, the public vector store port, a pgvector baseline adapter, and a citation-aware retriever tool. More specialized ingestion connectors can implement `knowledge.Loader` without changing the indexing pipeline.
+这一切片提供 Provider 能力辅助函数、OpenAI-compatible API 和 mock test 的 embedding 支持、文件/HTTP 文档加载、文本分块、批量索引、公共向量存储端口、pgvector 基线适配器，以及支持引用的检索工具。更专用的摄取连接器可以实现 `knowledge.Loader`，无需改变索引流水线。

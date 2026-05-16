@@ -1,22 +1,22 @@
-# Filesystem Tool Executor
+# 文件系统工具执行器
 
-`agentflow.NewFilesystemToolExecutor` exposes constrained read-only filesystem access as a normal `core.ToolExecutor`. It is intended for trusted local runbooks, policy files, checked-out documentation, generated reports, and other text assets that an agent may inspect during a workflow.
+`agentflow.NewFilesystemToolExecutor` 将受约束的只读文件系统访问暴露为普通的 `core.ToolExecutor`。它适合可信的本地运行手册、策略文件、已检出的文档、生成报告，以及 Agent 在工作流中可能需要查看的其他文本资产。
 
-## Safety Model
+## 安全模型
 
-The executor is deny-by-default:
+该执行器默认拒绝访问：
 
-- At least one allowed root directory is required.
-- Allowed roots are resolved and validated as directories during construction.
-- Requests may use absolute paths under an allowed root or relative paths resolved against allowed roots.
-- Path traversal and symlink escapes are rejected by Go's traversal-resistant `os.Root` APIs.
-- Directories are rejected.
-- File reads are size-limited. The default limit is 1 MiB.
-- The result is structured JSON with path, byte size, and content.
+- 必须至少配置一个允许访问的根目录。
+- 构造时会解析允许访问的根目录，并确认它们确实是目录。
+- 请求可以使用允许根目录下的绝对路径，也可以使用相对路径并由允许根目录解析。
+- 路径穿越和符号链接逃逸会被 Go 的抗遍历 `os.Root` API 拒绝。
+- 目录会被拒绝。
+- 文件读取大小受限，默认限制为 1 MiB。
+- 结果以结构化 JSON 返回，包含路径、字节大小和内容。
 
-This keeps the runtime governance path intact: agent tool allowlists, RBAC, approval policy, side-effect policy, rate caps, audit, and output redaction still apply before and after tool execution.
+这可以保持运行时治理路径不变：Agent 工具 allowlist、RBAC、审批策略、副作用策略、速率限制、审计和输出脱敏，都会在工具执行前后继续生效。
 
-## Wiring
+## 装配
 
 ```go
 filesystemTool, err := agentflow.NewFilesystemToolExecutor(agentflow.FilesystemToolConfig{
@@ -33,7 +33,7 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-## Tool Input
+## 工具输入
 
 ```json
 {
@@ -41,7 +41,7 @@ fw, err := agentflow.NewFromFile(
 }
 ```
 
-## Tool Output
+## 工具输出
 
 ```json
 {
@@ -51,4 +51,4 @@ fw, err := agentflow.NewFromFile(
 }
 ```
 
-Do not point allowed roots at directories containing secrets, credentials, SSH keys, or broad home directories. For write access, use a purpose-built tool with domain-specific validation and approval gates.
+不要把允许根目录指向包含密钥、凭证、SSH key 或宽泛用户主目录的目录。如果需要写访问，请使用带领域校验和审批门禁的专用工具。

@@ -1,16 +1,16 @@
-# MCP Tool Integration
+# MCP 工具集成
 
-AgentFlow integrates MCP servers through adapters instead of baking MCP into the runtime core:
+AgentFlow 通过适配器集成 MCP server，而不是把 MCP 烘焙进运行时核心：
 
 ```text
 MCP server -> MCP client adapter -> core.ToolExecutor -> AgentFlow runtime
 ```
 
-This keeps scenarios and governance policies unchanged. MCP-backed tools still pass through agent tool allowlists, approval policy, RBAC policy, audit sinks, rate caps, side-effect checks, and output redaction.
+这样可以保持场景和治理策略不变。MCP 支撑的工具仍然会经过 Agent 工具 allowlist、审批策略、RBAC 策略、审计 sink、速率限制、副作用检查和输出脱敏。
 
-## HTTP JSON-RPC Client
+## HTTP JSON-RPC 客户端
 
-Use `NewMCPHTTPClient` for MCP servers exposed over an HTTP JSON-RPC endpoint:
+当 MCP server 通过 HTTP JSON-RPC 端点暴露时，使用 `NewMCPHTTPClient`：
 
 ```go
 mcpClient, err := agentflow.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
@@ -19,11 +19,11 @@ if err != nil {
 }
 ```
 
-The client supports `tools/list` and `tools/call`. It intentionally depends only on the standard library `net/http` client so applications can inject custom TLS, proxy, retry, or authentication transports.
+客户端支持 `tools/list` 和 `tools/call`。它有意只依赖标准库 `net/http` 客户端，因此应用可以注入自定义 TLS、代理、重试或认证 transport。
 
-## Tool Executor Adapter
+## 工具执行器适配器
 
-Wrap one MCP server tool as a normal AgentFlow `core.ToolExecutor`:
+将一个 MCP server 工具包装为普通 AgentFlow `core.ToolExecutor`：
 
 ```go
 searchTool, err := agentflow.NewMCPToolExecutor(mcpClient, "search")
@@ -37,22 +37,22 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-The scenario declares the tool metadata and governance policy:
+场景中声明工具元数据和治理策略：
 
 ```yaml
 tools:
   docs.search:
     type: mcp.tool
-    description: Search the company documentation MCP server.
+    description: 搜索公司文档 MCP server。
     side_effect: read
     approval: never
 ```
 
-`CallToolResult.isError` is mapped to `core.ToolResult.Error`, while the complete MCP result is preserved in the JSON output. This gives the LLM enough detail to continue the tool loop while preserving a clear runtime error signal.
+`CallToolResult.isError` 会映射到 `core.ToolResult.Error`，完整 MCP result 会保留在 JSON 输出中。这样 LLM 既能获得足够细节继续工具循环，又能保留清晰的运行时错误信号。
 
-## Production Notes
+## 生产注意事项
 
-- Keep MCP servers tenant-aware or register separate executors per tenant boundary.
-- Use AgentFlow RBAC and governance policies for coarse-grained controls, then enforce resource-level authorization inside the MCP server.
-- Prefer short tool names in the MCP server and stable scenario-level names in AgentFlow. The scenario name is the policy surface; the MCP name is the adapter target.
-- Treat remote MCP servers as external side effects unless they are strictly read-only and trusted.
+- 保持 MCP server 具备租户感知能力，或按租户边界注册独立执行器。
+- 使用 AgentFlow RBAC 和治理策略做粗粒度控制，再在 MCP server 内部执行资源级授权。
+- MCP server 内优先使用短工具名，在 AgentFlow 场景中使用稳定的场景级名称。场景名称是策略表面，MCP 名称是适配器目标。
+- 除非远程 MCP server 严格只读且可信，否则应将其视为外部副作用。

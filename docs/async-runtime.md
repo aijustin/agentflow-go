@@ -1,21 +1,21 @@
-# Async Runtime
+# 异步运行时
 
-The async runtime foundation provides job queue, worker, and HTTP submit/status/cancel contracts for long-running agent workflows. It is designed to keep the existing synchronous framework facade intact while enabling horizontally scalable workers.
+异步运行时基础提供任务队列、Worker，以及用于长时间运行 Agent 工作流的 HTTP 提交/状态/取消契约。它在保持既有同步框架门面不变的同时，让 Worker 可以水平扩展。
 
-## Current Scope
+## 当前范围
 
-- Public job, lease, queue, handler, and worker contracts in `pkg/async`.
-- In-memory queue adapter for tests and local development.
-- PostgreSQL queue adapter for production workers, exposed through `agentflow.NewPostgresJobQueue`.
-- Worker loop with bounded concurrency, context cancellation, polling, job timeout, lease completion, and failure reporting.
-- Root constructor for local queues: `agentflow.NewInMemoryJobQueue()`.
-- Root HTTP handler for async run submit/status/cancel: `agentflow.NewAsyncRunHTTPHandler(...)`.
-- Root framework-run worker handler: `agentflow.NewFrameworkRunJobHandler(...)`.
-- Production HTTP handler with `/healthz`, `/readyz`, and `/v1/runs` routing: `agentflow.NewProductionHTTPHandler(...)`.
+- `pkg/async` 中的公共任务、租约、队列、Handler 和 Worker 契约。
+- 用于测试和本地开发的内存队列适配器。
+- 用于生产 Worker 的 PostgreSQL 队列适配器，通过 `agentflow.NewPostgresJobQueue` 暴露。
+- Worker 循环支持有界并发、上下文取消、轮询、任务超时、租约完成和失败上报。
+- 本地队列根构造函数：`agentflow.NewInMemoryJobQueue()`。
+- 异步 run submit/status/cancel 的根 HTTP handler：`agentflow.NewAsyncRunHTTPHandler(...)`。
+- 框架运行 Worker Handler：`agentflow.NewFrameworkRunJobHandler(...)`。
+- 带 `/healthz`、`/readyz` 和 `/v1/runs` 路由的生产 HTTP Handler：`agentflow.NewProductionHTTPHandler(...)`。
 
-## Queue Semantics
+## 队列语义
 
-Jobs move through these states:
+任务状态流转如下：
 
 ```text
 queued -> running -> completed
@@ -24,15 +24,15 @@ queued -> running -> dead_letter
 queued/running -> cancelled
 ```
 
-Important rules:
+关键规则：
 
-- `Lease` assigns a queued job to a worker for a TTL.
-- Expired running leases can be recovered by another worker.
-- `Complete` and `Fail` require a current lease.
-- Failed jobs retry until `MaxAttempts` is reached.
-- Final failed jobs move to `dead_letter`.
+- `Lease` 会将排队任务分配给一个 Worker，并设置 TTL。
+- 过期的运行中租约可以被其他 Worker 恢复。
+- `Complete` 和 `Fail` 需要当前有效租约。
+- 失败任务会重试，直到达到 `MaxAttempts`。
+- 最终失败的任务会进入 `dead_letter`。
 
-## Worker Usage
+## Worker 使用方式
 
 ```go
 queue, err := agentflow.NewPostgresJobQueue(db)
@@ -70,9 +70,9 @@ if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 }
 ```
 
-`POST /v1/runs` stores a `pkg/async.RunPayload`. The framework worker handler decodes that payload, preserves `run_id`, restores the submitting principal when present, and calls `Framework.Run`.
+`POST /v1/runs` 会存储一个 `pkg/async.RunPayload`。框架 Worker Handler 会解码该载荷，保留 `run_id`，在存在提交者主体时恢复该身份，然后调用 `Framework.Run`。
 
-## HTTP Submit/Status/Cancel Usage
+## HTTP 提交/状态/取消用法
 
 ```go
 queue := agentflow.NewInMemoryJobQueue()
@@ -90,7 +90,7 @@ if err != nil {
 http.Handle("/v1/", apiKeyMiddleware(handler))
 ```
 
-For production services, prefer the wrapper handler when you want health/readiness probes and the async run API mounted together:
+生产服务如果希望将健康检查、就绪探针和异步运行 API 一起挂载，可以优先使用封装 Handler：
 
 ```go
 api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
@@ -107,15 +107,15 @@ if err != nil {
 http.ListenAndServe(":8080", api)
 ```
 
-Endpoints:
+端点：
 
-- `POST /v1/runs`: enqueues a run job and returns `202 Accepted` with the queued job.
-- `GET /v1/runs/{run_id}`: returns the queued/running/completed/cancelled job state.
-- `POST /v1/runs/{run_id}/cancel`: cancels queued or running jobs.
+- `POST /v1/runs`：入队一个运行任务，并返回 `202 Accepted` 和排队任务。
+- `GET /v1/runs/{run_id}`：返回 queued/running/completed/cancelled 任务状态。
+- `POST /v1/runs/{run_id}/cancel`：取消排队或运行中的任务。
 
-When a policy is configured, the handler enforces `run.submit`, `run.read`, and `run.cancel`. Accepted submit/cancel actions and denied policy decisions are emitted to the configured audit sink.
+配置策略后，Handler 会强制检查 `run.submit`、`run.read` 和 `run.cancel`。接受的提交/取消动作以及被拒绝的策略决策都会写入配置的审计 sink。
 
-## Next Slices
+## 后续切片
 
-- Add dead-letter inspection and retry APIs.
-- Add metrics for queue depth, lease recovery, retry counts, and worker latency.
+- 增加死信查看和重试 API。
+- 增加队列深度、租约恢复、重试次数和 Worker 延迟指标。

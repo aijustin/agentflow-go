@@ -1,20 +1,20 @@
-# HTTP Tool Executor
+# HTTP 工具执行器
 
-`agentflow.NewHTTPToolExecutor` exposes a constrained HTTP client as a normal `core.ToolExecutor`. It is intended for read-only integrations such as internal status APIs, documentation gateways, and service metadata endpoints.
+`agentflow.NewHTTPToolExecutor` 将受约束的 HTTP 客户端暴露为普通的 `core.ToolExecutor`。它适合只读集成，例如内部状态 API、文档网关和服务元数据端点。
 
-## Safety Model
+## 安全模型
 
-The executor is deny-by-default:
+该执行器默认拒绝访问：
 
-- At least one allowed host is required.
-- Only `GET` and `HEAD` are allowed unless `AllowedMethods` is explicitly configured.
-- Only `http` and `https` URLs are accepted.
-- Responses are size-limited. The default limit is 1 MiB.
-- The result is structured JSON with status code, headers, and body.
+- 必须至少配置一个允许访问的主机。
+- 除非显式配置 `AllowedMethods`，否则只允许 `GET` 和 `HEAD`。
+- 只接受 `http` 和 `https` URL。
+- 响应大小受限，默认限制为 1 MiB。
+- 结果以结构化 JSON 返回，包含状态码、响应头和响应体。
 
-This keeps the runtime governance path intact: agent tool allowlists, RBAC, approval policy, side-effect policy, rate caps, audit, and output redaction still apply before and after tool execution.
+这可以保持运行时治理路径不变：Agent 工具 allowlist、RBAC、审批策略、副作用策略、速率限制、审计和输出脱敏，都会在工具执行前后继续生效。
 
-## Wiring
+## 装配
 
 ```go
 httpTool, err := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{
@@ -33,7 +33,7 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-## Tool Input
+## 工具输入
 
 ```json
 {
@@ -43,7 +43,7 @@ fw, err := agentflow.NewFromFile(
 }
 ```
 
-## Tool Output
+## 工具输出
 
 ```json
 {
@@ -53,4 +53,4 @@ fw, err := agentflow.NewFromFile(
 }
 ```
 
-For mutating APIs, prefer a purpose-built tool with domain-specific validation over broad `POST`/`PUT` access.
+对于会修改状态的 API，优先编写带领域校验的专用工具，而不是开放宽泛的 `POST`/`PUT` 能力。

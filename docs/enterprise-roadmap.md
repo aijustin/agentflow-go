@@ -1,149 +1,149 @@
-# Enterprise Roadmap
+# 企业路线图
 
-This roadmap turns agentflow-go from an embeddable agent framework into an enterprise-ready foundation for internal agent platforms.
+这份路线图将 agentflow-go 从可嵌入 Agent 框架推进为企业内部 Agent 平台的基础底座。
 
-## Execution Principles
+## 执行原则
 
-- Build the runtime foundation before expanding the ecosystem.
-- Keep every milestone independently testable and releasable.
-- Prefer ports and adapters over provider-specific coupling.
-- Keep local development simple while adding production-grade backends.
-- Treat security, observability, and auditability as runtime features, not deployment afterthoughts.
+- 先构建运行时基础，再扩展生态。
+- 每个里程碑都应独立可测试、可发布。
+- 优先使用端口与适配器，而不是 Provider 特定耦合。
+- 在增加生产级后端的同时保持本地开发简单。
+- 将安全、可观测性和审计能力视为运行时功能，而不是部署后的补丁。
 
-## Milestone Order
+## 里程碑顺序
 
-### M1: Production Persistence and Recovery
+### M1：生产持久化与恢复
 
-Goal: runs, workflow checkpoints, step outputs, and large blobs survive restarts and multi-instance deployment.
+目标：运行、工作流检查点、步骤输出和大型 Blob 在重启与多实例部署后仍然可恢复。
 
-Deliverables:
+交付物：
 
-- PostgreSQL `RunStateRepository` adapter.
-- S3-compatible `BlobStore` adapter for MinIO, AWS S3 path-style endpoints, and private object stores. Implemented as a standard-library SigV4 adapter.
-- Redis-based lease adapter for distributed coordination. Implemented with `SET NX PX` and atomic Lua renew/release.
-- Retention and cleanup APIs for expired snapshots, completed runs, and orphaned blobs.
-- Integration tests for cross-process resume, CAS conflict handling, and blob checksum validation.
+- PostgreSQL `RunStateRepository` 适配器。
+- S3 兼容 `BlobStore` 适配器，支持 MinIO、AWS S3 path-style endpoint 和私有对象存储。已实现为标准库 SigV4 适配器。
+- 基于 Redis 的分布式协调租约适配器。已通过 `SET NX PX` 和原子 Lua 续租/释放实现。
+- 用于过期快照、已完成运行和孤儿 Blob 的保留与清理 API。
+- 针对跨进程恢复、CAS 冲突处理和 Blob checksum validation 的集成测试。
 
-Acceptance criteria:
+验收标准：
 
-- A paused run can be resumed by a different process or instance.
-- Concurrent resume attempts preserve CAS semantics and only one succeeds.
-- Large step outputs can be externalized and retrieved from object storage.
-- Storage failures return explicit, typed errors where possible.
+- 暂停的运行可以由另一个进程或实例恢复。
+- 并发恢复尝试保留 CAS 语义，并且只有一个成功。
+- 大型步骤输出可以外置到对象存储并被取回。
+- 存储失败尽可能返回明确的类型化错误。
 
-### M2: Async Runtime and Workers
+### M2：异步运行时与 Worker
 
-Goal: support long-running enterprise workflows through asynchronous job submission and horizontally scalable workers.
+目标：通过异步任务提交和可水平扩展 Worker 支持长时间运行的企业工作流。
 
-Deliverables:
+交付物：
 
-- Job, queue, worker, and lease abstractions. Initial `pkg/async` contracts are implemented.
-- In-memory queue for tests and local development. Implemented as `internal/adapter/queue/inmem` and exposed through `NewInMemoryJobQueue`.
-- PostgreSQL queue adapter for production baseline.
-- HTTP API for submit/status/cancel flows plus production health/readiness wrapper.
-- Retry, timeout, dead-letter, and cancellation semantics.
+- 任务、队列、Worker 和租约抽象。初始 `pkg/async` 契约已实现。
+- 用于测试和本地开发的内存队列。已在 `internal/adapter/queue/inmem` 实现，并通过 `NewInMemoryJobQueue` 暴露。
+- 生产基线 PostgreSQL 队列适配器。
+- 提交/状态/取消流程的 HTTP API，以及生产健康检查/就绪探针封装。
+- 重试、超时、死信和取消语义。
 
-Acceptance criteria:
+验收标准：
 
-- HTTP submission returns a `run_id` without blocking on completion.
-- Multiple workers do not execute the same leased job at the same time.
-- Cancellation propagates through runtime context.
-- Failed jobs can be retried and eventually marked dead-lettered.
+- HTTP 提交返回 `run_id`，不阻塞等待完成。
+- 多个 Worker 不会同时执行同一个租约任务。
+- 取消会通过运行时上下文传播。
+- 失败任务可以重试，并最终标记为死信。
 
-### M3: Enterprise Auth, Tenancy, and RBAC
+### M3：企业认证、租户与 RBAC
 
-Goal: make runtime APIs safe for shared company use.
+目标：让 runtime API 可以安全地用于公司共享环境。
 
-Design: [security-auth-tenancy.md](security-auth-tenancy.md)
+设计：[security-auth-tenancy.md](security-auth-tenancy.md)
 
-Deliverables:
+交付物：
 
-- Tenant/workspace/project context model.
-- API key authentication middleware.
-- OIDC/OAuth2 authentication adapter.
-- RBAC policy port with roles for admin, operator, viewer, approver, and service principals.
-- Tenant-scoped run state, memory, blobs, events, and audit records.
+- 租户/工作区/项目上下文模型。
+- API key 认证中间件。
+- OIDC/OAuth2 认证适配器。
+- RBAC 策略端口，包含 admin、operator、viewer、approver 和 service principal 角色。
+- 租户作用域的运行状态、记忆、Blob、事件和审计记录。
 
-Acceptance criteria:
+验收标准：
 
-- Tenant data cannot be loaded or resumed across tenant boundaries.
-- Dangerous tools and HITL decisions enforce role checks.
-- Approval records include actor identity.
-- HTTP APIs return consistent 401/403 responses.
+- 租户数据不能跨租户边界加载或恢复。
+- 危险工具和 HITL 决策会强制执行角色检查。
+- 审批记录包含操作者身份。
+- HTTP API 返回一致的 401/403 响应。
 
-### M4: Observability, Audit, and Governance
+### M4：可观测性、审计与治理
 
-Goal: make production behavior diagnosable, measurable, and governable.
+目标：让生产行为可诊断、可度量、可治理。
 
-Design: [observability-governance.md](observability-governance.md)
+设计：[observability-governance.md](observability-governance.md)
 
-Deliverables:
+交付物：
 
-- Structured `slog` fields for run, tenant, agent, tool, step, and trace identifiers.
-- OpenTelemetry tracing.
-- Prometheus metrics for runtime, LLM, tool, workflow, and queue behavior.
-- Audit sink interface and durable audit event adapters.
-- Redaction hooks for secrets and sensitive data.
-- Policy baseline for budget limits, tool side effects, approval gates, and output checks.
+- 运行、租户、Agent、工具、步骤和追踪标识的结构化 `slog` 字段。
+- OpenTelemetry 追踪。
+- 运行时、LLM、工具、工作流和队列行为的 Prometheus 指标。
+- 审计 sink 接口和持久审计事件适配器。
+- 密钥和敏感数据的脱敏钩子。
+- 预算限制、工具副作用、审批门禁和输出检查的策略基线。
 
-Acceptance criteria:
+验收标准：
 
-- A run can be traced from HTTP request through workflow steps, LLM calls, and tools.
-- Metrics expose latency, error counts, token usage, and queue depth.
-- Audit logs answer who approved, rejected, amended, or invoked risky tools.
-- Sensitive values do not appear in logs, events, snapshots, or debug responses.
+- 一个运行可以从 HTTP 请求追踪到工作流步骤、LLM 调用和工具。
+- 指标暴露延迟、错误数、token 用量和队列深度。
+- 审计日志能回答谁批准、拒绝、修订或调用了高风险工具。
+- 敏感值不会出现在日志、事件、快照或调试响应中。
 
-### M5: Provider Matrix, RAG, and Knowledge
+### M5：Provider 能力矩阵、RAG 与知识库
 
-Goal: support enterprise knowledge workflows and predictable model behavior.
+目标：支持企业知识工作流和可预期的模型行为。
 
-Deliverables:
+交付物：
 
-- Provider capability matrix for streaming, tool calls, structured output, embeddings, and usage accounting. Initial capability helpers are implemented.
-- Embedding provider port. `llm.Embedder` is implemented by the OpenAI-compatible and mock adapters.
-- Vector store port and pgvector baseline adapter. Initial `pkg/knowledge` and PostgreSQL pgvector adapter are implemented.
-- Document loader, chunker, indexer, retriever tool, and citation/source tracking. File and HTTP loaders are implemented.
-- Retriever tool. Initial semantic retrieval executor is implemented.
-- Tenant-isolated knowledge collections.
+- 流式输出、工具调用、结构化输出、embedding 和用量统计的 Provider 能力矩阵。初始能力辅助函数已实现。
+- Embedding Provider 端口。`llm.Embedder` 已由 OpenAI-compatible 和 mock 适配器实现。
+- 向量存储端口和 pgvector 基线适配器。初始 `pkg/knowledge` 和 PostgreSQL pgvector 适配器已实现。
+- 文档加载器、分块器、索引器、检索工具和引用/来源追踪。文件和 HTTP 加载器已实现。
+- 检索工具。初始语义检索执行器已实现。
+- 租户隔离的知识集合。
 
-Acceptance criteria:
+验收标准：
 
-- Scenarios can bind agents to knowledge collections through YAML.
-- Retrieval results include source metadata and citation identifiers.
-- Unsupported provider capabilities fail clearly or route through configured fallbacks.
-- Tenant isolation applies to indexed documents and retrieval.
+- 场景可以通过 YAML 将 Agent 绑定到知识集合。
+- 检索结果包含来源元数据和引用标识。
+- 不支持的 Provider 能力会清晰失败，或通过配置的降级路由处理。
+- 租户隔离适用于已索引文档和检索。
 
-### M6: Skill/Tool Ecosystem and Deployment Templates
+### M6：Skill/Tool 生态与部署模板
 
-Goal: make agentflow-go easy for teams to extend, package, deploy, and maintain.
+目标：让 agentflow-go 便于团队扩展、打包、部署和维护。
 
-Deliverables:
+交付物：
 
-- Skill package format, versioning, and compatibility validation.
-- Tool package format, schema validation, and side-effect metadata.
-- Registry interface for internal skill/tool catalogs.
-- Built-in enterprise tools for HTTP, SQL, Git, filesystem, tickets, and chatops. Initial constrained HTTP, filesystem read, and SQL query tool executors are implemented.
-- Docker Compose local enterprise stack. Initial PostgreSQL+pgvector, Redis, MinIO, and `agent-http` stack is implemented under `deploy/enterprise`.
-- Helm chart and Kubernetes manifests. Initial Kustomize base for `agent-http` is implemented under `deploy/kubernetes/base`.
-- Example scenarios for approvals, code review, ticket handling, RAG Q&A, and multi-agent workflows.
-- v0 API stability policy and migration guide. Implemented in `docs/api-stability.md` with release validation guidance in `docs/release-checklist.md`.
+- Skill 包格式、版本管理和兼容性校验。
+- 工具包格式、schema 校验和副作用元数据。
+- 内部 skill/tool catalog 的注册表接口。
+- HTTP、SQL、Git、文件系统、工单、ChatOps 的内置企业工具。初始受约束 HTTP、文件系统读取和 SQL 查询工具执行器已实现。
+- Docker Compose 本地企业栈。初始 PostgreSQL+pgvector、Redis、MinIO 和 `agent-http` 栈已在 `deploy/enterprise` 下实现。
+- Helm chart 和 Kubernetes manifests。`agent-http` 的初始 Kustomize base 已在 `deploy/kubernetes/base` 下实现。
+- 审批、代码评审、工单处理、RAG 问答和多 Agent 工作流示例场景。
+- v0 API 稳定性策略和迁移指南。已在 `docs/api-stability.md` 中实现，发布验证指南位于 `docs/release-checklist.md`。
 
-Acceptance criteria:
+验收标准：
 
-- Teams can register new tools and skills without modifying core runtime packages.
-- Packages carry version and compatibility metadata.
-- A local enterprise stack starts with one command.
-- Kubernetes deployment includes runtime, worker, metrics, and health probes.
+- 团队可以注册新工具和 skill，而不需要修改核心运行时包。
+- 包携带版本和兼容性元数据。
+- 本地企业栈可以一条命令启动。
+- Kubernetes 部署包含运行时、Worker、指标和健康探针。
 
-## Recommended Delivery Sequence
+## 推荐交付顺序
 
-1. M1 persistence and recovery.
-2. M2 async runtime and workers.
-3. M3 auth, tenancy, and RBAC.
-4. M4 observability, audit, and governance.
-5. M5 provider matrix and RAG.
-6. M6 ecosystem and deployment templates.
+1. M1 持久化与恢复。
+2. M2 异步运行时与 Worker。
+3. M3 认证、租户与 RBAC。
+4. M4 可观测性、审计与治理。
+5. M5 Provider 能力矩阵与 RAG。
+6. M6 生态与部署模板。
 
-## Current Focus
+## 当前重点
 
-M1-M4 foundations are implemented as library-grade slices: durable run state/blob/memory adapters, async queue/worker execution, enterprise identity/RBAC/audit, structured `slog` sinks, tool governance, output redaction, and production async HTTP routing. M5 now includes provider capability helpers, OpenAI-compatible embeddings, MCP tool adapters, `pkg/knowledge`, file/HTTP document loading, chunking/indexing, pgvector storage, explicit retriever citations, and metadata filtering. M6 has started with a local enterprise Compose stack, production SQL migrations, a Kustomize base, constrained HTTP, filesystem read, and SQL query tool executors, plus v0 API stability and release-check guidance. The next focus is more specialized ingestion connectors, Helm chart packaging, and additional built-in enterprise tools.
+M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、异步队列/Worker 执行、企业身份/RBAC/审计、结构化 `slog` sink、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、OpenAI-compatible embeddings、MCP 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用和元数据过滤。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器，以及 v0 API 稳定性和发布检查指南开始。下一步重点是更专用的摄取连接器、Helm chart 打包和更多内置企业工具。

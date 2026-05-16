@@ -1,21 +1,21 @@
-# Enterprise Deployment Templates
+# 企业部署模板
 
-The repository includes a local enterprise Compose stack under [deploy/enterprise](../deploy/enterprise). It is intended for development, integration testing, and as a concrete reference for production deployments.
+仓库在 [deploy/enterprise](../deploy/enterprise) 下提供本地企业级 Compose 栈。它用于开发、集成测试，也可以作为生产部署的具体参考。
 
-## Included Services
+## 包含的服务
 
-- PostgreSQL with pgvector and bootstrap SQL for run state, async jobs, and knowledge embeddings.
-- Redis for distributed coordination leases.
-- MinIO for S3-compatible blob storage.
-- `agent-http` for the debug console and HTTP HITL bridge.
+- PostgreSQL，包含 pgvector，以及用于运行状态、异步任务和知识库向量的初始化 SQL。
+- Redis，用于分布式协调租约。
+- MinIO，用于 S3 兼容 Blob 存储。
+- `agent-http`，用于调试控制台和 HTTP HITL 桥接。
 
-## Production Migrations
+## 生产迁移
 
-Versioned PostgreSQL migrations live in [deploy/migrations/postgres](../deploy/migrations/postgres). The local Compose stack reuses the same `0001_agentflow_core.up.sql` file during database initialization.
+版本化 PostgreSQL 迁移位于 [deploy/migrations/postgres](../deploy/migrations/postgres)。本地 Compose 栈在数据库初始化时复用同一份 `0001_agentflow_core.up.sql`。
 
-Application teams can import these SQL files into their preferred migration runner. Adjust the pgvector dimension in an application-owned migration when the embedding model does not produce 1536-dimensional vectors.
+应用团队可以将这些 SQL 文件接入自己选择的迁移执行器。如果 embedding 模型不是 1536 维向量，应在应用自有迁移中调整 pgvector 维度。
 
-## Quick Start
+## 快速开始
 
 ```sh
 cd deploy/enterprise
@@ -23,18 +23,18 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The debug console listens on `http://localhost:18080` by default. The API key, token secret, database password, and MinIO credentials are controlled through `.env`.
+调试控制台默认监听 `http://localhost:18080`。API key、token secret、数据库密码和 MinIO 凭证通过 `.env` 控制。
 
-## How This Maps to AgentFlow Constructors
+## 与 AgentFlow 构造函数的映射
 
-- PostgreSQL run snapshots: `agentflow.NewPostgresRunStateRepository(db)`
-- PostgreSQL async jobs: `agentflow.NewPostgresJobQueue(db)`
-- PostgreSQL pgvector knowledge: `agentflow.NewPostgresVectorStore(...)`
-- Redis leases: `agentflow.NewRedisLocker(...)`
-- S3-compatible blobs: `agentflow.NewS3BlobStore(...)`
+- PostgreSQL 运行快照：`agentflow.NewPostgresRunStateRepository(db)`
+- PostgreSQL 异步任务：`agentflow.NewPostgresJobQueue(db)`
+- PostgreSQL pgvector 知识库：`agentflow.NewPostgresVectorStore(...)`
+- Redis 租约：`agentflow.NewRedisLocker(...)`
+- S3 兼容 Blob：`agentflow.NewS3BlobStore(...)`
 
-The framework remains library-first. Production services should own their driver imports, connection pools, migration strategy, secrets, and worker process model.
+框架仍然坚持库优先。生产服务应该自行拥有驱动导入、连接池、迁移策略、密钥和 Worker 进程模型。
 
-## Next Deployment Layer
+## 下一层部署能力
 
-The Compose stack is the local baseline. A minimal Kustomize base lives in [deploy/kubernetes/base](../deploy/kubernetes/base) for `agent-http`. Workers are application-specific because the host service owns scenario wiring, database drivers, queue selection, and tool executors, so the repository includes `worker-deployment.example.yaml` as a template rather than a runnable generic worker.
+Compose 栈是本地基线。[deploy/kubernetes/base](../deploy/kubernetes/base) 中提供了 `agent-http` 的最小 Kustomize base。Worker 具有应用特异性，因为宿主服务拥有场景装配、数据库驱动、队列选择和工具执行器，所以仓库提供 `worker-deployment.example.yaml` 作为模板，而不是提供一个可直接运行的通用 Worker。

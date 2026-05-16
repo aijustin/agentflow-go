@@ -683,7 +683,7 @@
     <main class="main">
       <header class="hero" id="top">
         <div class="hero-copy">
-          <span class="eyebrow">agentflow-go manual</span>
+          <span class="eyebrow">agentflow-go 使用手册</span>
           <h2>把 Agent 应用从 Demo 带到企业现场</h2>
           <p>AgentFlow Go 用 YAML 描述场景，用 Go 接入模型、工具、记忆、运行状态、治理和人工审批。它适合被公司内部平台、业务系统和自动化工作流作为基础框架引用。</p>
           <div class="hero-actions">
@@ -695,7 +695,7 @@
         <div class="console" aria-label="快速命令示例">
           <div class="console-head">
             <span class="lights" aria-hidden="true"><span></span><span></span><span></span></span>
-            <span>release-ready path</span>
+            <span>发布就绪路径</span>
           </div>
           <pre><code>go get github.com/aijustin/agentflow-go
 
@@ -713,7 +713,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
       <section id="overview">
         <div class="section-head">
           <div>
-            <div class="section-kicker">01 / Overview</div>
+            <div class="section-kicker">01 / 概览</div>
             <h3>框架概览</h3>
           </div>
           <span class="tag">Go 1.25.10+</span>
@@ -721,16 +721,16 @@ GOTOOLCHAIN=auto make release-check</code></pre>
         <p class="lead">AgentFlow Go 是一个以场景为中心的 Agent 框架。业务把 Agent、LLM profile、工具、记忆、工作流和人工审批写进 YAML，Go 代码负责把真实模型、数据库、HTTP、文件系统、对象存储和企业治理能力注入运行时。</p>
         <div class="metric-strip" aria-label="能力摘要">
           <div class="metric"><strong>YAML</strong><span>声明 Agent、工具、LLM、workflow</span></div>
-          <div class="metric"><strong>Ports</strong><span>公共契约在 pkg，适配器在 internal</span></div>
-          <div class="metric"><strong>Runtime</strong><span>自动工具调用、固定工作流、HITL</span></div>
-          <div class="metric"><strong>Enterprise</strong><span>审计、RBAC、治理、持久化、部署模板</span></div>
+          <div class="metric"><strong>端口</strong><span>公共契约在 pkg，适配器在 internal</span></div>
+          <div class="metric"><strong>运行时</strong><span>自动工具调用、固定工作流、HITL</span></div>
+          <div class="metric"><strong>企业能力</strong><span>审计、RBAC、治理、持久化、部署模板</span></div>
         </div>
         <div class="diagram" aria-label="AgentFlow 架构图">
           <div class="flow-row">
-            <div class="flow-node"><b>Scenario YAML</b><span>Agents, LLM profiles, tools, workflow, policies</span></div>
-            <div class="flow-node"><b>Root Facade</b><span>NewFromFile, options, constructors, adapters</span></div>
-            <div class="flow-node"><b>Runtime</b><span>Autonomous loop, workflow runner, HITL resume</span></div>
-            <div class="flow-node"><b>Enterprise Adapters</b><span>PostgreSQL, Redis, S3, MCP, RAG, HTTP, SQL</span></div>
+            <div class="flow-node"><b>场景 YAML</b><span>Agent、LLM profile、工具、workflow、策略</span></div>
+            <div class="flow-node"><b>根门面</b><span>NewFromFile、options、constructors、adapters</span></div>
+            <div class="flow-node"><b>运行时</b><span>自主循环、workflow runner、HITL resume</span></div>
+            <div class="flow-node"><b>企业适配器</b><span>PostgreSQL、Redis、S3、MCP、RAG、HTTP、SQL</span></div>
           </div>
         </div>
       </section>
@@ -738,7 +738,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
       <section id="quickstart">
         <div class="section-head">
           <div>
-            <div class="section-kicker">02 / First Run</div>
+            <div class="section-kicker">02 / 首次运行</div>
             <h3>快速开始</h3>
           </div>
         </div>
@@ -770,31 +770,31 @@ GOTOOLCHAIN=auto make release-check</code></pre>
       <section id="concepts">
         <div class="section-head">
           <div>
-            <div class="section-kicker">03 / Mental Model</div>
+            <div class="section-kicker">03 / 心智模型</div>
             <h3>核心概念</h3>
           </div>
         </div>
         <div class="grid three">
-          <div class="panel"><h4>Agent</h4><p>业务角色。绑定 LLM profile、工具列表、系统指令、记忆和输出 schema。</p></div>
-          <div class="panel"><h4>Tool</h4><p>可执行能力。通过 `core.ToolExecutor` 接入，经过 allowlist、RBAC、审批、速率限制、审计和输出脱敏。</p></div>
+          <div class="panel"><h4>智能体</h4><p>业务角色。绑定 LLM profile、工具列表、系统指令、记忆和输出 schema。</p></div>
+          <div class="panel"><h4>工具</h4><p>可执行能力。通过 `core.ToolExecutor` 接入，经过 allowlist、RBAC、审批、速率限制、审计和输出脱敏。</p></div>
           <div class="panel"><h4>LLM Profile</h4><p>模型配置。声明 provider、model、context window、能力矩阵、timeout、temperature 和 extra body。</p></div>
-          <div class="panel"><h4>Memory</h4><p>会话或命名空间记忆。运行前注入上下文，运行后写入用户、助手和工具观察。</p></div>
-          <div class="panel"><h4>Run State</h4><p>可恢复执行快照。用于 HITL 暂停、workflow 节点状态、CAS 版本和跨进程恢复。</p></div>
-          <div class="panel"><h4>Workflow</h4><p>固定图编排。支持依赖、条件边、重试、转换节点、Agent 节点、人工门禁和并发批次。</p></div>
+          <div class="panel"><h4>记忆</h4><p>会话或命名空间记忆。运行前注入上下文，运行后写入用户、助手和工具观察。</p></div>
+          <div class="panel"><h4>运行状态</h4><p>可恢复执行快照。用于 HITL 暂停、workflow 节点状态、CAS 版本和跨进程恢复。</p></div>
+          <div class="panel"><h4>工作流</h4><p>固定图编排。支持依赖、条件边、重试、转换节点、Agent 节点、人工门禁和并发批次。</p></div>
         </div>
       </section>
 
       <section id="scenario">
         <div class="section-head">
           <div>
-            <div class="section-kicker">04 / YAML Contract</div>
+            <div class="section-kicker">04 / YAML 契约</div>
             <h3>场景 YAML</h3>
           </div>
         </div>
         <p class="lead">YAML 是 AgentFlow 的产品界面。它让业务团队能审阅 Agent 能力、工具风险、审批策略和运行模式，而不是把这些策略散落在 Go 代码里。</p>
         <div class="callout"><strong>配置发现:</strong> 使用 <a href="../schemas/agentflow.scenario.schema.json">JSON Schema</a> 获得编辑器补全和枚举提示；运行 <code>agentctl schema</code> 可输出同一份契约；完整字段说明见 <a href="configuration-reference.md">配置参考</a>。</div>
         <div class="code-block"><div class="code-title"><span>scenario.yaml</span><button class="copy" type="button">复制</button></div><pre><code># yaml-language-server: $schema=../schemas/agentflow.scenario.schema.json
-      scenario:
+    scenario:
   name: support-assistant
   llms:
     default:
@@ -826,7 +826,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
       <section id="embed">
         <div class="section-head">
           <div>
-            <div class="section-kicker">05 / Library Usage</div>
+            <div class="section-kicker">05 / 库使用</div>
             <h3>嵌入 Go 项目</h3>
           </div>
         </div>
@@ -861,7 +861,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
       <section id="runtime">
         <div class="section-head">
           <div>
-            <div class="section-kicker">06 / Runtime Modes</div>
+            <div class="section-kicker">06 / 运行模式</div>
             <h3>运行模式</h3>
           </div>
         </div>
@@ -869,10 +869,10 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
           <table>
             <thead><tr><th>模式</th><th>适用场景</th><th>关键能力</th><th>关注点</th></tr></thead>
             <tbody>
-              <tr><td>Autonomous</td><td>模型自主调用工具直到给出最终回答</td><td>ToolCaller、agent whitelist、max_steps、rate_cap</td><td>工具安全、输出审计、预算治理</td></tr>
-              <tr><td>Fixed Workflow</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition、transform、parallel batch、retry</td><td>节点幂等、状态持久化、失败恢复</td></tr>
-              <tr><td>Human in the loop</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、approval records</td><td>token secret、过期时间、actor identity</td></tr>
-              <tr><td>Async Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、lease、dead-letter、cancel</td><td>lease TTL、重试策略、队列可观测性</td></tr>
+              <tr><td>自主模式</td><td>模型自主调用工具直到给出最终回答</td><td>ToolCaller、agent whitelist、max_steps、rate_cap</td><td>工具安全、输出审计、预算治理</td></tr>
+              <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition、transform、parallel batch、retry</td><td>节点幂等、状态持久化、失败恢复</td></tr>
+              <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、approval records</td><td>token secret、过期时间、actor identity</td></tr>
+              <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、lease、dead-letter、cancel</td><td>lease TTL、重试策略、队列可观测性</td></tr>
             </tbody>
           </table>
         </div>
@@ -881,17 +881,17 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
       <section id="tools">
         <div class="section-head">
           <div>
-            <div class="section-kicker">07 / Tooling</div>
+            <div class="section-kicker">07 / 工具体系</div>
             <h3>工具体系</h3>
           </div>
         </div>
         <p class="lead">所有工具都作为 `core.ToolExecutor` 接入。内置工具保持收紧默认值，企业自定义工具也应遵循同样模型: 输入 schema、side effect、approval、rate cap、审计和输出脱敏。</p>
         <div class="grid three">
-          <div class="panel"><h4>HTTP Tool</h4><p>读取 allowlisted 内部 API。默认仅允许 GET/HEAD，限制 host、method 和响应大小。</p><span class="tag">builtin.http</span></div>
-          <div class="panel"><h4>Filesystem Tool</h4><p>读取 allowlisted root 下的本地文件。拒绝路径逃逸、符号链接逃逸和超大文件。</p><span class="tag">builtin.filesystem</span></div>
-          <div class="panel"><h4>SQL Tool</h4><p>执行命名 read-only SQL。支持 PostgreSQL、MySQL、ClickHouse 的 `database/sql` 驱动。</p><span class="tag">builtin.sql</span></div>
+          <div class="panel"><h4>HTTP 工具</h4><p>读取 allowlisted 内部 API。默认仅允许 GET/HEAD，限制 host、method 和响应大小。</p><span class="tag">builtin.http</span></div>
+          <div class="panel"><h4>文件系统工具</h4><p>读取 allowlisted root 下的本地文件。拒绝路径逃逸、符号链接逃逸和超大文件。</p><span class="tag">builtin.filesystem</span></div>
+          <div class="panel"><h4>SQL 工具</h4><p>执行命名 read-only SQL。支持 PostgreSQL、MySQL、ClickHouse 的 `database/sql` 驱动。</p><span class="tag">builtin.sql</span></div>
         </div>
-        <div class="code-block"><div class="code-title"><span>sql tool wiring</span><button class="copy" type="button">复制</button></div><pre><code>sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
+        <div class="code-block"><div class="code-title"><span>SQL 工具装配</span><button class="copy" type="button">复制</button></div><pre><code>sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
   DB: db,
   AllowedQueries: map[string]string{
     "tickets.open": "SELECT id, title, status FROM tickets WHERE status = $1",
@@ -908,7 +908,7 @@ fw, err := agentflow.NewFromFile(
       <section id="rag">
         <div class="section-head">
           <div>
-            <div class="section-kicker">08 / Knowledge</div>
+            <div class="section-kicker">08 / 知识库</div>
             <h3>RAG 与知识库</h3>
           </div>
         </div>
@@ -932,7 +932,7 @@ fw, err := agentflow.NewFromFile(
             </ol>
           </div>
         </div>
-        <div class="code-block"><div class="code-title"><span>retriever wiring</span><button class="copy" type="button">复制</button></div><pre><code>store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{DB: db})
+        <div class="code-block"><div class="code-title"><span>检索工具装配</span><button class="copy" type="button">复制</button></div><pre><code>store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{DB: db})
 retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
   Embedder:     provider,
   Store:        store,
@@ -945,7 +945,7 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
       <section id="enterprise">
         <div class="section-head">
           <div>
-            <div class="section-kicker">09 / Enterprise</div>
+            <div class="section-kicker">09 / 企业能力</div>
             <h3>企业能力</h3>
           </div>
         </div>
@@ -953,9 +953,9 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
           <table>
             <thead><tr><th>能力</th><th>公共入口</th><th>默认实现</th><th>生产建议</th></tr></thead>
             <tbody>
-              <tr><td>Run State</td><td>WithRunStateRepository</td><td>file, in-memory, PostgreSQL</td><td>生产使用 PostgreSQL，保留 CAS 语义。</td></tr>
-              <tr><td>Blob Store</td><td>WithBlobStore</td><td>file, in-memory, S3-compatible</td><td>大输出外部化到 MinIO 或 S3。</td></tr>
-              <tr><td>Async Queue</td><td>pkg/async</td><td>in-memory, PostgreSQL</td><td>使用 worker 独立部署并配置 lease。</td></tr>
+              <tr><td>运行状态</td><td>WithRunStateRepository</td><td>file, in-memory, PostgreSQL</td><td>生产使用 PostgreSQL，保留 CAS 语义。</td></tr>
+              <tr><td>Blob 存储</td><td>WithBlobStore</td><td>file, in-memory, S3-compatible</td><td>大输出外部化到 MinIO 或 S3。</td></tr>
+              <tr><td>异步队列</td><td>pkg/async</td><td>in-memory, PostgreSQL</td><td>使用 worker 独立部署并配置 lease。</td></tr>
               <tr><td>Identity/RBAC</td><td>pkg/identity, pkg/security</td><td>API key, static RBAC</td><td>接入公司 OIDC 后保持同一 policy port。</td></tr>
               <tr><td>Audit</td><td>WithAuditSink</td><td>noop, in-memory, file, slog</td><td>高风险工具和 HITL 必须可追踪 actor。</td></tr>
               <tr><td>Governance</td><td>pkg/governance</td><td>budget, side effect, redaction</td><td>对 tool、LLM、输出做统一策略链。</td></tr>
@@ -967,7 +967,7 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
       <section id="deployment">
         <div class="section-head">
           <div>
-            <div class="section-kicker">10 / Operations</div>
+            <div class="section-kicker">10 / 运维发布</div>
             <h3>部署与发布</h3>
           </div>
         </div>
@@ -975,14 +975,14 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
           <div class="panel">
             <h4>本地企业栈</h4>
             <p>`deploy/enterprise` 包含 PostgreSQL+pgvector、Redis、MinIO 和 `agent-http` 的 Compose 模板，适合本地验证生产拓扑。</p>
-            <div class="code-block"><div class="code-title"><span>compose</span><button class="copy" type="button">复制</button></div><pre><code>cd deploy/enterprise
+            <div class="code-block"><div class="code-title"><span>Compose 启动</span><button class="copy" type="button">复制</button></div><pre><code>cd deploy/enterprise
 cp .env.example .env
 docker compose up --build</code></pre></div>
           </div>
           <div class="panel">
             <h4>发布检查</h4>
             <p>`make release-check` 会运行格式化、单元测试、`go vet`、二进制构建、`govulncheck` 和所有示例 YAML 校验。</p>
-            <div class="code-block"><div class="code-title"><span>release</span><button class="copy" type="button">复制</button></div><pre><code>GOTOOLCHAIN=auto make release-check</code></pre></div>
+            <div class="code-block"><div class="code-title"><span>发布检查</span><button class="copy" type="button">复制</button></div><pre><code>GOTOOLCHAIN=auto make release-check</code></pre></div>
           </div>
         </div>
       </section>
@@ -990,7 +990,7 @@ docker compose up --build</code></pre></div>
       <section id="checklist">
         <div class="section-head">
           <div>
-            <div class="section-kicker">11 / Adoption</div>
+            <div class="section-kicker">11 / 落地采用</div>
             <h3>落地检查表</h3>
           </div>
         </div>

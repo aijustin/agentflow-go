@@ -1,8 +1,8 @@
-# PostgreSQL pgvector Store
+# PostgreSQL pgvector 存储
 
-The pgvector adapter implements `knowledge.VectorStore` with `database/sql`. Applications provide the driver and pool; AgentFlow does not force `pgx`, `lib/pq`, or any other driver dependency.
+pgvector 适配器使用 `database/sql` 实现 `knowledge.VectorStore`。应用提供驱动和连接池；AgentFlow 不强制引入 `pgx`、`lib/pq` 或任何其他驱动依赖。
 
-## Constructor
+## 构造函数
 
 ```go
 store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{
@@ -14,11 +14,11 @@ if err != nil {
 }
 ```
 
-If `TableName` is empty, the adapter uses `agentflow_knowledge_embeddings`. Schema-qualified table names such as `knowledge.embeddings` are accepted.
+如果 `TableName` 为空，适配器使用 `agentflow_knowledge_embeddings`。也接受带 schema 的表名，例如 `knowledge.embeddings`。
 
-## Table Contract
+## 表契约
 
-Create the `vector` extension and table with the embedding dimension used by your model:
+按模型使用的 embedding 维度创建 `vector` extension 和表：
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -37,24 +37,24 @@ ON agentflow_knowledge_embeddings
 USING hnsw (embedding vector_cosine_ops);
 ```
 
-Use the dimension required by your embedding profile. For example, `text-embedding-3-small` commonly uses 1536 dimensions.
+请使用 embedding profile 所需的维度。例如，`text-embedding-3-small` 通常使用 1536 维。
 
-## Query Behavior
+## 查询行为
 
-The adapter queries by namespace and orders by cosine distance:
+适配器按 namespace 查询，并按 cosine distance 排序：
 
 ```sql
 ORDER BY embedding <=> $query_vector::vector
 ```
 
-Scores are returned as `1 - distance`, which makes larger values better for cosine search. Metadata is stored as JSONB and returned as string metadata on each result. `knowledge.Query.Filter` is applied as an exact JSONB containment filter with `metadata_json @> $filter::jsonb`.
+得分以 `1 - distance` 返回，因此在 cosine search 中值越大越好。元数据以 JSONB 存储，并作为字符串元数据返回到每个结果上。`knowledge.Query.Filter` 会作为精确 JSONB containment filter 应用：`metadata_json @> $filter::jsonb`。
 
-## Tenancy
+## 租户
 
-`namespace` is the isolation key. Use a tenant/workspace/project prefix such as `tenant-a/project-x/docs`. For stronger isolation, combine namespace checks with separate database roles, schemas, or row-level security.
+`namespace` 是隔离 key。建议使用 `tenant-a/project-x/docs` 这样的租户/工作区/项目前缀。如果需要更强隔离，可结合 namespace 检查与独立数据库角色、schema 或行级安全。
 
-## Operational Notes
+## 运维注意事项
 
-- Batch ingestion can call `Upsert` with multiple document embeddings; each document is written with `ON CONFLICT` upsert semantics.
-- Empty vectors and non-finite vector values are rejected before hitting the database.
-- The adapter applies namespace filtering and exact metadata containment filtering in SQL. More advanced predicates can be layered above or added through future query options.
+- 批量摄取可以用多个文档 embedding 调用 `Upsert`；每个文档会以 `ON CONFLICT` upsert 语义写入。
+- 空向量和非有限向量值会在进入数据库前被拒绝。
+- 适配器在 SQL 中应用 namespace filtering 和精确 metadata containment filtering。更高级的谓词可以在上层叠加，或通过未来查询选项增加。

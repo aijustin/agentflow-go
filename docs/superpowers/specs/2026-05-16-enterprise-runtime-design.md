@@ -1,79 +1,79 @@
-# Enterprise Runtime Design
+# 企业运行时设计
 
-## Goal
+## 目标
 
-Build agentflow-go into an enterprise-grade foundation for company agent platforms while preserving its current library-first API and scenario-driven architecture.
+将 agentflow-go 构建为公司 Agent 平台的企业级基础，同时保留当前库优先 API 和场景驱动架构。
 
-## Scope
+## 范围
 
-This design covers P0-P2 enterprise capabilities across persistence, async execution, authentication, tenancy, observability, governance, provider maturity, RAG, skill/tool packaging, and deployment templates.
+本设计覆盖 P0-P2 企业能力，包括持久化、异步执行、认证、租户、可观测性、治理、Provider 成熟度、RAG、skill/tool 打包和部署模板。
 
-## Architecture
+## 架构
 
-Enterprise capabilities will be added as ports and adapters around the existing runtime:
+企业能力会围绕既有运行时以端口与适配器形式增加：
 
-- Core contracts remain in `pkg/`.
-- Production adapters live under `internal/adapter/` and are exposed through root facade constructors when they are safe public extension points.
-- Runtime behavior remains scenario-driven; production configuration adds durable infrastructure and policy around the same YAML model.
-- HTTP services become a deployable control plane over the same framework facade.
+- 核心契约保持在 `pkg/` 中。
+- 生产适配器位于 `internal/adapter/`，当它们适合作为安全的公共扩展点时，通过根门面构造函数暴露。
+- 运行时行为保持场景驱动；生产配置是在同一 YAML 模型外增加持久化基础设施和策略。
+- HTTP 服务成为同一框架门面之上的可部署控制面。
 
-## Milestones
+## 里程碑
 
-### M1: Production Persistence and Recovery
+### M1：生产持久化与恢复
 
-Add database/object-store persistence while preserving `runstate.Repository` and `runstate.BlobStore` contracts. This milestone focuses on correctness under concurrency, restart recovery, and clear failure behavior.
+在保留 `runstate.Repository` 和 `runstate.BlobStore` 契约的同时，增加数据库/对象存储持久化。本里程碑关注并发正确性、重启恢复和清晰失败行为。
 
-### M2: Async Runtime and Workers
+### M2：异步运行时与 Worker
 
-Add job queues and workers so runs can execute outside the request path. The existing synchronous facade remains the local and embedding API, while the worker runtime handles production queues.
+增加任务队列和 Worker，让运行可以脱离请求路径执行。既有同步门面仍作为本地和嵌入式 API，Worker 运行时负责生产队列。
 
-### M3: Enterprise Auth, Tenancy, and RBAC
+### M3：企业认证、租户与 RBAC
 
-Add authenticated request context, tenant scoping, and role checks. Tenancy must flow through run state, memory, blob storage, events, audit, and HTTP APIs.
+增加认证请求上下文、租户作用域和角色检查。租户必须流经运行状态、记忆、Blob 存储、事件、审计和 HTTP API。
 
-### M4: Observability, Audit, and Governance
+### M4：可观测性、审计与治理
 
-Add standardized logs, traces, metrics, audit events, redaction, and policy hooks. Governance should apply before tool execution, during HITL decisions, and before sensitive outputs are persisted or emitted.
+增加标准化日志、追踪、指标、审计事件、脱敏和策略钩子。治理应在工具执行前、HITL 决策期间，以及敏感输出持久化或发出之前生效。
 
-### M5: Provider Matrix, RAG, and Knowledge
+### M5：Provider 能力矩阵、RAG 与知识库
 
-Stabilize provider capabilities and add knowledge retrieval as first-class runtime infrastructure. RAG should be tenant-scoped and source-traceable.
+稳定 Provider 能力，并将知识检索作为一等运行时基础设施。RAG 应按租户隔离，并且能追踪来源。
 
-### M6: Skill/Tool Ecosystem and Deployment Templates
+### M6：Skill/Tool 生态与部署模板
 
-Package reusable enterprise capabilities and provide deployment assets for local and Kubernetes environments.
+打包可复用企业能力，并为本地和 Kubernetes 环境提供部署资产。
 
-## Data Flow
+## 数据流
 
-1. A user, service, or scheduler submits a run through the library facade, CLI, HTTP API, or async queue.
-2. The runtime loads scenario configuration, tenant context, policy context, memory, and persisted run state when resuming.
-3. Agent, workflow, tool, LLM, HITL, and memory steps emit events, logs, traces, metrics, and audit records.
-4. Step outputs are persisted inline or externalized to BlobStore based on configured thresholds.
-5. Pause, resume, completion, failure, and cancellation states are saved through a CAS-safe repository.
+1. 用户、服务或调度器通过库门面、CLI、HTTP API 或异步队列提交运行。
+2. 运行时在恢复时加载场景配置、租户上下文、策略上下文、记忆和已持久化运行状态。
+3. Agent、工作流、工具、LLM、HITL 和记忆步骤发出事件、日志、追踪、指标和审计记录。
+4. 步骤输出根据配置阈值内联持久化，或外置到 BlobStore。
+5. 暂停、恢复、完成、失败和取消状态通过 CAS 安全仓库保存。
 
-## Error Handling
+## 错误处理
 
-- Storage adapters must distinguish not found, stale version, validation failure, and infrastructure errors.
-- Queue workers must record retryable versus terminal failures.
-- Auth middleware must return consistent unauthenticated and unauthorized errors.
-- Provider adapters must report unsupported capabilities explicitly.
-- Redaction must fail closed for known secret fields.
+- 存储适配器必须区分未找到、旧版本、校验失败和基础设施错误。
+- 队列 Worker 必须记录可重试失败与终止失败。
+- 认证中间件必须返回一致的未认证和未授权错误。
+- Provider 适配器必须显式报告不支持的能力。
+- 脱敏对已知密钥字段必须失败关闭。
 
-## Testing Strategy
+## 测试策略
 
-- Unit tests for contract behavior and edge cases.
-- Integration tests behind build tags for PostgreSQL, Redis, object storage, provider calls, and queue workers.
-- Race tests for concurrent CAS and in-memory adapters.
-- Golden or example tests for YAML scenario compatibility.
-- End-to-end tests for async submit/resume/cancel flows.
+- 用单元测试覆盖契约行为和边界情况。
+- 用 build tag 保护 PostgreSQL、Redis、对象存储、Provider 调用和队列 Worker 的集成测试。
+- 用 race test 覆盖并发 CAS 和内存适配器。
+- 用 golden 或 example test 覆盖 YAML 场景兼容性。
+- 用端到端测试覆盖异步提交/恢复/取消流程。
 
-## Non-Goals For The First Slice
+## 第一切片的非目标
 
-- Replacing the existing synchronous facade.
-- Introducing an ORM.
-- Making provider-specific APIs part of core runtime contracts.
-- Building a UI beyond the existing debug console.
+- 替换既有同步门面。
+- 引入 ORM。
+- 将 Provider 特定 API 放入核心运行时契约。
+- 构建超出现有调试控制台的 UI。
 
-## First Slice
+## 第一切片
 
-Implement a PostgreSQL-compatible run state adapter without adding a database driver dependency. The adapter should accept a caller-provided `*sql.DB`, use parameterized SQL, preserve CAS semantics, and expose a root constructor.
+实现 PostgreSQL 兼容运行状态适配器，且不增加数据库驱动依赖。适配器应接受调用方提供的 `*sql.DB`，使用参数化 SQL，保留 CAS 语义，并暴露根构造函数。
