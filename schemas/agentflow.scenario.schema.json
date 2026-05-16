@@ -1,0 +1,526 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/aijustin/agentflow-go/main/schemas/agentflow.scenario.schema.json",
+  "title": "AgentFlow Scenario",
+  "description": "JSON Schema for AgentFlow scenario YAML files.",
+  "type": "object",
+  "required": ["scenario"],
+  "additionalProperties": false,
+  "properties": {
+    "scenario": {
+      "$ref": "#/$defs/scenario"
+    }
+  },
+  "$defs": {
+    "scenario": {
+      "type": "object",
+      "required": ["name", "agents"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable scenario identifier."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable purpose and scope of the scenario."
+        },
+        "llms": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/llmProfile"
+          },
+          "description": "Named LLM profiles referenced by agents and tools."
+        },
+        "memories": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/memory"
+          },
+          "description": "Named memory repositories and scopes."
+        },
+        "tools": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/tool"
+          },
+          "description": "Named tool contracts available to agents and workflows."
+        },
+        "skills": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/skill"
+          },
+          "description": "Declarative prompt, policy, and workflow packages."
+        },
+        "agents": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/agent"
+          },
+          "description": "Named agents that can be executed by the runtime."
+        },
+        "orchestration": {
+          "$ref": "#/$defs/orchestration"
+        },
+        "runtime": {
+          "$ref": "#/$defs/runtime"
+        }
+      }
+    },
+    "llmProfile": {
+      "type": "object",
+      "required": ["provider", "model"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "examples": ["mock", "openai-compatible", "anthropic", "local"],
+          "description": "Provider identifier. Built-in constructors cover common providers, but applications may register custom gateways."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provider-specific model name."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Optional provider endpoint, commonly used for OpenAI-compatible servers."
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Environment variable that stores the API key."
+        },
+        "context_window_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Advertised context window size for the profile."
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum output tokens requested from the provider."
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration"
+        },
+        "thinking": {
+          "$ref": "#/$defs/thinking"
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "examples": ["low", "medium", "high"],
+          "description": "Provider-specific reasoning effort hint."
+        },
+        "context": {
+          "$ref": "#/$defs/contextPolicy"
+        },
+        "extra_body": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Provider-specific request body extensions."
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["chat", "tool_call", "structured_output", "stream", "embed"]
+          },
+          "description": "Explicit capabilities supported by this profile."
+        },
+        "metadata": {
+          "$ref": "#/$defs/stringMap"
+        }
+      }
+    },
+    "thinking": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "budget_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "contextPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["none", "sliding_window", "sliding_window_with_summary"]
+        },
+        "context_window_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reserved_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "summary_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tool_result_max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "memory_recall_limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "system_prompt_protection": {
+          "type": "boolean"
+        },
+        "compression": {
+          "$ref": "#/$defs/compressionPolicy"
+        }
+      }
+    },
+    "compressionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "trigger_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "required": ["type", "scope"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["in_memory", "file", "custom"]
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["conversation", "session", "long_term", "audit"]
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/stringMap"
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "examples": ["builtin.echo", "builtin.http", "builtin.filesystem", "builtin.sql", "mcp.tool"],
+          "description": "Tool executor type. Built-in examples are documented, while applications may register custom tool types."
+        },
+        "description": {
+          "type": "string"
+        },
+        "input_schema": {
+          "$ref": "#/$defs/jsonSchemaFragment"
+        },
+        "output_schema": {
+          "$ref": "#/$defs/jsonSchemaFragment"
+        },
+        "side_effect": {
+          "type": "string",
+          "enum": ["none", "read", "write", "external", "dangerous"]
+        },
+        "approval": {
+          "type": "string",
+          "enum": ["never", "risky", "always"]
+        },
+        "llm": {
+          "type": "string",
+          "description": "Optional LLM profile override for tool execution."
+        },
+        "rate_cap": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum calls to this tool per run."
+        },
+        "metadata": {
+          "$ref": "#/$defs/stringMap"
+        }
+      }
+    },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "llm": {
+          "type": "string",
+          "description": "Name of a profile under scenario.llms."
+        },
+        "memory": {
+          "type": "string",
+          "description": "Name of a memory entry under scenario.memories."
+        },
+        "tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          },
+          "description": "Tool names from scenario.tools."
+        },
+        "skills": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          },
+          "description": "Skill names from scenario.skills."
+        },
+        "sub_agents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration"
+        },
+        "retry_limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_schema": {
+          "$ref": "#/$defs/jsonSchemaFragment"
+        },
+        "human_checkpoints": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "metadata": {
+          "$ref": "#/$defs/stringMap"
+        }
+      }
+    },
+    "orchestration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["autonomous", "fixed_workflow", "hybrid"]
+        },
+        "workflow": {
+          "$ref": "#/$defs/workflow"
+        },
+        "max_parallel": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "human_in_loop": {
+          "$ref": "#/$defs/humanInLoop"
+        }
+      }
+    },
+    "humanInLoop": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "checkpoints": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflowNode"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflowEdge"
+          }
+        }
+      }
+    },
+    "workflowNode": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["agent", "tool", "skill", "human_gate", "transform"]
+        },
+        "ref": {
+          "type": "string",
+          "description": "Referenced agent, tool, or skill name depending on kind."
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "depends_on": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "condition": {
+          "type": "string"
+        },
+        "retry": {
+          "$ref": "#/$defs/retryPolicy"
+        }
+      }
+    },
+    "workflowEdge": {
+      "type": "object",
+      "required": ["from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "condition": {
+          "type": "string"
+        }
+      }
+    },
+    "retryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout": {
+          "$ref": "#/$defs/duration"
+        },
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_parallel": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "step_output_threshold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "secrets": {
+          "$ref": "#/$defs/stringMap"
+        }
+      }
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^[0-9]+(ns|us|ms|s|m|h)$",
+      "examples": ["30s", "2m", "1h"],
+      "description": "Go-style duration string parsed by time.Duration."
+    },
+    "jsonSchemaFragment": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "JSON Schema fragment used to describe tool or agent payloads."
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

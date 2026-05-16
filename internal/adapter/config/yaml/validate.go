@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
-	"github.com/aijustin/agentflow-go/pkg/memory"
 )
 
 func Validate(s core.Scenario) error {
@@ -26,17 +25,13 @@ func Validate(s core.Scenario) error {
 		if mem.Type == "" {
 			return fmt.Errorf("config: memories.%s.type is required", name)
 		}
-		switch mem.Type {
-		case "in_memory", "file", "custom":
-		default:
+		if !containsString(supportedMemoryTypes, mem.Type) {
 			return fmt.Errorf("config: memories.%s.type %q is unsupported", name, mem.Type)
 		}
 		if mem.Scope == "" {
 			return fmt.Errorf("config: memories.%s.scope is required", name)
 		}
-		switch memory.Scope(mem.Scope) {
-		case memory.ScopeConversation, memory.ScopeSession, memory.ScopeLongTerm, memory.ScopeAudit:
-		default:
+		if !containsString(supportedMemoryScopes, mem.Scope) {
 			return fmt.Errorf("config: memories.%s.scope %q is unsupported", name, mem.Scope)
 		}
 	}
@@ -44,14 +39,10 @@ func Validate(s core.Scenario) error {
 		if tool.Type == "" {
 			return fmt.Errorf("config: tools.%s.type is required", name)
 		}
-		switch tool.Approval {
-		case "", core.ApprovalNever, core.ApprovalRisky, core.ApprovalAlways:
-		default:
+		if tool.Approval != "" && !containsString(supportedApprovalPolicies, string(tool.Approval)) {
 			return fmt.Errorf("config: tools.%s.approval %q is unsupported", name, tool.Approval)
 		}
-		switch tool.SideEffect {
-		case "", core.SideEffectNone, core.SideEffectRead, core.SideEffectWrite, core.SideEffectExternal, core.SideEffectDangerous:
-		default:
+		if tool.SideEffect != "" && !containsString(supportedSideEffects, string(tool.SideEffect)) {
 			return fmt.Errorf("config: tools.%s.side_effect %q is unsupported", name, tool.SideEffect)
 		}
 		if tool.RateCap < 0 {
@@ -165,6 +156,9 @@ func validateWorkflow(w core.Workflow, s core.Scenario) error {
 }
 
 func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
+	if !containsString(supportedWorkflowNodeKinds, string(node.Kind)) {
+		return fmt.Errorf("config: workflow node %q kind %q is unsupported", node.ID, node.Kind)
+	}
 	switch node.Kind {
 	case core.NodeTool:
 		if node.Ref == "" {
@@ -189,8 +183,6 @@ func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
 		}
 	case core.NodeHumanGate, core.NodeTransform:
 		return nil
-	default:
-		return fmt.Errorf("config: workflow node %q kind %q is unsupported", node.ID, node.Kind)
 	}
 	return nil
 }

@@ -11,6 +11,35 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
+func TestSchemaCommandPrintsScenarioJSONSchema(t *testing.T) {
+	cmd := newRootCommand()
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"schema"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("schema command failed: %v stderr=%s", err, stderr.String())
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(out.Bytes(), &schema); err != nil {
+		t.Fatalf("schema output should be valid JSON, got %q: %v", out.String(), err)
+	}
+	if schema["$schema"] != "https://json-schema.org/draft/2020-12/schema" {
+		t.Fatalf("unexpected schema draft: %+v", schema["$schema"])
+	}
+	if schema["title"] != "AgentFlow Scenario" {
+		t.Fatalf("unexpected schema title: %+v", schema["title"])
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"fixed_workflow"`)) {
+		t.Fatalf("schema output should include orchestration enum: %s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"tool_call"`)) {
+		t.Fatalf("schema output should include llm capability enum: %s", out.String())
+	}
+}
+
 func TestRunAndResumeShareFileBackedState(t *testing.T) {
 	stateDir := t.TempDir()
 	secret := "test-secret"

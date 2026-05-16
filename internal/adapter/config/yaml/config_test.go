@@ -1,6 +1,12 @@
 package yaml
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
 
 func TestLoadValidScenario(t *testing.T) {
 	scenario, err := Load([]byte(`
@@ -55,6 +61,53 @@ scenario:
 	}
 	if len(scenario.Agents["worker"].Policy.OutputSchema) == 0 {
 		t.Fatalf("expected agent output schema")
+	}
+}
+
+func TestScenarioJSONSchemaIncludesSupportedEnums(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(ScenarioJSONSchema(), &schema); err != nil {
+		t.Fatalf("ScenarioJSONSchema should return valid JSON: %v", err)
+	}
+
+	definitions := schema["$defs"].(map[string]any)
+	assertEnum(t, definitions, "memory", "type", SupportedMemoryTypes())
+	assertEnum(t, definitions, "memory", "scope", SupportedMemoryScopes())
+	assertEnum(t, definitions, "tool", "approval", SupportedApprovalPolicies())
+	assertEnum(t, definitions, "tool", "side_effect", SupportedSideEffects())
+	assertEnum(t, definitions, "orchestration", "mode", SupportedOrchestrationModes())
+	assertEnum(t, definitions, "workflowNode", "kind", SupportedWorkflowNodeKinds())
+	assertEnum(t, definitions, "llmProfile", "capabilities", SupportedLLMCapabilities())
+	assertEnum(t, definitions, "contextPolicy", "strategy", SupportedContextStrategies())
+}
+
+func TestScenarioJSONSchemaMatchesRepositorySchemaFile(t *testing.T) {
+	schemaPath := filepath.Join("..", "..", "..", "..", "schemas", "agentflow.scenario.schema.json")
+	content, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read repository schema: %v", err)
+	}
+	if string(content) != string(ScenarioJSONSchema()) {
+		t.Fatalf("repository schema %s is out of sync with ScenarioJSONSchema", schemaPath)
+	}
+}
+
+func assertEnum(t *testing.T, definitions map[string]any, definitionName, propertyName string, want []string) {
+	t.Helper()
+	definition := definitions[definitionName].(map[string]any)
+	properties := definition["properties"].(map[string]any)
+	property := properties[propertyName].(map[string]any)
+	if propertyName == "capabilities" {
+		items := property["items"].(map[string]any)
+		property = items
+	}
+	rawValues := property["enum"].([]any)
+	got := make([]string, 0, len(rawValues))
+	for _, rawValue := range rawValues {
+		got = append(got, rawValue.(string))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s.%s enum = %v, want %v", definitionName, propertyName, got, want)
 	}
 }
 

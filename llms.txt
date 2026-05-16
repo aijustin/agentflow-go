@@ -6,6 +6,8 @@ Scenario-configured Go toolkit for composing Agents, Tools, Skills, LLM gateways
 
 - `README.md`: primary user documentation.
 - `docs/manual.html`: standalone professional HTML usage manual for guided framework adoption.
+- `schemas/agentflow.scenario.schema.json`: JSON Schema for scenario YAML editor completion, enum discovery, and CI validation.
+- `docs/configuration-reference.md`: human-readable scenario YAML field and enum reference.
 - `examples/*.yaml`: scenario examples.
 - `framework.go`: root importable facade for other Go projects.
 - `async.go`: root async queue, HTTP, and framework-run worker constructors.
@@ -72,6 +74,7 @@ make vet
 make lint
 make security
 go run ./cmd/agentctl validate -f examples/autonomous.yaml
+go run ./cmd/agentctl schema
 AGENT_HTTP_ADDR=:18080 go run ./cmd/agent-http
 ```
 
