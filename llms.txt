@@ -5,6 +5,7 @@ Scenario-configured Go toolkit for composing Agents, Tools, Skills, LLM gateways
 ## Important files
 
 - `README.md`: primary user documentation.
+- `docs/manual.html`: standalone professional HTML usage manual for guided framework adoption.
 - `examples/*.yaml`: scenario examples.
 - `framework.go`: root importable facade for other Go projects.
 - `async.go`: root async queue, HTTP, and framework-run worker constructors.

@@ -18,6 +18,8 @@ go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json
 
 Before tagging a release, run `GOTOOLCHAIN=auto make release-check`. See [docs/release-checklist.md](docs/release-checklist.md) and [docs/api-stability.md](docs/api-stability.md) for release validation and v0 compatibility policy.
 
+For a polished guided overview, open the standalone HTML manual at [docs/manual.html](docs/manual.html).
+
 ## Getting started
 
 ### Requirements

@@ -1,0 +1,1079 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>AgentFlow Go 使用手册</title>
+  <style>
+    :root {
+      --bg: #f6f3ec;
+      --paper: #fffdf7;
+      --ink: #16201f;
+      --muted: #64706d;
+      --line: #d8d0c2;
+      --line-strong: #b6a98f;
+      --teal: #0f766e;
+      --teal-dark: #0b4f4a;
+      --amber: #b7791f;
+      --red: #9f2f25;
+      --green: #4f7f38;
+      --blue: #315c8c;
+      --code-bg: #141918;
+      --code-ink: #edf7f2;
+      --shadow: 0 22px 70px rgba(31, 25, 13, 0.12);
+      --radius: 8px;
+      --sidebar: 320px;
+      --content: 1120px;
+    }
+
+    [data-theme="dark"] {
+      --bg: #101412;
+      --paper: #171d1a;
+      --ink: #e9efe8;
+      --muted: #a7b2ac;
+      --line: #2d3733;
+      --line-strong: #54615c;
+      --teal: #5ecdc1;
+      --teal-dark: #8edbd3;
+      --amber: #e1b15e;
+      --red: #e47f72;
+      --green: #9ac97b;
+      --blue: #83a9d8;
+      --code-bg: #0a0d0c;
+      --code-ink: #eff8f3;
+      --shadow: 0 22px 70px rgba(0, 0, 0, 0.36);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(90deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px) 0 0 / 44px 44px,
+        linear-gradient(0deg, rgba(183, 121, 31, 0.07) 1px, transparent 1px) 0 0 / 44px 44px,
+        var(--bg);
+      color: var(--ink);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+      letter-spacing: 0;
+    }
+
+    a {
+      color: var(--teal-dark);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    code, pre, kbd {
+      font-family: "SFMono-Regular", "Cascadia Code", "Menlo", "Consolas", monospace;
+    }
+
+    .progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 20;
+      width: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--teal), var(--amber), var(--red));
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      padding: 28px 24px;
+      border-right: 1px solid var(--line);
+      background: rgba(255, 253, 247, 0.83);
+      backdrop-filter: blur(18px);
+      overflow: auto;
+    }
+
+    [data-theme="dark"] .sidebar {
+      background: rgba(23, 29, 26, 0.86);
+    }
+
+    .brand {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 26px;
+    }
+
+    .mark {
+      display: inline-grid;
+      place-items: center;
+      width: 46px;
+      height: 46px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      color: var(--paper);
+      background: conic-gradient(from 150deg, var(--teal), var(--blue), var(--amber), var(--teal));
+      font-weight: 800;
+      box-shadow: var(--shadow);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .tools {
+      display: flex;
+      gap: 8px;
+      margin: 20px 0 22px;
+    }
+
+    button, .button-link {
+      appearance: none;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--paper);
+      color: var(--ink);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      padding: 8px 10px;
+      text-decoration: none;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    button:hover, .button-link:hover {
+      transform: translateY(-1px);
+      border-color: var(--teal);
+      background: color-mix(in srgb, var(--paper), var(--teal) 8%);
+    }
+
+    .search {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      color: var(--ink);
+      padding: 11px 12px;
+      font: inherit;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 4px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .nav a {
+      display: block;
+      border-radius: var(--radius);
+      color: var(--muted);
+      padding: 8px 10px;
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .nav a:hover, .nav a.active {
+      background: color-mix(in srgb, var(--teal), transparent 88%);
+      color: var(--ink);
+    }
+
+    .main {
+      width: min(var(--content), calc(100vw - var(--sidebar)));
+      margin: 0 auto;
+      padding: 36px 36px 80px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+      gap: 22px;
+      align-items: stretch;
+      min-height: 72vh;
+      padding: 28px 0 24px;
+    }
+
+    .hero-copy {
+      padding: 44px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--paper), transparent 5%);
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--teal-dark);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      display: inline-block;
+      width: 28px;
+      height: 2px;
+      background: var(--teal);
+    }
+
+    .hero h2 {
+      margin: 18px 0 16px;
+      font-size: clamp(42px, 7vw, 84px);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+
+    .hero p {
+      max-width: 720px;
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .primary-action {
+      border-color: var(--teal-dark);
+      background: var(--teal-dark);
+      color: var(--paper);
+      font-weight: 700;
+    }
+
+    .console {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      box-shadow: var(--shadow);
+    }
+
+    .console-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      color: #b8c7c0;
+      font-size: 12px;
+    }
+
+    .lights {
+      display: inline-flex;
+      gap: 6px;
+    }
+
+    .lights span {
+      display: block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--red);
+    }
+
+    .lights span:nth-child(2) { background: var(--amber); }
+    .lights span:nth-child(3) { background: var(--green); }
+
+    .console pre {
+      flex: 1;
+      margin: 0;
+      padding: 22px;
+      overflow: auto;
+      font-size: 13px;
+      line-height: 1.62;
+      white-space: pre-wrap;
+    }
+
+    section {
+      margin: 32px 0;
+      scroll-margin-top: 20px;
+    }
+
+    section > .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 16px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    h3 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 52px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .section-kicker {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .lead {
+      color: var(--muted);
+      font-size: 17px;
+      max-width: 860px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--paper), transparent 3%);
+      padding: 20px;
+    }
+
+    .panel h4 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .panel p, .panel li {
+      color: var(--muted);
+    }
+
+    .panel p:last-child, .panel ul:last-child, .panel ol:last-child {
+      margin-bottom: 0;
+    }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .metric {
+      padding: 18px;
+      background: var(--paper);
+    }
+
+    .metric strong {
+      display: block;
+      color: var(--teal-dark);
+      font-size: 26px;
+      line-height: 1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .diagram {
+      display: grid;
+      gap: 12px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, color-mix(in srgb, var(--paper), var(--teal) 5%), var(--paper));
+    }
+
+    .flow-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .flow-node {
+      position: relative;
+      min-height: 86px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      padding: 14px;
+      background: var(--paper);
+    }
+
+    .flow-node::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -12px;
+      width: 12px;
+      height: 1px;
+      background: var(--line-strong);
+    }
+
+    .flow-node:last-child::after {
+      display: none;
+    }
+
+    .flow-node b {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
+    }
+
+    .flow-node span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .code-block {
+      position: relative;
+      margin: 16px 0;
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border: 1px solid color-mix(in srgb, var(--line), black 12%);
+    }
+
+    .code-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      color: #b8c7c0;
+      font-size: 12px;
+    }
+
+    .copy {
+      border-color: rgba(255, 255, 255, 0.2);
+      background: transparent;
+      color: var(--code-ink);
+      padding: 5px 8px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 18px;
+      overflow: auto;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+    }
+
+    th, td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--teal-dark);
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      padding: 2px 9px;
+      color: var(--teal-dark);
+      background: color-mix(in srgb, var(--teal), transparent 90%);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .callout {
+      border-left: 4px solid var(--amber);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      background: color-mix(in srgb, var(--amber), transparent 90%);
+    }
+
+    .callout strong {
+      color: var(--amber);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .step-index {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--paper);
+      color: var(--teal-dark);
+      font-weight: 800;
+    }
+
+    .footer {
+      margin-top: 50px;
+      padding: 28px 0 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 1080px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .main {
+        width: min(100%, var(--content));
+        padding: 24px 18px 64px;
+      }
+
+      .hero, .grid.three, .grid.two, .flow-row, .metric-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-copy {
+        padding: 26px;
+      }
+
+      .flow-node::after {
+        display: none;
+      }
+    }
+
+    @media print {
+      body {
+        background: white;
+        color: black;
+      }
+
+      .sidebar, .progress, .tools, .hero-actions, .copy {
+        display: none !important;
+      }
+
+      .layout {
+        display: block;
+      }
+
+      .main {
+        width: 100%;
+        padding: 0;
+      }
+
+      .hero {
+        min-height: 0;
+      }
+
+      .panel, .hero-copy, .console, .diagram, .table-wrap, .code-block {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+  <div class="layout">
+    <aside class="sidebar" aria-label="手册目录">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">AF</div>
+        <h1>AgentFlow Go 使用手册</h1>
+        <p>面向企业 Agent 应用的 Go 框架指南</p>
+      </div>
+      <div class="tools">
+        <button type="button" id="themeToggle" title="切换明暗主题">主题</button>
+        <button type="button" onclick="window.print()" title="打印或导出 PDF">打印</button>
+        <a class="button-link" href="https://github.com/aijustin/agentflow-go" title="打开 GitHub 仓库">GitHub</a>
+      </div>
+      <input class="search" id="navSearch" type="search" placeholder="筛选目录" aria-label="筛选目录">
+      <nav>
+        <ul class="nav" id="nav">
+          <li><a href="#overview">框架概览</a></li>
+          <li><a href="#quickstart">快速开始</a></li>
+          <li><a href="#concepts">核心概念</a></li>
+          <li><a href="#scenario">场景 YAML</a></li>
+          <li><a href="#embed">嵌入 Go 项目</a></li>
+          <li><a href="#runtime">运行模式</a></li>
+          <li><a href="#tools">工具体系</a></li>
+          <li><a href="#rag">RAG 与知识库</a></li>
+          <li><a href="#enterprise">企业能力</a></li>
+          <li><a href="#deployment">部署与发布</a></li>
+          <li><a href="#checklist">落地检查表</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="hero" id="top">
+        <div class="hero-copy">
+          <span class="eyebrow">agentflow-go manual</span>
+          <h2>把 Agent 应用从 Demo 带到企业现场</h2>
+          <p>AgentFlow Go 用 YAML 描述场景，用 Go 接入模型、工具、记忆、运行状态、治理和人工审批。它适合被公司内部平台、业务系统和自动化工作流作为基础框架引用。</p>
+          <div class="hero-actions">
+            <a class="button-link primary-action" href="#quickstart">开始接入</a>
+            <a class="button-link" href="#enterprise">查看企业能力</a>
+            <a class="button-link" href="../README.md">阅读 README</a>
+          </div>
+        </div>
+        <div class="console" aria-label="快速命令示例">
+          <div class="console-head">
+            <span class="lights" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span>release-ready path</span>
+          </div>
+          <pre><code>go get github.com/aijustin/agentflow-go
+
+go run ./cmd/agentctl validate \
+  -f examples/autonomous.yaml
+
+go run ./cmd/agentctl run \
+  -f examples/autonomous.yaml \
+  --prompt "hello" --json
+
+GOTOOLCHAIN=auto make release-check</code></pre>
+        </div>
+      </header>
+
+      <section id="overview">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">01 / Overview</div>
+            <h3>框架概览</h3>
+          </div>
+          <span class="tag">Go 1.25.10+</span>
+        </div>
+        <p class="lead">AgentFlow Go 是一个以场景为中心的 Agent 框架。业务把 Agent、LLM profile、工具、记忆、工作流和人工审批写进 YAML，Go 代码负责把真实模型、数据库、HTTP、文件系统、对象存储和企业治理能力注入运行时。</p>
+        <div class="metric-strip" aria-label="能力摘要">
+          <div class="metric"><strong>YAML</strong><span>声明 Agent、工具、LLM、workflow</span></div>
+          <div class="metric"><strong>Ports</strong><span>公共契约在 pkg，适配器在 internal</span></div>
+          <div class="metric"><strong>Runtime</strong><span>自动工具调用、固定工作流、HITL</span></div>
+          <div class="metric"><strong>Enterprise</strong><span>审计、RBAC、治理、持久化、部署模板</span></div>
+        </div>
+        <div class="diagram" aria-label="AgentFlow 架构图">
+          <div class="flow-row">
+            <div class="flow-node"><b>Scenario YAML</b><span>Agents, LLM profiles, tools, workflow, policies</span></div>
+            <div class="flow-node"><b>Root Facade</b><span>NewFromFile, options, constructors, adapters</span></div>
+            <div class="flow-node"><b>Runtime</b><span>Autonomous loop, workflow runner, HITL resume</span></div>
+            <div class="flow-node"><b>Enterprise Adapters</b><span>PostgreSQL, Redis, S3, MCP, RAG, HTTP, SQL</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="quickstart">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">02 / First Run</div>
+            <h3>快速开始</h3>
+          </div>
+        </div>
+        <div class="timeline">
+          <div class="step">
+            <div class="step-index">1</div>
+            <div>
+              <h4>安装模块</h4>
+              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go get github.com/aijustin/agentflow-go</code></pre></div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-index">2</div>
+            <div>
+              <h4>校验场景</h4>
+              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./cmd/agentctl validate -f examples/autonomous.yaml</code></pre></div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-index">3</div>
+            <div>
+              <h4>运行 Agent</h4>
+              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json</code></pre></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="concepts">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">03 / Mental Model</div>
+            <h3>核心概念</h3>
+          </div>
+        </div>
+        <div class="grid three">
+          <div class="panel"><h4>Agent</h4><p>业务角色。绑定 LLM profile、工具列表、系统指令、记忆和输出 schema。</p></div>
+          <div class="panel"><h4>Tool</h4><p>可执行能力。通过 `core.ToolExecutor` 接入，经过 allowlist、RBAC、审批、速率限制、审计和输出脱敏。</p></div>
+          <div class="panel"><h4>LLM Profile</h4><p>模型配置。声明 provider、model、context window、能力矩阵、timeout、temperature 和 extra body。</p></div>
+          <div class="panel"><h4>Memory</h4><p>会话或命名空间记忆。运行前注入上下文，运行后写入用户、助手和工具观察。</p></div>
+          <div class="panel"><h4>Run State</h4><p>可恢复执行快照。用于 HITL 暂停、workflow 节点状态、CAS 版本和跨进程恢复。</p></div>
+          <div class="panel"><h4>Workflow</h4><p>固定图编排。支持依赖、条件边、重试、转换节点、Agent 节点、人工门禁和并发批次。</p></div>
+        </div>
+      </section>
+
+      <section id="scenario">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">04 / YAML Contract</div>
+            <h3>场景 YAML</h3>
+          </div>
+        </div>
+        <p class="lead">YAML 是 AgentFlow 的产品界面。它让业务团队能审阅 Agent 能力、工具风险、审批策略和运行模式，而不是把这些策略散落在 Go 代码里。</p>
+        <div class="code-block"><div class="code-title"><span>scenario.yaml</span><button class="copy" type="button">复制</button></div><pre><code>scenario:
+  name: support-assistant
+  llms:
+    default:
+      provider: openai-compatible
+      model: qwen/qwen3.6-35b-a3b
+      capabilities: [chat, tool_call]
+      context_window_tokens: 128000
+  tools:
+    sql.query:
+      type: builtin.sql
+      approval: never
+      side_effect: read
+      rate_cap: 5
+      input_schema:
+        type: object
+        required: [query_id]
+  agents:
+    assistant:
+      llm: default
+      tools: [sql.query]
+      memory: session
+      instructions: "只执行 allowlisted read-only 查询。"
+  orchestration:
+    mode: autonomous
+    max_steps: 6</code></pre></div>
+        <div class="callout"><strong>建议:</strong> 把工具 `side_effect`、`approval`、`rate_cap` 和 `input_schema` 当作安全契约维护。这样即使底层工具很强，Agent 运行时仍然走统一治理路径。</div>
+      </section>
+
+      <section id="embed">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">05 / Library Usage</div>
+            <h3>嵌入 Go 项目</h3>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="panel">
+            <h4>最小嵌入</h4>
+            <div class="code-block"><div class="code-title"><span>main.go</span><button class="copy" type="button">复制</button></div><pre><code>fw, err := agentflow.NewFromFile("scenario.yaml")
+if err != nil {
+  log.Fatal(err)
+}
+
+result, err := fw.Run(ctx, agentflow.RunRequest{
+  RunID:  "run-1",
+  Agent:  "assistant",
+  Prompt: "hello",
+})</code></pre></div>
+          </div>
+          <div class="panel">
+            <h4>生产注入</h4>
+            <div class="code-block"><div class="code-title"><span>options.go</span><button class="copy" type="button">复制</button></div><pre><code>fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithLLMGateway(gateway),
+  agentflow.WithToolExecutor("sql.query", sqlTool),
+  agentflow.WithRunStateRepository(runs),
+  agentflow.WithAuditSink(auditSink),
+  agentflow.WithToolGovernancePolicy(policy),
+)</code></pre></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="runtime">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">06 / Runtime Modes</div>
+            <h3>运行模式</h3>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>模式</th><th>适用场景</th><th>关键能力</th><th>关注点</th></tr></thead>
+            <tbody>
+              <tr><td>Autonomous</td><td>模型自主调用工具直到给出最终回答</td><td>ToolCaller、agent whitelist、max_steps、rate_cap</td><td>工具安全、输出审计、预算治理</td></tr>
+              <tr><td>Fixed Workflow</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition、transform、parallel batch、retry</td><td>节点幂等、状态持久化、失败恢复</td></tr>
+              <tr><td>Human in the loop</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、approval records</td><td>token secret、过期时间、actor identity</td></tr>
+              <tr><td>Async Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、lease、dead-letter、cancel</td><td>lease TTL、重试策略、队列可观测性</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tools">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">07 / Tooling</div>
+            <h3>工具体系</h3>
+          </div>
+        </div>
+        <p class="lead">所有工具都作为 `core.ToolExecutor` 接入。内置工具保持收紧默认值，企业自定义工具也应遵循同样模型: 输入 schema、side effect、approval、rate cap、审计和输出脱敏。</p>
+        <div class="grid three">
+          <div class="panel"><h4>HTTP Tool</h4><p>读取 allowlisted 内部 API。默认仅允许 GET/HEAD，限制 host、method 和响应大小。</p><span class="tag">builtin.http</span></div>
+          <div class="panel"><h4>Filesystem Tool</h4><p>读取 allowlisted root 下的本地文件。拒绝路径逃逸、符号链接逃逸和超大文件。</p><span class="tag">builtin.filesystem</span></div>
+          <div class="panel"><h4>SQL Tool</h4><p>执行命名 read-only SQL。支持 PostgreSQL、MySQL、ClickHouse 的 `database/sql` 驱动。</p><span class="tag">builtin.sql</span></div>
+        </div>
+        <div class="code-block"><div class="code-title"><span>sql tool wiring</span><button class="copy" type="button">复制</button></div><pre><code>sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
+  DB: db,
+  AllowedQueries: map[string]string{
+    "tickets.open": "SELECT id, title, status FROM tickets WHERE status = $1",
+  },
+  MaxRows: 20,
+})
+
+fw, err := agentflow.NewFromFile(
+  "examples/sql_tool.yaml",
+  agentflow.WithToolExecutor("sql.query", sqlTool),
+)</code></pre></div>
+      </section>
+
+      <section id="rag">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">08 / Knowledge</div>
+            <h3>RAG 与知识库</h3>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="panel">
+            <h4>索引链路</h4>
+            <ol>
+              <li>Loader 从文件或 HTTP 拉取文档。</li>
+              <li>Chunker 切分文本并保留 parent_id、chunk_index、位置元数据。</li>
+              <li>Embedder 生成向量。</li>
+              <li>VectorStore 写入 pgvector 或自定义实现。</li>
+            </ol>
+          </div>
+          <div class="panel">
+            <h4>检索链路</h4>
+            <ol>
+              <li>Retriever tool 接收 query。</li>
+              <li>Embedder 生成 query vector。</li>
+              <li>VectorStore 执行 namespace 和 metadata filter。</li>
+              <li>结果返回 content、score、metadata、citation。</li>
+            </ol>
+          </div>
+        </div>
+        <div class="code-block"><div class="code-title"><span>retriever wiring</span><button class="copy" type="button">复制</button></div><pre><code>store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{DB: db})
+retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
+  Embedder:     provider,
+  Store:        store,
+  Profile:      "embed",
+  Namespace:    "tenant-a/docs",
+  DefaultLimit: 5,
+})</code></pre></div>
+      </section>
+
+      <section id="enterprise">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">09 / Enterprise</div>
+            <h3>企业能力</h3>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>能力</th><th>公共入口</th><th>默认实现</th><th>生产建议</th></tr></thead>
+            <tbody>
+              <tr><td>Run State</td><td>WithRunStateRepository</td><td>file, in-memory, PostgreSQL</td><td>生产使用 PostgreSQL，保留 CAS 语义。</td></tr>
+              <tr><td>Blob Store</td><td>WithBlobStore</td><td>file, in-memory, S3-compatible</td><td>大输出外部化到 MinIO 或 S3。</td></tr>
+              <tr><td>Async Queue</td><td>pkg/async</td><td>in-memory, PostgreSQL</td><td>使用 worker 独立部署并配置 lease。</td></tr>
+              <tr><td>Identity/RBAC</td><td>pkg/identity, pkg/security</td><td>API key, static RBAC</td><td>接入公司 OIDC 后保持同一 policy port。</td></tr>
+              <tr><td>Audit</td><td>WithAuditSink</td><td>noop, in-memory, file, slog</td><td>高风险工具和 HITL 必须可追踪 actor。</td></tr>
+              <tr><td>Governance</td><td>pkg/governance</td><td>budget, side effect, redaction</td><td>对 tool、LLM、输出做统一策略链。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="deployment">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">10 / Operations</div>
+            <h3>部署与发布</h3>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="panel">
+            <h4>本地企业栈</h4>
+            <p>`deploy/enterprise` 包含 PostgreSQL+pgvector、Redis、MinIO 和 `agent-http` 的 Compose 模板，适合本地验证生产拓扑。</p>
+            <div class="code-block"><div class="code-title"><span>compose</span><button class="copy" type="button">复制</button></div><pre><code>cd deploy/enterprise
+cp .env.example .env
+docker compose up --build</code></pre></div>
+          </div>
+          <div class="panel">
+            <h4>发布检查</h4>
+            <p>`make release-check` 会运行格式化、单元测试、`go vet`、二进制构建、`govulncheck` 和所有示例 YAML 校验。</p>
+            <div class="code-block"><div class="code-title"><span>release</span><button class="copy" type="button">复制</button></div><pre><code>GOTOOLCHAIN=auto make release-check</code></pre></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="checklist">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">11 / Adoption</div>
+            <h3>落地检查表</h3>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="panel">
+            <h4>开发阶段</h4>
+            <ul>
+              <li>每个工具都有输入 schema、side effect 和 approval 策略。</li>
+              <li>LLM profile 显式声明 capabilities。</li>
+              <li>需要恢复的流程使用持久化 RunStateRepository。</li>
+              <li>RAG 结果带 source metadata 和 citation。</li>
+              <li>新增公共 API 同步 README、CHANGELOG 和 godoc。</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h4>生产阶段</h4>
+            <ul>
+              <li>非 loopback HTTP 服务配置 `AGENT_TOKEN_SECRET` 和 `AGENT_HTTP_API_KEY`。</li>
+              <li>数据库工具使用只读账号和最小表权限。</li>
+              <li>审计日志覆盖审批、拒绝、修订和高风险工具调用。</li>
+              <li>对象存储、数据库、Redis 由平台统一管理密钥。</li>
+              <li>发版前运行 `GOTOOLCHAIN=auto make release-check`。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer">
+          <p>AgentFlow Go: <a href="https://github.com/aijustin/agentflow-go">github.com/aijustin/agentflow-go</a>. 本手册是静态 HTML，可直接打开，也可放到 GitHub Pages 或企业内部文档站。</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const root = document.documentElement;
+    const savedTheme = localStorage.getItem('agentflow-manual-theme');
+    if (savedTheme) root.dataset.theme = savedTheme;
+
+    document.getElementById('themeToggle').addEventListener('click', () => {
+      const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      localStorage.setItem('agentflow-manual-theme', next);
+    });
+
+    const progress = document.getElementById('progress');
+    const updateProgress = () => {
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      progress.style.width = `${Math.max(0, Math.min(100, (scrollTop / max) * 100))}%`;
+    };
+    document.addEventListener('scroll', updateProgress, { passive: true });
+    updateProgress();
+
+    const navLinks = Array.from(document.querySelectorAll('.nav a'));
+    const sections = navLinks.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        navLinks.forEach(link => link.classList.toggle('active', link.getAttribute('href') === `#${entry.target.id}`));
+      });
+    }, { rootMargin: '-40% 0px -55% 0px', threshold: 0.01 });
+    sections.forEach(section => observer.observe(section));
+
+    document.getElementById('navSearch').addEventListener('input', event => {
+      const query = event.target.value.trim().toLowerCase();
+      navLinks.forEach(link => {
+        const match = link.textContent.toLowerCase().includes(query);
+        link.parentElement.classList.toggle('hidden', query && !match);
+      });
+    });
+
+    document.querySelectorAll('.copy').forEach(button => {
+      button.addEventListener('click', async () => {
+        const block = button.closest('.code-block');
+        const code = block ? block.querySelector('code') : null;
+        if (!code) return;
+        try {
+          await navigator.clipboard.writeText(code.innerText);
+          const previous = button.textContent;
+          button.textContent = '已复制';
+          setTimeout(() => { button.textContent = previous; }, 1200);
+        } catch {
+          button.textContent = '复制失败';
+        }
+      });
+    });
+  </script>
+</body>
+</html>

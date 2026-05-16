@@ -18,6 +18,8 @@ go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json
 
 发布前建议运行 `GOTOOLCHAIN=auto make release-check`。发版检查和 v0 兼容策略见 [docs/release-checklist.md](docs/release-checklist.md) 与 [docs/api-stability.md](docs/api-stability.md)。
 
+如需更完整的可视化使用指南，可直接打开独立 HTML 手册：[docs/manual.html](docs/manual.html)。
+
 ## 快速开始
 
 ### 环境要求
