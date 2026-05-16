@@ -88,7 +88,11 @@ func TestProviderConstructorsExposeBuiltInGateways(t *testing.T) {
 		t.Fatalf("local gateway should expose OpenAI-compatible streaming")
 	}
 	anthropic := agentflow.NewAnthropicGateway([]llm.Profile{profile}, nil)
-	if !anthropic.Supports("default", llm.CapChat) || anthropic.Supports("default", llm.CapToolCall) {
+	if !anthropic.Supports("default", llm.CapChat) ||
+		!anthropic.Supports("default", llm.CapToolCall) ||
+		!anthropic.Supports("default", llm.CapStructuredOutput) ||
+		!anthropic.Supports("default", llm.CapStream) ||
+		anthropic.Supports("default", llm.CapEmbed) {
 		t.Fatalf("anthropic gateway capability set was unexpected")
 	}
 	router := agentflow.NewLLMRouter(map[string]llm.Gateway{"default": openAI})

@@ -24,6 +24,7 @@
 - `Lease` 使用原子 `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED) ... RETURNING ...` 模式。
 - 当 `available_at <= now` 时，排队任务可被租约获取。
 - 当 `lease_expires_at < now` 时，运行中任务可被恢复。
+- `Renew` 会在 Worker ID 和尝试次数匹配时原子延长 `lease_expires_at`。
 - `Complete` 和 `Fail` 需要当前 Worker ID 和尝试次数。
 - 失败任务会回到 `queued`，直到 `attempts >= max_attempts`，之后进入 `dead_letter`。
 
@@ -41,9 +42,10 @@ if err != nil {
 }
 
 worker, err := async.NewWorker(queue, workerHandler, async.WorkerConfig{
-    WorkerID:    "worker-1",
-    Concurrency: 4,
-    LeaseTTL:    time.Minute,
-    JobTimeout:  5 * time.Minute,
+    WorkerID:      "worker-1",
+    Concurrency:   4,
+    LeaseTTL:      time.Minute,
+    RenewInterval: 30 * time.Second,
+    JobTimeout:    5 * time.Minute,
 })
 ```

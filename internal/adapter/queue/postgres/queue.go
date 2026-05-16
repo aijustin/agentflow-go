@@ -138,6 +138,32 @@ FROM %s WHERE id = $1`, q.table)
 	return job, nil
 }
 
+func (q *Queue) Renew(ctx context.Context, lease asyncpkg.Lease, ttl time.Duration) (asyncpkg.Lease, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return asyncpkg.Lease{}, false, err
+	}
+	if err := lease.Validate(); err != nil {
+		return asyncpkg.Lease{}, false, err
+	}
+	if ttl <= 0 {
+		return asyncpkg.Lease{}, false, asyncpkg.ErrStaleLease
+	}
+	now := q.now().UTC()
+	expires := now.Add(ttl)
+	query := fmt.Sprintf(`UPDATE %s
+SET lease_expires_at = $1, updated_at = $2
+WHERE id = $3 AND state = $4 AND lease_worker_id = $5 AND attempts = $6
+RETURNING id, type, run_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at`, q.table)
+	job, err := q.scanJob(q.db.QueryRowContext(ctx, query, expires, now, lease.JobID, string(asyncpkg.JobRunning), lease.WorkerID, int64(lease.Attempt)))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return asyncpkg.Lease{}, false, asyncpkg.ErrStaleLease
+		}
+		return asyncpkg.Lease{}, false, fmt.Errorf("postgres queue: renew job %q: %w", lease.JobID, err)
+	}
+	return asyncpkg.Lease{JobID: job.ID, WorkerID: job.LeaseWorkerID, Attempt: job.Attempts, ExpiresAt: job.LeaseExpiresAt}, true, nil
+}
+
 func (q *Queue) Complete(ctx context.Context, lease asyncpkg.Lease) error {
 	if err := ctx.Err(); err != nil {
 		return err

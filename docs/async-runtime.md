@@ -27,6 +27,7 @@ queued/running -> cancelled
 关键规则：
 
 - `Lease` 会将排队任务分配给一个 Worker，并设置 TTL。
+- 当队列实现 `LeaseRenewer` 时，Worker 会按 `RenewInterval` 在长任务执行期间续租。
 - 过期的运行中租约可以被其他 Worker 恢复。
 - `Complete` 和 `Fail` 需要当前有效租约。
 - 失败任务会重试，直到达到 `MaxAttempts`。
@@ -54,11 +55,12 @@ worker, err := async.NewWorker(
     queue,
     runHandler,
     async.WorkerConfig{
-        WorkerID:     "worker-1",
-        Concurrency:  4,
-        LeaseTTL:     time.Minute,
-        JobTimeout:   2 * time.Minute,
-        PollInterval: 100 * time.Millisecond,
+        WorkerID:      "worker-1",
+        Concurrency:   4,
+        LeaseTTL:      time.Minute,
+        RenewInterval: 30 * time.Second,
+        JobTimeout:    2 * time.Minute,
+        PollInterval:  100 * time.Millisecond,
     },
 )
 if err != nil {

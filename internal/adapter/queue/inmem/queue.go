@@ -99,6 +99,30 @@ func (queue *Queue) Load(ctx context.Context, jobID string) (asyncpkg.Job, error
 	return asyncpkg.CloneJob(job), nil
 }
 
+func (queue *Queue) Renew(ctx context.Context, lease asyncpkg.Lease, ttl time.Duration) (asyncpkg.Lease, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return asyncpkg.Lease{}, false, err
+	}
+	if err := lease.Validate(); err != nil {
+		return asyncpkg.Lease{}, false, err
+	}
+	if ttl <= 0 {
+		return asyncpkg.Lease{}, false, asyncpkg.ErrStaleLease
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	job, err := queue.leasedJob(lease)
+	if err != nil {
+		return asyncpkg.Lease{}, false, err
+	}
+	now := queue.now()
+	job.LeaseExpiresAt = now.Add(ttl)
+	job.UpdatedAt = now
+	queue.jobs[job.ID] = job
+	lease.ExpiresAt = job.LeaseExpiresAt
+	return lease, true, nil
+}
+
 func (queue *Queue) Complete(ctx context.Context, lease asyncpkg.Lease) error {
 	if err := ctx.Err(); err != nil {
 		return err

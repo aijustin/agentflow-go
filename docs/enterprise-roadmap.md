@@ -41,12 +41,13 @@
 - 用于测试和本地开发的内存队列。已在 `internal/adapter/queue/inmem` 实现，并通过 `NewInMemoryJobQueue` 暴露。
 - 生产基线 PostgreSQL 队列适配器。
 - 提交/状态/取消流程的 HTTP API，以及生产健康检查/就绪探针封装。
-- 重试、超时、死信和取消语义。
+- 重试、超时、死信、取消语义和 Worker 租约续租。
 
 验收标准：
 
 - HTTP 提交返回 `run_id`，不阻塞等待完成。
 - 多个 Worker 不会同时执行同一个租约任务。
+- 长任务会在执行期间续租，避免被其他 Worker 误恢复。
 - 取消会通过运行时上下文传播。
 - 失败任务可以重试，并最终标记为死信。
 
@@ -99,7 +100,7 @@
 
 交付物：
 
-- 流式输出、工具调用、结构化输出、embedding 和用量统计的 Provider 能力矩阵。初始能力辅助函数已实现。
+- 流式输出、工具调用、结构化输出、embedding 和用量统计的 Provider 能力矩阵。初始能力辅助函数已实现，OpenAI-compatible 覆盖 chat/tool/structured/stream/embed，Anthropic Messages 覆盖 chat/tool/structured/stream。
 - Embedding Provider 端口。`llm.Embedder` 已由 OpenAI-compatible 和 mock 适配器实现。
 - 向量存储端口和 pgvector 基线适配器。初始 `pkg/knowledge` 和 PostgreSQL pgvector 适配器已实现。
 - 文档加载器、分块器、索引器、检索工具和引用/来源追踪。文件和 HTTP 加载器已实现。
@@ -146,4 +147,4 @@
 
 ## 当前重点
 
-M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、异步队列/Worker 执行、企业身份/RBAC/审计、结构化 `slog` sink、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、OpenAI-compatible embeddings、MCP 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用和元数据过滤。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器，以及 v0 API 稳定性和发布检查指南开始。下一步重点是更专用的摄取连接器、Helm chart 打包和更多内置企业工具。
+M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、结构化 `slog` sink、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用和元数据过滤。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器，以及 v0 API 稳定性和发布检查指南开始。下一步重点是条件表达式/转换节点增强、Helm chart 打包和更多内置企业工具。

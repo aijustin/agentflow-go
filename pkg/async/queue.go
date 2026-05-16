@@ -73,6 +73,10 @@ type Queue interface {
 	Cancel(ctx context.Context, jobID string) error
 }
 
+type LeaseRenewer interface {
+	Renew(ctx context.Context, lease Lease, ttl time.Duration) (Lease, bool, error)
+}
+
 func CloneJob(job Job) Job {
 	if job.Payload != nil {
 		payload := make([]byte, len(job.Payload))

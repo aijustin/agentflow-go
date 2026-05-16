@@ -18,21 +18,23 @@ func (fn HandlerFunc) HandleJob(ctx context.Context, job Job) error {
 }
 
 type WorkerConfig struct {
-	WorkerID     string
-	Concurrency  int
-	LeaseTTL     time.Duration
-	JobTimeout   time.Duration
-	PollInterval time.Duration
+	WorkerID      string
+	Concurrency   int
+	LeaseTTL      time.Duration
+	RenewInterval time.Duration
+	JobTimeout    time.Duration
+	PollInterval  time.Duration
 }
 
 type Worker struct {
-	queue        Queue
-	handler      Handler
-	workerID     string
-	concurrency  int
-	leaseTTL     time.Duration
-	jobTimeout   time.Duration
-	pollInterval time.Duration
+	queue         Queue
+	handler       Handler
+	workerID      string
+	concurrency   int
+	leaseTTL      time.Duration
+	renewInterval time.Duration
+	jobTimeout    time.Duration
+	pollInterval  time.Duration
 }
 
 func NewWorker(queue Queue, handler Handler, config WorkerConfig) (*Worker, error) {
@@ -53,18 +55,26 @@ func NewWorker(queue Queue, handler Handler, config WorkerConfig) (*Worker, erro
 	if leaseTTL <= 0 {
 		leaseTTL = time.Minute
 	}
+	renewInterval := config.RenewInterval
+	if renewInterval <= 0 {
+		renewInterval = leaseTTL / 2
+	}
+	if renewInterval <= 0 || renewInterval >= leaseTTL {
+		renewInterval = leaseTTL / 2
+	}
 	pollInterval := config.PollInterval
 	if pollInterval <= 0 {
 		pollInterval = 100 * time.Millisecond
 	}
 	return &Worker{
-		queue:        queue,
-		handler:      handler,
-		workerID:     config.WorkerID,
-		concurrency:  concurrency,
-		leaseTTL:     leaseTTL,
-		jobTimeout:   config.JobTimeout,
-		pollInterval: pollInterval,
+		queue:         queue,
+		handler:       handler,
+		workerID:      config.WorkerID,
+		concurrency:   concurrency,
+		leaseTTL:      leaseTTL,
+		renewInterval: renewInterval,
+		jobTimeout:    config.JobTimeout,
+		pollInterval:  pollInterval,
 	}, nil
 }
 
@@ -126,16 +136,45 @@ func (worker *Worker) handleLeasedJob(ctx context.Context, lease Lease) error {
 	if err != nil {
 		return err
 	}
+	renewCtx, stopRenew := context.WithCancel(ctx)
+	defer stopRenew()
+	worker.startLeaseRenewal(renewCtx, lease)
 	jobCtx := ctx
 	cancel := func() {}
 	if worker.jobTimeout > 0 {
 		jobCtx, cancel = context.WithTimeout(ctx, worker.jobTimeout)
 	}
 	defer cancel()
-	if err := worker.handler.HandleJob(jobCtx, job); err != nil {
+	err = worker.handler.HandleJob(jobCtx, job)
+	stopRenew()
+	if err != nil {
 		return worker.queue.Fail(ctx, lease, err)
 	}
 	return worker.queue.Complete(ctx, lease)
+}
+
+func (worker *Worker) startLeaseRenewal(ctx context.Context, lease Lease) {
+	renewer, ok := worker.queue.(LeaseRenewer)
+	if !ok {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(worker.renewInterval)
+		defer ticker.Stop()
+		current := lease
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				renewed, ok, err := renewer.Renew(ctx, current, worker.leaseTTL)
+				if err != nil || !ok {
+					return
+				}
+				current = renewed
+			}
+		}
+	}()
 }
 
 func wait(ctx context.Context, duration time.Duration) error {

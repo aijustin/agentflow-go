@@ -120,6 +120,49 @@ func TestQueueRecoversExpiredLeases(t *testing.T) {
 	}
 }
 
+func TestQueueRenewsLeases(t *testing.T) {
+	ctx := context.Background()
+	queue := newTestQueue(t)
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	queue.now = func() time.Time { return now }
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: asyncpkg.RunJobType, MaxAttempts: 2}); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := queue.Lease(ctx, "worker-1", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("expected lease, ok=%v err=%v", ok, err)
+	}
+	now = now.Add(30 * time.Second)
+	renewed, ok, err := queue.Renew(ctx, lease, 2*time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("expected renewal, ok=%v err=%v", ok, err)
+	}
+	if !renewed.ExpiresAt.Equal(now.Add(2 * time.Minute)) {
+		t.Fatalf("unexpected renewed lease: %+v", renewed)
+	}
+	now = now.Add(90 * time.Second)
+	if _, ok, err := queue.Lease(ctx, "worker-2", time.Minute); err != nil || ok {
+		t.Fatalf("renewed lease should not be stolen, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestQueueRenewRejectsStaleLease(t *testing.T) {
+	ctx := context.Background()
+	queue := newTestQueue(t)
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: asyncpkg.RunJobType, MaxAttempts: 2}); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := queue.Lease(ctx, "worker-1", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("expected lease, ok=%v err=%v", ok, err)
+	}
+	stale := lease
+	stale.WorkerID = "worker-2"
+	if _, ok, err := queue.Renew(ctx, stale, time.Minute); !errors.Is(err, asyncpkg.ErrStaleLease) || ok {
+		t.Fatalf("expected stale renewal rejection, ok=%v err=%v", ok, err)
+	}
+}
+
 func TestQueueCancelsJobsAndLoadsMissing(t *testing.T) {
 	ctx := context.Background()
 	queue := newTestQueue(t)
@@ -240,6 +283,8 @@ func (c *testConn) QueryContext(ctx context.Context, query string, args []driver
 	}
 	normalized := strings.ToUpper(strings.TrimSpace(query))
 	switch {
+	case strings.HasPrefix(normalized, "UPDATE") && strings.Contains(normalized, "SET LEASE_EXPIRES_AT = $1"):
+		return c.renew(args)
 	case strings.HasPrefix(normalized, "UPDATE") && strings.Contains(normalized, "RETURNING"):
 		return c.lease(args)
 	case strings.HasPrefix(normalized, "SELECT"):
@@ -309,6 +354,24 @@ func (c *testConn) load(args []driver.NamedValue) (driver.Rows, error) {
 	if !ok {
 		return rows(nil), nil
 	}
+	return rows([][]driver.Value{jobValues(job)}), nil
+}
+
+func (c *testConn) renew(args []driver.NamedValue) (driver.Rows, error) {
+	expires := args[0].Value.(time.Time)
+	now := args[1].Value.(time.Time)
+	jobID := args[2].Value.(string)
+	workerID := args[4].Value.(string)
+	attempt := int(args[5].Value.(int64))
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	job, ok := c.state.rows[jobID]
+	if !ok || job.State != asyncpkg.JobRunning || job.LeaseWorkerID != workerID || job.Attempts != attempt {
+		return rows(nil), nil
+	}
+	job.LeaseExpiresAt = expires
+	job.UpdatedAt = now
+	c.state.rows[jobID] = job
 	return rows([][]driver.Value{jobValues(job)}), nil
 }
 

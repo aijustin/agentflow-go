@@ -133,7 +133,7 @@ for chunk := range chunks {
 }
 ```
 
-When an agent has tools and the configured LLM gateway supports `CapToolCall`, the runtime runs an autonomous tool loop: send tool specs to the LLM, validate returned tool calls against the agent whitelist, enforce approval and per-run `rate_cap`, retry transient LLM/tool errors from `retry_limit`/`max_retries`, execute registered tool executors, append tool results, and continue until the LLM returns a final answer or `max_steps` is reached.
+When an agent has tools and the configured LLM gateway supports `CapToolCall`, the runtime runs an autonomous tool loop: send tool specs to the LLM, validate returned tool calls against the agent whitelist, enforce approval and per-run `rate_cap`, retry classified transient LLM/tool errors from `retry_limit`/`max_retries` with exponential backoff, execute registered tool executors, append bounded tool results, and continue until the LLM returns a final answer or `max_steps` is reached. `Stream` also accepts tool-enabled agents; it runs the same governed tool loop and emits the final answer as a stream chunk.
 
 When an agent binds `memory`, the runtime reads stored conversation/session messages before context preparation, injects them into the LLM context, and appends user prompts, assistant answers, and tool observations after execution. `in_memory` repositories are auto-created by the root facade unless a custom repository is supplied.
 
@@ -207,10 +207,11 @@ if err != nil {
 }
 
 worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
-  WorkerID:    "worker-1",
-  Concurrency: 4,
-  LeaseTTL:    time.Minute,
-  JobTimeout:  5 * time.Minute,
+  WorkerID:      "worker-1",
+  Concurrency:   4,
+  LeaseTTL:      time.Minute,
+  RenewInterval: 30 * time.Second,
+  JobTimeout:    5 * time.Minute,
 })
 ```
 
@@ -627,7 +628,7 @@ scenario:
           trigger_ratio: 0.5
 ```
 
-Supported context strategies are `none`, `sliding_window`, and `sliding_window_with_summary`. Before each LLM call, the runtime emits `ContextPrepared` with before/after token estimates, dropped message count, summary status, and active input budget.
+Supported context strategies are `none`, `sliding_window`, and `sliding_window_with_summary`. Before each LLM call, the runtime emits `ContextPrepared` with before/after token estimates, dropped message count, summary status, and active input budget. When `tool_result_max_tokens` is set, large tool observations are compacted before they are sent back into the next LLM turn while the full persisted step output remains available through run state/blob storage.
 
 For local Qwen reasoning models, keep `max_output_tokens` high enough for reasoning tokens because some OpenAI-compatible servers count reasoning output against `max_tokens`. The runtime treats an empty response with `finish_reason=length` as an error so misconfigured reasoning budgets do not look like successful empty answers.
 
@@ -875,8 +876,8 @@ Design boundaries:
 - `Agent = entity that owns LLM and memory binding`.
 - `RunStateRepository` is separate from Memory and handles resumable workflow snapshots.
 - Context governance is profile-scoped: different agents/tools can route to different LLM profiles with different window, output, thinking, and compression policies.
-- Autonomous execution supports LLM tool-calling loops with tool whitelist checks, approval-policy denial, per-run rate caps, retry, tool result feedback, and LLM/tool lifecycle events.
-- Structured output runs use an agent-level `output_schema` and provider `StructuredOutputter`; streaming runs use provider `Streamer` and persist the final accumulated answer.
+- Autonomous execution supports LLM tool-calling loops with tool whitelist checks, approval-policy denial, per-run rate caps, classified retry, bounded tool result feedback, and LLM/tool lifecycle events.
+- Structured output runs use an agent-level `output_schema` and provider `StructuredOutputter`; streaming runs use provider `Streamer` for normal chat and the governed tool loop for tool-enabled agents, then persist the final accumulated answer.
 - Memory bindings are connected to runtime reads/writes for conversation and session history.
 - Fixed workflows run from graph dependencies and edges, with bounded parallel batches, false-condition skips, retry policy, transform nodes, agent nodes, human-gate nodes, and CAS-safe step output persistence.
 - Workflow human-gate nodes pause with persisted `CurrentNodeID`/`PendingGate` and can resume downstream execution after approval.
@@ -945,7 +946,7 @@ Implemented:
 - Fixed-workflow runner wired through the root facade
 - In-memory Memory, RunStateRepository, and BlobStore
 - LLM abstractions plus root constructors for OpenAI-compatible, Anthropic, local, router, and mock testing paths
-- Autonomous tool-calling loop for registered tools and OpenAI-compatible function calling
+- Autonomous tool-calling loop for registered tools, OpenAI-compatible function calling, and Anthropic Messages tool use
 - Runtime memory integration for injected history and persisted user/assistant/tool observations
 - Fixed-workflow graph scheduler with dependencies, parallelism, retries, conditions, transform/agent/human-gate nodes, and CAS-safe output saves
 - Workflow-level HITL pause/resume with saved scheduler position
@@ -953,13 +954,13 @@ Implemented:
 - Skill prompt/workflow expansion during scenario build
 - File-backed durable adapters for run state, blobs, and memory, plus PostgreSQL-backed run state, PostgreSQL-backed async queue, and S3-compatible blob storage
 - Redis-backed distributed lease adapter for worker and workflow coordination
-- Async job queue and worker contracts with in-memory/PostgreSQL queue adapters, framework-run worker handler, and HTTP submit/status/cancel handler
+- Async job queue and worker contracts with in-memory/PostgreSQL queue adapters, lease renewal, framework-run worker handler, and HTTP submit/status/cancel handler
 - Enterprise identity context, API key middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization
 - Audit event model with noop, in-memory, JSONL file, and structured `slog` sinks, plus framework audit wiring
 - Governance hooks for tool budgets, tool side-effect ceilings, and persisted output redaction
 - Durable CLI resume via `--state-dir`
-- Runtime hardening: global/agent/profile timeouts, context-aware LLM/tool retry, tool rate caps, failed-run status persistence, and blob externalization for large outputs
-- Structured output and streaming runtime paths exposed through the root facade
+- Runtime hardening: global/agent/profile timeouts, classified LLM/tool retry with exponential backoff, tool rate caps, bounded tool-result context feedback, failed-run status persistence, and blob externalization for large outputs
+- Structured output and streaming runtime paths exposed through the root facade, including tool-enabled streaming runs
 - Context governance with sliding-window trimming, heuristic summary compression, richer LLM profile config, and `ContextPrepared` events
 - CLI and HTTP HITL surfaces with expiring CLI tokens and safer debug-console secret defaults
 - GitHub Actions CI, golangci-lint configuration, govulncheck/CodeQL workflows, Dependabot, GoReleaser, Dockerfile, and security/community docs

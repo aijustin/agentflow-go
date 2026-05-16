@@ -81,7 +81,7 @@ LLM 配置定义在 `scenario.llms.<name>` 下，可被 Agent 或工具引用。
 | `sliding_window` | 保留受保护 prompt 和最近消息，使输入落在预算内。 |
 | `sliding_window_with_summary` | 对丢弃上下文生成摘要，同时保留最近消息。 |
 
-Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`reserved_output_tokens`、`summary_tokens`、`tool_result_max_tokens`、`memory_recall_limit`、`system_prompt_protection`、`compression.trigger_ratio`。
+Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`reserved_output_tokens`、`summary_tokens`、`tool_result_max_tokens`、`memory_recall_limit`、`system_prompt_protection`、`compression.trigger_ratio`。其中 `tool_result_max_tokens` 会限制工具结果回灌给下一轮 LLM 的上下文大小；完整工具输出仍会按运行状态/Blob 策略持久化。
 
 ## 记忆
 

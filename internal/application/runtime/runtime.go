@@ -366,13 +366,6 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 	if err != nil {
 		return nil, core.Agent{}, nil, err
 	}
-	if len(agent.Tools)+len(agent.SubAgents) > 0 {
-		return nil, core.Agent{}, nil, fmt.Errorf("runtime: streaming tool loops are not supported")
-	}
-	streamer, ok := e.llm.(llm.Streamer)
-	if !ok || !e.llm.Supports(agent.LLM, llm.CapStream) {
-		return nil, core.Agent{}, nil, fmt.Errorf("runtime: llm profile %q does not support streaming", agent.LLM)
-	}
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	profile := e.scenario.LLMs[agent.LLM]
 	history, err := e.readMemory(ctx, req.RunID, agent)
@@ -390,6 +383,29 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		Thinking:        profile.Thinking,
 		ReasoningEffort: profile.ReasoningEffort,
 		ExtraBody:       profile.ExtraBody,
+	}
+	if len(agent.Tools)+len(agent.SubAgents) > 0 {
+		caller, ok := e.llm.(llm.ToolCaller)
+		if !ok || !e.llm.Supports(agent.LLM, llm.CapToolCall) {
+			cancel()
+			return nil, core.Agent{}, nil, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM)
+		}
+		ch := make(chan llm.ChatChunk, 1)
+		go func() {
+			defer close(ch)
+			output, err := e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller)
+			if err != nil {
+				ch <- llm.ChatChunk{Done: true, Error: err.Error()}
+				return
+			}
+			ch <- llm.ChatChunk{Content: output, Done: true}
+		}()
+		return ch, agent, cancel, nil
+	}
+	streamer, ok := e.llm.(llm.Streamer)
+	if !ok || !e.llm.Supports(agent.LLM, llm.CapStream) {
+		cancel()
+		return nil, core.Agent{}, nil, fmt.Errorf("runtime: llm profile %q does not support streaming", agent.LLM)
 	}
 	e.emitJSON(ctx, core.EventLLMCalled, req.RunID, map[string]any{"profile": agent.LLM, "stream": true})
 	ch, err := streamer.StreamChat(ctx, agent.LLM, baseReq)
@@ -442,7 +458,8 @@ func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.A
 		}
 		for _, toolCall := range resp.ToolCalls {
 			result := e.dispatchTool(ctx, runID, agent, toolCall, toolCalls)
-			raw, err := json.Marshal(result)
+			contextResult := compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
+			raw, err := json.Marshal(contextResult)
 			if err != nil {
 				return "", err
 			}
@@ -455,6 +472,43 @@ func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.A
 		}
 	}
 	return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", maxSteps)
+}
+
+func compactToolResultForContext(result core.ToolResult, maxTokens int) core.ToolResult {
+	if maxTokens <= 0 {
+		return result
+	}
+	raw, err := json.Marshal(result)
+	if err != nil || contextwindow.EstimateTokens(string(raw)) <= maxTokens {
+		return result
+	}
+	content := string(result.Output)
+	if content == "" {
+		content = result.Error
+	}
+	compact := map[string]any{
+		"truncated":       true,
+		"original_tokens": contextwindow.EstimateTokens(string(raw)),
+		"max_tokens":      maxTokens,
+		"content":         truncateForTokenBudget(content, maxTokens),
+	}
+	output, err := json.Marshal(compact)
+	if err != nil {
+		return result
+	}
+	return core.ToolResult{Tool: result.Tool, Output: output, Error: result.Error}
+}
+
+func truncateForTokenBudget(content string, maxTokens int) string {
+	if maxTokens <= 0 || contextwindow.EstimateTokens(content) <= maxTokens {
+		return content
+	}
+	limit := maxTokens * 3
+	runes := []rune(content)
+	if limit <= 0 || len(runes) <= limit {
+		return content
+	}
+	return string(runes[:limit]) + "..."
 }
 
 func (e *Engine) prepareContext(agent core.Agent, profile core.LLMProfileRef, req RunRequest, history []llm.Message) ([]llm.Message, contextwindow.Stats) {
@@ -984,11 +1038,25 @@ func shouldRetry(ctx context.Context, err error) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var classified interface{ Retryable() bool }
+	if errors.As(err, &classified) {
+		return classified.Retryable()
+	}
+	return true
 }
 
 func retryDelay(ctx context.Context, attempt int) error {
-	delay := time.Duration(attempt) * 10 * time.Millisecond
+	delay := 100 * time.Millisecond
+	for range max(0, attempt-1) {
+		delay *= 2
+		if delay >= 2*time.Second {
+			delay = 2 * time.Second
+			break
+		}
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {

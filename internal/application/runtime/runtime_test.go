@@ -415,6 +415,23 @@ func TestEngineRunRetriesLLMChat(t *testing.T) {
 	}
 }
 
+func TestEngineRunDoesNotRetryPermanentLLMError(t *testing.T) {
+	gateway := &retryGateway{failures: 3, err: permanentRetryError{message: "bad request"}}
+	scenario := baseScenario(false)
+	scenario.Runtime.MaxRetries = 3
+	engine, err := NewEngine(scenario, Dependencies{Runs: runstateinmem.NewRepository(), LLM: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.Run(context.Background(), RunRequest{RunID: "run-permanent", Agent: "assistant", Prompt: "hello"})
+	if err == nil {
+		t.Fatal("expected permanent error")
+	}
+	if gateway.calls != 1 {
+		t.Fatalf("permanent error should not be retried, got %d calls", gateway.calls)
+	}
+}
+
 func TestEngineRunRetriesToolExecution(t *testing.T) {
 	gateway := llmmock.NewGateway()
 	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
@@ -478,6 +495,44 @@ func TestEngineRunDeniesToolAfterRateCap(t *testing.T) {
 	}
 	if events.count(core.EventToolCalled) != 1 || events.count(core.EventToolDenied) != 1 {
 		t.Fatalf("expected one tool call and one denial, got %+v", events.types())
+	}
+}
+
+func TestEngineRunCompactsLargeToolResultBeforeNextLLMCall(t *testing.T) {
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"hello"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	profile := scenario.LLMs["default"]
+	profile.Context.ToolResultMaxTokens = 20
+	scenario.LLMs = map[string]core.LLMProfileRef{"default": profile}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:  runstateinmem.NewRepository(),
+		LLM:   gateway,
+		Tools: mapToolRegistry{"echo": largeOutputTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(context.Background(), RunRequest{RunID: "run-compact", Agent: "assistant", Prompt: "use echo"}); err != nil {
+		t.Fatal(err)
+	}
+	requests := gateway.ToolRequests("default")
+	if len(requests) != 2 {
+		t.Fatalf("expected two tool loop requests, got %+v", requests)
+	}
+	messages := requests[1].Messages
+	if len(messages) == 0 {
+		t.Fatal("expected messages in second request")
+	}
+	content := messages[len(messages)-1].Content
+	if !strings.Contains(content, `"truncated":true`) || strings.Contains(content, strings.Repeat("x", 256)) {
+		t.Fatalf("tool result was not compacted before context reuse: %s", content)
 	}
 }
 
@@ -603,6 +658,49 @@ func TestEngineStreamCompletesRunAndWritesMemory(t *testing.T) {
 	}
 }
 
+func TestEngineStreamSupportsAutonomousToolLoop(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall, llm.CapStream)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"hello"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "final answer"}},
+	})
+	engine, err := NewEngine(toolScenario(core.ApprovalNever, core.SideEffectRead, 4), Dependencies{
+		Runs:  repo,
+		LLM:   gateway,
+		Tools: mapToolRegistry{"echo": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := engine.Stream(context.Background(), RunRequest{RunID: "run-stream-tools", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	done := false
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatal(chunk.Error)
+		}
+		got += chunk.Content
+		done = done || chunk.Done
+	}
+	if got != "final answer" || !done {
+		t.Fatalf("unexpected tool stream got=%q done=%v", got, done)
+	}
+	loaded, err := repo.Load(context.Background(), "run-stream-tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusCompleted {
+		t.Fatalf("run not completed: %+v", loaded)
+	}
+}
+
 func TestEngineRunDelegatesToSubAgent(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
@@ -717,6 +815,7 @@ func (blockingGateway) Chat(ctx context.Context, _ string, _ llm.ChatRequest) (l
 type retryGateway struct {
 	failures int
 	calls    int
+	err      error
 }
 
 func (g *retryGateway) Supports(_ string, cap llm.Capability) bool {
@@ -726,9 +825,24 @@ func (g *retryGateway) Supports(_ string, cap llm.Capability) bool {
 func (g *retryGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatResponse, error) {
 	g.calls++
 	if g.calls <= g.failures {
+		if g.err != nil {
+			return llm.ChatResponse{}, g.err
+		}
 		return llm.ChatResponse{}, errors.New("temporary llm failure")
 	}
 	return llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "retried"}}, nil
+}
+
+type permanentRetryError struct {
+	message string
+}
+
+func (err permanentRetryError) Error() string {
+	return err.message
+}
+
+func (err permanentRetryError) Retryable() bool {
+	return false
 }
 
 func (g *capturingGateway) Supports(string, llm.Capability) bool {
@@ -793,6 +907,15 @@ func (t *flakyTool) Execute(ctx context.Context, call core.ToolCall) (core.ToolR
 		return core.ToolResult{}, errors.New("temporary tool failure")
 	}
 	return core.ToolResult{Tool: call.Tool, Output: call.Input}, nil
+}
+
+type largeOutputTool struct{}
+
+func (largeOutputTool) Execute(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
+	if err := ctx.Err(); err != nil {
+		return core.ToolResult{}, err
+	}
+	return core.ToolResult{Tool: call.Tool, Output: json.RawMessage(`{"data":"` + strings.Repeat("x", 1024) + `"}`)}, nil
 }
 
 type captureEvents struct {

@@ -99,7 +99,7 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		return nil, fmt.Errorf("openai: unexpected status %s", resp.Status)
+		return nil, openAIAPIError(resp)
 	}
 	ch := make(chan llm.ChatChunk)
 	go func() {
@@ -170,7 +170,7 @@ func (g *Gateway) Embed(ctx context.Context, profileName string, input []string)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("openai: unexpected status %s", resp.Status)
+		return nil, openAIAPIError(resp)
 	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -209,7 +209,7 @@ func (g *Gateway) chat(ctx context.Context, profileName string, req llm.ChatRequ
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return llm.ToolCallResponse{}, fmt.Errorf("openai: unexpected status %s", resp.Status)
+		return llm.ToolCallResponse{}, openAIAPIError(resp)
 	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -272,6 +272,11 @@ func authorizeRequest(httpReq *http.Request, profile llm.Profile) {
 			httpReq.Header.Set("Authorization", "Bearer "+key)
 		}
 	}
+}
+
+func openAIAPIError(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	return llm.APIError{Provider: "openai", StatusCode: resp.StatusCode, Status: resp.Status, Body: strings.TrimSpace(string(body))}
 }
 
 func decodeChatResponse(raw []byte) (llm.ToolCallResponse, error) {

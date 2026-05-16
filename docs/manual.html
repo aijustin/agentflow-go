@@ -881,10 +881,10 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
           <table>
             <thead><tr><th>模式</th><th>适用场景</th><th>关键能力</th><th>关注点</th></tr></thead>
             <tbody>
-              <tr><td>自主模式</td><td>模型自主调用工具直到给出最终回答</td><td>ToolCaller、agent whitelist、max_steps、rate_cap</td><td>工具安全、输出审计、预算治理</td></tr>
+              <tr><td>自主模式</td><td>模型自主调用工具直到给出最终回答</td><td>ToolCaller、agent whitelist、max_steps、rate_cap、tool result cap</td><td>工具安全、输出审计、预算治理</td></tr>
               <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition、transform、parallel batch、retry</td><td>节点幂等、状态持久化、失败恢复</td></tr>
               <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、approval records</td><td>token secret、过期时间、actor identity</td></tr>
-              <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、lease、dead-letter、cancel</td><td>lease TTL、重试策略、队列可观测性</td></tr>
+              <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、lease、renew、dead-letter、cancel</td><td>lease TTL、续租间隔、重试策略、队列可观测性</td></tr>
             </tbody>
           </table>
         </div>

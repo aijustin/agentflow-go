@@ -102,6 +102,49 @@ func TestQueueRecoversExpiredLeases(t *testing.T) {
 	}
 }
 
+func TestQueueRenewsLeases(t *testing.T) {
+	ctx := context.Background()
+	queue := NewQueue()
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	queue.now = func() time.Time { return now }
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: "run", MaxAttempts: 2}); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := queue.Lease(ctx, "worker-1", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("expected lease, ok=%v err=%v", ok, err)
+	}
+	now = now.Add(30 * time.Second)
+	renewed, ok, err := queue.Renew(ctx, lease, 2*time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("expected renewal, ok=%v err=%v", ok, err)
+	}
+	if !renewed.ExpiresAt.Equal(now.Add(2 * time.Minute)) {
+		t.Fatalf("unexpected renewed lease: %+v", renewed)
+	}
+	now = now.Add(90 * time.Second)
+	if _, ok, err := queue.Lease(ctx, "worker-2", time.Minute); err != nil || ok {
+		t.Fatalf("renewed lease should not be stolen, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestQueueRenewRejectsStaleLease(t *testing.T) {
+	ctx := context.Background()
+	queue := NewQueue()
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: "run", MaxAttempts: 2}); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := queue.Lease(ctx, "worker-1", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("expected lease, ok=%v err=%v", ok, err)
+	}
+	stale := lease
+	stale.WorkerID = "worker-2"
+	if _, ok, err := queue.Renew(ctx, stale, time.Minute); !errors.Is(err, asyncpkg.ErrStaleLease) || ok {
+		t.Fatalf("expected stale renewal rejection, ok=%v err=%v", ok, err)
+	}
+}
+
 func TestQueueCancelsJobs(t *testing.T) {
 	ctx := context.Background()
 	queue := NewQueue()

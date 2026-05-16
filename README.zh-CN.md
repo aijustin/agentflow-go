@@ -133,7 +133,7 @@ for chunk := range chunks {
 }
 ```
 
-当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 重试临时 LLM/工具错误，执行注册的 ToolExecutor，将工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。
+当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 对分类后的临时 LLM/工具错误做指数退避重试，执行注册的 ToolExecutor，将受限后的工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。`Stream` 也支持带工具的 Agent：它会运行同一套受治理工具循环，并把最终答案作为流式 chunk 输出。
 
 当 Agent 绑定 `memory` 时，Runtime 会在上下文准备前读取 conversation/session 记忆并注入 LLM 上下文，执行后追加用户输入、助手回复和工具观察结果。根门面会自动为 `in_memory` 类型创建内存仓库，除非调用方显式传入自定义仓库。
 
@@ -207,10 +207,11 @@ if err != nil {
 }
 
 worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
-  WorkerID:    "worker-1",
-  Concurrency: 4,
-  LeaseTTL:    time.Minute,
-  JobTimeout:  5 * time.Minute,
+  WorkerID:      "worker-1",
+  Concurrency:   4,
+  LeaseTTL:      time.Minute,
+  RenewInterval: 30 * time.Second,
+  JobTimeout:    5 * time.Minute,
 })
 ```
 
@@ -875,8 +876,8 @@ internal/
 - `Agent = 拥有 LLM 和 Memory 绑定的实体`。
 - `RunStateRepository` 与 Memory 分离，专门处理可恢复的运行快照。
 - 上下文治理按 LLM Profile 生效：不同 Agent/Tool 可以路由到具有不同窗口、输出、thinking 和压缩策略的 LLM Profile。
-- 自主执行支持 LLM 工具调用循环、工具白名单、审批拒绝、每次运行 rate cap、重试、工具结果回填和生命周期事件。
-- 结构化输出使用 Agent 级 `output_schema` 和 Provider 的 `StructuredOutputter`；流式输出使用 `Streamer`，并在结束后持久化累积的最终答案。
+- 自主执行支持 LLM 工具调用循环、工具白名单、审批拒绝、每次运行 rate cap、分类重试、受限工具结果回填和生命周期事件。
+- 结构化输出使用 Agent 级 `output_schema` 和 Provider 的 `StructuredOutputter`；普通流式输出使用 `Streamer`，带工具 Agent 的流式输出会复用受治理工具循环，并在结束后持久化累积的最终答案。
 - Memory 绑定已接入 Runtime 读写，用于 conversation/session 历史。
 - 固定工作流按图依赖和边执行，支持有限并行、条件跳过、重试、transform/agent/human-gate 节点和 CAS 安全输出保存。
 - Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图。
@@ -945,7 +946,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 - 已接入根门面的 Fixed-workflow runner
 - In-memory Memory、RunStateRepository、BlobStore
 - LLM 抽象，以及 OpenAI-compatible、Anthropic、local、router 和 mock 测试路径的根包构造函数
-- 注册工具和 OpenAI-compatible function calling 的自主工具调用循环
+- 注册工具、OpenAI-compatible function calling 和 Anthropic Messages tool use 的自主工具调用循环
 - Runtime memory integration：注入历史并持久化用户/助手/工具观察结果
 - 固定工作流图调度：依赖、并行、重试、条件、transform/agent/human-gate 节点、CAS 安全输出保存
 - Workflow-level HITL pause/resume
@@ -953,12 +954,12 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 - Skill prompt/workflow expansion
 - 文件版 RunState、Blob、Memory 持久化适配器，以及 PostgreSQL RunState 和 S3-compatible BlobStore 持久化适配器
 - 用于 Worker 和工作流协调的 Redis 分布式租约适配器
-- 异步 Job Queue 和 Worker 契约、内存队列适配器，以及 HTTP submit/status/cancel handler
+- 异步 Job Queue 和 Worker 契约、内存/PostgreSQL 队列适配器、租约续租，以及 HTTP submit/status/cancel handler
 - 企业 identity context、API Key middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization
 - Audit event 模型，以及 noop、内存和 JSONL 文件 sink，加上 framework audit wiring
 - 通过 `--state-dir` 支持 durable CLI resume
-- Runtime hardening：全局/Agent/Profile timeout、LLM/Tool retry、Tool rate cap、失败状态持久化、大输出 Blob 外置
-- 结构化输出和流式输出 Runtime 路径
+- Runtime hardening：全局/Agent/Profile timeout、分类 LLM/Tool retry + 指数退避、Tool rate cap、工具结果回填上限、失败状态持久化、大输出 Blob 外置
+- 结构化输出和流式输出 Runtime 路径，包含带工具 Agent 的流式运行
 - 上下文治理：滑动窗口、启发式摘要压缩、丰富 LLM Profile 配置、`ContextPrepared` 事件
 - CLI 和 HTTP HITL 界面，包含可过期 CLI Token 和更安全的调试台密钥默认值
 - GitHub Actions CI、golangci-lint 配置、govulncheck/CodeQL 工作流、Dependabot、GoReleaser、Dockerfile、安全和社区文档
