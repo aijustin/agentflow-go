@@ -62,6 +62,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Unit and integration tests covering configuration, runtime, HITL, run state, memory, LLM routing, and workflow execution.
 - Environment-driven `realmodel` integration tests for OpenAI-compatible local model endpoints, including long-context governance with a real model.
 
+### Fixed
+
+- Fixed-workflow `agent` nodes now execute through the runtime-backed agent path instead of saving a dummy completion output, so LLM calls, memory, tools, and observability events are preserved.
+
 ### Known limitations
 
 - Autonomous planning beyond tool-calling loops is still incomplete.

@@ -313,6 +313,22 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 	return resp.Message.Content, nil
 }
 
+// RunAgent executes one configured agent inside an existing run. It reuses the
+// runtime LLM, memory, tool, governance, and observability paths without
+// creating or completing a root RunSnapshot.
+func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.AgentInput) (core.AgentOutput, error) {
+	output, err := e.answer(ctx, RunRequest{
+		RunID:   input.RunID,
+		Agent:   agentName,
+		Prompt:  input.Prompt,
+		Context: input.Context,
+	})
+	if err != nil {
+		return core.AgentOutput{}, err
+	}
+	return core.AgentOutput{RunID: input.RunID, Text: output, Raw: input.Context}, nil
+}
+
 var autonomousPlanSchema = json.RawMessage(`{"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"goal":{"type":"string"},"tool":{"type":"string"}},"required":["goal"]}}},"required":["steps"]}`)
 
 type autonomousPlan struct {

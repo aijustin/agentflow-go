@@ -73,6 +73,32 @@ func TestFrameworkRunExecutesFixedWorkflow(t *testing.T) {
 	}
 }
 
+func TestFrameworkFixedWorkflowAgentNodeCallsLLM(t *testing.T) {
+	fw, err := agentflow.NewFromFile(
+		"examples/fixed_workflow.yaml",
+		agentflow.WithLLMGateway(fakeGateway{content: "llm review"}),
+		agentflow.WithToolExecutor("repo_search", noopTool{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-agent-node", Prompt: "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-agent-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output core.AgentOutput
+	if err := json.Unmarshal(snapshot.StepOutputs["review"].Inline, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Text != "llm review" {
+		t.Fatalf("expected agent node to call LLM, got %+v", output)
+	}
+}
+
 func TestFrameworkWithToolResolverResolvesToolLazily(t *testing.T) {
 	scenario := core.Scenario{
 		Name: "lazy-tools",

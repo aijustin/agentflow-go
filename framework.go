@@ -94,6 +94,27 @@ type toolRegistry struct {
 	resolver core.ToolResolver
 }
 
+type workflowAgentRegistry struct {
+	agents map[string]core.Agent
+	engine *appexec.Engine
+}
+
+func (r workflowAgentRegistry) Agent(name string) (core.AgentRunner, bool) {
+	if _, ok := r.agents[name]; !ok {
+		return nil, false
+	}
+	return workflowAgentRunner{name: name, engine: r.engine}, true
+}
+
+type workflowAgentRunner struct {
+	name   string
+	engine *appexec.Engine
+}
+
+func (r workflowAgentRunner) Run(ctx context.Context, input core.AgentInput) (core.AgentOutput, error) {
+	return r.engine.RunAgent(ctx, r.name, input)
+}
+
 func newToolRegistry(eager map[string]core.ToolExecutor, resolver core.ToolResolver) *toolRegistry {
 	if eager == nil {
 		eager = make(map[string]core.ToolExecutor)
@@ -468,6 +489,7 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 		f.tools,
 		f.runs,
 		f.events,
+		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: f.scenario.Agents, engine: f.engine}),
 		orchestration.WithHumanGate(f.gate),
 		orchestration.WithBlobStore(f.blobs),
 	)

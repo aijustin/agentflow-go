@@ -279,9 +279,6 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 
 func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
 	if r.agents == nil {
-		if agent, ok := scenario.Agents[node.Ref]; ok {
-			return r.saveStepOutput(ctx, scenario, runID, node.ID, core.AgentOutput{RunID: runID, Text: fmt.Sprintf("agent %s completed", agent.Name), Raw: node.Input})
-		}
 		return fmt.Errorf("orchestration: agent registry is required")
 	}
 	agent, ok := r.agents.Agent(node.Ref)

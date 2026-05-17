@@ -42,6 +42,27 @@ type Server struct {
 	audit          audit.Sink
 }
 
+type runtimeAgentRegistry struct {
+	agents map[string]core.Agent
+	engine *appexec.Engine
+}
+
+func (r runtimeAgentRegistry) Agent(name string) (core.AgentRunner, bool) {
+	if _, ok := r.agents[name]; !ok {
+		return nil, false
+	}
+	return runtimeAgentRunner{name: name, engine: r.engine}, true
+}
+
+type runtimeAgentRunner struct {
+	name   string
+	engine *appexec.Engine
+}
+
+func (r runtimeAgentRunner) Run(ctx context.Context, input core.AgentInput) (core.AgentOutput, error) {
+	return r.engine.RunAgent(ctx, r.name, input)
+}
+
 type Option func(*serverOptions) error
 
 type serverOptions struct {
@@ -241,7 +262,35 @@ func (s *Server) runScenario(ctx context.Context, scenario core.Scenario, runID 
 				return appexec.RunResult{}, err
 			}
 		}
-		runner := orchestration.NewWorkflowRunner(reg, s.repo, s.events, orchestration.WithHumanGate(humancli.NewGate(s.repo, s.signer, nil)), orchestration.WithBlobStore(s.blobs))
+		gate := humancli.NewGate(s.repo, s.signer, nil)
+		deps := appexec.Dependencies{Runs: s.repo, Blobs: s.blobs, Events: s.events, Tools: reg, HumanGate: gate}
+		if req.RealModel.Enabled {
+			if req.RealModel.BaseURL == "" || req.RealModel.Model == "" || req.RealModel.APIKey == "" {
+				return appexec.RunResult{}, fmt.Errorf("real model base_url, model, and api_key are required")
+			}
+			profileName := firstProfileName(scenario)
+			deps.LLM = llmrouter.New(map[string]llm.Gateway{
+				profileName: openai.NewGateway([]llm.Profile{{
+					Name:     profileName,
+					Provider: "openai-compatible",
+					Model:    req.RealModel.Model,
+					Endpoint: strings.TrimRight(req.RealModel.BaseURL, "/"),
+					Metadata: map[string]string{"api_key": req.RealModel.APIKey},
+				}}, nil),
+			})
+		}
+		engine, err := appexec.NewEngine(scenario, deps)
+		if err != nil {
+			return appexec.RunResult{}, err
+		}
+		runner := orchestration.NewWorkflowRunner(
+			reg,
+			s.repo,
+			s.events,
+			orchestration.WithAgentRegistry(runtimeAgentRegistry{agents: scenario.Agents, engine: engine}),
+			orchestration.WithHumanGate(gate),
+			orchestration.WithBlobStore(s.blobs),
+		)
 		if err := runner.Run(ctx, scenario, runID); err != nil {
 			var paused orchestration.WorkflowPausedError
 			if errors.As(err, &paused) {
