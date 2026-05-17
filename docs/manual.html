@@ -412,6 +412,65 @@
       font-size: 13px;
     }
 
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 14px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .pill-list li {
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      padding: 5px 10px;
+      color: var(--teal-dark);
+      background: color-mix(in srgb, var(--teal), transparent 92%);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .dashboard-preview {
+      display: grid;
+      grid-template-columns: 0.9fr 1.2fr 1fr;
+      gap: 10px;
+      min-height: 260px;
+      margin: 16px 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--paper), var(--teal) 4%);
+    }
+
+    .dashboard-pane {
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    .dashboard-pane b {
+      font-size: 13px;
+      color: var(--teal-dark);
+    }
+
+    .event-row {
+      display: grid;
+      gap: 3px;
+      border-left: 3px solid var(--teal);
+      padding: 8px 8px 8px 10px;
+      background: color-mix(in srgb, var(--paper), var(--teal) 6%);
+      font-size: 12px;
+    }
+
+    .event-row span {
+      color: var(--muted);
+    }
+
     .diagram {
       display: grid;
       gap: 12px;
@@ -605,7 +664,7 @@
         padding: 24px 18px 64px;
       }
 
-      .hero, .grid.three, .grid.two, .flow-row, .metric-strip {
+      .hero, .grid.three, .grid.two, .flow-row, .metric-strip, .dashboard-preview {
         grid-template-columns: 1fr;
       }
 
@@ -674,6 +733,7 @@
           <li><a href="#tools">工具体系</a></li>
           <li><a href="#rag">RAG 与知识库</a></li>
           <li><a href="#enterprise">企业能力</a></li>
+          <li><a href="#observability">可观测面板</a></li>
           <li><a href="#deployment">部署与发布</a></li>
           <li><a href="#checklist">落地检查表</a></li>
         </ul>
@@ -685,9 +745,10 @@
         <div class="hero-copy">
           <span class="eyebrow">agentflow-go 使用手册</span>
           <h2>把 Agent 应用从 Demo 带到企业现场</h2>
-          <p>AgentFlow Go 用 YAML 描述场景，用 Go 接入模型、工具、记忆、运行状态、治理和人工审批。它适合被公司内部平台、业务系统和自动化工作流作为基础框架引用。</p>
+          <p>AgentFlow Go 用 YAML 描述场景，用 Go 接入模型、工具、记忆、运行状态、治理、人工审批和实时可观测面板。它适合被公司内部平台、业务系统和自动化工作流作为基础框架引用。</p>
           <div class="hero-actions">
             <a class="button-link primary-action" href="#quickstart">开始接入</a>
+            <a class="button-link" href="#observability">开启可观测</a>
             <a class="button-link" href="#enterprise">查看企业能力</a>
             <a class="button-link" href="../README.md">阅读 README</a>
           </div>
@@ -718,19 +779,19 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           </div>
           <span class="tag">Go 1.25.10+</span>
         </div>
-        <p class="lead">AgentFlow Go 是一个以场景为中心的 Agent 框架。业务把 Agent、LLM profile、工具、记忆、工作流和人工审批写进 YAML，Go 代码负责把真实模型、数据库、HTTP、文件系统、对象存储和企业治理能力注入运行时。</p>
+        <p class="lead">AgentFlow Go 是一个以场景为中心的 Agent 框架。业务把 Agent、LLM profile、工具、Skill、记忆、工作流、人工审批和策略写进 YAML，Go 代码负责把真实模型、数据库、HTTP、文件系统、对象存储、身份治理和可观测能力注入运行时。</p>
         <div class="metric-strip" aria-label="能力摘要">
-          <div class="metric"><strong>YAML</strong><span>声明 Agent、工具、LLM、workflow</span></div>
-          <div class="metric"><strong>端口</strong><span>公共契约在 pkg，适配器在 internal</span></div>
-          <div class="metric"><strong>运行时</strong><span>自动工具调用、固定工作流、HITL</span></div>
-          <div class="metric"><strong>企业能力</strong><span>审计、RBAC、治理、持久化、部署模板</span></div>
+          <div class="metric"><strong>场景</strong><span>声明 Agent、Tool、Skill、workflow、policy</span></div>
+          <div class="metric"><strong>模型</strong><span>Provider Router、结构化输出、流式输出、规划 pass</span></div>
+          <div class="metric"><strong>运行</strong><span>自主工具循环、固定工作流、HITL、异步 Worker</span></div>
+          <div class="metric"><strong>生产</strong><span>可观测面板、审计、OIDC/JWKS、Redis/Postgres/S3</span></div>
         </div>
         <div class="diagram" aria-label="AgentFlow 架构图">
           <div class="flow-row">
-            <div class="flow-node"><b>场景 YAML</b><span>Agent、LLM profile、工具、workflow、策略</span></div>
-            <div class="flow-node"><b>根门面</b><span>NewFromFile、options、constructors、adapters</span></div>
-            <div class="flow-node"><b>运行时</b><span>自主循环、workflow runner、HITL resume</span></div>
-            <div class="flow-node"><b>企业适配器</b><span>PostgreSQL、Redis、S3、MCP、RAG、HTTP、SQL</span></div>
+            <div class="flow-node"><b>场景 YAML</b><span>Agent、LLM profile、工具、Skill、workflow、策略</span></div>
+            <div class="flow-node"><b>根门面</b><span>NewFromFile、options、provider router、constructors</span></div>
+            <div class="flow-node"><b>运行时</b><span>规划、工具循环、workflow runner、HITL resume、事件流</span></div>
+            <div class="flow-node"><b>生产适配器</b><span>PostgreSQL、Redis、S3、MCP、RAG、HTTP、SQL、Observability</span></div>
           </div>
         </div>
       </section>
@@ -764,6 +825,13 @@ GOTOOLCHAIN=auto make release-check</code></pre>
               <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json</code></pre></div>
             </div>
           </div>
+          <div class="step">
+            <div class="step-index">4</div>
+            <div>
+              <h4>开启观测面板</h4>
+              <p>在宿主服务里接入 <code>NewEventStoreSink</code>、<code>NewEventHub</code> 和 <code>NewObservabilityHTTPHandler</code>，即可查看实时会话、调用时序和事件详情。</p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -781,6 +849,9 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           <div class="panel"><h4>记忆</h4><p>会话或命名空间记忆。运行前注入上下文，运行后写入用户、助手和工具观察。</p></div>
           <div class="panel"><h4>运行状态</h4><p>可恢复执行快照。用于 HITL 暂停、workflow 节点状态、CAS 版本和跨进程恢复。</p></div>
           <div class="panel"><h4>工作流</h4><p>固定图编排。支持依赖、条件表达式、重试、set/copy 转换节点、Agent 节点、人工门禁和并发批次。</p></div>
+          <div class="panel"><h4>技能包</h4><p>声明式 prompt fragment、Agent policy、Tool policy 和 workflow segment，会在场景构建阶段展开。</p></div>
+          <div class="panel"><h4>可观测事件</h4><p>Runtime 通过 EventSink 输出 Run、Step、Tool、LLM、Memory、Context 和 HITL 事件，可持久化并实时推送。</p></div>
+          <div class="panel"><h4>身份与治理</h4><p>Principal、RBAC、API Key、OIDC/JWKS JWT、工具授权、预算、side effect 和输出脱敏统一走策略端口。</p></div>
         </div>
       </section>
 
@@ -831,6 +902,8 @@ GOTOOLCHAIN=auto make release-check</code></pre>
       instructions: "只执行 allowlisted read-only 查询。"
   orchestration:
     mode: autonomous
+    planning:
+      enabled: true
     max_steps: 6</code></pre></div>
         <div class="callout"><strong>建议:</strong> 把工具 `side_effect`、`approval`、`rate_cap` 和 `input_schema` 当作安全契约维护。这样即使底层工具很强，Agent 运行时仍然走统一治理路径。</div>
       </section>
@@ -863,6 +936,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
   agentflow.WithLLMGateway(gateway),
   agentflow.WithToolExecutor("sql.query", sqlTool),
   agentflow.WithRunStateRepository(runs),
+  agentflow.WithEventSink(agentflow.NewEventStoreSink(eventStore, eventHub)),
   agentflow.WithAuditSink(auditSink),
   agentflow.WithToolGovernancePolicy(policy),
 )</code></pre></div>
@@ -881,10 +955,11 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
           <table>
             <thead><tr><th>模式</th><th>适用场景</th><th>关键能力</th><th>关注点</th></tr></thead>
             <tbody>
-              <tr><td>自主模式</td><td>模型自主调用工具直到给出最终回答</td><td>ToolCaller、agent whitelist、max_steps、rate_cap、tool result cap</td><td>工具安全、输出审计、预算治理</td></tr>
-              <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition 表达式、transform set/copy、parallel batch、retry</td><td>节点幂等、状态持久化、失败恢复</td></tr>
-              <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、approval records</td><td>token secret、过期时间、actor identity</td></tr>
-              <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、lease、renew、dead-letter、cancel</td><td>lease TTL、续租间隔、重试策略、队列可观测性</td></tr>
+              <tr><td>自主模式</td><td>模型规划并调用工具直到给出最终回答</td><td>planning pass、ToolCaller、agent whitelist、max_steps、rate_cap、tool result cap</td><td>工具安全、输出审计、预算治理、事件追踪</td></tr>
+              <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition 表达式、transform set/copy、parallel batch、retry、agent node</td><td>节点幂等、CAS 状态持久化、失败恢复</td></tr>
+              <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、approve/reject/amend、PendingGate</td><td>token secret、过期时间、actor identity、审计记录</td></tr>
+              <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、PostgreSQL queue、lease、renew、dead-letter、cancel</td><td>lease TTL、续租间隔、重试策略、队列可观测性</td></tr>
+              <tr><td>结构化/流式</td><td>JSON 输出契约或实时答复体验</td><td>output_schema、StructuredOutputter、Streamer、tool-enabled stream</td><td>Provider capability 显式声明，失败时清晰报错</td></tr>
             </tbody>
           </table>
         </div>
@@ -902,6 +977,9 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
           <div class="panel"><h4>HTTP 工具</h4><p>读取 allowlisted 内部 API。默认仅允许 GET/HEAD，限制 host、method 和响应大小。</p><span class="tag">builtin.http</span></div>
           <div class="panel"><h4>文件系统工具</h4><p>读取 allowlisted root 下的本地文件。拒绝路径逃逸、符号链接逃逸和超大文件。</p><span class="tag">builtin.filesystem</span></div>
           <div class="panel"><h4>SQL 工具</h4><p>执行命名 read-only SQL。支持 PostgreSQL、MySQL、ClickHouse 的 `database/sql` 驱动。</p><span class="tag">builtin.sql</span></div>
+          <div class="panel"><h4>MCP 工具</h4><p>把 HTTP 或 stdio MCP Server 包装成普通 ToolExecutor，继续使用 allowlist、审批、速率限制和审计。</p><span class="tag">mcp</span></div>
+          <div class="panel"><h4>Retriever 工具</h4><p>组合 Embedder、VectorStore 和 namespace/filter，把 pgvector 检索结果带 citation 返回给 Agent。</p><span class="tag">rag</span></div>
+          <div class="panel"><h4>子 Agent</h4><p>supervisor 可以把 sub_agents 当作虚拟 delegation tool 调用，复用同一套事件和治理模型。</p><span class="tag">delegate</span></div>
         </div>
         <div class="code-block"><div class="code-title"><span>SQL 工具装配</span><button class="copy" type="button">复制</button></div><pre><code>sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
   DB: db,
@@ -961,40 +1039,132 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
             <h3>企业能力</h3>
           </div>
         </div>
+        <p class="lead">当前企业能力已经从日志和审计扩展到身份、授权、运行状态、异步执行、可观测面板和数据库/对象存储适配器。根门面保留低依赖，具体驱动仍由宿主应用选择。</p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>能力</th><th>公共入口</th><th>默认实现</th><th>生产建议</th></tr></thead>
             <tbody>
-              <tr><td>运行状态</td><td>WithRunStateRepository</td><td>file, in-memory, PostgreSQL</td><td>生产使用 PostgreSQL，保留 CAS 语义。</td></tr>
+              <tr><td>运行状态</td><td>WithRunStateRepository</td><td>file, in-memory, PostgreSQL, Redis</td><td>PostgreSQL 适合审计型持久化，Redis 适合低延迟 CAS 快照。</td></tr>
               <tr><td>Blob 存储</td><td>WithBlobStore</td><td>file, in-memory, S3-compatible</td><td>大输出外部化到 MinIO 或 S3。</td></tr>
-              <tr><td>异步队列</td><td>pkg/async</td><td>in-memory, PostgreSQL</td><td>使用 worker 独立部署并配置 lease。</td></tr>
-              <tr><td>Identity/RBAC</td><td>pkg/identity, pkg/security</td><td>API key, JWT Bearer, static RBAC</td><td>接入公司 OIDC 后保持同一 policy port。</td></tr>
+              <tr><td>异步队列</td><td>pkg/async, NewProductionHTTPHandler</td><td>in-memory, PostgreSQL</td><td>使用 worker 独立部署，HTTP API 挂载 submit/status/cancel。</td></tr>
+              <tr><td>可观测面板</td><td>NewObservabilityHTTPHandler</td><td>in-memory, PostgreSQL EventStore, SSE</td><td>挂在受保护路径下，PostgreSQL 默认自动建表，也可迁移先行。</td></tr>
+              <tr><td>Identity/RBAC</td><td>pkg/identity, pkg/security</td><td>API key, static JWT, OIDC/JWKS, static RBAC</td><td>接入公司 OIDC，tenant/workspace/project 进入 Principal Scope。</td></tr>
               <tr><td>Audit</td><td>WithAuditSink</td><td>noop, in-memory, file, slog</td><td>高风险工具和 HITL 必须可追踪 actor。</td></tr>
               <tr><td>Governance</td><td>pkg/governance</td><td>budget, side effect, redaction</td><td>对 tool、LLM、输出做统一策略链。</td></tr>
+              <tr><td>Provider 路由</td><td>NewLLMProviderRouter</td><td>OpenAI-compatible, Anthropic, mock</td><td>按 profile 路由 chat/tool/structured/stream/embed，并显式校验 capability。</td></tr>
+              <tr><td>分布式协调</td><td>NewRedisLocker</td><td>Redis lease</td><td>用于 Worker 和跨实例任务协调，配置 TTL、renew 和 key prefix。</td></tr>
             </tbody>
           </table>
         </div>
       </section>
 
+      <section id="observability">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">10 / 实时运营视角</div>
+            <h3>可观测面板</h3>
+          </div>
+          <span class="tag">EventStore + SSE</span>
+        </div>
+        <p class="lead">可观测面板把运行时事件变成产品化视图：左侧是实时会话，中间是 Run/Step/Tool/LLM/Memory/HITL 调用时序，右侧展开事件 JSON payload。它复用 <code>core.EventSink</code>，事件可以同时进入 PostgreSQL、日志、指标和 tracing。</p>
+        <div class="dashboard-preview" aria-label="可观测面板布局示意">
+          <div class="dashboard-pane">
+            <b>Sessions</b>
+            <div class="event-row"><strong>run-42</strong><span>running · support-assistant</span></div>
+            <div class="event-row"><strong>run-41</strong><span>completed · 18 events</span></div>
+            <div class="event-row"><strong>run-40</strong><span>paused · human gate</span></div>
+          </div>
+          <div class="dashboard-pane">
+            <b>Timeline</b>
+            <div class="event-row"><strong>#1 RunStarted</strong><span>scenario loaded</span></div>
+            <div class="event-row"><strong>#2 LLMCalled</strong><span>profile=chat</span></div>
+            <div class="event-row"><strong>#3 ToolCalled</strong><span>sql.query · read</span></div>
+            <div class="event-row"><strong>#4 LLMReturned</strong><span>tokens + latency metadata</span></div>
+          </div>
+          <div class="dashboard-pane">
+            <b>Details</b>
+            <pre><code>{
+  "run_id": "run-42",
+  "sequence": 3,
+  "type": "ToolCalled",
+  "payload": {"tool":"sql.query"}
+}</code></pre>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="panel">
+            <h4>最小接入</h4>
+            <div class="code-block"><div class="code-title"><span>observability.go</span><button class="copy" type="button">复制</button></div><pre><code>eventStore, err := agentflow.NewPostgresEventStore(ctx,
+  agentflow.PostgresEventStoreConfig{DB: db})
+if err != nil {
+  log.Fatal(err)
+}
+eventHub := agentflow.NewEventHub()
+
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithEventSink(agentflow.NewEventFanoutSink(
+    agentflow.NewEventStoreSink(eventStore, eventHub),
+    agentflow.NewSlogEventSink(logger),
+  )),
+)</code></pre></div>
+          </div>
+          <div class="panel">
+            <h4>挂载面板</h4>
+            <div class="code-block"><div class="code-title"><span>http.go</span><button class="copy" type="button">复制</button></div><pre><code>dashboard, err := agentflow.NewObservabilityHTTPHandler(
+  agentflow.ObservabilityHTTPHandlerConfig{
+    Store:          eventStore,
+    Hub:            eventHub,
+    AuthMiddleware: authMiddleware,
+  })
+if err != nil {
+  log.Fatal(err)
+}
+mux.Handle("/observability/",
+  http.StripPrefix("/observability", dashboard))</code></pre></div>
+          </div>
+        </div>
+        <ul class="pill-list" aria-label="可观测要点">
+          <li>自动创建 agentflow_runtime_events</li>
+          <li>GET /api/runs</li>
+          <li>GET /api/runs/{run_id}/events</li>
+          <li>GET /api/runs/{run_id}/stream</li>
+          <li>支持 SkipSchemaSetup</li>
+          <li>事件 payload 需先脱敏</li>
+        </ul>
+        <div class="callout"><strong>生产建议:</strong> 默认自动建表适合首次启用和开发环境；权限受控或大表环境建议先执行 <a href="../deploy/migrations/postgres/0001_agentflow_core.up.sql">PostgreSQL migration</a>，再设置 <code>SkipSchemaSetup: true</code>。外部暴露面板前必须加 API Key、JWT 或公司网关认证。</div>
+      </section>
+
       <section id="deployment">
         <div class="section-head">
           <div>
-            <div class="section-kicker">10 / 运维发布</div>
+            <div class="section-kicker">11 / 运维发布</div>
             <h3>部署与发布</h3>
           </div>
         </div>
         <div class="grid two">
           <div class="panel">
             <h4>本地企业栈</h4>
-            <p>`deploy/enterprise` 包含 PostgreSQL+pgvector、Redis、MinIO 和 `agent-http` 的 Compose 模板，适合本地验证生产拓扑。</p>
+            <p><code>deploy/enterprise</code> 包含 PostgreSQL+pgvector、Redis、MinIO 和 <code>agent-http</code> 的 Compose 模板，适合本地验证生产拓扑。</p>
             <div class="code-block"><div class="code-title"><span>Compose 启动</span><button class="copy" type="button">复制</button></div><pre><code>cd deploy/enterprise
 cp .env.example .env
 docker compose up --build</code></pre></div>
           </div>
           <div class="panel">
             <h4>发布检查</h4>
-            <p>`make release-check` 会运行格式化、单元测试、`go vet`、二进制构建、`govulncheck` 和所有示例 YAML 校验。</p>
+            <p><code>make release-check</code> 会运行格式化、单元测试、<code>go vet</code>、二进制构建、<code>govulncheck</code> 和所有示例 YAML 校验。</p>
             <div class="code-block"><div class="code-title"><span>发布检查</span><button class="copy" type="button">复制</button></div><pre><code>GOTOOLCHAIN=auto make release-check</code></pre></div>
+          </div>
+          <div class="panel">
+            <h4>生产数据库</h4>
+            <p>PostgreSQL 迁移包含 RunState、JobQueue、Runtime Events 和 pgvector 表。可观测事件仓库会默认自动建表，生产可改为迁移先行。</p>
+            <div class="code-block"><div class="code-title"><span>PostgreSQL</span><button class="copy" type="button">复制</button></div><pre><code>psql "$AGENTFLOW_POSTGRES_DSN" \
+  -f deploy/migrations/postgres/0001_agentflow_core.up.sql</code></pre></div>
+          </div>
+          <div class="panel">
+            <h4>HTTP 安全</h4>
+            <p>非 loopback HTTP 服务必须配置强 token secret、API key 或 JWT middleware；可观测面板、异步 run API 和 HITL bridge 都应在同一认证策略后面。</p>
+            <ul class="pill-list"><li>AGENT_TOKEN_SECRET</li><li>AGENT_HTTP_API_KEY</li><li>OIDC/JWKS</li><li>RBAC policy</li></ul>
           </div>
         </div>
       </section>
@@ -1002,7 +1172,7 @@ docker compose up --build</code></pre></div>
       <section id="checklist">
         <div class="section-head">
           <div>
-            <div class="section-kicker">11 / 落地采用</div>
+            <div class="section-kicker">12 / 落地采用</div>
             <h3>落地检查表</h3>
           </div>
         </div>
@@ -1012,8 +1182,11 @@ docker compose up --build</code></pre></div>
             <ul>
               <li>每个工具都有输入 schema、side effect 和 approval 策略。</li>
               <li>LLM profile 显式声明 capabilities。</li>
+              <li>需要多模型时使用 Provider Router，chat/tool/structured/stream/embed 按 profile 路由。</li>
+              <li>复杂自主任务开启 planning pass，并把计划写入后续上下文。</li>
               <li>需要恢复的流程使用持久化 RunStateRepository。</li>
-              <li>RAG 结果带 source metadata 和 citation，并可接入 hybrid search 与 reranker。</li>
+              <li>RAG 结果带 source metadata 和 citation，VectorStore 按 namespace 隔离。</li>
+              <li>事件 payload 只放运营元数据，敏感输出先走 redactor。</li>
               <li>新增公共 API 同步 README、CHANGELOG 和 godoc。</li>
             </ul>
           </div>
@@ -1021,6 +1194,9 @@ docker compose up --build</code></pre></div>
             <h4>生产阶段</h4>
             <ul>
               <li>非 loopback HTTP 服务配置 `AGENT_TOKEN_SECRET` 和 `AGENT_HTTP_API_KEY`。</li>
+              <li>可观测面板挂载在受保护路径，并启用 PostgreSQL EventStore。</li>
+              <li>受控数据库环境先跑 migration，再对 EventStore 设置 `SkipSchemaSetup`。</li>
+              <li>企业认证优先接入 OIDC/JWKS JWT，并保留 tenant/workspace/project scope。</li>
               <li>数据库工具使用只读账号和最小表权限。</li>
               <li>审计日志覆盖审批、拒绝、修订和高风险工具调用。</li>
               <li>对象存储、数据库、Redis 由平台统一管理密钥。</li>
