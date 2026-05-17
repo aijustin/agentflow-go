@@ -47,6 +47,39 @@ fw, err := agentflow.NewFromFile("scenario.yaml", agentflow.WithEventSink(eventS
 
 标签必须保持有限基数。使用路由模式和枚举值，不要使用用户 ID 或原始 prompt。
 
+### 可观测面板
+
+框架现在提供面向运行时会话的可观测面板。它通过 `core.EventSink` 采集事件，并将事件追加到 `observability.EventStore`，再通过 `EventHub` 向浏览器提供 Server-Sent Events 实时更新。面板可以查看：
+
+- 当前和历史会话、状态、场景名、最后更新时间和事件数。
+- 会话内的编排时序，包括 run、step、tool、LLM、memory、human gate 等事件。
+- 每个事件的 trace/span、时间戳、序号和 JSON payload，便于展开输入/输出或工具返回摘要。
+
+最小接入方式：
+
+```go
+eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{DB: db})
+if err != nil {
+	log.Fatal(err)
+}
+eventHub := agentflow.NewEventHub()
+
+fw, err := agentflow.NewFromFile(
+	"scenario.yaml",
+	agentflow.WithEventSink(agentflow.NewEventFanoutSink(
+		agentflow.NewEventStoreSink(eventStore, eventHub),
+		agentflow.NewObservabilityEventSink(recorder, tracer, agentflow.NewSlogEventSink(logger)),
+	)),
+)
+
+dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+	Store: eventStore,
+	Hub:   eventHub,
+})
+```
+
+`NewPostgresEventStore` 默认自动执行幂等建表，创建 `agentflow_runtime_events` 和查询索引；受控生产环境也可以先执行 [deploy/migrations/postgres/0001_agentflow_core.up.sql](../deploy/migrations/postgres/0001_agentflow_core.up.sql)，再设置 `SkipSchemaSetup: true`。完整说明见 [docs/observability-dashboard.md](observability-dashboard.md)。
+
 ### 链路追踪
 
 框架已定义 `pkg/observability.Tracer` 与标准 span 名称，例如 `agentflow.runtime.event`、`agentflow.run`、`agentflow.tool.call` 和 `agentflow.queue.job`。`NewObservabilityEventSink` 可以把运行时事件映射为追踪 span；完整 OpenTelemetry SDK 接入由宿主应用注入具体 tracer/exporter。
@@ -95,3 +128,4 @@ OpenTelemetry span 应包裹：
 3. 增加审计 sink 端口和内存/文件适配器。已在 `pkg/audit`、`NewInMemoryAuditSink`、`NewFileAuditSink` 中完成。
 4. 增加预算、工具副作用、输出脱敏的策略接口。已在 `pkg/governance` 中完成；运行时工具治理和持久化输出脱敏已接入。
 5. 指标与追踪端口已通过 `pkg/observability` 和 `NewObservabilityEventSink` 实现；依赖评审后可在可选集成包中增加 Prometheus/OpenTelemetry 具体适配器。
+6. 运行时事件仓库、PostgreSQL 自动建表、实时 EventHub 和可观测 HTTP 面板已通过 `NewPostgresEventStore`、`NewEventStoreSink`、`NewEventHub` 和 `NewObservabilityHTTPHandler` 提供。

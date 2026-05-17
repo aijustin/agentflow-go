@@ -400,6 +400,32 @@ fw, err := agentflow.NewFromFile(
 
 治理策略会在工具执行前生效，输出脱敏会在运行时 step output 持久化前执行。
 
+AgentFlow 也内置了运行时可观测面板，用于查看实时会话、编排时序和事件详情。PostgreSQL 事件仓库默认自动创建表和索引，开启面板只需要接入事件 sink 并挂载 HTTP handler：
+
+```go
+eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{DB: db})
+if err != nil {
+  log.Fatal(err)
+}
+eventHub := agentflow.NewEventHub()
+
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithEventSink(agentflow.NewEventFanoutSink(
+    agentflow.NewEventStoreSink(eventStore, eventHub),
+    agentflow.NewSlogEventSink(logger),
+  )),
+)
+
+dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+  Store: eventStore,
+  Hub:   eventHub,
+})
+mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
+```
+
+数据库配置、自动建表、接口列表和安全建议见 [docs/observability-dashboard.md](docs/observability-dashboard.md)。
+
 底层扩展接口位于：
 
 - `github.com/aijustin/agentflow-go/pkg/core`
@@ -929,7 +955,8 @@ internal/
 - 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约可用于长任务执行；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
 - 企业 identity context、API Key middleware、静态和 OIDC/JWKS JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewOIDCJWTAuthenticator`、`NewAPIKeyMiddleware`、`NewJWTMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
 - Audit event 契约和 noop/内存/文件 sink 可通过 `pkg/audit`、`NewNoopAuditSink`、`NewInMemoryAuditSink`、`NewFileAuditSink` 和 `WithAuditSink` 使用。
-- 企业认证/租户和可观测/治理设计见 [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md) 与 [docs/observability-governance.md](docs/observability-governance.md)。
+- 运行时可观测面板、事件仓库、实时 EventHub 和 PostgreSQL 自动建表可通过 `NewPostgresEventStore`、`NewInMemoryEventStore`、`NewEventStoreSink`、`NewEventHub` 和 `NewObservabilityHTTPHandler` 使用。
+- 企业认证/租户和可观测/治理设计见 [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md)、[docs/observability-governance.md](docs/observability-governance.md) 与 [docs/observability-dashboard.md](docs/observability-dashboard.md)。
 - 内存适配器是并发安全的，并按 run/session 命名空间隔离。
 
 ## 测试

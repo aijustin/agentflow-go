@@ -400,6 +400,32 @@ fw, err := agentflow.NewFromFile(
 
 Governance policies run before tool execution, and output redaction is applied before runtime step outputs are persisted.
 
+AgentFlow also ships a runtime observability dashboard for live sessions and event detail drill-downs. The PostgreSQL event store creates its table and indexes automatically by default, so enabling the panel only requires wiring an event sink and mounting the handler:
+
+```go
+eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{DB: db})
+if err != nil {
+  log.Fatal(err)
+}
+eventHub := agentflow.NewEventHub()
+
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithEventSink(agentflow.NewEventFanoutSink(
+    agentflow.NewEventStoreSink(eventStore, eventHub),
+    agentflow.NewSlogEventSink(logger),
+  )),
+)
+
+dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+  Store: eventStore,
+  Hub:   eventHub,
+})
+mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
+```
+
+See [docs/observability-dashboard.md](docs/observability-dashboard.md) for database configuration, automatic schema setup, endpoints, and security notes.
+
 Low-level extension interfaces remain available through:
 
 - `github.com/aijustin/agentflow-go/pkg/core`
@@ -932,7 +958,8 @@ Design boundaries:
 - File-backed RunState, BlobStore, and Memory adapters are available from the root facade for durable local persistence; PostgreSQL-backed and Redis-backed RunState are available for production persistence; S3-compatible BlobStore is available for large runtime/workflow outputs; Redis-backed leases are available for worker coordination; async queue and worker contracts are available for long-running execution; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
 - Enterprise identity context, API key middleware, static and OIDC/JWKS JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, `NewOIDCJWTAuthenticator`, `NewAPIKeyMiddleware`, `NewJWTMiddleware`, `NewAuthorizationMiddleware`, and `WithSecurityPolicy`.
 - Audit event contracts and noop/in-memory/file sinks are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.
-- Enterprise auth/tenancy and observability/governance designs are documented in [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md) and [docs/observability-governance.md](docs/observability-governance.md).
+- Runtime observability dashboard, event store, live event hub, and automatic PostgreSQL schema setup are available through `NewPostgresEventStore`, `NewInMemoryEventStore`, `NewEventStoreSink`, `NewEventHub`, and `NewObservabilityHTTPHandler`.
+- Enterprise auth/tenancy and observability/governance designs are documented in [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md), [docs/observability-governance.md](docs/observability-governance.md), and [docs/observability-dashboard.md](docs/observability-dashboard.md).
 - In-memory adapters are concurrency-safe and namespaced by run/session where applicable.
 
 ## Testing

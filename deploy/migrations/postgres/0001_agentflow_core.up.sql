@@ -43,6 +43,29 @@ CREATE INDEX IF NOT EXISTS agentflow_jobs_run_idx
 ON agentflow_jobs (run_id)
 WHERE run_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS agentflow_runtime_events (
+  id bigserial PRIMARY KEY,
+  run_id text NOT NULL,
+  sequence bigint NOT NULL,
+  event_type text NOT NULL,
+  scenario_name text NOT NULL DEFAULT '',
+  trace_id text NOT NULL DEFAULT '',
+  span_id text NOT NULL DEFAULT '',
+  occurred_at timestamptz NOT NULL,
+  payload_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (run_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS agentflow_runtime_events_run_sequence_idx
+ON agentflow_runtime_events (run_id, sequence);
+
+CREATE INDEX IF NOT EXISTS agentflow_runtime_events_run_updated_idx
+ON agentflow_runtime_events (run_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS agentflow_runtime_events_type_time_idx
+ON agentflow_runtime_events (event_type, occurred_at DESC);
+
 CREATE TABLE IF NOT EXISTS agentflow_knowledge_embeddings (
   namespace text NOT NULL,
   document_id text NOT NULL,
