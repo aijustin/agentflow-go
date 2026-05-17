@@ -23,6 +23,18 @@
 
 ### 指标
 
+框架已提供轻量级指标端口 `pkg/observability.Recorder` 和事件适配器 `agentflow.NewObservabilityEventSink`。当前适配器会把 `core.EventSink` 事件转换为低基数指标，例如 `agentflow_runtime_events_total`，并可继续转发给已有事件 sink。Prometheus exporter 仍建议放在应用侧或后续可选适配器中，以免核心库强制引入运行时依赖。
+
+```go
+eventSink := agentflow.NewObservabilityEventSink(
+	prometheusRecorder,
+	otelTracer,
+	agentflow.NewSlogEventSink(logger),
+)
+
+fw, err := agentflow.NewFromFile("scenario.yaml", agentflow.WithEventSink(eventSink))
+```
+
 初始 Prometheus 指标应覆盖：
 
 - 按状态统计运行数量。
@@ -36,6 +48,8 @@
 标签必须保持有限基数。使用路由模式和枚举值，不要使用用户 ID 或原始 prompt。
 
 ### 链路追踪
+
+框架已定义 `pkg/observability.Tracer` 与标准 span 名称，例如 `agentflow.runtime.event`、`agentflow.run`、`agentflow.tool.call` 和 `agentflow.queue.job`。`NewObservabilityEventSink` 可以把运行时事件映射为追踪 span；完整 OpenTelemetry SDK 接入由宿主应用注入具体 tracer/exporter。
 
 OpenTelemetry span 应包裹：
 
@@ -80,4 +94,4 @@ OpenTelemetry span 应包裹：
 2. 增加 no-op 实现和 `slog` 实现。已通过 `NewSlogEventSink` 完成。
 3. 增加审计 sink 端口和内存/文件适配器。已在 `pkg/audit`、`NewInMemoryAuditSink`、`NewFileAuditSink` 中完成。
 4. 增加预算、工具副作用、输出脱敏的策略接口。已在 `pkg/governance` 中完成；运行时工具治理和持久化输出脱敏已接入。
-5. 依赖评审后，在可选依赖或集成包中增加指标和追踪。
+5. 指标与追踪端口已通过 `pkg/observability` 和 `NewObservabilityEventSink` 实现；依赖评审后可在可选集成包中增加 Prometheus/OpenTelemetry 具体适配器。

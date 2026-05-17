@@ -780,7 +780,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           <div class="panel"><h4>LLM Profile</h4><p>模型配置。声明 provider、model、context window、能力矩阵、timeout、temperature 和 extra body。</p></div>
           <div class="panel"><h4>记忆</h4><p>会话或命名空间记忆。运行前注入上下文，运行后写入用户、助手和工具观察。</p></div>
           <div class="panel"><h4>运行状态</h4><p>可恢复执行快照。用于 HITL 暂停、workflow 节点状态、CAS 版本和跨进程恢复。</p></div>
-          <div class="panel"><h4>工作流</h4><p>固定图编排。支持依赖、条件边、重试、转换节点、Agent 节点、人工门禁和并发批次。</p></div>
+          <div class="panel"><h4>工作流</h4><p>固定图编排。支持依赖、条件表达式、重试、set/copy 转换节点、Agent 节点、人工门禁和并发批次。</p></div>
         </div>
       </section>
 
@@ -882,7 +882,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
             <thead><tr><th>模式</th><th>适用场景</th><th>关键能力</th><th>关注点</th></tr></thead>
             <tbody>
               <tr><td>自主模式</td><td>模型自主调用工具直到给出最终回答</td><td>ToolCaller、agent whitelist、max_steps、rate_cap、tool result cap</td><td>工具安全、输出审计、预算治理</td></tr>
-              <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition、transform、parallel batch、retry</td><td>节点幂等、状态持久化、失败恢复</td></tr>
+              <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition 表达式、transform set/copy、parallel batch、retry</td><td>节点幂等、状态持久化、失败恢复</td></tr>
               <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、approval records</td><td>token secret、过期时间、actor identity</td></tr>
               <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、lease、renew、dead-letter、cancel</td><td>lease TTL、续租间隔、重试策略、队列可观测性</td></tr>
             </tbody>
@@ -968,7 +968,7 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
               <tr><td>运行状态</td><td>WithRunStateRepository</td><td>file, in-memory, PostgreSQL</td><td>生产使用 PostgreSQL，保留 CAS 语义。</td></tr>
               <tr><td>Blob 存储</td><td>WithBlobStore</td><td>file, in-memory, S3-compatible</td><td>大输出外部化到 MinIO 或 S3。</td></tr>
               <tr><td>异步队列</td><td>pkg/async</td><td>in-memory, PostgreSQL</td><td>使用 worker 独立部署并配置 lease。</td></tr>
-              <tr><td>Identity/RBAC</td><td>pkg/identity, pkg/security</td><td>API key, static RBAC</td><td>接入公司 OIDC 后保持同一 policy port。</td></tr>
+              <tr><td>Identity/RBAC</td><td>pkg/identity, pkg/security</td><td>API key, JWT Bearer, static RBAC</td><td>接入公司 OIDC 后保持同一 policy port。</td></tr>
               <tr><td>Audit</td><td>WithAuditSink</td><td>noop, in-memory, file, slog</td><td>高风险工具和 HITL 必须可追踪 actor。</td></tr>
               <tr><td>Governance</td><td>pkg/governance</td><td>budget, side effect, redaction</td><td>对 tool、LLM、输出做统一策略链。</td></tr>
             </tbody>
@@ -1013,7 +1013,7 @@ docker compose up --build</code></pre></div>
               <li>每个工具都有输入 schema、side effect 和 approval 策略。</li>
               <li>LLM profile 显式声明 capabilities。</li>
               <li>需要恢复的流程使用持久化 RunStateRepository。</li>
-              <li>RAG 结果带 source metadata 和 citation。</li>
+              <li>RAG 结果带 source metadata 和 citation，并可接入 hybrid search 与 reranker。</li>
               <li>新增公共 API 同步 README、CHANGELOG 和 godoc。</li>
             </ul>
           </div>

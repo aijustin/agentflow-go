@@ -15,11 +15,22 @@ type DocumentEmbedding struct {
 }
 
 type Query struct {
-	Namespace string            `json:"namespace,omitempty"`
-	Vector    []float32         `json:"vector"`
-	Limit     int               `json:"limit,omitempty"`
-	Filter    map[string]string `json:"filter,omitempty"`
+	Namespace    string            `json:"namespace,omitempty"`
+	Text         string            `json:"text,omitempty"`
+	Mode         SearchMode        `json:"mode,omitempty"`
+	Vector       []float32         `json:"vector"`
+	Limit        int               `json:"limit,omitempty"`
+	Filter       map[string]string `json:"filter,omitempty"`
+	VectorWeight float64           `json:"vector_weight,omitempty"`
+	TextWeight   float64           `json:"text_weight,omitempty"`
 }
+
+type SearchMode string
+
+const (
+	SearchModeVector SearchMode = "vector"
+	SearchModeHybrid SearchMode = "hybrid"
+)
 
 type SearchResult struct {
 	Document Document `json:"document"`
@@ -39,4 +50,12 @@ type VectorStore interface {
 	Upsert(ctx context.Context, documents []DocumentEmbedding) error
 	Query(ctx context.Context, query Query) ([]SearchResult, error)
 	Delete(ctx context.Context, req DeleteRequest) error
+}
+
+type HybridSearcher interface {
+	HybridQuery(ctx context.Context, query Query) ([]SearchResult, error)
+}
+
+type Reranker interface {
+	Rerank(ctx context.Context, query string, results []SearchResult) ([]SearchResult, error)
 }

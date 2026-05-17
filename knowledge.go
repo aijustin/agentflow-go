@@ -14,11 +14,16 @@ import (
 )
 
 type RetrieverToolConfig struct {
-	Embedder     llm.Embedder
-	Store        knowledge.VectorStore
-	Profile      string
-	Namespace    string
-	DefaultLimit int
+	Embedder            llm.Embedder
+	Store               knowledge.VectorStore
+	Profile             string
+	Namespace           string
+	DefaultLimit        int
+	SearchMode          knowledge.SearchMode
+	CandidateMultiplier int
+	Reranker            knowledge.Reranker
+	VectorWeight        float64
+	TextWeight          float64
 }
 
 type PostgresVectorStoreConfig struct {
@@ -53,11 +58,16 @@ type KnowledgeIndexerConfig struct {
 // NewRetrieverTool creates a semantic retrieval tool backed by an embedder and vector store.
 func NewRetrieverTool(config RetrieverToolConfig) (core.ToolExecutor, error) {
 	return toolretriever.NewTool(toolretriever.Config{
-		Embedder:     config.Embedder,
-		Store:        config.Store,
-		Profile:      config.Profile,
-		Namespace:    config.Namespace,
-		DefaultLimit: config.DefaultLimit,
+		Embedder:            config.Embedder,
+		Store:               config.Store,
+		Profile:             config.Profile,
+		Namespace:           config.Namespace,
+		DefaultLimit:        config.DefaultLimit,
+		SearchMode:          config.SearchMode,
+		CandidateMultiplier: config.CandidateMultiplier,
+		Reranker:            config.Reranker,
+		VectorWeight:        config.VectorWeight,
+		TextWeight:          config.TextWeight,
 	})
 }
 

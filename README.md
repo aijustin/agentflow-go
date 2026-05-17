@@ -135,6 +135,8 @@ for chunk := range chunks {
 
 When an agent has tools and the configured LLM gateway supports `CapToolCall`, the runtime runs an autonomous tool loop: send tool specs to the LLM, validate returned tool calls against the agent whitelist, enforce approval and per-run `rate_cap`, retry classified transient LLM/tool errors from `retry_limit`/`max_retries` with exponential backoff, execute registered tool executors, append bounded tool results, and continue until the LLM returns a final answer or `max_steps` is reached. `Stream` also accepts tool-enabled agents; it runs the same governed tool loop and emits the final answer as a stream chunk.
 
+Fixed workflows support `tool`, `agent`, `human_gate`, and `transform` nodes. Node `condition` expressions can read `steps.<node_id>` paths with `exists(...)`, `missing(...)`, `eq(...)`, and `ne(...)`; transform nodes can build structured outputs with `set` and `copy` mappings.
+
 When an agent binds `memory`, the runtime reads stored conversation/session messages before context preparation, injects them into the LLM context, and appends user prompts, assistant answers, and tool observations after execution. `in_memory` repositories are auto-created by the root facade unless a custom repository is supplied.
 
 Enable the built-in HMAC-token HITL gate:

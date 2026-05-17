@@ -61,7 +61,7 @@
 
 - 租户/工作区/项目上下文模型。
 - API key 认证中间件。
-- OIDC/OAuth2 认证适配器。
+- JWT Bearer 认证适配器，用于接入 OIDC/OAuth2 网关。HS256/RS256 校验已实现；OIDC Discovery/JWKS 自动刷新待实现。
 - RBAC 策略端口，包含 admin、operator、viewer、approver 和 service principal 角色。
 - 租户作用域的运行状态、记忆、Blob、事件和审计记录。
 
@@ -81,8 +81,8 @@
 交付物：
 
 - 运行、租户、Agent、工具、步骤和追踪标识的结构化 `slog` 字段。
-- OpenTelemetry 追踪。
-- 运行时、LLM、工具、工作流和队列行为的 Prometheus 指标。
+- OpenTelemetry 追踪端口。基础 `Tracer` 端口和事件 span 适配已实现；具体 SDK/exporter 由宿主应用或后续可选适配器注入。
+- 运行时、LLM、工具、工作流和队列行为的 Prometheus 指标。基础 `Recorder` 端口和运行时事件计数已实现；完整 exporter/HTTP 暴露待实现。
 - 审计 sink 接口和持久审计事件适配器。
 - 密钥和敏感数据的脱敏钩子。
 - 预算限制、工具副作用、审批门禁和输出检查的策略基线。
@@ -104,7 +104,7 @@
 - Embedding Provider 端口。`llm.Embedder` 已由 OpenAI-compatible 和 mock 适配器实现。
 - 向量存储端口和 pgvector 基线适配器。初始 `pkg/knowledge` 和 PostgreSQL pgvector 适配器已实现。
 - 文档加载器、分块器、索引器、检索工具和引用/来源追踪。文件和 HTTP 加载器已实现。
-- 检索工具。初始语义检索执行器已实现。
+- 检索工具。语义检索执行器、混合检索扩展端口和 reranker 扩展端口已实现。
 - 租户隔离的知识集合。
 
 验收标准：
@@ -147,4 +147,4 @@
 
 ## 当前重点
 
-M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、结构化 `slog` sink、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用和元数据过滤。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器，以及 v0 API 稳定性和发布检查指南开始。下一步重点是条件表达式/转换节点增强、Helm chart 打包和更多内置企业工具。
+M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、API key/JWT Bearer 认证、结构化 `slog` sink、观测指标/追踪端口、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP HTTP/stdio 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用、元数据过滤、混合检索扩展端口和 reranker 扩展端口。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器，以及 v0 API 稳定性和发布检查指南开始。下一步重点是 OIDC Discovery/JWKS 自动刷新、Prometheus/OpenTelemetry 具体适配器、Helm chart 打包和更多内置企业工具。

@@ -52,6 +52,44 @@ func TestToolRequiresQuery(t *testing.T) {
 	}
 }
 
+func TestToolUsesHybridSearchAndReranker(t *testing.T) {
+	store := &fakeStore{results: []knowledge.SearchResult{
+		{Document: knowledge.Document{ID: "low", Content: "low"}, Score: 0.2},
+		{Document: knowledge.Document{ID: "high", Content: "high"}, Score: 0.9},
+	}}
+	reranker := &fakeReranker{}
+	tool, err := NewTool(Config{
+		Embedder:            &fakeEmbedder{vectors: [][]float32{{0.1, 0.2}}},
+		Store:               store,
+		Profile:             "embed",
+		DefaultLimit:        1,
+		SearchMode:          knowledge.SearchModeHybrid,
+		CandidateMultiplier: 2,
+		Reranker:            reranker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := tool.Execute(context.Background(), core.ToolCall{Tool: "retrieve", Input: json.RawMessage(`{"query":"hello"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.hybridCalled || store.query.Text != "hello" || store.query.Mode != knowledge.SearchModeHybrid || store.query.Limit != 2 {
+		t.Fatalf("expected hybrid search with expanded candidate limit, got called=%v query=%+v", store.hybridCalled, store.query)
+	}
+	if reranker.query != "hello" || len(reranker.input) != 2 {
+		t.Fatalf("unexpected reranker input: %+v", reranker)
+	}
+	var out Response
+	if err := json.Unmarshal(result.Output, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != 1 || out.Results[0].ID != "high" {
+		t.Fatalf("expected reranked top result, got %+v", out.Results)
+	}
+}
+
 type fakeEmbedder struct {
 	profile string
 	input   []string
@@ -71,8 +109,9 @@ func (f *fakeEmbedder) Embed(_ context.Context, profile string, input []string) 
 }
 
 type fakeStore struct {
-	query   knowledge.Query
-	results []knowledge.SearchResult
+	query        knowledge.Query
+	results      []knowledge.SearchResult
+	hybridCalled bool
 }
 
 func (f *fakeStore) Upsert(context.Context, []knowledge.DocumentEmbedding) error { return nil }
@@ -82,4 +121,21 @@ func (f *fakeStore) Query(_ context.Context, query knowledge.Query) ([]knowledge
 	return f.results, nil
 }
 
+func (f *fakeStore) HybridQuery(_ context.Context, query knowledge.Query) ([]knowledge.SearchResult, error) {
+	f.hybridCalled = true
+	f.query = query
+	return f.results, nil
+}
+
 func (f *fakeStore) Delete(context.Context, knowledge.DeleteRequest) error { return nil }
+
+type fakeReranker struct {
+	query string
+	input []knowledge.SearchResult
+}
+
+func (f *fakeReranker) Rerank(_ context.Context, query string, results []knowledge.SearchResult) ([]knowledge.SearchResult, error) {
+	f.query = query
+	f.input = append([]knowledge.SearchResult(nil), results...)
+	return []knowledge.SearchResult{results[1], results[0]}, nil
+}

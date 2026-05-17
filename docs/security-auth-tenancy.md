@@ -28,10 +28,34 @@
 按以下顺序实现认证：
 
 1. API key 中间件，用于服务到服务调用和第一批生产部署。
-2. OIDC/OAuth2 中间件，用于 SSO 用户。
-3. 可选 mTLS 或私有网络强制策略，用于内部部署。
+2. JWT Bearer 中间件，用于接入 OIDC/OAuth2 网关或公司 SSO 签发的访问令牌。
+3. OIDC Discovery/JWKS 自动刷新，用于减少应用侧密钥配置。
+4. 可选 mTLS 或私有网络强制策略，用于内部部署。
 
 Debug UI 和生产 API 应保持不同部署模式。Debug 端点只应在 loopback listener 上保留本地开发默认值。
+
+JWT Bearer 使用示例：
+
+```go
+authenticator, err := agentflow.NewJWTAuthenticator(agentflow.JWTAuthenticatorConfig{
+    Issuer:   "https://sso.example.com/realms/company",
+    Audience: "agentflow-api",
+    Keys: []agentflow.JWTKey{{
+        ID:              "sso-key-1",
+        Algorithm:       agentflow.JWTAlgorithmRS256,
+        RSAPublicKeyPEM: publicKeyPEM,
+    }},
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+authMiddleware, err := agentflow.NewJWTMiddleware(agentflow.JWTMiddlewareConfig{
+    Authenticator: authenticator,
+})
+```
+
+令牌 claim 默认读取 `sub`、`tenant_id`、`workspace_id`、`project_id` 和 `roles`。如果公司 SSO 使用不同字段名，可通过 `TenantClaim`、`WorkspaceClaim`、`ProjectClaim` 和 `RolesClaim` 覆盖。
 
 ## 授权策略
 
@@ -83,3 +107,4 @@ type Policy interface {
 3. 增加策略端口和用于测试的 allowlist 实现。已在 `pkg/security` 中完成。
 4. 围绕运行提交、恢复、读取、取消和工具调用增加授权检查。Debug HTTP 运行提交/读取/恢复、异步 HTTP 提交/状态/取消和运行时工具调用已实现。
 5. 为接受和拒绝决策增加审计事件。已覆盖调试运行提交、HITL 决策、运行时工具调用和策略拒绝。
+6. 增加 JWT Bearer 认证器和 HTTP 中间件。已支持 HS256、RS256、公钥 PEM、issuer/audience/exp/nbf 校验，以及 `tenant_id`、`workspace_id`、`project_id`、`roles` claim 到 `identity.Principal` 的映射。完整 OIDC Discovery/JWKS 自动刷新仍由宿主应用或后续适配器提供。

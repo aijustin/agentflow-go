@@ -21,6 +21,25 @@ if err != nil {
 
 客户端支持 `tools/list` 和 `tools/call`。它有意只依赖标准库 `net/http` 客户端，因此应用可以注入自定义 TLS、代理、重试或认证 transport。
 
+## Stdio 客户端
+
+当 MCP server 以本地子进程方式运行时，使用 `NewMCPStdioClient`：
+
+```go
+mcpClient, err := agentflow.NewMCPStdioClient(ctx, agentflow.MCPStdioClientConfig{
+  Command: "node",
+  Args:    []string{"./mcp-server.js"},
+  Env:     []string{"MCP_MODE=stdio"},
+  Dir:     "./tools/docs-search",
+})
+if err != nil {
+  log.Fatal(err)
+}
+defer mcpClient.Close()
+```
+
+Stdio 客户端同样支持 `tools/list` 和 `tools/call`，并通过 `exec.CommandContext` 直接传递命令和参数，不经过 shell 拼接。应用应只运行可信的 MCP server，并将命令、工作目录和环境变量来自受控配置或部署系统。
+
 ## 工具执行器适配器
 
 将一个 MCP server 工具包装为普通 AgentFlow `core.ToolExecutor`：
@@ -55,4 +74,5 @@ tools:
 - 保持 MCP server 具备租户感知能力，或按租户边界注册独立执行器。
 - 使用 AgentFlow RBAC 和治理策略做粗粒度控制，再在 MCP server 内部执行资源级授权。
 - MCP server 内优先使用短工具名，在 AgentFlow 场景中使用稳定的场景级名称。场景名称是策略表面，MCP 名称是适配器目标。
+- 对 stdio server 使用最小权限运行用户和固定工作目录；不要把用户输入直接映射为命令或参数。
 - 除非远程 MCP server 严格只读且可信，否则应将其视为外部副作用。

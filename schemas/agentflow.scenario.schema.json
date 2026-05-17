@@ -498,7 +498,8 @@
         },
         "input": {
           "type": "object",
-          "additionalProperties": true
+          "additionalProperties": true,
+          "description": "Static node input. Transform nodes may use set/copy to build output from previous step paths."
         },
         "depends_on": {
           "type": "array",
@@ -508,7 +509,8 @@
           }
         },
         "condition": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional condition expression. Supports true/false, always/never, exists(path), missing(path), eq(path, value), and ne(path, value). Paths start with steps.<node_id>."
         },
         "retry": {
           "$ref": "#/$defs/retryPolicy"
@@ -529,7 +531,8 @@
           "minLength": 1
         },
         "condition": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional static edge condition. Dynamic data-dependent conditions should be placed on nodes."
         }
       }
     },

@@ -268,6 +268,39 @@ Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
 
 Workflow 边位于 `scenario.orchestration.workflow.edges`，使用 `from`、`to` 和可选 `condition`。
 
+`condition` 支持以下轻量表达式：
+
+| 表达式 | 含义 |
+| --- | --- |
+| `true` / `always` / 空 | 执行节点。 |
+| `false` / `never` | 跳过节点。 |
+| `exists(steps.inspect.output)` | 当路径存在时执行。 |
+| `missing(steps.inspect.error)` | 当路径不存在时执行。 |
+| `eq(steps.inspect.output.status, "ready")` | 当路径值等于期望值时执行。 |
+| `ne(steps.inspect.output.status, "blocked")` | 当路径值不等于期望值时执行。 |
+
+路径以 `steps.<node_id>` 开头，后续字段来自该节点保存到 RunState 的 JSON 输出。Tool 节点输出通常形如 `steps.<id>.output.<field>`，因为 `core.ToolResult` 会把工具原始 JSON 放在 `output` 字段中。
+
+`transform` 节点的 `input` 可以使用 `set` 和 `copy` 构造新的步骤输出：
+
+```yaml
+workflow:
+  nodes:
+    - id: inspect
+      kind: tool
+      ref: docs.search
+    - id: shape
+      kind: transform
+      depends_on: [inspect]
+      input:
+        set:
+          kind: summary
+        copy:
+          first_result: steps.inspect.output.results.0.content
+```
+
+`set` 写入静态字段，`copy` 从已有步骤输出路径复制字段。没有 `set`/`copy` 的 transform 会保留旧行为：把静态 input 包装为该节点输出。
+
 ## 运行时
 
 运行时设置定义在 `scenario.runtime` 下。

@@ -12,26 +12,37 @@ import (
 )
 
 type Config struct {
-	Embedder     llm.Embedder
-	Store        knowledge.VectorStore
-	Profile      string
-	Namespace    string
-	DefaultLimit int
+	Embedder            llm.Embedder
+	Store               knowledge.VectorStore
+	Profile             string
+	Namespace           string
+	DefaultLimit        int
+	SearchMode          knowledge.SearchMode
+	CandidateMultiplier int
+	Reranker            knowledge.Reranker
+	VectorWeight        float64
+	TextWeight          float64
 }
 
 type Tool struct {
-	embedder     llm.Embedder
-	store        knowledge.VectorStore
-	profile      string
-	namespace    string
-	defaultLimit int
+	embedder            llm.Embedder
+	store               knowledge.VectorStore
+	profile             string
+	namespace           string
+	defaultLimit        int
+	searchMode          knowledge.SearchMode
+	candidateMultiplier int
+	reranker            knowledge.Reranker
+	vectorWeight        float64
+	textWeight          float64
 }
 
 type Request struct {
-	Query     string            `json:"query"`
-	Namespace string            `json:"namespace,omitempty"`
-	Limit     int               `json:"limit,omitempty"`
-	Filter    map[string]string `json:"filter,omitempty"`
+	Query     string               `json:"query"`
+	Namespace string               `json:"namespace,omitempty"`
+	Limit     int                  `json:"limit,omitempty"`
+	Filter    map[string]string    `json:"filter,omitempty"`
+	Mode      knowledge.SearchMode `json:"mode,omitempty"`
 }
 
 type Response struct {
@@ -60,7 +71,15 @@ func NewTool(config Config) (*Tool, error) {
 	if limit <= 0 {
 		limit = 5
 	}
-	return &Tool{embedder: config.Embedder, store: config.Store, profile: config.Profile, namespace: config.Namespace, defaultLimit: limit}, nil
+	searchMode := config.SearchMode
+	if searchMode == "" {
+		searchMode = knowledge.SearchModeVector
+	}
+	multiplier := config.CandidateMultiplier
+	if multiplier <= 0 {
+		multiplier = 1
+	}
+	return &Tool{embedder: config.Embedder, store: config.Store, profile: config.Profile, namespace: config.Namespace, defaultLimit: limit, searchMode: searchMode, candidateMultiplier: multiplier, reranker: config.Reranker, vectorWeight: config.VectorWeight, textWeight: config.TextWeight}, nil
 }
 
 func (tool *Tool) Execute(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
@@ -89,9 +108,27 @@ func (tool *Tool) Execute(ctx context.Context, call core.ToolCall) (core.ToolRes
 	if limit <= 0 {
 		limit = tool.defaultLimit
 	}
-	results, err := tool.store.Query(ctx, knowledge.Query{Namespace: namespace, Vector: vectors[0], Limit: limit, Filter: req.Filter})
+	searchMode := req.Mode
+	if searchMode == "" {
+		searchMode = tool.searchMode
+	}
+	candidateLimit := limit
+	if tool.reranker != nil && tool.candidateMultiplier > 1 {
+		candidateLimit = limit * tool.candidateMultiplier
+	}
+	query := knowledge.Query{Namespace: namespace, Text: req.Query, Mode: searchMode, Vector: vectors[0], Limit: candidateLimit, Filter: req.Filter, VectorWeight: tool.vectorWeight, TextWeight: tool.textWeight}
+	results, err := tool.search(ctx, query)
 	if err != nil {
 		return core.ToolResult{}, err
+	}
+	if tool.reranker != nil {
+		results, err = tool.reranker.Rerank(ctx, req.Query, results)
+		if err != nil {
+			return core.ToolResult{}, err
+		}
+	}
+	if len(results) > limit {
+		results = results[:limit]
 	}
 	out := Response{Results: make([]Result, 0, len(results))}
 	for _, result := range results {
@@ -102,6 +139,15 @@ func (tool *Tool) Execute(ctx context.Context, call core.ToolCall) (core.ToolRes
 		return core.ToolResult{}, err
 	}
 	return core.ToolResult{Tool: call.Tool, Output: payload}, nil
+}
+
+func (tool *Tool) search(ctx context.Context, query knowledge.Query) ([]knowledge.SearchResult, error) {
+	if query.Mode == knowledge.SearchModeHybrid {
+		if hybrid, ok := tool.store.(knowledge.HybridSearcher); ok {
+			return hybrid.HybridQuery(ctx, query)
+		}
+	}
+	return tool.store.Query(ctx, query)
 }
 
 func firstNonEmpty(values ...string) string {

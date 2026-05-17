@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -155,7 +157,13 @@ func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, r
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !conditionEnabled(node.Condition) {
+			enabled, err := r.conditionEnabled(ctx, runID, node.Condition)
+			if err != nil {
+				r.emitJSON(ctx, core.EventStepFailed, scenario.Name, runID, map[string]any{"node_id": node.ID, "error": err.Error()})
+				errs <- err
+				return
+			}
+			if !enabled {
 				r.emitJSON(ctx, core.EventStepCompleted, scenario.Name, runID, map[string]any{"node_id": node.ID, "skipped": true})
 				return
 			}
@@ -207,7 +215,7 @@ func (r *WorkflowRunner) runNode(ctx context.Context, scenario core.Scenario, no
 	case core.NodeAgent:
 		return r.runAgentNode(ctx, scenario, node, runID)
 	case core.NodeTransform:
-		return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]json.RawMessage{"input": node.Input})
+		return r.runTransformNode(ctx, scenario, node, runID)
 	case core.NodeHumanGate:
 		return r.runHumanGateNode(ctx, node, runID)
 	case core.NodeSkill:
@@ -215,6 +223,36 @@ func (r *WorkflowRunner) runNode(ctx context.Context, scenario core.Scenario, no
 	default:
 		return fmt.Errorf("orchestration: unsupported node kind %q", node.Kind)
 	}
+}
+
+type transformSpec struct {
+	Set  map[string]any    `json:"set"`
+	Copy map[string]string `json:"copy"`
+}
+
+func (r *WorkflowRunner) runTransformNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
+	if len(node.Input) == 0 {
+		return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]json.RawMessage{"input": node.Input})
+	}
+	var spec transformSpec
+	if err := json.Unmarshal(node.Input, &spec); err != nil {
+		return fmt.Errorf("orchestration: transform node %q decode input: %w", node.ID, err)
+	}
+	if len(spec.Set) == 0 && len(spec.Copy) == 0 {
+		return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]json.RawMessage{"input": node.Input})
+	}
+	output := cloneAnyMap(spec.Set)
+	for field, path := range spec.Copy {
+		value, ok, err := r.resolveWorkflowPath(ctx, runID, path)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("orchestration: transform node %q path %q not found", node.ID, path)
+		}
+		output[field] = value
+	}
+	return r.saveStepOutput(ctx, scenario, runID, node.ID, output)
 }
 
 func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
@@ -316,7 +354,7 @@ func dependencies(workflow core.Workflow) map[string]map[string]bool {
 		}
 	}
 	for _, edge := range workflow.Edges {
-		if !conditionEnabled(edge.Condition) {
+		if !staticConditionEnabled(edge.Condition) {
 			continue
 		}
 		if deps[edge.To] == nil {
@@ -344,8 +382,8 @@ func readyNodes(pending, done map[string]bool, deps map[string]map[string]bool) 
 	return ready
 }
 
-func conditionEnabled(condition string) bool {
-	switch condition {
+func staticConditionEnabled(condition string) bool {
+	switch strings.TrimSpace(condition) {
 	case "", "true", "always":
 		return true
 	case "false", "never":
@@ -353,6 +391,172 @@ func conditionEnabled(condition string) bool {
 	default:
 		return true
 	}
+}
+
+func (r *WorkflowRunner) conditionEnabled(ctx context.Context, runID, condition string) (bool, error) {
+	condition = strings.TrimSpace(condition)
+	switch condition {
+	case "", "true", "always":
+		return true, nil
+	case "false", "never":
+		return false, nil
+	}
+	if inner, ok := functionCall(condition, "exists"); ok {
+		_, found, err := r.resolveWorkflowPath(ctx, runID, strings.TrimSpace(inner))
+		return found, err
+	}
+	if inner, ok := functionCall(condition, "missing"); ok {
+		_, found, err := r.resolveWorkflowPath(ctx, runID, strings.TrimSpace(inner))
+		return !found, err
+	}
+	if inner, ok := functionCall(condition, "eq"); ok {
+		args := splitConditionArgs(inner)
+		if len(args) != 2 {
+			return false, fmt.Errorf("orchestration: eq condition requires path and expected value")
+		}
+		actual, found, err := r.resolveWorkflowPath(ctx, runID, strings.TrimSpace(args[0]))
+		if err != nil || !found {
+			return false, err
+		}
+		expected := parseConditionValue(strings.TrimSpace(args[1]))
+		return workflowValuesEqual(actual, expected), nil
+	}
+	if inner, ok := functionCall(condition, "ne"); ok {
+		args := splitConditionArgs(inner)
+		if len(args) != 2 {
+			return false, fmt.Errorf("orchestration: ne condition requires path and expected value")
+		}
+		actual, found, err := r.resolveWorkflowPath(ctx, runID, strings.TrimSpace(args[0]))
+		if err != nil || !found {
+			return false, err
+		}
+		expected := parseConditionValue(strings.TrimSpace(args[1]))
+		return !workflowValuesEqual(actual, expected), nil
+	}
+	return true, nil
+}
+
+func (r *WorkflowRunner) resolveWorkflowPath(ctx context.Context, runID, path string) (any, bool, error) {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	if len(parts) < 2 || parts[0] != "steps" {
+		return nil, false, fmt.Errorf("orchestration: workflow path %q must start with steps.<node_id>", path)
+	}
+	raw, ok, err := r.stepOutputRaw(ctx, runID, parts[1])
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false, fmt.Errorf("orchestration: decode step output %q: %w", parts[1], err)
+	}
+	current := value
+	for _, part := range parts[2:] {
+		if part == "" {
+			return nil, false, nil
+		}
+		switch typed := current.(type) {
+		case map[string]any:
+			next, ok := typed[part]
+			if !ok {
+				return nil, false, nil
+			}
+			current = next
+		case []any:
+			index, err := strconv.Atoi(part)
+			if err != nil || index < 0 || index >= len(typed) {
+				return nil, false, nil
+			}
+			current = typed[index]
+		default:
+			return nil, false, nil
+		}
+	}
+	return current, true, nil
+}
+
+func (r *WorkflowRunner) stepOutputRaw(ctx context.Context, runID, nodeID string) (json.RawMessage, bool, error) {
+	if r.runs == nil {
+		return nil, false, fmt.Errorf("orchestration: run-state repository is required for workflow expressions")
+	}
+	snapshot, err := r.runs.Load(ctx, runID)
+	if err != nil {
+		return nil, false, err
+	}
+	ref, ok := snapshot.StepOutputs[nodeID]
+	if !ok {
+		return nil, false, nil
+	}
+	if ref.Blob != nil {
+		if r.blobs == nil {
+			return nil, false, fmt.Errorf("orchestration: blob store is required for externalized step output %q", nodeID)
+		}
+		raw, err := r.blobs.Get(ctx, *ref.Blob)
+		return raw, err == nil, err
+	}
+	return ref.Inline, true, nil
+}
+
+func functionCall(condition, name string) (string, bool) {
+	prefix := name + "("
+	if !strings.HasPrefix(condition, prefix) || !strings.HasSuffix(condition, ")") {
+		return "", false
+	}
+	return strings.TrimSpace(condition[len(prefix) : len(condition)-1]), true
+}
+
+func splitConditionArgs(input string) []string {
+	args := make([]string, 0, 2)
+	var builder strings.Builder
+	inString := false
+	escaped := false
+	for _, r := range input {
+		switch {
+		case escaped:
+			builder.WriteRune(r)
+			escaped = false
+		case r == '\\' && inString:
+			builder.WriteRune(r)
+			escaped = true
+		case r == '"':
+			builder.WriteRune(r)
+			inString = !inString
+		case r == ',' && !inString:
+			args = append(args, strings.TrimSpace(builder.String()))
+			builder.Reset()
+		default:
+			builder.WriteRune(r)
+		}
+	}
+	args = append(args, strings.TrimSpace(builder.String()))
+	return args
+}
+
+func parseConditionValue(raw string) any {
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err == nil {
+		return value
+	}
+	return strings.Trim(raw, `"`)
+}
+
+func workflowValuesEqual(left, right any) bool {
+	leftBytes, leftErr := json.Marshal(left)
+	rightBytes, rightErr := json.Marshal(right)
+	if leftErr == nil && rightErr == nil {
+		return string(leftBytes) == string(rightBytes)
+	}
+	return fmt.Sprint(left) == fmt.Sprint(right)
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return make(map[string]any)
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 func firstPositive(values ...int) int {

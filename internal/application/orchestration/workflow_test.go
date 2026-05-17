@@ -123,6 +123,80 @@ func TestWorkflowRunnerSkipsFalseConditionAndRunsParallelOutputs(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunnerEvaluatesConditionFromStepOutputs(t *testing.T) {
+	reg := registry.New()
+	if err := reg.RegisterTool("status", toolFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{Tool: "status", Output: json.RawMessage(`{"status":"ready"}`)}, nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RegisterTool("skip", builtin.NewEchoTool()); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RegisterTool("run", builtin.NewEchoTool()); err != nil {
+		t.Fatal(err)
+	}
+	runs := newWorkflowRun(t)
+	scenario := core.Scenario{
+		Name: "scenario",
+		Orchestration: core.Orchestration{Workflow: &core.Workflow{
+			Nodes: []core.WorkflowNode{
+				{ID: "status", Kind: core.NodeTool, Ref: "status"},
+				{ID: "skip", Kind: core.NodeTool, Ref: "skip", DependsOn: []string{"status"}, Condition: `eq(steps.status.output.status, "blocked")`},
+				{ID: "run", Kind: core.NodeTool, Ref: "run", DependsOn: []string{"status"}, Condition: `eq(steps.status.output.status, "ready")`},
+			},
+		}},
+	}
+
+	if err := NewWorkflowRunner(reg, runs, nil).Run(context.Background(), scenario, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.StepOutputs["skip"]; ok {
+		t.Fatalf("skip node should not have output: %+v", loaded.StepOutputs)
+	}
+	if _, ok := loaded.StepOutputs["run"]; !ok {
+		t.Fatalf("run node should have output: %+v", loaded.StepOutputs)
+	}
+}
+
+func TestWorkflowRunnerTransformCopiesPreviousStepOutput(t *testing.T) {
+	reg := registry.New()
+	if err := reg.RegisterTool("first", toolFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{Tool: "first", Output: json.RawMessage(`{"message":"hello","nested":{"id":"42"}}`)}, nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runs := newWorkflowRun(t)
+	scenario := core.Scenario{
+		Name: "scenario",
+		Orchestration: core.Orchestration{Workflow: &core.Workflow{
+			Nodes: []core.WorkflowNode{
+				{ID: "first", Kind: core.NodeTool, Ref: "first"},
+				{ID: "shape", Kind: core.NodeTransform, DependsOn: []string{"first"}, Input: json.RawMessage(`{"set":{"kind":"summary"},"copy":{"message":"steps.first.output.message","id":"steps.first.output.nested.id"}}`)},
+			},
+		}},
+	}
+
+	if err := NewWorkflowRunner(reg, runs, nil).Run(context.Background(), scenario, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(loaded.StepOutputs["shape"].Inline, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output["kind"] != "summary" || output["message"] != "hello" || output["id"] != "42" {
+		t.Fatalf("unexpected transform output: %+v", output)
+	}
+}
+
 func TestWorkflowRunnerPausesAndResumesHumanGate(t *testing.T) {
 	reg := registry.New()
 	if err := reg.RegisterTool("after", builtin.NewEchoTool()); err != nil {

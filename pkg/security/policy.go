@@ -42,10 +42,20 @@ type APIKeyAuthenticator interface {
 	AuthenticateAPIKey(ctx context.Context, key string) (identity.Principal, bool, error)
 }
 
+type BearerAuthenticator interface {
+	AuthenticateBearer(ctx context.Context, token string) (identity.Principal, bool, error)
+}
+
 type APIKeyAuthenticatorFunc func(ctx context.Context, key string) (identity.Principal, bool, error)
 
 func (fn APIKeyAuthenticatorFunc) AuthenticateAPIKey(ctx context.Context, key string) (identity.Principal, bool, error) {
 	return fn(ctx, key)
+}
+
+type BearerAuthenticatorFunc func(ctx context.Context, token string) (identity.Principal, bool, error)
+
+func (fn BearerAuthenticatorFunc) AuthenticateBearer(ctx context.Context, token string) (identity.Principal, bool, error) {
+	return fn(ctx, token)
 }
 
 type PolicyFunc func(ctx context.Context, principal identity.Principal, action Action, resource Resource) error

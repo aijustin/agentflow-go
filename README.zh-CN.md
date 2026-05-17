@@ -135,6 +135,8 @@ for chunk := range chunks {
 
 当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 对分类后的临时 LLM/工具错误做指数退避重试，执行注册的 ToolExecutor，将受限后的工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。`Stream` 也支持带工具的 Agent：它会运行同一套受治理工具循环，并把最终答案作为流式 chunk 输出。
 
+固定工作流支持 `tool`、`agent`、`human_gate` 和 `transform` 节点。`condition` 可使用 `exists(...)`、`missing(...)`、`eq(...)`、`ne(...)` 读取 `steps.<node_id>` 路径，`transform` 节点可用 `set`/`copy` 从前序步骤构造结构化输出。
+
 当 Agent 绑定 `memory` 时，Runtime 会在上下文准备前读取 conversation/session 记忆并注入 LLM 上下文，执行后追加用户输入、助手回复和工具观察结果。根门面会自动为 `in_memory` 类型创建内存仓库，除非调用方显式传入自定义仓库。
 
 启用内置 HMAC Token 的 HITL Gate：
