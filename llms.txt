@@ -107,7 +107,8 @@ AGENT_HTTP_ADDR=:18080 go run ./cmd/agent-http
 - The debug HTTP server allows a development default secret only on loopback listeners; exposed listeners require `AGENT_TOKEN_SECRET` and `AGENT_HTTP_API_KEY`.
 - Runtime hardening includes global/agent/profile timeouts, context-aware LLM/tool retries, per-run tool rate caps, failed-run status persistence, and BlobStore externalization for large outputs.
 - Structured output uses agent `output_schema` plus `llm.StructuredOutputter`; streaming uses `llm.Streamer` and persists accumulated final text.
-- Skills are declarative prompt/policy/workflow packages; tools are executable schema-backed units.
+- Skills are declarative prompt/policy/workflow packages expanded during scenario build; they do not initialize tools.
+- Tools have separate declaration and execution surfaces: manifests live in `scenario.tools`, light executors can be registered with `WithToolExecutor`, and heavy or tenant-scoped executors can be lazily bound with `WithToolResolver` at invocation time.
 - MCP servers are integrated as adapters that implement `core.ToolExecutor`, keeping governance and audit in the existing runtime path.
 - The built-in HTTP tool executor is deny-by-default: host allowlist required, GET/HEAD by default, response size limit.
 - RAG foundations include `llm.Embedder`, `knowledge.Loader`, `knowledge.Chunker`, `knowledge.VectorStore`, file/HTTP loaders, OpenAI-compatible embeddings, pgvector storage, indexing, citations, and a retriever tool.

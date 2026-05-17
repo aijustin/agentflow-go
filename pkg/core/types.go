@@ -177,6 +177,19 @@ type ToolExecutor interface {
 	Execute(ctx context.Context, call ToolCall) (ToolResult, error)
 }
 
+// ToolResolver resolves a declared tool manifest to an executor at call time.
+// Resolvers are useful for heavy or tenant-scoped tools whose clients should
+// not be initialized during scenario loading.
+type ToolResolver interface {
+	ResolveTool(ctx context.Context, tool Tool) (ToolExecutor, error)
+}
+
+type ToolResolverFunc func(ctx context.Context, tool Tool) (ToolExecutor, error)
+
+func (fn ToolResolverFunc) ResolveTool(ctx context.Context, tool Tool) (ToolExecutor, error) {
+	return fn(ctx, tool)
+}
+
 type AgentInput struct {
 	RunID   string          `json:"run_id"`
 	Prompt  string          `json:"prompt,omitempty"`

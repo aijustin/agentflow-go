@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	blobfile "github.com/aijustin/agentflow-go/internal/adapter/blob/file"
@@ -60,7 +61,7 @@ type Framework struct {
 	events   core.EventSink
 	gate     core.HumanGate
 	llm      llm.Gateway
-	tools    map[string]core.ToolExecutor
+	tools    *toolRegistry
 	memory   map[string]memory.Repository
 	policy   security.Policy
 	audit    audit.Sink
@@ -75,6 +76,7 @@ type options struct {
 	events      core.EventSink
 	gate        core.HumanGate
 	tools       map[string]core.ToolExecutor
+	resolver    core.ToolResolver
 	memory      map[string]memory.Repository
 	tokenSecret []byte
 	tokenTTL    time.Duration
@@ -85,11 +87,59 @@ type options struct {
 	redactor    governance.OutputRedactor
 }
 
-type toolRegistry map[string]core.ToolExecutor
+type toolRegistry struct {
+	mu       sync.Mutex
+	eager    map[string]core.ToolExecutor
+	cache    map[string]core.ToolExecutor
+	resolver core.ToolResolver
+}
 
-func (r toolRegistry) Tool(name string) (core.ToolExecutor, bool) {
-	tool, ok := r[name]
-	return tool, ok
+func newToolRegistry(eager map[string]core.ToolExecutor, resolver core.ToolResolver) *toolRegistry {
+	if eager == nil {
+		eager = make(map[string]core.ToolExecutor)
+	}
+	return &toolRegistry{eager: eager, cache: make(map[string]core.ToolExecutor), resolver: resolver}
+}
+
+func (r *toolRegistry) ResolveTool(ctx context.Context, tool core.Tool) (core.ToolExecutor, bool, error) {
+	if r == nil {
+		return nil, false, nil
+	}
+	name := tool.Name
+	if name == "" {
+		return nil, false, fmt.Errorf("agentflow: tool name is required")
+	}
+	r.mu.Lock()
+	if executor, ok := r.eager[name]; ok {
+		r.mu.Unlock()
+		return executor, true, nil
+	}
+	if executor, ok := r.cache[name]; ok {
+		r.mu.Unlock()
+		return executor, true, nil
+	}
+	resolver := r.resolver
+	r.mu.Unlock()
+	if resolver == nil {
+		return nil, false, nil
+	}
+	executor, err := resolver.ResolveTool(ctx, tool)
+	if err != nil {
+		return nil, false, err
+	}
+	if executor == nil {
+		return nil, false, fmt.Errorf("agentflow: tool resolver returned nil executor for %q", name)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing, ok := r.eager[name]; ok {
+		return existing, true, nil
+	}
+	if existing, ok := r.cache[name]; ok {
+		return existing, true, nil
+	}
+	r.cache[name] = executor
+	return executor, true, nil
 }
 
 // Option customizes Framework construction.
@@ -164,6 +214,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 			return nil, err
 		}
 	}
+	tools := newToolRegistry(cfg.tools, cfg.resolver)
 	if len(cfg.tokenSecret) > 0 {
 		if cfg.gate != nil {
 			return nil, fmt.Errorf("agentflow: WithHumanGate and WithHITLTokenSecret are mutually exclusive")
@@ -188,7 +239,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		Blobs:          cfg.blobs,
 		Events:         cfg.events,
 		HumanGate:      cfg.gate,
-		Tools:          toolRegistry(cfg.tools),
+		Tools:          tools,
 		Memory:         cfg.memory,
 		Policy:         cfg.policy,
 		Audit:          cfg.audit,
@@ -206,7 +257,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		events:   cfg.events,
 		gate:     cfg.gate,
 		llm:      cfg.llm,
-		tools:    cfg.tools,
+		tools:    tools,
 		memory:   cfg.memory,
 		policy:   cfg.policy,
 		audit:    cfg.audit,
@@ -330,6 +381,19 @@ func WithToolExecutor(name string, executor core.ToolExecutor) Option {
 	}
 }
 
+// WithToolResolver wires a resolver that creates or retrieves tool executors
+// only when a declared tool is invoked. Explicit WithToolExecutor registrations
+// take precedence over the resolver.
+func WithToolResolver(resolver core.ToolResolver) Option {
+	return func(o *options) error {
+		if resolver == nil {
+			return fmt.Errorf("agentflow: tool resolver is nil")
+		}
+		o.resolver = resolver
+		return nil
+	}
+}
+
 // WithMemoryRepository wires a memory backend by scenario memory name.
 func WithMemoryRepository(name string, repo memory.Repository) Option {
 	return func(o *options) error {
@@ -401,7 +465,7 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	runner := orchestration.NewWorkflowRunner(
-		toolRegistry(f.tools),
+		f.tools,
 		f.runs,
 		f.events,
 		orchestration.WithHumanGate(f.gate),

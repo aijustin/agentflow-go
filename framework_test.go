@@ -73,6 +73,53 @@ func TestFrameworkRunExecutesFixedWorkflow(t *testing.T) {
 	}
 }
 
+func TestFrameworkWithToolResolverResolvesToolLazily(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "lazy-tools",
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Description: "Echo input", Approval: core.ApprovalNever},
+		},
+		Agents: map[string]core.Agent{
+			"worker": {Name: "worker"},
+		},
+		Orchestration: core.Orchestration{
+			Mode:     core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{{ID: "echo", Kind: core.NodeTool, Ref: "echo", Input: json.RawMessage(`{"message":"hi"}`)}}},
+		},
+	}
+	resolveCalls := 0
+	resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		resolveCalls++
+		if tool.Name != "echo" || tool.Type != "builtin.echo" {
+			t.Fatalf("unexpected tool metadata: %+v", tool)
+		}
+		return noopTool{}, nil
+	})
+
+	fw, err := agentflow.New(scenario, agentflow.WithToolResolver(resolver))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolveCalls != 0 {
+		t.Fatalf("resolver should not be called during framework construction, got %d", resolveCalls)
+	}
+	for _, runID := range []string{"run-1", "run-2"} {
+		result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID, Agent: "worker"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != runstate.RunStatusCompleted {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+	}
+	if resolveCalls != 1 {
+		t.Fatalf("resolver should be cached after first use, got %d calls", resolveCalls)
+	}
+}
+
 func TestProviderConstructorsExposeBuiltInGateways(t *testing.T) {
 	profile := llm.Profile{Name: "default", Provider: "openai-compatible", Model: "test"}
 	openAI := agentflow.NewOpenAICompatibleGateway([]llm.Profile{profile}, nil)

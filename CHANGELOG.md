@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Context governance package and runtime wiring for sliding-window trimming, summary compression, and `ContextPrepared` observability events.
 - Richer LLM profile configuration, including context window size, output budget, temperature, top-p, thinking budget, reasoning effort, timeouts, and provider-specific `extra_body` fields.
 - Autonomous tool-calling runtime loop with agent tool whitelist checks, approval-policy denial, tool dispatch, tool-result feedback to the LLM, `max_steps` enforcement, and LLM/tool lifecycle events.
+- Lazy tool resolution through `core.ToolResolver` and root `WithToolResolver`, allowing heavy or tenant-scoped tool executors to be bound only after allowlist, approval, RBAC, governance, and rate-cap checks pass.
 - OpenAI-compatible function-calling request/response support plus router/mock propagation for `ToolCaller`.
 - Runtime memory integration for agent-bound conversation/session history, including memory injection before context preparation and writes for user prompts, assistant answers, and tool observations.
 - Fixed-workflow scheduler for graph dependencies, `depends_on`, edge conditions, bounded parallel batches, retry policy, transform nodes, agent nodes, human-gate nodes, and CAS-safe parallel step output persistence.

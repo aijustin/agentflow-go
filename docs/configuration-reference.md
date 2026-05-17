@@ -147,7 +147,9 @@ Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`re
 
 ## Skill 配置
 
-Skill 定义在 `scenario.skills.<name>` 下。它是可复用的能力包，不是独立运行时 Actor。Agent 通过 `skills` 绑定 Skill 后，场景构建阶段会把 prompt 片段合并到 Agent 指令，覆盖 Agent/Tool 策略，并把 Skill 的 workflow 子图展开到主 workflow 中。
+Skill 定义在 `scenario.skills.<name>` 下。它是可复用的能力包，不是独立运行时 Actor。Agent 通过 `skills` 绑定 Skill 后，场景构建阶段会把 prompt 片段合并到 Agent 指令，覆盖 Agent/Tool 策略，并把 Skill 的 workflow 子图展开到主 workflow 中。Skill 不初始化工具；工具的真实 executor 由宿主应用通过 `WithToolExecutor` 提前注册，或通过 `WithToolResolver` 在调用时按需解析。
+
+这个分工让 Skill 可以作为 prompt/policy/workflow 包被复用，也让重型工具保持惰性加载：`scenario.tools` 负责声明 manifest、schema、副作用和审批策略，`WithToolResolver` 负责在 allowlist、审批、RBAC、治理策略和 rate cap 检查通过后再绑定真实执行器。
 
 | 字段 | 类型 | 是否必填 | 说明 |
 | --- | --- | --- | --- |

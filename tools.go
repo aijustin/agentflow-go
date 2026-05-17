@@ -11,6 +11,9 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
+type ToolResolver = core.ToolResolver
+type ToolResolverFunc = core.ToolResolverFunc
+
 type HTTPToolConfig struct {
 	AllowedHosts     []string
 	AllowedMethods   []string

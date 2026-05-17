@@ -16,7 +16,7 @@ import (
 )
 
 type ToolRegistry interface {
-	Tool(name string) (core.ToolExecutor, bool)
+	ResolveTool(ctx context.Context, tool core.Tool) (core.ToolExecutor, bool, error)
 }
 
 type AgentRegistry interface {
@@ -259,7 +259,14 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if r.tools == nil {
 		return fmt.Errorf("orchestration: tool registry is required")
 	}
-	executor, ok := r.tools.Tool(node.Ref)
+	tool := scenario.Tools[node.Ref]
+	if tool.Name == "" {
+		tool.Name = node.Ref
+	}
+	executor, ok, err := r.tools.ResolveTool(ctx, tool)
+	if err != nil {
+		return fmt.Errorf("orchestration: resolve tool %q: %w", node.Ref, err)
+	}
 	if !ok {
 		return fmt.Errorf("orchestration: tool %q not found", node.Ref)
 	}

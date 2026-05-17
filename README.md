@@ -267,6 +267,28 @@ fw, err := agentflow.NewFromFile(
 
 See [docs/mcp-tools.md](docs/mcp-tools.md) for the adapter model and security notes.
 
+Heavy or tenant-scoped tools do not need to be constructed during framework startup. Declare their manifest in `scenario.tools`, then resolve the executor only after the runtime has checked the agent allowlist, approval policy, RBAC, governance policy, and rate caps:
+
+```go
+resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
+  switch tool.Type {
+  case "builtin.sql":
+    return newTenantSQLTool(ctx, tool.Metadata)
+  case "mcp.tool":
+    return newTenantMCPTool(ctx, tool.Metadata)
+  default:
+    return nil, fmt.Errorf("unsupported tool type %q", tool.Type)
+  }
+})
+
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithToolResolver(resolver),
+)
+```
+
+`WithToolExecutor` remains useful for light or always-on tools and takes precedence over the resolver. Resolved executors are cached by scenario tool name for the lifetime of the framework. Skills do not initialize tools; they expand prompt fragments, policy overlays, and workflow segments during scenario build, while the resolver owns real executor binding at invocation time.
+
 For read-only internal API calls, register the constrained HTTP tool executor:
 
 ```go
@@ -645,7 +667,7 @@ scenario:
 | `llms` | Named LLM profiles. Agents and tools can bind to different profiles. |
 | `memories` | Named memory backends and scopes. In-memory and file-backed repositories are available. |
 | `tools` | Tool declarations, side-effect metadata, approval policy, optional LLM override, and per-run `rate_cap`. |
-| `skills` | Declarative prompt/policy/workflow packages. Skills are not runtime actors; they expand into agent instructions, tool policies, and workflow subgraphs during scenario build. |
+| `skills` | Declarative prompt/policy/workflow packages. Skills are not runtime actors and do not initialize tools; they expand into agent instructions, tool policies, and workflow subgraphs during scenario build. |
 | `agents` | Agent role, instructions, LLM binding, memory binding, tools, and skills. |
 | `orchestration` | Autonomous, fixed workflow, or hybrid HITL execution policy. |
 | `runtime` | Runtime limits, output thresholds, secrets, and operational settings. |
@@ -955,6 +977,7 @@ Design boundaries:
 - Workflow human-gate nodes pause with persisted `CurrentNodeID`/`PendingGate` and can resume downstream execution after approval.
 - `sub_agents` are available to supervisor agents as virtual delegation tools during autonomous execution.
 - Skill prompt fragments, agent policies, tool policies, and workflow segments are expanded during scenario build with namespaced workflow node IDs.
+- Tools have separate declaration and execution surfaces: `scenario.tools` exposes manifests to LLMs and validators, `WithToolExecutor` eagerly registers light executors, and `WithToolResolver` lazily binds heavy or tenant-scoped executors only when a permitted invocation reaches execution.
 - File-backed RunState, BlobStore, and Memory adapters are available from the root facade for durable local persistence; PostgreSQL-backed and Redis-backed RunState are available for production persistence; S3-compatible BlobStore is available for large runtime/workflow outputs and supports MinIO/AWS S3 style endpoints plus verified S3-compatible COS/OSS endpoints; Redis-backed leases are available for worker coordination; async queue and worker contracts are available for long-running execution; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
 - Enterprise identity context, API key middleware, static and OIDC/JWKS JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, `NewOIDCJWTAuthenticator`, `NewAPIKeyMiddleware`, `NewJWTMiddleware`, `NewAuthorizationMiddleware`, and `WithSecurityPolicy`.
 - Audit event contracts and noop/in-memory/file sinks are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.
@@ -1020,6 +1043,7 @@ Implemented:
 - In-memory Memory, RunStateRepository, and BlobStore
 - LLM abstractions plus root constructors for OpenAI-compatible, Anthropic, local, router, and mock testing paths
 - Autonomous tool-calling loop for registered tools, OpenAI-compatible function calling, and Anthropic Messages tool use
+- Lazy tool resolution through `WithToolResolver` for heavy or tenant-scoped executors after runtime policy checks
 - Runtime memory integration for injected history and persisted user/assistant/tool observations
 - Fixed-workflow graph scheduler with dependencies, parallelism, retries, conditions, transform/agent/human-gate nodes, and CAS-safe output saves
 - Workflow-level HITL pause/resume with saved scheduler position
@@ -1043,7 +1067,7 @@ Remaining production roadmap:
 
 - Concrete Prometheus/OpenTelemetry exporters on top of the existing recorder/tracer ports
 - Helm chart packaging beyond the current Compose and Kustomize base templates
-- Additional built-in enterprise tool executors and integration test matrices for managed services
+- Tool/Skill catalog manifest validation, packaging workflows, and integration test matrices for managed services
 
 ## Contributing
 

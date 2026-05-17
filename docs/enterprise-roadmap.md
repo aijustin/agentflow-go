@@ -123,7 +123,7 @@
 
 - Skill 包格式、版本管理、compatible-agent 校验、Agent policy overlay 和 Tool policy overlay。
 - 工具包格式、schema 校验和副作用元数据。
-- 内部 skill/tool catalog 的注册表接口。
+- 内部 skill/tool catalog 的注册表接口；根门面已提供 `WithToolResolver`，用于在工具调用通过 allowlist、审批、RBAC 和治理策略后按需绑定重型或租户隔离 executor。
 - HTTP、SQL、Git、文件系统、工单、ChatOps 的内置企业工具。初始受约束 HTTP、文件系统读取和 SQL 查询工具执行器已实现。
 - Docker Compose 本地企业栈。初始 PostgreSQL+pgvector、Redis、MinIO 和 `agent-http` 栈已在 `deploy/enterprise` 下实现。
 - Helm chart 和 Kubernetes manifests。`agent-http` 的初始 Kustomize base 已在 `deploy/kubernetes/base` 下实现。
@@ -148,4 +148,4 @@
 
 ## 当前重点
 
-M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、PostgreSQL/Redis RunState、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、API key/JWT Bearer/OIDC JWKS 认证、结构化 `slog` sink、观测指标/追踪端口、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、provider router、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP HTTP/stdio 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用、元数据过滤、混合检索扩展端口和 reranker 扩展端口。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器、Skill policy expansion，以及 v0 API 稳定性和发布检查指南开始。下一步重点是 Prometheus/OpenTelemetry 具体适配器、Helm chart 打包和更多内置企业工具。
+M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、PostgreSQL/Redis RunState、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、API key/JWT Bearer/OIDC JWKS 认证、结构化 `slog` sink、观测指标/追踪端口、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、provider router、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP HTTP/stdio 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用、元数据过滤、混合检索扩展端口和 reranker 扩展端口。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器、Skill policy expansion、懒 ToolResolver，以及 v0 API 稳定性和发布检查指南开始。下一步重点是 Tool/Skill catalog manifest 校验、Prometheus/OpenTelemetry 具体适配器和 Helm chart 打包。

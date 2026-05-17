@@ -37,7 +37,7 @@ type Engine struct {
 }
 
 type ToolRegistry interface {
-	Tool(name string) (core.ToolExecutor, bool)
+	ResolveTool(ctx context.Context, tool core.Tool) (core.ToolExecutor, bool, error)
 }
 
 type Dependencies struct {
@@ -741,6 +741,9 @@ func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result
 	}
+	if tool.Name == "" {
+		tool.Name = call.Name
+	}
 	if reason := approvalDenialReason(tool); reason != "" {
 		result := core.ToolResult{Tool: call.Name, Error: reason}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
@@ -768,7 +771,12 @@ func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
 		return result
 	}
-	executor, ok := e.tools.Tool(call.Name)
+	executor, ok, err := e.tools.ResolveTool(ctx, tool)
+	if err != nil {
+		result := core.ToolResult{Tool: call.Name, Error: "resolve tool executor: " + err.Error()}
+		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
+		return result
+	}
 	if !ok {
 		result := core.ToolResult{Tool: call.Name, Error: "tool executor is not registered"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})

@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -43,4 +44,12 @@ func (r *Registry) RegisterTool(name string, executor core.ToolExecutor) error {
 func (r *Registry) Tool(name string) (core.ToolExecutor, bool) {
 	tool, ok := r.Tools[name]
 	return tool, ok
+}
+
+func (r *Registry) ResolveTool(ctx context.Context, tool core.Tool) (core.ToolExecutor, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	executor, ok := r.Tool(tool.Name)
+	return executor, ok, nil
 }

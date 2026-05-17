@@ -972,7 +972,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
             <h3>工具体系</h3>
           </div>
         </div>
-        <p class="lead">所有工具都作为 `core.ToolExecutor` 接入。内置工具保持收紧默认值，企业自定义工具也应遵循同样模型: 输入 schema、side effect、approval、rate cap、审计和输出脱敏。</p>
+        <p class="lead">所有工具都作为 <code>core.ToolExecutor</code> 接入。内置工具保持收紧默认值，企业自定义工具也应遵循同样模型: 输入 schema、side effect、approval、rate cap、审计和输出脱敏。工具声明和执行器绑定是分离的：<code>scenario.tools</code> 暴露 manifest，<code>WithToolExecutor</code> 适合轻量常驻工具，<code>WithToolResolver</code> 适合在通过 allowlist、审批、RBAC 和治理策略后再按需解析重型或租户隔离工具。</p>
         <div class="grid three">
           <div class="panel"><h4>HTTP 工具</h4><p>读取 allowlisted 内部 API。默认仅允许 GET/HEAD，限制 host、method 和响应大小。</p><span class="tag">builtin.http</span></div>
           <div class="panel"><h4>文件系统工具</h4><p>读取 allowlisted root 下的本地文件。拒绝路径逃逸、符号链接逃逸和超大文件。</p><span class="tag">builtin.filesystem</span></div>
@@ -993,6 +993,22 @@ fw, err := agentflow.NewFromFile(
   "examples/sql_tool.yaml",
   agentflow.WithToolExecutor("sql.query", sqlTool),
 )</code></pre></div>
+        <div class="code-block"><div class="code-title"><span>惰性工具解析</span><button class="copy" type="button">复制</button></div><pre><code>resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
+  switch tool.Type {
+  case "builtin.sql":
+    return newTenantSQLTool(ctx, tool.Metadata)
+  case "mcp.tool":
+    return newTenantMCPTool(ctx, tool.Metadata)
+  default:
+    return nil, fmt.Errorf("unsupported tool type %q", tool.Type)
+  }
+})
+
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithToolResolver(resolver),
+)</code></pre></div>
+        <div class="callout"><strong>Skill 边界:</strong> Skill 解决 prompt、policy 和 workflow 片段的复用，会在场景构建阶段展开；它不初始化工具。真实工具客户端、租户凭证和重型连接器应由 <code>WithToolResolver</code> 在调用时绑定。</div>
       </section>
 
       <section id="rag">

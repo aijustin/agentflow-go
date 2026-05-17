@@ -932,9 +932,12 @@ func (g *capturingGate) Resume(context.Context, string, core.Decision, json.RawM
 
 type mapToolRegistry map[string]core.ToolExecutor
 
-func (r mapToolRegistry) Tool(name string) (core.ToolExecutor, bool) {
-	tool, ok := r[name]
-	return tool, ok
+func (r mapToolRegistry) ResolveTool(ctx context.Context, tool core.Tool) (core.ToolExecutor, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	executor, ok := r[tool.Name]
+	return executor, ok, nil
 }
 
 type echoTool struct{}

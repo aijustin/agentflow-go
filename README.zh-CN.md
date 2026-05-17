@@ -267,6 +267,28 @@ fw, err := agentflow.NewFromFile(
 
 适配模型和安全注意事项见 [docs/mcp-tools.md](docs/mcp-tools.md)。
 
+重型或租户隔离的工具不需要在框架启动时全部构造。可以先在 `scenario.tools` 声明 manifest，然后通过 `WithToolResolver` 在运行时完成 allowlist、审批、RBAC、治理策略和 rate cap 检查后，再按需解析真正的 executor：
+
+```go
+resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
+  switch tool.Type {
+  case "builtin.sql":
+    return newTenantSQLTool(ctx, tool.Metadata)
+  case "mcp.tool":
+    return newTenantMCPTool(ctx, tool.Metadata)
+  default:
+    return nil, fmt.Errorf("unsupported tool type %q", tool.Type)
+  }
+})
+
+fw, err := agentflow.NewFromFile(
+  "scenario.yaml",
+  agentflow.WithToolResolver(resolver),
+)
+```
+
+`WithToolExecutor` 仍适合轻量或常驻工具，并且优先级高于 resolver。resolver 解析出的 executor 会按场景工具名缓存在 framework 生命周期内。Skill 不负责初始化工具；它只在场景构建阶段展开 prompt 片段、策略覆盖和 workflow 片段，真实 executor 绑定由 resolver 在调用时完成。
+
 读取内部 API 可注册受限 HTTP Tool Executor：
 
 ```go
@@ -642,7 +664,7 @@ scenario:
 | `llms` | 命名 LLM Profile。Agent 和 Tool 可以绑定不同 Profile。 |
 | `memories` | 命名 Memory 后端和作用域。当前支持内存和文件持久化仓库。 |
 | `tools` | Tool 声明、副作用等级、审批策略、可选 LLM 覆盖和每次运行的 `rate_cap`。 |
-| `skills` | 声明式 prompt/policy/workflow 包。Skill 不是独立运行时 Actor，会在场景构建阶段展开为 Agent 指令、工具策略和 workflow 子图。 |
+| `skills` | 声明式 prompt/policy/workflow 包。Skill 不是独立运行时 Actor，也不初始化工具；它会在场景构建阶段展开为 Agent 指令、工具策略和 workflow 子图。 |
 | `agents` | Agent 角色、指令、LLM 绑定、Memory 绑定、工具和技能。 |
 | `orchestration` | autonomous、fixed_workflow 或 hybrid 编排策略。 |
 | `runtime` | Runtime 限制、输出阈值、密钥和运行参数。 |
@@ -952,6 +974,7 @@ internal/
 - Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图。
 - `sub_agents` 会在自主执行中作为虚拟 delegation tool 暴露给 supervisor Agent。
 - Skill prompt fragments、Agent policy、Tool policy 和 workflow segments 会在场景构建阶段展开为命名空间化的 workflow 节点。
+- Tool 的声明面和执行面已经分离：`scenario.tools` 向 LLM 和校验器暴露 manifest，`WithToolExecutor` 提前注册轻量 executor，`WithToolResolver` 则在允许的调用真正进入执行阶段时按需绑定重型或租户隔离 executor。
 - 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储，支持 MinIO/AWS S3 风格 endpoint，以及经过验证的腾讯云 COS/阿里云 OSS S3 兼容接口；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约可用于长任务执行；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
 - 企业 identity context、API Key middleware、静态和 OIDC/JWKS JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewOIDCJWTAuthenticator`、`NewAPIKeyMiddleware`、`NewJWTMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
 - Audit event 契约和 noop/内存/文件 sink 可通过 `pkg/audit`、`NewNoopAuditSink`、`NewInMemoryAuditSink`、`NewFileAuditSink` 和 `WithAuditSink` 使用。
@@ -1017,6 +1040,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 - In-memory Memory、RunStateRepository、BlobStore
 - LLM 抽象，以及 OpenAI-compatible、Anthropic、local、router 和 mock 测试路径的根包构造函数
 - 注册工具、OpenAI-compatible function calling 和 Anthropic Messages tool use 的自主工具调用循环
+- 通过 `WithToolResolver` 在运行时策略检查后惰性绑定重型或租户隔离工具 executor
 - Runtime memory integration：注入历史并持久化用户/助手/工具观察结果
 - 固定工作流图调度：依赖、并行、重试、条件、transform/agent/human-gate 节点、CAS 安全输出保存
 - Workflow-level HITL pause/resume
@@ -1039,7 +1063,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 - 在现有 recorder/tracer 端口之上补充具体 Prometheus/OpenTelemetry exporter
 - 在当前 Compose 和 Kustomize base 之外补充 Helm chart 打包
-- 增加更多内置企业工具执行器，以及针对托管服务的集成测试矩阵
+- 完善 Tool/Skill catalog manifest 校验、打包流程，以及针对托管服务的集成测试矩阵
 
 ## 贡献
 
