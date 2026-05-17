@@ -154,7 +154,7 @@ func retryDelay(ctx context.Context, attempt int) error {
 			break
 		}
 	}
-	// Add ±25 % jitter to prevent thundering-herd on concurrent retries.
+	// Add ±25% jitter to prevent thundering-herd on concurrent retries.
 	jitter := time.Duration(rand.N(int64(delay/2))) - delay/4
 	delay += jitter
 	if delay < time.Millisecond {

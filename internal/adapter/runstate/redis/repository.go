@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -151,7 +152,11 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 		for _, keyVal := range keys {
 			snap, err := r.Load(ctx, strings.TrimPrefix(keyVal.bulk, r.prefix))
 			if err != nil {
-				continue
+				if errors.Is(err, runstate.ErrNotFound) {
+					// Key disappeared between SCAN and GET (deleted concurrently); skip.
+					continue
+				}
+				return out, fmt.Errorf("redis runstate: list: load %q: %w", keyVal.bulk, err)
 			}
 			if filter.Status != "" && snap.Status != filter.Status {
 				continue

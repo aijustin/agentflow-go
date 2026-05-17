@@ -640,6 +640,9 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 	if snapshot, err := f.runs.Load(ctx, runID); err == nil {
 		snapshot.Status = runstate.RunStatusFailed
 		if saveErr := f.runs.Save(ctx, &snapshot, snapshot.Version); saveErr != nil {
+			if f.logger != nil {
+				f.logger.Warn(ctx, "agentflow: failed to persist workflow failure status", "run_id", runID, "save_error", saveErr)
+			}
 			f.emit(ctx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q,"save_error":%q}`, cause.Error(), saveErr.Error())))
 			return
 		}
