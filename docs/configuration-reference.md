@@ -320,8 +320,10 @@ workflow:
 | `max_steps` | 整数 | 否 | 全局 autonomous 步骤上限。 |
 | `max_retries` | 整数 | 否 | 全局重试上限。 |
 | `max_parallel` | 整数 | 否 | 全局并行度上限。 |
-| `step_output_threshold` | 整数 | 否 | 单步输出超过该字节阈值时外置到 BlobStore。 |
+| `step_output_threshold` | 整数 | 否 | 单步输出超过该字节阈值时外置到已配置的 BlobStore；未配置 BlobStore 或未超过阈值时继续内联保存。 |
 | `secrets` | 字符串映射 | 否 | Secret 引用。敏感值建议优先使用环境变量。 |
+
+大输出外置适合 SQL/RAG/长文档生成等大载荷场景，用来控制 RunState 的数据库行大小和 Redis 内存占用。生产环境可以通过 `WithBlobStore` 接入文件、内存或 S3-compatible BlobStore；S3 兼容实现面向 MinIO、AWS S3 path-style endpoint，以及通过 path-style SigV4 `PUT`/`GET` 验证的腾讯云 COS/阿里云 OSS 兼容接口。原生 COS/OSS API 需要独立适配器实现同一个 `runstate.BlobStore` 契约。
 
 ## 扩展点
 

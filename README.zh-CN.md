@@ -952,7 +952,7 @@ internal/
 - Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图。
 - `sub_agents` 会在自主执行中作为虚拟 delegation tool 暴露给 supervisor Agent。
 - Skill prompt fragments、Agent policy、Tool policy 和 workflow segments 会在场景构建阶段展开为命名空间化的 workflow 节点。
-- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约可用于长任务执行；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
+- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储，支持 MinIO/AWS S3 风格 endpoint，以及经过验证的腾讯云 COS/阿里云 OSS S3 兼容接口；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约可用于长任务执行；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
 - 企业 identity context、API Key middleware、静态和 OIDC/JWKS JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewOIDCJWTAuthenticator`、`NewAPIKeyMiddleware`、`NewJWTMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
 - Audit event 契约和 noop/内存/文件 sink 可通过 `pkg/audit`、`NewNoopAuditSink`、`NewInMemoryAuditSink`、`NewFileAuditSink` 和 `WithAuditSink` 使用。
 - 运行时可观测面板、事件仓库、实时 EventHub 和 PostgreSQL 自动建表可通过 `NewPostgresEventStore`、`NewInMemoryEventStore`、`NewEventStoreSink`、`NewEventHub` 和 `NewObservabilityHTTPHandler` 使用。

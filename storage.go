@@ -19,7 +19,8 @@ type S3BlobStoreConfig struct {
 }
 
 // NewS3BlobStore creates an S3-compatible blob store for large runtime and
-// workflow outputs. It uses path-style object URLs and AWS Signature Version 4.
+// workflow outputs. It uses path-style object URLs, AWS Signature Version 4,
+// and supports providers whose S3-compatible PUT/GET behavior has been tested.
 func NewS3BlobStore(config S3BlobStoreConfig) (runstate.BlobStore, error) {
 	return blobs3.NewStore(blobs3.Config{
 		Endpoint:        config.Endpoint,
