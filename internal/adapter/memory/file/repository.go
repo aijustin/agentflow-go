@@ -85,6 +85,13 @@ func (r *Repository) Delete(ctx context.Context, ns memory.Namespace, key string
 	return err
 }
 
+// List is not supported by the file-backed repository because the file name is
+// a hash of the full namespace+key and the original key cannot be recovered
+// from the hash.  It always returns an empty slice.
+func (r *Repository) List(_ context.Context, _ memory.Namespace, _ string) ([]memory.Entry, error) {
+	return nil, nil
+}
+
 func (r *Repository) path(ns memory.Namespace, key string) string {
 	sum := sha256.Sum256([]byte(ns.KeyPrefix() + ":" + key))
 	return filepath.Join(r.dir, hex.EncodeToString(sum[:])+".json")

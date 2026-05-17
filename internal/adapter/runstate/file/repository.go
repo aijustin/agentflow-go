@@ -77,6 +77,46 @@ func (r *Repository) Delete(ctx context.Context, runID string) error {
 	return err
 }
 
+func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]runstate.RunSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []runstate.RunSnapshot
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(r.dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var snap runstate.RunSnapshot
+		if err := json.Unmarshal(data, &snap); err != nil {
+			continue
+		}
+		if filter.Status != "" && snap.Status != filter.Status {
+			continue
+		}
+		if filter.ScenarioName != "" && snap.ScenarioName != filter.ScenarioName {
+			continue
+		}
+		out = append(out, snap)
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 func (r *Repository) loadLocked(runID string) (runstate.RunSnapshot, error) {
 	data, err := os.ReadFile(r.path(runID))
 	if os.IsNotExist(err) {

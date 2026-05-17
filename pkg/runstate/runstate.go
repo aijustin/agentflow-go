@@ -90,6 +90,20 @@ type Repository interface {
 	Save(ctx context.Context, snapshot *RunSnapshot, expectedVersion int64) error
 	Load(ctx context.Context, runID string) (RunSnapshot, error)
 	Delete(ctx context.Context, runID string) error
+	// List returns snapshots that match the filter. Implementations may
+	// return results in any order. An empty filter matches all snapshots.
+	List(ctx context.Context, filter ListFilter) ([]RunSnapshot, error)
+}
+
+// ListFilter controls which snapshots are returned by Repository.List.
+// Zero values are treated as "no filter" for the corresponding field.
+type ListFilter struct {
+	// Status, when non-empty, restricts results to snapshots with this status.
+	Status RunStatus
+	// ScenarioName, when non-empty, restricts results to a specific scenario.
+	ScenarioName string
+	// Limit is the maximum number of results to return. 0 means no limit.
+	Limit int
 }
 
 type BlobStore interface {

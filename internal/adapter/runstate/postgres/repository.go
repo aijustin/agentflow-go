@@ -136,6 +136,50 @@ func (r *Repository) Delete(ctx context.Context, runID string) error {
 	return nil
 }
 
+func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]runstate.RunSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	args := []any{}
+	where := ""
+	if filter.Status != "" {
+		args = append(args, string(filter.Status))
+		where += fmt.Sprintf(" WHERE status = $%d", len(args))
+	}
+	if filter.ScenarioName != "" {
+		args = append(args, filter.ScenarioName)
+		if where == "" {
+			where = fmt.Sprintf(" WHERE scenario_name = $%d", len(args))
+		} else {
+			where += fmt.Sprintf(" AND scenario_name = $%d", len(args))
+		}
+	}
+	limit := ""
+	if filter.Limit > 0 {
+		args = append(args, filter.Limit)
+		limit = fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+	query := fmt.Sprintf(`SELECT snapshot_json FROM %s%s%s`, r.table, where, limit)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres runstate: list snapshots: %w", err)
+	}
+	defer rows.Close()
+	var out []runstate.RunSnapshot
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			return nil, fmt.Errorf("postgres runstate: scan snapshot: %w", err)
+		}
+		var snap runstate.RunSnapshot
+		if err := json.Unmarshal(data, &snap); err != nil {
+			return nil, fmt.Errorf("postgres runstate: decode snapshot: %w", err)
+		}
+		out = append(out, snap)
+	}
+	return out, rows.Err()
+}
+
 func requireAffected(result sql.Result, want int64) error {
 	affected, err := result.RowsAffected()
 	if err != nil {

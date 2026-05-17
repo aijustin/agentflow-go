@@ -8,7 +8,9 @@ package agentflow
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
@@ -67,6 +70,9 @@ type Framework struct {
 	audit    audit.Sink
 	toolGov  governance.ToolPolicy
 	redactor governance.OutputRedactor
+	recorder observability.Recorder
+	tracer   observability.Tracer
+	logger   appexec.Logger
 }
 
 type options struct {
@@ -85,6 +91,9 @@ type options struct {
 	audit       audit.Sink
 	toolGov     governance.ToolPolicy
 	redactor    governance.OutputRedactor
+	recorder    observability.Recorder
+	tracer      observability.Tracer
+	logger      appexec.Logger
 }
 
 type toolRegistry struct {
@@ -266,6 +275,9 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		Audit:          cfg.audit,
 		ToolPolicy:     cfg.toolGov,
 		OutputRedactor: cfg.redactor,
+		Recorder:       cfg.recorder,
+		Tracer:         cfg.tracer,
+		Logger:         cfg.logger,
 	})
 	if err != nil {
 		return nil, err
@@ -284,6 +296,9 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		audit:    cfg.audit,
 		toolGov:  cfg.toolGov,
 		redactor: cfg.redactor,
+		recorder: cfg.recorder,
+		tracer:   cfg.tracer,
+		logger:   cfg.logger,
 	}, nil
 }
 
@@ -350,6 +365,9 @@ func WithAuditSink(sink audit.Sink) Option {
 	}
 }
 
+// WithToolGovernancePolicy wires a per-invocation tool governance policy.
+// The policy is evaluated before every tool execution and can deny calls
+// based on side-effect level, call budget, or custom logic.
 func WithToolGovernancePolicy(policy governance.ToolPolicy) Option {
 	return func(o *options) error {
 		if policy == nil {
@@ -360,12 +378,52 @@ func WithToolGovernancePolicy(policy governance.ToolPolicy) Option {
 	}
 }
 
+// WithOutputRedactor wires an output redactor that scrubs sensitive fields
+// from step outputs before they are persisted or returned to callers.
 func WithOutputRedactor(redactor governance.OutputRedactor) Option {
 	return func(o *options) error {
 		if redactor == nil {
 			return fmt.Errorf("agentflow: output redactor is nil")
 		}
 		o.redactor = redactor
+		return nil
+	}
+}
+
+// WithLogger wires a structured logger that receives warning and error
+// messages from the runtime.  The logger implementation must satisfy
+// appexec.Logger (Warn and Error methods).  If not provided, messages are
+// silently discarded.
+func WithLogger(logger appexec.Logger) Option {
+	return func(o *options) error {
+		if logger == nil {
+			return fmt.Errorf("agentflow: logger is nil")
+		}
+		o.logger = logger
+		return nil
+	}
+}
+
+// WithRecorder wires a metrics recorder.  If not provided, metrics are
+// discarded via observability.NoopRecorder.
+func WithRecorder(recorder observability.Recorder) Option {
+	return func(o *options) error {
+		if recorder == nil {
+			return fmt.Errorf("agentflow: recorder is nil")
+		}
+		o.recorder = recorder
+		return nil
+	}
+}
+
+// WithTracer wires a distributed-tracing provider.  If not provided, tracing
+// is a no-op via observability.NoopTracer.
+func WithTracer(tracer observability.Tracer) Option {
+	return func(o *options) error {
+		if tracer == nil {
+			return fmt.Errorf("agentflow: tracer is nil")
+		}
+		o.tracer = tracer
 		return nil
 	}
 }
@@ -460,17 +518,21 @@ func WithHITLTokenTTL(ttl time.Duration) Option {
 
 // Run executes the framework scenario.
 func (f *Framework) Run(ctx context.Context, req RunRequest) (RunResult, error) {
-	if f.scenario.Orchestration.Mode == core.OrchestrationFixedWorkflow {
+	switch f.scenario.Orchestration.Mode {
+	case core.OrchestrationFixedWorkflow:
 		return f.runWorkflow(ctx, req)
+	case core.OrchestrationHybrid:
+		return f.runHybrid(ctx, req)
+	default:
+		return f.engine.Run(ctx, req)
 	}
-	return f.engine.Run(ctx, req)
 }
 
 func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult, error) {
 	ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
 	defer cancel()
 	if req.RunID == "" {
-		req.RunID = fmt.Sprintf("run-%d", time.Now().UnixNano())
+		req.RunID = generateRunID()
 	}
 	snapshot := runstate.RunSnapshot{
 		RunID:        req.RunID,
@@ -492,6 +554,7 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: f.scenario.Agents, engine: f.engine}),
 		orchestration.WithHumanGate(f.gate),
 		orchestration.WithBlobStore(f.blobs),
+		orchestration.WithWorkflowToolPolicy(f.toolGov),
 	)
 	if err := runner.Run(ctx, f.scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
@@ -513,10 +576,73 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: "fixed workflow completed"}, nil
 }
 
+// runHybrid executes a hybrid scenario: the optional fixed workflow DAG runs
+// first, then an autonomous agent executes with the workflow step outputs
+// injected as context.  If no workflow is defined, execution falls back to
+// pure autonomous mode.
+func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, error) {
+	if f.scenario.Orchestration.Workflow == nil {
+		// No workflow phase – degrade gracefully to autonomous mode.
+		return f.engine.Run(ctx, req)
+	}
+	ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
+	defer cancel()
+	if req.RunID == "" {
+		req.RunID = generateRunID()
+	}
+
+	// Phase 1: fixed workflow DAG.
+	snapshot := runstate.RunSnapshot{
+		RunID:        req.RunID,
+		ScenarioName: f.scenario.Name,
+		Status:       runstate.RunStatusRunning,
+		Variables:    map[string]json.RawMessage{"input": req.Context},
+		StepOutputs:  make(map[string]runstate.StepOutputRef),
+	}
+	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
+		return RunResult{}, err
+	}
+	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
+	runner := orchestration.NewWorkflowRunner(
+		f.tools,
+		f.runs,
+		f.events,
+		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: f.scenario.Agents, engine: f.engine}),
+		orchestration.WithHumanGate(f.gate),
+		orchestration.WithBlobStore(f.blobs),
+		orchestration.WithWorkflowToolPolicy(f.toolGov),
+	)
+	if err := runner.Run(ctx, f.scenario, req.RunID); err != nil {
+		var paused orchestration.WorkflowPausedError
+		if errors.As(err, &paused) {
+			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
+		}
+		f.markWorkflowFailed(ctx, req.RunID, err)
+		return RunResult{}, err
+	}
+
+	// Enrich context for Phase 2 with workflow step outputs.
+	loaded, err := f.runs.Load(ctx, req.RunID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if req.Context == nil && len(loaded.StepOutputs) > 0 {
+		if raw, merr := json.Marshal(loaded.StepOutputs); merr == nil {
+			req.Context = raw
+		}
+	}
+
+	// Phase 2: autonomous agent execution continuing the same run.
+	return f.engine.RunHybrid(ctx, req)
+}
+
 func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause error) {
 	if snapshot, err := f.runs.Load(ctx, runID); err == nil {
 		snapshot.Status = runstate.RunStatusFailed
-		_ = f.runs.Save(ctx, &snapshot, snapshot.Version)
+		if saveErr := f.runs.Save(ctx, &snapshot, snapshot.Version); saveErr != nil {
+			f.emit(ctx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q,"save_error":%q}`, cause.Error(), saveErr.Error())))
+			return
+		}
 	}
 	f.emit(ctx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))
 }
@@ -633,4 +759,15 @@ func NewFileBlobStore(dir string) (runstate.BlobStore, error) {
 // NewFileMemoryRepository creates a JSON-file-backed memory repository.
 func NewFileMemoryRepository(dir string) (memory.Repository, error) {
 	return memoryfile.NewRepository(dir)
+}
+
+// generateRunID returns a cryptographically random run identifier with a
+// "run-" prefix.  It falls back to a nanosecond timestamp on the rare occasion
+// that the random reader fails.
+func generateRunID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("run-%d", time.Now().UnixNano())
+	}
+	return "run-" + hex.EncodeToString(b[:])
 }

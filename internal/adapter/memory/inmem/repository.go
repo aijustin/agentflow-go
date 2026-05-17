@@ -3,6 +3,7 @@ package inmem
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -70,6 +71,25 @@ func (r *Repository) Delete(ctx context.Context, ns memory.Namespace, key string
 	defer r.mu.Unlock()
 	delete(r.data, r.key(ns, key))
 	return nil
+}
+
+func (r *Repository) List(ctx context.Context, ns memory.Namespace, prefix string) ([]memory.Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	nsPrefix := ns.KeyPrefix() + ":"
+	keyPrefix := nsPrefix + prefix
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []memory.Entry
+	for k, v := range r.data {
+		if !strings.HasPrefix(k, keyPrefix) {
+			continue
+		}
+		rawKey := strings.TrimPrefix(k, nsPrefix)
+		out = append(out, memory.Entry{Key: rawKey, Value: clone(v)})
+	}
+	return out, nil
 }
 
 func (r *Repository) key(ns memory.Namespace, key string) string {

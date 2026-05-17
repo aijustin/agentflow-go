@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -43,13 +44,23 @@ func WithBlobStore(blobs runstate.BlobStore) RunnerOption {
 	}
 }
 
+// WithWorkflowToolPolicy wires a per-invocation governance policy applied to
+// NodeTool executions inside a workflow.  The policy is evaluated before each
+// tool call and can deny the invocation.
+func WithWorkflowToolPolicy(policy governance.ToolPolicy) RunnerOption {
+	return func(r *WorkflowRunner) {
+		r.toolGov = policy
+	}
+}
+
 type WorkflowRunner struct {
-	tools  ToolRegistry
-	agents AgentRegistry
-	gate   core.HumanGate
-	runs   runstate.Repository
-	blobs  runstate.BlobStore
-	events core.EventSink
+	tools   ToolRegistry
+	agents  AgentRegistry
+	gate    core.HumanGate
+	runs    runstate.Repository
+	blobs   runstate.BlobStore
+	events  core.EventSink
+	toolGov governance.ToolPolicy
 }
 
 type WorkflowPausedError struct {
@@ -262,6 +273,16 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	tool := scenario.Tools[node.Ref]
 	if tool.Name == "" {
 		tool.Name = node.Ref
+	}
+	if r.toolGov != nil {
+		if err := r.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
+			RunID:      runID,
+			Tool:       node.Ref,
+			SideEffect: tool.SideEffect,
+			Input:      node.Input,
+		}); err != nil {
+			return fmt.Errorf("orchestration: tool %q denied by governance: %w", node.Ref, err)
+		}
 	}
 	executor, ok, err := r.tools.ResolveTool(ctx, tool)
 	if err != nil {

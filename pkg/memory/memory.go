@@ -38,4 +38,7 @@ type Repository interface {
 	Set(ctx context.Context, ns Namespace, key string, value json.RawMessage) error
 	Append(ctx context.Context, ns Namespace, key string, value json.RawMessage) error
 	Delete(ctx context.Context, ns Namespace, key string) error
+	// List returns all entries whose keys begin with prefix within the
+	// namespace. An empty prefix matches all keys in the namespace.
+	List(ctx context.Context, ns Namespace, prefix string) ([]Entry, error)
 }

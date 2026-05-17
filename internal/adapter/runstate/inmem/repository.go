@@ -67,6 +67,28 @@ func (r *Repository) Delete(ctx context.Context, runID string) error {
 	return nil
 }
 
+func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]runstate.RunSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]runstate.RunSnapshot, 0, len(r.snapshots))
+	for _, snap := range r.snapshots {
+		if filter.Status != "" && snap.Status != filter.Status {
+			continue
+		}
+		if filter.ScenarioName != "" && snap.ScenarioName != filter.ScenarioName {
+			continue
+		}
+		out = append(out, cloneSnapshot(snap))
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 func cloneSnapshot(snapshot runstate.RunSnapshot) runstate.RunSnapshot {
 	if snapshot.Variables != nil {
 		variables := make(map[string]json.RawMessage, len(snapshot.Variables))

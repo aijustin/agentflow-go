@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,7 +59,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	}
 	idGenerator := config.IDGenerator
 	if idGenerator == nil {
-		idGenerator = func() string { return fmt.Sprintf("run-%d", time.Now().UnixNano()) }
+		idGenerator = generateRunID
 	}
 	now := config.Now
 	if now == nil {
@@ -250,4 +252,15 @@ func writeJSON(w nethttp.ResponseWriter, status int, v any) {
 func principalFromContext(ctx context.Context) identity.Principal {
 	principal, _ := identity.PrincipalFromContext(ctx)
 	return principal
+}
+
+// generateRunID returns a cryptographically random run identifier with a
+// "run-" prefix.  Falls back to a nanosecond timestamp on the rare occasion
+// that the random reader fails.
+func generateRunID() string {
+	var b [8]byte
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		return fmt.Sprintf("run-%d", time.Now().UnixNano())
+	}
+	return "run-" + hex.EncodeToString(b[:])
 }

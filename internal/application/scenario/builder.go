@@ -20,6 +20,9 @@ func Build(s core.Scenario) (RuntimePlan, error) {
 	if err != nil {
 		return RuntimePlan{}, err
 	}
+	if err := validateNoSkillNodes(expanded); err != nil {
+		return RuntimePlan{}, err
+	}
 	plan := RuntimePlan{
 		Scenario: expanded,
 		LLMs:     make(map[string]llm.Profile, len(s.LLMs)),
@@ -194,4 +197,20 @@ func mergePromptFragments(instructions string, fragments []core.PromptFragment) 
 		b.WriteString(fragment.Content)
 	}
 	return b.String()
+}
+
+// validateNoSkillNodes ensures that after expandSkills there are no residual
+// NodeSkill nodes in the workflow.  A NodeSkill node that survives expansion
+// means a skill was referenced in a workflow node directly (rather than via an
+// agent), which is unsupported.
+func validateNoSkillNodes(s core.Scenario) error {
+	if s.Orchestration.Workflow == nil {
+		return nil
+	}
+	for _, node := range s.Orchestration.Workflow.Nodes {
+		if node.Kind == core.NodeSkill {
+			return fmt.Errorf("scenario: workflow node %q has kind %q which must be expanded before runtime; reference skills via agent.skills instead", node.ID, node.Kind)
+		}
+	}
+	return nil
 }

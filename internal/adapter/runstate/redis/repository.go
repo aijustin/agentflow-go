@@ -126,6 +126,51 @@ func (r *Repository) Delete(ctx context.Context, runID string) error {
 	return err
 }
 
+// List scans all keys with the repository prefix and returns snapshots that
+// satisfy the filter. Because the Redis adapter uses a raw RESP protocol
+// client without connection pooling, each scan cursor iteration opens a new
+// connection. For large keyspaces prefer a dedicated store with direct
+// indexing (e.g. postgres).
+func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]runstate.RunSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	pattern := r.prefix + "*"
+	cursor := "0"
+	var out []runstate.RunSnapshot
+	for {
+		value, err := r.do(ctx, "SCAN", cursor, "MATCH", pattern, "COUNT", "100")
+		if err != nil {
+			return nil, err
+		}
+		if len(value.array) != 2 {
+			return nil, fmt.Errorf("redis runstate: unexpected SCAN response")
+		}
+		cursor = value.array[0].bulk
+		keys := value.array[1].array
+		for _, keyVal := range keys {
+			snap, err := r.Load(ctx, strings.TrimPrefix(keyVal.bulk, r.prefix))
+			if err != nil {
+				continue
+			}
+			if filter.Status != "" && snap.Status != filter.Status {
+				continue
+			}
+			if filter.ScenarioName != "" && snap.ScenarioName != filter.ScenarioName {
+				continue
+			}
+			out = append(out, snap)
+			if filter.Limit > 0 && len(out) >= filter.Limit {
+				return out, nil
+			}
+		}
+		if cursor == "0" {
+			break
+		}
+	}
+	return out, nil
+}
+
 func (r *Repository) key(runID string) string {
 	return r.prefix + runID
 }
@@ -178,6 +223,7 @@ type respValue struct {
 	integer int64
 	nil     bool
 	err     string
+	array   []respValue
 }
 
 func writeCommand(writer io.Writer, args ...string) error {
@@ -231,6 +277,27 @@ func readValue(reader *bufio.Reader) (respValue, error) {
 			return respValue{}, err
 		}
 		return respValue{bulk: string(data[:length])}, nil
+	case '*':
+		line, err := readLine(reader)
+		if err != nil {
+			return respValue{}, err
+		}
+		count, err := strconv.Atoi(line)
+		if err != nil {
+			return respValue{}, err
+		}
+		if count == -1 {
+			return respValue{nil: true}, nil
+		}
+		elements := make([]respValue, count)
+		for i := range elements {
+			elem, err := readValue(reader)
+			if err != nil {
+				return respValue{}, err
+			}
+			elements[i] = elem
+		}
+		return respValue{array: elements}, nil
 	default:
 		return respValue{}, fmt.Errorf("redis runstate: unsupported response prefix %q", prefix)
 	}
