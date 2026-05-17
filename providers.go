@@ -15,6 +15,11 @@ type OpenAICompatibleProvider interface {
 	llm.Embedder
 }
 
+type LLMProviderRouter interface {
+	llm.Gateway
+	llm.Embedder
+}
+
 // NewOpenAICompatibleGateway creates a gateway for OpenAI-compatible chat APIs.
 func NewOpenAICompatibleGateway(profiles []llm.Profile, client *http.Client) llm.Gateway {
 	return openai.NewGateway(profiles, client)
@@ -42,5 +47,11 @@ func NewAnthropicGateway(profiles []llm.Profile, client *http.Client) llm.Gatewa
 
 // NewLLMRouter routes profile names to provider-specific gateways.
 func NewLLMRouter(routes map[string]llm.Gateway) llm.Gateway {
+	return llmrouter.New(routes)
+}
+
+// NewLLMProviderRouter routes chat/tool/structured/streaming and embedding
+// calls by profile name when the selected route supports the requested capability.
+func NewLLMProviderRouter(routes map[string]llm.Gateway) LLMProviderRouter {
 	return llmrouter.New(routes)
 }

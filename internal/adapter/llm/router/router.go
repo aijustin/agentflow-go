@@ -18,7 +18,25 @@ func New(routes map[string]llm.Gateway) *Gateway {
 
 func (g *Gateway) Supports(profile string, cap llm.Capability) bool {
 	route, ok := g.routes[profile]
-	return ok && route.Supports(profile, cap)
+	if !ok || !route.Supports(profile, cap) {
+		return false
+	}
+	switch cap {
+	case llm.CapToolCall:
+		_, ok := route.(llm.ToolCaller)
+		return ok
+	case llm.CapStructuredOutput:
+		_, ok := route.(llm.StructuredOutputter)
+		return ok
+	case llm.CapStream:
+		_, ok := route.(llm.Streamer)
+		return ok
+	case llm.CapEmbed:
+		_, ok := route.(llm.Embedder)
+		return ok
+	default:
+		return true
+	}
 }
 
 func (g *Gateway) Chat(ctx context.Context, profile string, req llm.ChatRequest) (llm.ChatResponse, error) {
@@ -63,4 +81,16 @@ func (g *Gateway) StreamChat(ctx context.Context, profile string, req llm.ChatRe
 		return nil, fmt.Errorf("llm router: profile %q does not support streaming", profile)
 	}
 	return streamer.StreamChat(ctx, profile, req)
+}
+
+func (g *Gateway) Embed(ctx context.Context, profile string, input []string) ([][]float32, error) {
+	route, ok := g.routes[profile]
+	if !ok {
+		return nil, fmt.Errorf("llm router: profile %q not found", profile)
+	}
+	embedder, ok := route.(llm.Embedder)
+	if !ok || !route.Supports(profile, llm.CapEmbed) {
+		return nil, fmt.Errorf("llm router: profile %q does not support embeddings", profile)
+	}
+	return embedder.Embed(ctx, profile, input)
 }

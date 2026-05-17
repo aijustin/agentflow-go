@@ -70,6 +70,9 @@ func Validate(s core.Scenario) error {
 			if policy.Approval != "" && !containsString(supportedApprovalPolicies, string(policy.Approval)) {
 				return fmt.Errorf("config: skills.%s.tool_policies approval %q is unsupported", name, policy.Approval)
 			}
+			if policy.SideEffect != "" && !containsString(supportedSideEffects, string(policy.SideEffect)) {
+				return fmt.Errorf("config: skills.%s.tool_policies side_effect %q is unsupported", name, policy.SideEffect)
+			}
 			if policy.RateCap < 0 {
 				return fmt.Errorf("config: skills.%s.tool_policies rate_cap must be >= 0", name)
 			}
@@ -97,9 +100,21 @@ func Validate(s core.Scenario) error {
 			}
 		}
 		for _, skill := range agent.Skills {
-			if _, ok := s.Skills[skill]; !ok {
+			candidate, ok := s.Skills[skill]
+			if !ok {
 				return fmt.Errorf("config: agents.%s.skills references unknown skill %q", name, skill)
 			}
+			if len(candidate.CompatibleAgents) > 0 && !containsString(candidate.CompatibleAgents, name) {
+				return fmt.Errorf("config: agents.%s.skills references incompatible skill %q", name, skill)
+			}
+		}
+	}
+	if s.Orchestration.Planning.MaxSteps < 0 {
+		return fmt.Errorf("config: orchestration.planning.max_steps must be >= 0")
+	}
+	if s.Orchestration.Planning.Agent != "" {
+		if _, ok := s.Agents[s.Orchestration.Planning.Agent]; !ok {
+			return fmt.Errorf("config: orchestration.planning.agent references unknown agent %q", s.Orchestration.Planning.Agent)
 		}
 	}
 	switch s.Orchestration.Mode {

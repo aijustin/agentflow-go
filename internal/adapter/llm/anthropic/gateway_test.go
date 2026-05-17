@@ -49,6 +49,11 @@ func TestGatewaySupportsConfiguredCapabilities(t *testing.T) {
 	if gateway.Supports("default", llm.CapEmbed) {
 		t.Fatal("anthropic should not advertise embeddings by default")
 	}
+
+	gateway = NewGateway([]llm.Profile{{Name: "default", Model: "claude-test", Capabilities: []llm.Capability{llm.CapEmbed}}}, nil)
+	if gateway.Supports("default", llm.CapEmbed) {
+		t.Fatal("anthropic should not advertise embeddings even when profile capabilities are misconfigured")
+	}
 }
 
 func TestGatewayChatWithTools(t *testing.T) {

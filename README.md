@@ -103,6 +103,18 @@ provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
 }, nil)
 ```
 
+For mixed-provider applications, `NewLLMProviderRouter` routes chat/tool/structured/stream and embedding calls by profile name. Capabilities are explicit: unsupported features fail clearly instead of being silently emulated.
+
+```go
+openaiProvider := agentflow.NewOpenAICompatibleProvider(openaiProfiles, nil)
+anthropicGateway := agentflow.NewAnthropicGateway(anthropicProfiles, nil)
+
+provider := agentflow.NewLLMProviderRouter(map[string]llm.Gateway{
+  "chat":  anthropicGateway,
+  "embed": openaiProvider,
+})
+```
+
 For structured output, configure `agents.<name>.output_schema` and call `RunStructured`; the gateway must implement `llm.StructuredOutputter`:
 
 ```go
@@ -134,6 +146,8 @@ for chunk := range chunks {
 ```
 
 When an agent has tools and the configured LLM gateway supports `CapToolCall`, the runtime runs an autonomous tool loop: send tool specs to the LLM, validate returned tool calls against the agent whitelist, enforce approval and per-run `rate_cap`, retry classified transient LLM/tool errors from `retry_limit`/`max_retries` with exponential backoff, execute registered tool executors, append bounded tool results, and continue until the LLM returns a final answer or `max_steps` is reached. `Stream` also accepts tool-enabled agents; it runs the same governed tool loop and emits the final answer as a stream chunk.
+
+Set `orchestration.planning.enabled: true` to add a planning pass before the autonomous tool loop. The runtime asks the executing agent, or `orchestration.planning.agent` when set, for a concise JSON plan and injects that plan into the subsequent execution context.
 
 Fixed workflows support `tool`, `agent`, `human_gate`, and `transform` nodes. Node `condition` expressions can read `steps.<node_id>` paths with `exists(...)`, `missing(...)`, `eq(...)`, and `ne(...)`; transform nodes can build structured outputs with `set` and `copy` mappings.
 
@@ -194,6 +208,21 @@ fw, err := agentflow.NewFromFile(
 ```
 
 See [docs/persistence/postgres-runstate.md](docs/persistence/postgres-runstate.md) for the table contract and operational notes.
+
+Redis-backed run state is also available when you want low-latency CAS snapshots without a SQL database:
+
+```go
+runs, err := agentflow.NewRedisRunStateRepository(agentflow.RedisRunStateRepositoryConfig{
+  Addr:      os.Getenv("AGENTFLOW_REDIS_ADDR"),
+  Password:  os.Getenv("AGENTFLOW_REDIS_PASSWORD"),
+  KeyPrefix: "agentflow:runstate:",
+})
+if err != nil {
+  log.Fatal(err)
+}
+```
+
+See [docs/persistence/redis-runstate.md](docs/persistence/redis-runstate.md) for storage semantics and operational notes.
 
 For asynchronous production execution, use a queue plus workers. The PostgreSQL queue adapter uses `database/sql` and does not force a driver dependency:
 
@@ -793,6 +822,21 @@ handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Reque
 }))
 ```
 
+For production OIDC/OAuth2 gateways, use JWKS discovery and refresh-backed JWT validation:
+
+```go
+auth, err := agentflow.NewOIDCJWTAuthenticator(agentflow.OIDCJWTAuthenticatorConfig{
+  Issuer:          "https://issuer.example.com",
+  Audience:        "agentflow-api",
+  DiscoveryURL:    "https://issuer.example.com/.well-known/openid-configuration",
+  RefreshInterval: 5 * time.Minute,
+})
+if err != nil {
+  log.Fatal(err)
+}
+middleware, err := agentflow.NewJWTMiddleware(agentflow.JWTMiddlewareConfig{Authenticator: auth})
+```
+
 Example: enforce authorization around a handler.
 
 ```go
@@ -873,20 +917,20 @@ internal/
 
 Design boundaries:
 
-- `Skill = prompt fragments + tool whitelist/policy + inline-able workflow sub-graph`.
+- `Skill = prompt fragments + agent/tool policy overlays + inline-able workflow sub-graph`.
 - `Tool = schema-backed execution unit`.
 - `Agent = entity that owns LLM and memory binding`.
 - `RunStateRepository` is separate from Memory and handles resumable workflow snapshots.
 - Context governance is profile-scoped: different agents/tools can route to different LLM profiles with different window, output, thinking, and compression policies.
-- Autonomous execution supports LLM tool-calling loops with tool whitelist checks, approval-policy denial, per-run rate caps, classified retry, bounded tool result feedback, and LLM/tool lifecycle events.
+- Autonomous execution supports an optional planning pass plus LLM tool-calling loops with tool whitelist checks, approval-policy denial, per-run rate caps, classified retry, bounded tool result feedback, and LLM/tool lifecycle events.
 - Structured output runs use an agent-level `output_schema` and provider `StructuredOutputter`; streaming runs use provider `Streamer` for normal chat and the governed tool loop for tool-enabled agents, then persist the final accumulated answer.
 - Memory bindings are connected to runtime reads/writes for conversation and session history.
 - Fixed workflows run from graph dependencies and edges, with bounded parallel batches, false-condition skips, retry policy, transform nodes, agent nodes, human-gate nodes, and CAS-safe step output persistence.
 - Workflow human-gate nodes pause with persisted `CurrentNodeID`/`PendingGate` and can resume downstream execution after approval.
 - `sub_agents` are available to supervisor agents as virtual delegation tools during autonomous execution.
-- Skill prompt fragments and skill workflow segments are expanded during scenario build with namespaced workflow node IDs.
-- File-backed RunState, BlobStore, and Memory adapters are available from the root facade for durable local persistence; PostgreSQL-backed RunState is available for production database persistence; S3-compatible BlobStore is available for large runtime/workflow outputs; Redis-backed leases are available for worker coordination; async queue and worker contracts are available for long-running execution; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
-- Enterprise identity context, API key middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, `NewAPIKeyMiddleware`, `NewAuthorizationMiddleware`, and `WithSecurityPolicy`.
+- Skill prompt fragments, agent policies, tool policies, and workflow segments are expanded during scenario build with namespaced workflow node IDs.
+- File-backed RunState, BlobStore, and Memory adapters are available from the root facade for durable local persistence; PostgreSQL-backed and Redis-backed RunState are available for production persistence; S3-compatible BlobStore is available for large runtime/workflow outputs; Redis-backed leases are available for worker coordination; async queue and worker contracts are available for long-running execution; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
+- Enterprise identity context, API key middleware, static and OIDC/JWKS JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, `NewOIDCJWTAuthenticator`, `NewAPIKeyMiddleware`, `NewJWTMiddleware`, `NewAuthorizationMiddleware`, and `WithSecurityPolicy`.
 - Audit event contracts and noop/in-memory/file sinks are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.
 - Enterprise auth/tenancy and observability/governance designs are documented in [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md) and [docs/observability-governance.md](docs/observability-governance.md).
 - In-memory adapters are concurrency-safe and namespaced by run/session where applicable.
@@ -944,7 +988,7 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 Implemented:
 
 - YAML loader and validator
-- Autonomous runtime engine
+- Autonomous runtime engine with optional planning pass before governed execution
 - Fixed-workflow runner wired through the root facade
 - In-memory Memory, RunStateRepository, and BlobStore
 - LLM abstractions plus root constructors for OpenAI-compatible, Anthropic, local, router, and mock testing paths
@@ -953,11 +997,11 @@ Implemented:
 - Fixed-workflow graph scheduler with dependencies, parallelism, retries, conditions, transform/agent/human-gate nodes, and CAS-safe output saves
 - Workflow-level HITL pause/resume with saved scheduler position
 - Multi-agent delegation through virtual sub-agent tools and persisted delegated outputs
-- Skill prompt/workflow expansion during scenario build
-- File-backed durable adapters for run state, blobs, and memory, plus PostgreSQL-backed run state, PostgreSQL-backed async queue, and S3-compatible blob storage
+- Skill prompt/workflow expansion, compatible-agent checks, agent policy overlays, and tool policy overlays during scenario build
+- File-backed durable adapters for run state, blobs, and memory, plus PostgreSQL-backed run state, Redis-backed run state, PostgreSQL-backed async queue, and S3-compatible blob storage
 - Redis-backed distributed lease adapter for worker and workflow coordination
 - Async job queue and worker contracts with in-memory/PostgreSQL queue adapters, lease renewal, framework-run worker handler, and HTTP submit/status/cancel handler
-- Enterprise identity context, API key middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization
+- Enterprise identity context, API key middleware, static/JWKS-discovered JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization
 - Audit event model with noop, in-memory, JSONL file, and structured `slog` sinks, plus framework audit wiring
 - Governance hooks for tool budgets, tool side-effect ceilings, and persisted output redaction
 - Durable CLI resume via `--state-dir`
@@ -968,14 +1012,11 @@ Implemented:
 - GitHub Actions CI, golangci-lint configuration, govulncheck/CodeQL workflows, Dependabot, GoReleaser, Dockerfile, and security/community docs
 - Unit and integration tests
 
-Not yet production-complete:
+Remaining production roadmap:
 
-- Redis run-state storage adapter beyond lease coordination
-- Production queue adapter and framework handler for executing queued run jobs
-- Advanced autonomous planning beyond the tool-calling loop
-- Richer skill policy expansion beyond prompts and workflow segments
-- Full provider feature parity for streaming, tool calls, structured output, embeddings
-- Production auth layer for HTTP bridge beyond token HMAC verification
+- Concrete Prometheus/OpenTelemetry exporters on top of the existing recorder/tracer ports
+- Helm chart packaging beyond the current Compose and Kustomize base templates
+- Additional built-in enterprise tool executors and integration test matrices for managed services
 
 ## Contributing
 

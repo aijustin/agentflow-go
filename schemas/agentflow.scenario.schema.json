@@ -306,6 +306,10 @@
           },
           "description": "Prompt fragments appended to the agent instructions when the skill is attached."
         },
+        "agent_policy": {
+          "$ref": "#/$defs/agentPolicy",
+          "description": "Agent policy overrides applied when an agent attaches this skill."
+        },
         "tool_policies": {
           "type": "array",
           "items": {
@@ -348,6 +352,10 @@
         "approval": {
           "type": "string",
           "enum": ["never", "risky", "always"]
+        },
+        "side_effect": {
+          "type": "string",
+          "enum": ["none", "read", "write", "external", "dangerous"]
         },
         "rate_cap": {
           "type": "integer",
@@ -442,6 +450,26 @@
         },
         "human_in_loop": {
           "$ref": "#/$defs/humanInLoop"
+        },
+        "planning": {
+          "$ref": "#/$defs/planningPolicy"
+        }
+      }
+    },
+    "planningPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "agent": {
+          "type": "string",
+          "description": "Optional planner agent name. Defaults to the executing agent."
+        },
+        "max_steps": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -571,6 +599,33 @@
         },
         "secrets": {
           "$ref": "#/$defs/stringMap"
+        }
+      }
+    },
+    "agentPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration"
+        },
+        "retry_limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_schema": {
+          "$ref": "#/$defs/jsonSchemaFragment"
+        },
+        "human_checkpoints": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
         }
       }
     },

@@ -72,6 +72,7 @@ type Skill struct {
 	Version          string            `yaml:"version"`
 	CompatibleAgents []string          `yaml:"compatible_agents"`
 	PromptFragments  []PromptFragment  `yaml:"prompt_fragments"`
+	AgentPolicy      AgentPolicy       `yaml:"agent_policy"`
 	ToolPolicies     []SkillToolPolicy `yaml:"tool_policies"`
 	Workflow         *Workflow         `yaml:"workflow"`
 	Metadata         map[string]string `yaml:"metadata"`
@@ -83,9 +84,18 @@ type PromptFragment struct {
 }
 
 type SkillToolPolicy struct {
-	Tool     string `yaml:"tool"`
-	Approval string `yaml:"approval"`
-	RateCap  int    `yaml:"rate_cap"`
+	Tool       string `yaml:"tool"`
+	Approval   string `yaml:"approval"`
+	SideEffect string `yaml:"side_effect"`
+	RateCap    int    `yaml:"rate_cap"`
+}
+
+type AgentPolicy struct {
+	MaxSteps         int            `yaml:"max_steps"`
+	Timeout          time.Duration  `yaml:"timeout"`
+	RetryLimit       int            `yaml:"retry_limit"`
+	OutputSchema     map[string]any `yaml:"output_schema"`
+	HumanCheckpoints []string       `yaml:"human_checkpoints"`
 }
 
 type Agent struct {
@@ -110,6 +120,13 @@ type Orchestration struct {
 	Workflow    *Workflow         `yaml:"workflow"`
 	MaxParallel int               `yaml:"max_parallel"`
 	HumanInLoop HumanInLoopPolicy `yaml:"human_in_loop"`
+	Planning    PlanningPolicy    `yaml:"planning"`
+}
+
+type PlanningPolicy struct {
+	Enabled  bool   `yaml:"enabled"`
+	Agent    string `yaml:"agent"`
+	MaxSteps int    `yaml:"max_steps"`
 }
 
 type HumanInLoopPolicy struct {
@@ -190,6 +207,11 @@ func (d Document) ToCore() (core.Scenario, error) {
 				Enabled:     d.Scenario.Orchestration.HumanInLoop.Enabled,
 				Checkpoints: d.Scenario.Orchestration.HumanInLoop.Checkpoints,
 			},
+			Planning: core.PlanningPolicy{
+				Enabled:  d.Scenario.Orchestration.Planning.Enabled,
+				Agent:    d.Scenario.Orchestration.Planning.Agent,
+				MaxSteps: d.Scenario.Orchestration.Planning.MaxSteps,
+			},
 		},
 		Runtime: core.RuntimePolicy{
 			Timeout:             d.Scenario.Runtime.Timeout,
@@ -254,12 +276,17 @@ func (d Document) ToCore() (core.Scenario, error) {
 		if err != nil {
 			return core.Scenario{}, fmt.Errorf("skill %q workflow: %w", name, err)
 		}
+		agentPolicy, err := skill.agentPolicyToCore()
+		if err != nil {
+			return core.Scenario{}, fmt.Errorf("skill %q agent_policy: %w", name, err)
+		}
 		s.Skills[name] = core.Skill{
 			Name:             name,
 			Description:      skill.Description,
 			Version:          skill.Version,
 			CompatibleAgents: skill.CompatibleAgents,
 			PromptFragments:  skill.promptFragmentsToCore(),
+			AgentPolicy:      agentPolicy,
 			ToolPolicies:     skill.toolPoliciesToCore(),
 			Workflow:         workflow,
 			Metadata:         skillMetadata(skill.Source, skill.Metadata),
@@ -323,12 +350,27 @@ func (s Skill) toolPoliciesToCore() []core.SkillToolPolicy {
 	out := make([]core.SkillToolPolicy, 0, len(s.ToolPolicies))
 	for _, policy := range s.ToolPolicies {
 		out = append(out, core.SkillToolPolicy{
-			Tool:     policy.Tool,
-			Approval: core.ApprovalPolicy(policy.Approval),
-			RateCap:  policy.RateCap,
+			Tool:       policy.Tool,
+			Approval:   core.ApprovalPolicy(policy.Approval),
+			SideEffect: core.SideEffectLevel(policy.SideEffect),
+			RateCap:    policy.RateCap,
 		})
 	}
 	return out
+}
+
+func (s Skill) agentPolicyToCore() (core.AgentPolicy, error) {
+	outputSchema, err := marshalRaw(s.AgentPolicy.OutputSchema)
+	if err != nil {
+		return core.AgentPolicy{}, err
+	}
+	return core.AgentPolicy{
+		MaxSteps:         s.AgentPolicy.MaxSteps,
+		Timeout:          s.AgentPolicy.Timeout,
+		RetryLimit:       s.AgentPolicy.RetryLimit,
+		OutputSchema:     outputSchema,
+		HumanCheckpoints: s.AgentPolicy.HumanCheckpoints,
+	}, nil
 }
 
 func skillMetadata(source string, metadata map[string]string) map[string]string {

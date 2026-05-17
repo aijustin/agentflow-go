@@ -147,20 +147,22 @@ Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`re
 
 ## Skill 配置
 
-Skill 定义在 `scenario.skills.<name>` 下。它是可复用的能力包，不是独立运行时 Actor。Agent 通过 `skills` 绑定 Skill 后，场景构建阶段会把 prompt 片段合并到 Agent 指令，将工具策略应用到对应 Tool，并把 Skill 的 workflow 子图展开到主 workflow 中。
+Skill 定义在 `scenario.skills.<name>` 下。它是可复用的能力包，不是独立运行时 Actor。Agent 通过 `skills` 绑定 Skill 后，场景构建阶段会把 prompt 片段合并到 Agent 指令，覆盖 Agent/Tool 策略，并把 Skill 的 workflow 子图展开到主 workflow 中。
 
 | 字段 | 类型 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
 | `source` | 字符串 | 否 | Skill 来源，例如本地路径、目录 ID 或内部 catalog 标识；会保存到 metadata 的 `source`。 |
 | `description` | 字符串 | 否 | Skill 的用途和边界说明。 |
 | `version` | 字符串 | 否 | Skill 包版本。 |
-| `compatible_agents` | 字符串数组 | 否 | 该 Skill 预期兼容的 Agent 名称；引用未知 Agent 会校验失败。 |
+| `compatible_agents` | 字符串数组 | 否 | 该 Skill 预期兼容的 Agent 名称；引用未知 Agent 或绑定到未列出的 Agent 会校验失败。 |
 | `prompt_fragments` | 数组 | 否 | 追加到 Agent `instructions` 后的 prompt 片段。 |
 | `prompt_fragments[].name` | 字符串 | 否 | prompt 片段名称，会作为段落标题写入。 |
 | `prompt_fragments[].content` | 字符串 | 是 | prompt 片段内容。 |
-| `tool_policies` | 数组 | 否 | Skill 对工具审批和调用上限的策略覆盖。 |
+| `agent_policy` | 对象 | 否 | 覆盖绑定 Agent 的执行策略，支持 `max_steps`、`timeout`、`retry_limit`、`output_schema`、`human_checkpoints`。 |
+| `tool_policies` | 数组 | 否 | Skill 对工具审批、副作用等级和调用上限的策略覆盖。 |
 | `tool_policies[].tool` | 字符串 | 是 | 来自 `scenario.tools` 的工具名称。 |
 | `tool_policies[].approval` | 枚举 | 否 | 覆盖该工具的审批策略，支持 `never`、`risky`、`always`。 |
+| `tool_policies[].side_effect` | 枚举 | 否 | 覆盖工具副作用等级，支持 `none`、`read`、`write`、`external`、`dangerous`。 |
 | `tool_policies[].rate_cap` | 整数 | 否 | 覆盖该工具单次运行内最大调用次数。 |
 | `workflow` | 对象 | 否 | 可复用 workflow 子图；展开时节点 ID 会加上 `<agent>.<skill>.` 前缀。 |
 | `metadata` | 字符串映射 | 否 | 运维侧自定义元数据。 |
@@ -182,9 +184,13 @@ scenario:
       prompt_fragments:
         - name: 复核风格
           content: 回答前先确认数据来源，并标注不确定信息。
+      agent_policy:
+        max_steps: 6
+        retry_limit: 1
       tool_policies:
         - tool: sql.query
           approval: risky
+          side_effect: read
           rate_cap: 2
       workflow:
         nodes:
@@ -235,12 +241,15 @@ Agent 定义在 `scenario.agents.<name>` 下。
 | `max_parallel` | 整数 | 否 | 工作流批次的最大并行度。 |
 | `human_in_loop.enabled` | 布尔值 | 否 | 启用全局 HITL checkpoint。 |
 | `human_in_loop.checkpoints` | 字符串数组 | 否 | 全局 checkpoint 名称。 |
+| `planning.enabled` | 布尔值 | 否 | 启用自主执行前的规划 pass。 |
+| `planning.agent` | 字符串 | 否 | 专门用于生成计划的 Agent；为空时使用当前执行 Agent。 |
+| `planning.max_steps` | 整数 | 否 | 规划输出的最大步骤数；`0` 表示使用运行时默认值。 |
 
 支持的 `mode` 值：
 
 | 值 | 含义 |
 | --- | --- |
-| `autonomous` | LLM 驱动的自主工具调用循环。 |
+| `autonomous` | LLM 驱动的自主执行，可选 planning pass，随后进入受治理工具调用循环。 |
 | `fixed_workflow` | 确定性工作流图。 |
 | `hybrid` | 为固定流程与自主执行混合场景预留。 |
 

@@ -3,6 +3,7 @@ package scenario
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -42,12 +43,14 @@ func TestBuildRequiresAgent(t *testing.T) {
 }
 
 func TestBuildExpandsSkillWorkflowAndPromptFragments(t *testing.T) {
+	timeout := 2 * time.Minute
 	plan, err := Build(core.Scenario{
 		Name: "scenario",
 		Skills: map[string]core.Skill{
 			"review": {
 				PromptFragments: []core.PromptFragment{{Name: "style", Content: "Be concise."}},
-				ToolPolicies:    []core.SkillToolPolicy{{Tool: "echo", Approval: core.ApprovalRisky, RateCap: 2}},
+				AgentPolicy:     core.AgentPolicy{MaxSteps: 5, Timeout: timeout, RetryLimit: 2},
+				ToolPolicies:    []core.SkillToolPolicy{{Tool: "echo", Approval: core.ApprovalRisky, RateCap: 2, SideEffect: core.SideEffectExternal}},
 				Workflow: &core.Workflow{
 					Nodes: []core.WorkflowNode{
 						{ID: "inspect", Kind: core.NodeTool, Ref: "echo"},
@@ -70,6 +73,9 @@ func TestBuildExpandsSkillWorkflowAndPromptFragments(t *testing.T) {
 	if !strings.Contains(agent.Instructions, "Base.") || !strings.Contains(agent.Instructions, "Be concise.") {
 		t.Fatalf("prompt fragments not merged: %q", agent.Instructions)
 	}
+	if agent.Policy.MaxSteps != 5 || agent.Policy.Timeout != timeout || agent.Policy.RetryLimit != 2 {
+		t.Fatalf("agent policy not merged: %+v", agent.Policy)
+	}
 	nodes := plan.Scenario.Orchestration.Workflow.Nodes
 	if len(nodes) != 2 {
 		t.Fatalf("expected skill nodes expanded, got %+v", nodes)
@@ -82,7 +88,18 @@ func TestBuildExpandsSkillWorkflowAndPromptFragments(t *testing.T) {
 		t.Fatalf("edges not namespaced: %+v", edges)
 	}
 	tool := plan.Scenario.Tools["echo"]
-	if tool.Approval != core.ApprovalRisky || tool.RateCap != 2 {
+	if tool.Approval != core.ApprovalRisky || tool.RateCap != 2 || tool.SideEffect != core.SideEffectExternal {
 		t.Fatalf("tool policy not applied: %+v", tool)
+	}
+}
+
+func TestBuildRejectsIncompatibleSkill(t *testing.T) {
+	_, err := Build(core.Scenario{
+		Name:   "scenario",
+		Skills: map[string]core.Skill{"review": {CompatibleAgents: []string{"assistant"}}},
+		Agents: map[string]core.Agent{"worker": {Name: "worker", Skills: []string{"review"}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "incompatible skill") {
+		t.Fatalf("expected incompatible skill error, got %v", err)
 	}
 }

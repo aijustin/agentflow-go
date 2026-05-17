@@ -103,6 +103,18 @@ provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
 }, nil)
 ```
 
+混合 Provider 场景可使用 `NewLLMProviderRouter` 按 profile 路由 chat/tool/structured/stream 和 embedding 调用。能力会显式检查：Provider 不支持的能力会清晰失败，不会被静默模拟。
+
+```go
+openaiProvider := agentflow.NewOpenAICompatibleProvider(openaiProfiles, nil)
+anthropicGateway := agentflow.NewAnthropicGateway(anthropicProfiles, nil)
+
+provider := agentflow.NewLLMProviderRouter(map[string]llm.Gateway{
+  "chat":  anthropicGateway,
+  "embed": openaiProvider,
+})
+```
+
 结构化输出：在 `agents.<name>.output_schema` 中配置 JSON Schema，并调用 `RunStructured`。LLM Gateway 需要实现 `llm.StructuredOutputter`：
 
 ```go
@@ -134,6 +146,8 @@ for chunk := range chunks {
 ```
 
 当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 对分类后的临时 LLM/工具错误做指数退避重试，执行注册的 ToolExecutor，将受限后的工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。`Stream` 也支持带工具的 Agent：它会运行同一套受治理工具循环，并把最终答案作为流式 chunk 输出。
+
+配置 `orchestration.planning.enabled: true` 后，Runtime 会在自主工具循环前先执行规划 pass。规划默认使用当前执行 Agent，也可以通过 `orchestration.planning.agent` 指定专门规划 Agent；生成的简短 JSON 计划会注入后续执行上下文。
 
 固定工作流支持 `tool`、`agent`、`human_gate` 和 `transform` 节点。`condition` 可使用 `exists(...)`、`missing(...)`、`eq(...)`、`ne(...)` 读取 `steps.<node_id>` 路径，`transform` 节点可用 `set`/`copy` 从前序步骤构造结构化输出。
 
@@ -194,6 +208,21 @@ fw, err := agentflow.NewFromFile(
 ```
 
 表结构契约和运维注意事项见 [docs/persistence/postgres-runstate.md](docs/persistence/postgres-runstate.md)。
+
+如果希望使用 Redis 存储低延迟 CAS RunState，也可以使用 Redis RunState 适配器：
+
+```go
+runs, err := agentflow.NewRedisRunStateRepository(agentflow.RedisRunStateRepositoryConfig{
+  Addr:      os.Getenv("AGENTFLOW_REDIS_ADDR"),
+  Password:  os.Getenv("AGENTFLOW_REDIS_PASSWORD"),
+  KeyPrefix: "agentflow:runstate:",
+})
+if err != nil {
+  log.Fatal(err)
+}
+```
+
+存储语义和运维注意事项见 [docs/persistence/redis-runstate.md](docs/persistence/redis-runstate.md)。
 
 生产环境异步执行可使用队列和 Worker。PostgreSQL 队列适配器基于 `database/sql`，不强制绑定具体驱动：
 
@@ -432,9 +461,6 @@ make build
 
 ### `agentctl validate`
 
-校验 YAML 结构、引用关系、编排模式和固定工作流图结构。
-
-```sh
 go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
 ```
 
@@ -793,6 +819,21 @@ handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Reque
 }))
 ```
 
+生产 OIDC/OAuth2 网关可使用 OIDC Discovery/JWKS 自动刷新来校验 JWT：
+
+```go
+auth, err := agentflow.NewOIDCJWTAuthenticator(agentflow.OIDCJWTAuthenticatorConfig{
+  Issuer:          "https://issuer.example.com",
+  Audience:        "agentflow-api",
+  DiscoveryURL:    "https://issuer.example.com/.well-known/openid-configuration",
+  RefreshInterval: 5 * time.Minute,
+})
+if err != nil {
+  log.Fatal(err)
+}
+middleware, err := agentflow.NewJWTMiddleware(agentflow.JWTMiddlewareConfig{Authenticator: auth})
+```
+
 为 HTTP handler 添加授权检查：
 
 ```go
@@ -878,15 +919,15 @@ internal/
 - `Agent = 拥有 LLM 和 Memory 绑定的实体`。
 - `RunStateRepository` 与 Memory 分离，专门处理可恢复的运行快照。
 - 上下文治理按 LLM Profile 生效：不同 Agent/Tool 可以路由到具有不同窗口、输出、thinking 和压缩策略的 LLM Profile。
-- 自主执行支持 LLM 工具调用循环、工具白名单、审批拒绝、每次运行 rate cap、分类重试、受限工具结果回填和生命周期事件。
+- 自主执行支持可选 planning pass、LLM 工具调用循环、工具白名单、审批拒绝、每次运行 rate cap、分类重试、受限工具结果回填和生命周期事件。
 - 结构化输出使用 Agent 级 `output_schema` 和 Provider 的 `StructuredOutputter`；普通流式输出使用 `Streamer`，带工具 Agent 的流式输出会复用受治理工具循环，并在结束后持久化累积的最终答案。
 - Memory 绑定已接入 Runtime 读写，用于 conversation/session 历史。
 - 固定工作流按图依赖和边执行，支持有限并行、条件跳过、重试、transform/agent/human-gate 节点和 CAS 安全输出保存。
 - Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图。
 - `sub_agents` 会在自主执行中作为虚拟 delegation tool 暴露给 supervisor Agent。
-- Skill prompt fragments 和 workflow segments 会在场景构建阶段展开为命名空间化的 workflow 节点。
-- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 可用于生产数据库持久化；S3-compatible BlobStore 可用于大输出对象存储；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约可用于长任务执行；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
-- 企业 identity context、API Key middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewAPIKeyMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
+- Skill prompt fragments、Agent policy、Tool policy 和 workflow segments 会在场景构建阶段展开为命名空间化的 workflow 节点。
+- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约可用于长任务执行；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
+- 企业 identity context、API Key middleware、静态和 OIDC/JWKS JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewOIDCJWTAuthenticator`、`NewAPIKeyMiddleware`、`NewJWTMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
 - Audit event 契约和 noop/内存/文件 sink 可通过 `pkg/audit`、`NewNoopAuditSink`、`NewInMemoryAuditSink`、`NewFileAuditSink` 和 `WithAuditSink` 使用。
 - 企业认证/租户和可观测/治理设计见 [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md) 与 [docs/observability-governance.md](docs/observability-governance.md)。
 - 内存适配器是并发安全的，并按 run/session 命名空间隔离。
@@ -944,7 +985,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 已实现：
 
 - YAML loader 和 validator
-- Autonomous runtime engine
+- Autonomous runtime engine，包含自主执行前的可选 planning pass
 - 已接入根门面的 Fixed-workflow runner
 - In-memory Memory、RunStateRepository、BlobStore
 - LLM 抽象，以及 OpenAI-compatible、Anthropic、local、router 和 mock 测试路径的根包构造函数
@@ -953,11 +994,11 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 - 固定工作流图调度：依赖、并行、重试、条件、transform/agent/human-gate 节点、CAS 安全输出保存
 - Workflow-level HITL pause/resume
 - 通过虚拟 sub-agent tools 实现多 Agent delegation baseline
-- Skill prompt/workflow expansion
-- 文件版 RunState、Blob、Memory 持久化适配器，以及 PostgreSQL RunState 和 S3-compatible BlobStore 持久化适配器
+- Skill prompt/workflow expansion、compatible-agent 校验、Agent policy overlay 和 Tool policy overlay
+- 文件版 RunState、Blob、Memory 持久化适配器，以及 PostgreSQL RunState、Redis RunState 和 S3-compatible BlobStore 持久化适配器
 - 用于 Worker 和工作流协调的 Redis 分布式租约适配器
 - 异步 Job Queue 和 Worker 契约、内存/PostgreSQL 队列适配器、租约续租，以及 HTTP submit/status/cancel handler
-- 企业 identity context、API Key middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization
+- 企业 identity context、API Key middleware、静态/JWKS Discovery JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization
 - Audit event 模型，以及 noop、内存和 JSONL 文件 sink，加上 framework audit wiring
 - 通过 `--state-dir` 支持 durable CLI resume
 - Runtime hardening：全局/Agent/Profile timeout、分类 LLM/Tool retry + 指数退避、Tool rate cap、工具结果回填上限、失败状态持久化、大输出 Blob 外置
@@ -967,14 +1008,11 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 - GitHub Actions CI、golangci-lint 配置、govulncheck/CodeQL 工作流、Dependabot、GoReleaser、Dockerfile、安全和社区文档
 - 单元测试和集成测试
 
-尚未达到生产完备：
+后续生产路线：
 
-- Redis RunState 存储适配器
-- 生产级 Queue 适配器，以及执行 queued run jobs 的 framework handler
-- 超出工具调用循环的高级自主规划
-- 更完整的 Skill policy expansion
-- 各 Provider 在 streaming、tool calls、structured output、embeddings 上的完整特性对齐
-- HTTP 桥接除 HMAC Token 外的生产级认证层
+- 在现有 recorder/tracer 端口之上补充具体 Prometheus/OpenTelemetry exporter
+- 在当前 Compose 和 Kustomize base 之外补充 Helm chart 打包
+- 增加更多内置企业工具执行器，以及针对托管服务的集成测试矩阵
 
 ## 贡献
 

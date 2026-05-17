@@ -44,6 +44,22 @@ type JWTAuthenticatorConfig struct {
 	RolesClaim     string
 }
 
+type OIDCJWTAuthenticatorConfig struct {
+	Issuer          string
+	Audience        string
+	DiscoveryURL    string
+	JWKSURL         string
+	HTTPClient      *http.Client
+	RefreshInterval time.Duration
+	Now             func() time.Time
+	Leeway          time.Duration
+	PrincipalType   identity.PrincipalType
+	TenantClaim     string
+	WorkspaceClaim  string
+	ProjectClaim    string
+	RolesClaim      string
+}
+
 type JWTMiddlewareConfig struct {
 	Authenticator security.BearerAuthenticator
 }
@@ -80,6 +96,26 @@ func NewJWTAuthenticator(config JWTAuthenticatorConfig) (security.BearerAuthenti
 		WorkspaceClaim: config.WorkspaceClaim,
 		ProjectClaim:   config.ProjectClaim,
 		RolesClaim:     config.RolesClaim,
+	})
+}
+
+// NewOIDCJWTAuthenticator creates a bearer authenticator that discovers and
+// refreshes RSA verification keys from OIDC Discovery/JWKS endpoints.
+func NewOIDCJWTAuthenticator(config OIDCJWTAuthenticatorConfig) (security.BearerAuthenticator, error) {
+	return authjwt.NewOIDCAuthenticator(authjwt.OIDCConfig{
+		Issuer:          config.Issuer,
+		Audience:        config.Audience,
+		DiscoveryURL:    config.DiscoveryURL,
+		JWKSURL:         config.JWKSURL,
+		HTTPClient:      config.HTTPClient,
+		RefreshInterval: config.RefreshInterval,
+		Now:             config.Now,
+		Leeway:          config.Leeway,
+		PrincipalType:   config.PrincipalType,
+		TenantClaim:     config.TenantClaim,
+		WorkspaceClaim:  config.WorkspaceClaim,
+		ProjectClaim:    config.ProjectClaim,
+		RolesClaim:      config.RolesClaim,
 	})
 }
 

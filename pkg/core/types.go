@@ -68,9 +68,10 @@ type PromptFragment struct {
 }
 
 type SkillToolPolicy struct {
-	Tool     string         `json:"tool"`
-	Approval ApprovalPolicy `json:"approval,omitempty"`
-	RateCap  int            `json:"rate_cap,omitempty"`
+	Tool       string          `json:"tool"`
+	Approval   ApprovalPolicy  `json:"approval,omitempty"`
+	SideEffect SideEffectLevel `json:"side_effect,omitempty"`
+	RateCap    int             `json:"rate_cap,omitempty"`
 }
 
 type Skill struct {
@@ -79,6 +80,7 @@ type Skill struct {
 	Version          string            `json:"version,omitempty"`
 	CompatibleAgents []string          `json:"compatible_agents,omitempty"`
 	PromptFragments  []PromptFragment  `json:"prompt_fragments,omitempty"`
+	AgentPolicy      AgentPolicy       `json:"agent_policy,omitempty"`
 	ToolPolicies     []SkillToolPolicy `json:"tool_policies,omitempty"`
 	Workflow         *Workflow         `json:"workflow,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
@@ -134,6 +136,13 @@ type Orchestration struct {
 	Workflow    *Workflow         `json:"workflow,omitempty"`
 	MaxParallel int               `json:"max_parallel,omitempty"`
 	HumanInLoop HumanInLoopPolicy `json:"human_in_loop"`
+	Planning    PlanningPolicy    `json:"planning,omitempty"`
+}
+
+type PlanningPolicy struct {
+	Enabled  bool   `json:"enabled,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	MaxSteps int    `json:"max_steps,omitempty"`
 }
 
 type HumanInLoopPolicy struct {

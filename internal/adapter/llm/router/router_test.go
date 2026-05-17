@@ -63,6 +63,21 @@ func TestGatewayRoutesStructuredAndStreamByProfile(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesEmbeddingsByProfile(t *testing.T) {
+	mock := llmmock.NewGateway()
+	mock.SetCapabilities("embedding", llm.CapChat, llm.CapEmbed)
+	mock.QueueEmbedding("embedding", [][]float32{{1, 2, 3}})
+	gateway := New(map[string]llm.Gateway{"embedding": mock})
+
+	vectors, err := gateway.Embed(context.Background(), "embedding", []string{"hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vectors) != 1 || len(vectors[0]) != 3 || vectors[0][2] != 3 {
+		t.Fatalf("unexpected embeddings: %+v", vectors)
+	}
+}
+
 func TestGatewayUnknownProfile(t *testing.T) {
 	_, err := New(nil).Chat(context.Background(), "missing", llm.ChatRequest{})
 	if err == nil || !strings.Contains(err.Error(), "profile") {

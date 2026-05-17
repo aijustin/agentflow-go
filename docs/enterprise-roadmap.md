@@ -19,6 +19,7 @@
 交付物：
 
 - PostgreSQL `RunStateRepository` 适配器。
+- Redis `RunStateRepository` 适配器，使用 Hash + Lua CAS 保持与文件/PostgreSQL 仓库一致的乐观并发语义。
 - S3 兼容 `BlobStore` 适配器，支持 MinIO、AWS S3 path-style endpoint 和私有对象存储。已实现为标准库 SigV4 适配器。
 - 基于 Redis 的分布式协调租约适配器。已通过 `SET NX PX` 和原子 Lua 续租/释放实现。
 - 用于过期快照、已完成运行和孤儿 Blob 的保留与清理 API。
@@ -61,7 +62,7 @@
 
 - 租户/工作区/项目上下文模型。
 - API key 认证中间件。
-- JWT Bearer 认证适配器，用于接入 OIDC/OAuth2 网关。HS256/RS256 校验已实现；OIDC Discovery/JWKS 自动刷新待实现。
+- JWT Bearer 认证适配器，用于接入 OIDC/OAuth2 网关。已支持 HS256/RS256 静态密钥校验，以及 OIDC Discovery/JWKS 自动刷新和未知 `kid` 触发刷新。
 - RBAC 策略端口，包含 admin、operator、viewer、approver 和 service principal 角色。
 - 租户作用域的运行状态、记忆、Blob、事件和审计记录。
 
@@ -100,7 +101,7 @@
 
 交付物：
 
-- 流式输出、工具调用、结构化输出、embedding 和用量统计的 Provider 能力矩阵。初始能力辅助函数已实现，OpenAI-compatible 覆盖 chat/tool/structured/stream/embed，Anthropic Messages 覆盖 chat/tool/structured/stream。
+- 流式输出、工具调用、结构化输出、embedding 和用量统计的 Provider 能力矩阵。OpenAI-compatible 覆盖 chat/tool/structured/stream/embed，Anthropic Messages 覆盖 chat/tool/structured/stream，router 会按具体接口能力报告支持项并清晰拒绝 unsupported embedding。
 - Embedding Provider 端口。`llm.Embedder` 已由 OpenAI-compatible 和 mock 适配器实现。
 - 向量存储端口和 pgvector 基线适配器。初始 `pkg/knowledge` 和 PostgreSQL pgvector 适配器已实现。
 - 文档加载器、分块器、索引器、检索工具和引用/来源追踪。文件和 HTTP 加载器已实现。
@@ -120,7 +121,7 @@
 
 交付物：
 
-- Skill 包格式、版本管理和兼容性校验。
+- Skill 包格式、版本管理、compatible-agent 校验、Agent policy overlay 和 Tool policy overlay。
 - 工具包格式、schema 校验和副作用元数据。
 - 内部 skill/tool catalog 的注册表接口。
 - HTTP、SQL、Git、文件系统、工单、ChatOps 的内置企业工具。初始受约束 HTTP、文件系统读取和 SQL 查询工具执行器已实现。
@@ -147,4 +148,4 @@
 
 ## 当前重点
 
-M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、API key/JWT Bearer 认证、结构化 `slog` sink、观测指标/追踪端口、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP HTTP/stdio 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用、元数据过滤、混合检索扩展端口和 reranker 扩展端口。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器，以及 v0 API 稳定性和发布检查指南开始。下一步重点是 OIDC Discovery/JWKS 自动刷新、Prometheus/OpenTelemetry 具体适配器、Helm chart 打包和更多内置企业工具。
+M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、PostgreSQL/Redis RunState、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、API key/JWT Bearer/OIDC JWKS 认证、结构化 `slog` sink、观测指标/追踪端口、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、provider router、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP HTTP/stdio 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用、元数据过滤、混合检索扩展端口和 reranker 扩展端口。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器、Skill policy expansion，以及 v0 API 稳定性和发布检查指南开始。下一步重点是 Prometheus/OpenTelemetry 具体适配器、Helm chart 打包和更多内置企业工具。

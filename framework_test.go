@@ -99,6 +99,10 @@ func TestProviderConstructorsExposeBuiltInGateways(t *testing.T) {
 	if !router.Supports("default", llm.CapStructuredOutput) {
 		t.Fatalf("router did not expose routed structured output support")
 	}
+	providerRouter := agentflow.NewLLMProviderRouter(map[string]llm.Gateway{"embed": provider})
+	if !providerRouter.Supports("embed", llm.CapEmbed) {
+		t.Fatalf("provider router did not expose routed embedding support")
+	}
 }
 
 func TestPostgresRunStateConstructorRejectsInvalidInputs(t *testing.T) {
@@ -122,12 +126,24 @@ func TestRedisLockerConstructorRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestRedisRunStateConstructorRejectsInvalidInputs(t *testing.T) {
+	if _, err := agentflow.NewRedisRunStateRepository(agentflow.RedisRunStateRepositoryConfig{}); err == nil {
+		t.Fatal("expected empty config error")
+	}
+}
+
 func TestAPIKeyConstructorsRejectInvalidInputs(t *testing.T) {
 	if _, err := agentflow.NewStaticAPIKeyAuthenticator(nil); err == nil {
 		t.Fatal("expected empty static authenticator error")
 	}
 	if _, err := agentflow.NewAPIKeyMiddleware(agentflow.APIKeyMiddlewareConfig{}); err == nil {
 		t.Fatal("expected missing authenticator error")
+	}
+}
+
+func TestOIDCJWTConstructorRejectsInvalidInputs(t *testing.T) {
+	if _, err := agentflow.NewOIDCJWTAuthenticator(agentflow.OIDCJWTAuthenticatorConfig{}); err == nil {
+		t.Fatal("expected missing discovery or jwks url error")
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	runstatefile "github.com/aijustin/agentflow-go/internal/adapter/runstate/file"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	runstatepostgres "github.com/aijustin/agentflow-go/internal/adapter/runstate/postgres"
+	runstateredis "github.com/aijustin/agentflow-go/internal/adapter/runstate/redis"
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	appscenario "github.com/aijustin/agentflow-go/internal/application/scenario"
@@ -512,6 +513,30 @@ func NewPostgresRunStateRepository(db *sql.DB, tableName ...string) (runstate.Re
 		return runstatepostgres.NewRepository(db, runstatepostgres.WithTableName(tableName[0]))
 	}
 	return runstatepostgres.NewRepository(db)
+}
+
+type RedisRunStateRepositoryConfig struct {
+	Addr         string
+	Password     string
+	DB           int
+	KeyPrefix    string
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+}
+
+// NewRedisRunStateRepository creates a Redis-backed run-state repository with
+// compare-and-swap version checks for distributed workers.
+func NewRedisRunStateRepository(config RedisRunStateRepositoryConfig) (runstate.Repository, error) {
+	return runstateredis.NewRepository(runstateredis.Config{
+		Addr:         config.Addr,
+		Password:     config.Password,
+		DB:           config.DB,
+		KeyPrefix:    config.KeyPrefix,
+		DialTimeout:  config.DialTimeout,
+		ReadTimeout:  config.ReadTimeout,
+		WriteTimeout: config.WriteTimeout,
+	})
 }
 
 // NewFileBlobStore creates a file-backed blob store.

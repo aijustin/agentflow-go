@@ -68,7 +68,11 @@ func expandSkills(s core.Scenario) (core.Scenario, error) {
 				if !ok {
 					return core.Scenario{}, fmt.Errorf("scenario: agent %q references unknown skill %q", name, skillName)
 				}
+				if len(skill.CompatibleAgents) > 0 && !contains(skill.CompatibleAgents, name) {
+					return core.Scenario{}, fmt.Errorf("scenario: agent %q references incompatible skill %q", name, skillName)
+				}
 				agent.Instructions = mergePromptFragments(agent.Instructions, skill.PromptFragments)
+				agent.Policy = mergeAgentPolicy(agent.Policy, skill.AgentPolicy)
 				applySkillToolPolicies(s.Tools, skill.ToolPolicies)
 			}
 			agents[name] = agent
@@ -120,11 +124,42 @@ func applySkillToolPolicies(tools map[string]core.Tool, policies []core.SkillToo
 		if policy.Approval != "" {
 			tool.Approval = policy.Approval
 		}
+		if policy.SideEffect != "" {
+			tool.SideEffect = policy.SideEffect
+		}
 		if policy.RateCap > 0 {
 			tool.RateCap = policy.RateCap
 		}
 		tools[policy.Tool] = tool
 	}
+}
+
+func mergeAgentPolicy(base core.AgentPolicy, overlay core.AgentPolicy) core.AgentPolicy {
+	if overlay.MaxSteps > 0 {
+		base.MaxSteps = overlay.MaxSteps
+	}
+	if overlay.Timeout > 0 {
+		base.Timeout = overlay.Timeout
+	}
+	if overlay.RetryLimit > 0 {
+		base.RetryLimit = overlay.RetryLimit
+	}
+	if len(overlay.OutputSchema) > 0 {
+		base.OutputSchema = append(base.OutputSchema[:0:0], overlay.OutputSchema...)
+	}
+	if len(overlay.HumanCheckpoints) > 0 {
+		base.HumanCheckpoints = append([]string(nil), overlay.HumanCheckpoints...)
+	}
+	return base
+}
+
+func contains(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func namespaceIDs(prefix string, ids []string) []string {

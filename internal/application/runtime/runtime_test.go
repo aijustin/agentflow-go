@@ -218,6 +218,49 @@ func TestEngineRunAutonomousToolLoopExecutesTool(t *testing.T) {
 	}
 }
 
+func TestEngineRunAutonomousPlanningInjectsPlanIntoToolLoop(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall, llm.CapStructuredOutput)
+	gateway.QueueStructured("default", json.RawMessage(`{"steps":[{"goal":"call echo before answering","tool":"echo"}]}`))
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"hello"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "final answer"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Orchestration.Planning = core.PlanningPolicy{Enabled: true, MaxSteps: 3}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:  repo,
+		LLM:   gateway,
+		Tools: mapToolRegistry{"echo": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Run(context.Background(), RunRequest{RunID: "run-1", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "final answer" {
+		t.Fatalf("unexpected output %q", result.Output)
+	}
+	requests := gateway.ToolRequests("default")
+	if len(requests) == 0 {
+		t.Fatal("expected tool request")
+	}
+	foundPlan := false
+	for _, message := range requests[0].Messages {
+		if strings.Contains(message.Content, "call echo before answering") {
+			foundPlan = true
+		}
+	}
+	if !foundPlan {
+		t.Fatalf("plan was not injected into tool loop messages: %+v", requests[0].Messages)
+	}
+}
+
 func TestEngineRunAuthorizesToolInvocationAndAudits(t *testing.T) {
 	gateway := llmmock.NewGateway()
 	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
@@ -661,14 +704,17 @@ func TestEngineStreamCompletesRunAndWritesMemory(t *testing.T) {
 func TestEngineStreamSupportsAutonomousToolLoop(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
-	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall, llm.CapStream)
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall, llm.CapStream, llm.CapStructuredOutput)
+	gateway.QueueStructured("default", json.RawMessage(`{"steps":[{"goal":"stream echo plan","tool":"echo"}]}`))
 	gateway.QueueToolCall("default", llm.ToolCallResponse{
 		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"hello"}`)}},
 	})
 	gateway.QueueToolCall("default", llm.ToolCallResponse{
 		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "final answer"}},
 	})
-	engine, err := NewEngine(toolScenario(core.ApprovalNever, core.SideEffectRead, 4), Dependencies{
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Orchestration.Planning = core.PlanningPolicy{Enabled: true}
+	engine, err := NewEngine(scenario, Dependencies{
 		Runs:  repo,
 		LLM:   gateway,
 		Tools: mapToolRegistry{"echo": echoTool{}},
@@ -691,6 +737,18 @@ func TestEngineStreamSupportsAutonomousToolLoop(t *testing.T) {
 	}
 	if got != "final answer" || !done {
 		t.Fatalf("unexpected tool stream got=%q done=%v", got, done)
+	}
+	requests := gateway.ToolRequests("default")
+	foundPlan := false
+	if len(requests) > 0 {
+		for _, message := range requests[0].Messages {
+			if strings.Contains(message.Content, "stream echo plan") {
+				foundPlan = true
+			}
+		}
+	}
+	if !foundPlan {
+		t.Fatalf("stream planning was not injected: %+v", requests)
 	}
 	loaded, err := repo.Load(context.Background(), "run-stream-tools")
 	if err != nil {

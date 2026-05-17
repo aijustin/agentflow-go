@@ -91,7 +91,7 @@ func TestScenarioJSONSchemaIncludesSkillPackageFields(t *testing.T) {
 	skill := definitions["skill"].(map[string]any)
 	properties := skill["properties"].(map[string]any)
 
-	for _, property := range []string{"description", "compatible_agents", "prompt_fragments", "tool_policies", "workflow", "metadata"} {
+	for _, property := range []string{"description", "compatible_agents", "prompt_fragments", "agent_policy", "tool_policies", "workflow", "metadata"} {
 		if _, ok := properties[property]; !ok {
 			t.Fatalf("skill schema missing %q property", property)
 		}
@@ -206,6 +206,10 @@ scenario:
         - tool: echo
           approval: risky
           rate_cap: 2
+          side_effect: external
+      agent_policy:
+        max_steps: 4
+        retry_limit: 1
       workflow:
         nodes:
           - id: inspect
@@ -240,8 +244,11 @@ scenario:
 	if len(skill.PromptFragments) != 1 || skill.PromptFragments[0].Content != "Be concise." {
 		t.Fatalf("unexpected prompt fragments: %+v", skill.PromptFragments)
 	}
-	if len(skill.ToolPolicies) != 1 || skill.ToolPolicies[0].Approval != "risky" || skill.ToolPolicies[0].RateCap != 2 {
+	if len(skill.ToolPolicies) != 1 || skill.ToolPolicies[0].Approval != "risky" || skill.ToolPolicies[0].RateCap != 2 || skill.ToolPolicies[0].SideEffect != "external" {
 		t.Fatalf("unexpected tool policies: %+v", skill.ToolPolicies)
+	}
+	if skill.AgentPolicy.MaxSteps != 4 || skill.AgentPolicy.RetryLimit != 1 {
+		t.Fatalf("unexpected agent policy: %+v", skill.AgentPolicy)
 	}
 	if skill.Workflow == nil || len(skill.Workflow.Nodes) != 2 || string(skill.Workflow.Nodes[0].Input) == "" {
 		t.Fatalf("unexpected skill workflow: %+v", skill.Workflow)
@@ -317,6 +324,19 @@ func TestLoadValidationErrors(t *testing.T) {
 	      tool_policies:
 	        - tool: missing
 	          approval: risky
+	  agents:
+	    worker:
+	      skills: [review]
+	`,
+		},
+		{
+			name: "skill incompatible with attaching agent",
+			body: `
+	scenario:
+	  name: test
+	  skills:
+	    review:
+	      compatible_agents: [assistant]
 	  agents:
 	    worker:
 	      skills: [review]

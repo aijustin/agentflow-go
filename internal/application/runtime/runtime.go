@@ -262,6 +262,13 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 		return "", err
 	}
 	messages, stats := e.prepareContext(agent, profile, req, history)
+	if e.scenario.Orchestration.Planning.Enabled {
+		var err error
+		messages, err = e.injectAutonomousPlan(ctx, req.RunID, agent, profile, req, messages)
+		if err != nil {
+			return "", err
+		}
+	}
 	baseReq := llm.ChatRequest{
 		Messages:        messages,
 		Temperature:     profile.Temperature,
@@ -304,6 +311,96 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 		return "", err
 	}
 	return resp.Message.Content, nil
+}
+
+var autonomousPlanSchema = json.RawMessage(`{"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"goal":{"type":"string"},"tool":{"type":"string"}},"required":["goal"]}}},"required":["steps"]}`)
+
+type autonomousPlan struct {
+	Steps []autonomousPlanStep `json:"steps"`
+}
+
+type autonomousPlanStep struct {
+	Goal string `json:"goal"`
+	Tool string `json:"tool,omitempty"`
+}
+
+func (e *Engine) injectAutonomousPlan(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req RunRequest, messages []llm.Message) ([]llm.Message, error) {
+	plannerAgent := agent
+	if planner := e.scenario.Orchestration.Planning.Agent; planner != "" {
+		resolved, err := e.resolveAgent(planner)
+		if err != nil {
+			return nil, err
+		}
+		plannerAgent = resolved
+		profile = e.scenario.LLMs[plannerAgent.LLM]
+	}
+	maxSteps := firstPositive(e.scenario.Orchestration.Planning.MaxSteps, agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 5)
+	planReq := llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: llm.RoleSystem, Content: fmt.Sprintf("Create a concise execution plan with at most %d steps. Return JSON with a steps array; each step has goal and optional tool.", maxSteps)},
+			{Role: llm.RoleUser, Content: req.Prompt},
+		},
+		Temperature:     profile.Temperature,
+		TopP:            profile.TopP,
+		MaxTokens:       profile.MaxOutputTokens,
+		Thinking:        profile.Thinking,
+		ReasoningEffort: profile.ReasoningEffort,
+		ExtraBody:       profile.ExtraBody,
+	}
+	var rawPlan []byte
+	if outputter, ok := e.llm.(llm.StructuredOutputter); ok && e.llm.Supports(plannerAgent.LLM, llm.CapStructuredOutput) {
+		raw, err := e.structuredWithRetry(ctx, runID, plannerAgent, profile, autonomousPlanSchema, planReq, outputter)
+		if err != nil {
+			return nil, err
+		}
+		rawPlan = raw
+	} else {
+		resp, err := e.chatWithRetry(ctx, runID, plannerAgent, profile, planReq)
+		if err != nil {
+			return nil, err
+		}
+		rawPlan = []byte(resp.Message.Content)
+	}
+	planText := formatAutonomousPlan(rawPlan, maxSteps)
+	if strings.TrimSpace(planText) == "" {
+		return messages, nil
+	}
+	planned := make([]llm.Message, 0, len(messages)+1)
+	planned = append(planned, llm.Message{Role: llm.RoleSystem, Content: "Autonomous execution plan:\n" + planText})
+	planned = append(planned, messages...)
+	e.emitJSON(ctx, core.EventContextPrepared, runID, map[string]any{"planning": true, "steps": strings.Count(planText, "\n") + 1})
+	return planned, nil
+}
+
+func formatAutonomousPlan(raw []byte, maxSteps int) string {
+	var plan autonomousPlan
+	if err := json.Unmarshal(raw, &plan); err != nil || len(plan.Steps) == 0 {
+		return strings.TrimSpace(string(raw))
+	}
+	limit := len(plan.Steps)
+	if maxSteps > 0 && limit > maxSteps {
+		limit = maxSteps
+	}
+	var b strings.Builder
+	for index := 0; index < limit; index++ {
+		step := plan.Steps[index]
+		goal := strings.TrimSpace(step.Goal)
+		if goal == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(strconv.Itoa(index + 1))
+		b.WriteString(". ")
+		b.WriteString(goal)
+		if step.Tool != "" {
+			b.WriteString(" (tool: ")
+			b.WriteString(step.Tool)
+			b.WriteByte(')')
+		}
+	}
+	return b.String()
 }
 
 func (e *Engine) structuredAnswer(ctx context.Context, req RunRequest) (json.RawMessage, error) {
@@ -374,6 +471,13 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		return nil, core.Agent{}, nil, err
 	}
 	messages, stats := e.prepareContext(agent, profile, req, history)
+	if e.scenario.Orchestration.Planning.Enabled {
+		messages, err = e.injectAutonomousPlan(ctx, req.RunID, agent, profile, req, messages)
+		if err != nil {
+			cancel()
+			return nil, core.Agent{}, nil, err
+		}
+	}
 	e.emitJSON(ctx, core.EventContextPrepared, req.RunID, stats)
 	baseReq := llm.ChatRequest{
 		Messages:        messages,

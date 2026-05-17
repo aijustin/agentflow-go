@@ -33,6 +33,9 @@ func NewGateway(profiles []llm.Profile, client *http.Client) *Gateway {
 }
 
 func (g *Gateway) Supports(profile string, cap llm.Capability) bool {
+	if cap == llm.CapEmbed {
+		return false
+	}
 	profileConfig, ok := g.profiles[profile]
 	if !ok {
 		return false
