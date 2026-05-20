@@ -248,6 +248,7 @@ Agent 定义在 `scenario.agents.<name>` 下。
 | `planning.enabled` | 布尔值 | 否 | 启用自主执行前的规划 pass。 |
 | `planning.agent` | 字符串 | 否 | 专门用于生成计划的 Agent；为空时使用当前执行 Agent。 |
 | `planning.max_steps` | 整数 | 否 | 规划输出的最大步骤数；`0` 表示使用运行时默认值。 |
+| `planning.execute` | 布尔值 | 否 | 在自主 tool loop 中跟踪 plan step 完成状态并写入 RunState。 |
 
 支持的 `mode` 值：
 
@@ -255,7 +256,7 @@ Agent 定义在 `scenario.agents.<name>` 下。
 | --- | --- |
 | `autonomous` | LLM 驱动的自主执行，可选 planning pass，随后进入受治理工具调用循环。 |
 | `fixed_workflow` | 确定性工作流图。 |
-| `hybrid` | 为固定流程与自主执行混合场景预留。 |
+| `hybrid` | 先执行固定工作流阶段，再进入自主执行阶段（例如多专家并行分析后由 lead author 综合）。 |
 
 Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
 
@@ -343,10 +344,13 @@ workflow:
 | 字段 | 类型 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
 | `event` | 字符串 | 是 | 事件类型，例如 `ticket.created`。 |
-| `agent` | 字符串 | 是 | 要执行的 Agent 名称。 |
+| `agent` | 字符串 | 否 | 要执行的 Agent 名称；为空时使用场景默认 Agent。 |
 | `prompt_path` | 字符串 | 否 | 从事件 payload JSON 提取 prompt 的路径。 |
 | `context_path` | 字符串 | 否 | 从事件 payload JSON 提取 context 的路径。 |
 | `run_id_path` | 字符串 | 否 | 从事件 payload JSON 提取 run ID 的路径。 |
+| `default_prompt` | 字符串 | 否 | 当 `prompt_path` 未解析出内容时的回退 prompt。 |
+
+`Framework.HandleEvent` 会解析并执行匹配 trigger 对应的运行；`Framework.ResolveEvent` 仅解析为 `RunRequest` 而不执行，适合预检或自定义编排。
 
 示例：
 
@@ -377,6 +381,17 @@ agentctl trigger -f examples/ticket_handling.yaml \
   --event ticket.created \
   --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
 ```
+
+## CLI 与编排模式
+
+| 命令 | 使用的运行时 | 支持的 `orchestration.mode` |
+| --- | --- | --- |
+| `agentctl run` | 直接调用 autonomous `Engine` | 仅适合 `autonomous`（或把 workflow 场景当作单 Agent 调试） |
+| `agentctl trigger` | `Framework.HandleEvent` | `autonomous`、`fixed_workflow`、`hybrid` |
+| `agentctl resume --continue` | `Framework.ResumeAndContinue` | 同上 |
+| 库 `Framework.Run` | 完整 mode 分发 | `autonomous`、`fixed_workflow`、`hybrid` |
+
+固定工作流和 hybrid 场景应通过 `Framework.Run`、debug UI（fixed workflow 分支）或 embedding 应用调用，而不是 `agentctl run`。
 
 ## 运行时
 

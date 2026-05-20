@@ -15,7 +15,7 @@ Scenario-configured Go toolkit for composing Agents, Tools, Skills, LLM gateways
 - `observability.go`: root `slog` event and audit sink constructors.
 - `providers.go`: root constructors for built-in LLM gateways and router.
 - `mcp.go`: root constructors for MCP HTTP clients and MCP-backed tool executors.
-- `tools.go`: root constructors for built-in tool executors such as constrained HTTP, filesystem reads, and SQL queries.
+- `tools.go`: root constructors for built-in tool executors such as constrained HTTP, filesystem reads, SQL queries, Git, and ticket tools.
 - `knowledge.go`: root constructors for retriever tools and pgvector-backed vector stores.
 - `docs/enterprise-roadmap.md`: enterprise P0-P2 milestone roadmap.
 - `docs/api-stability.md`: v0 public API stability and migration policy.
@@ -24,6 +24,8 @@ Scenario-configured Go toolkit for composing Agents, Tools, Skills, LLM gateways
 - `docs/tools-http.md`: constrained HTTP tool executor wiring and safety model.
 - `docs/tools-filesystem.md`: constrained filesystem read tool wiring and safety model.
 - `docs/tools-sql.md`: constrained SQL query tool wiring and safety model.
+- `docs/tools-git.md`: read-only Git tool wiring and safety model.
+- `docs/tools-ticket.md`: ticket store tool wiring and safety model.
 - `docs/knowledge-rag.md`: RAG contracts, retriever tool wiring, and current scope.
 - `docs/deployment-enterprise.md`: local enterprise Compose stack and deployment mapping notes.
 - `docs/persistence/pgvector.md`: PostgreSQL pgvector vector-store table contract and notes.
@@ -54,6 +56,7 @@ Scenario-configured Go toolkit for composing Agents, Tools, Skills, LLM gateways
 - `.goreleaser.yml`: release binary configuration.
 - `Dockerfile`: container build for `agent-http` or `agentctl`.
 - `pkg/core`: public agent, tool, skill, workflow, HITL, and event types.
+- `pkg/eventrouter`: external event types and trigger-to-run routing.
 - `pkg/llm`: LLM gateway capability interfaces and request/response types.
 - `pkg/contextwindow`: context-window policies, token estimation, sliding-window trimming, and summary compression.
 - `pkg/memory`: memory namespace and repository port.
@@ -62,7 +65,7 @@ Scenario-configured Go toolkit for composing Agents, Tools, Skills, LLM gateways
 - `internal/application/runtime`: autonomous runtime engine.
 - `internal/application/orchestration`: workflow runner.
 - `cmd/agentctl`: CLI entrypoint.
-- `cmd/agent-http`: browser debug console and HTTP HITL bridge.
+- `cmd/agent-http`: browser debug console and basic HITL resume bridge (not the production webhook/event API).
 - `internal/adapter/debugui`: debug UI server, built-in scenarios, API handlers, and embedded HTML.
 
 ## Commands
@@ -103,9 +106,9 @@ AGENT_HTTP_ADDR=:18080 go run ./cmd/agent-http
 - Redis-backed distributed leases are available through `NewRedisLocker` and `pkg/coordination`.
 - Async job queues and workers are available through `pkg/async`; local queues are exposed through `NewInMemoryJobQueue`, PostgreSQL queues through `NewPostgresJobQueue`, queued framework execution through `NewFrameworkJobHandler` (`NewFrameworkRunJobHandler` alias) for `run`, `event`, and `resume.continue` jobs, async HTTP submit/status/cancel through `NewAsyncRunHTTPHandler`, and production health/API routing through `NewProductionHTTPHandler` with optional sync `/v1/events` and `/v1/hitl/resume` when `Framework` is configured.
 - External events map through `scenario.triggers` to `Framework.HandleEvent`, `NewWebhookHTTPHandler`, `agentctl trigger`, sync `/v1/events`, and async `event` jobs.
-- HITL continuation uses `Framework.ResumeAndContinue`, HTTP/CLI `continue: true`, and async `resume.continue` jobs.
-- Fixed workflows support `parallel_group` and `loop` nodes in addition to transform, agent, tool, skill, and human-gate nodes.
-- Built-in Git and ticket tools are available through root facade constructors for code-review and support-ticket scenarios.
+- HITL continuation uses `Framework.ResumeAndContinue`, HTTP/CLI `continue: true`, and async `resume.continue` jobs on production handlers (`/v1/hitl/resume`), not on the debug console resume endpoint.
+- Fixed workflows support `parallel_group` and `loop` nodes; `hybrid` mode runs a workflow stage then an autonomous stage.
+- `Framework.ResolveEvent` resolves triggers without executing; `planning.execute` tracks plan step completion during autonomous runs.
 - Enterprise identity and RBAC foundations are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, and `NewAPIKeyMiddleware`.
 - Authorization middleware and runtime tool authorization are available through `NewAuthorizationMiddleware` and `WithSecurityPolicy`.
 - Audit foundations are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.

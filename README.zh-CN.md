@@ -147,9 +147,9 @@ for chunk := range chunks {
 
 当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 对分类后的临时 LLM/工具错误做指数退避重试，执行注册的 ToolExecutor，将受限后的工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。`Stream` 也支持带工具的 Agent：它会运行同一套受治理工具循环，并把最终答案作为流式 chunk 输出。
 
-配置 `orchestration.planning.enabled: true` 后，Runtime 会在自主工具循环前先执行规划 pass。规划默认使用当前执行 Agent，也可以通过 `orchestration.planning.agent` 指定专门规划 Agent；生成的简短 JSON 计划会注入后续执行上下文。
+配置 `orchestration.planning.enabled: true` 后，Runtime 会在自主工具循环前先执行规划 pass。规划默认使用当前执行 Agent，也可以通过 `orchestration.planning.agent` 指定专门规划 Agent；生成的简短 JSON 计划会注入后续执行上下文。设置 `orchestration.planning.execute: true` 可在 tool loop 中跟踪 plan step 完成状态（见 `examples/multi_expert_research.yaml`）。
 
-固定工作流支持 `tool`、`agent`、`human_gate` 和 `transform` 节点。`condition` 可使用 `exists(...)`、`missing(...)`、`eq(...)`、`ne(...)` 读取 `steps.<node_id>` 路径，`transform` 节点可用 `set`/`copy` 从前序步骤构造结构化输出。
+固定工作流支持 `tool`、`agent`、`skill`、`human_gate`、`transform`、`parallel_group` 和 `loop` 节点。`condition` 可使用 `exists(...)`、`missing(...)`、`eq(...)`、`ne(...)` 读取 `steps.<node_id>` 路径，`transform` 节点可用 `set`/`copy` 从前序步骤构造结构化输出。
 
 当 Agent 绑定 `memory` 时，Runtime 会在上下文准备前读取 conversation/session 记忆并注入 LLM 上下文，执行后追加用户输入、助手回复和工具观察结果。根门面会自动为 `in_memory` 类型创建内存仓库，除非调用方显式传入自定义仓库。
 
@@ -346,6 +346,35 @@ fw, err := agentflow.NewFromFile(
 
 SQL 工具可接入任意 `database/sql` 驱动，包括 PostgreSQL、MySQL 和 ClickHouse。宿主应用自行导入具体驱动并传入已打开的 `*sql.DB`；agentflow-go 不强制引入数据库驱动依赖。
 
+代码审查流水线可注册只读 Git 工具：
+
+```go
+gitTool, err := agentflow.NewGitToolExecutor(agentflow.GitToolConfig{
+  AllowedRoots: []string{"/workspace/repos"},
+})
+fw, err := agentflow.NewFromFile(
+  "examples/code_review_pipeline.yaml",
+  agentflow.WithToolExecutor("git", gitTool),
+)
+```
+
+详见 [docs/tools-git.md](docs/tools-git.md)。CLI 不会自动注册 tool executor。
+
+客服工单场景可注册 ticket 工具并注入 store：
+
+```go
+store := agentflow.NewMemoryTicketStore(map[string]agentflow.Ticket{
+  "T-9": {ID: "T-9", Title: "Login issue", Status: "open"},
+})
+ticketTool, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{Store: store})
+fw, err := agentflow.NewFromFile(
+  "examples/ticket_handling.yaml",
+  agentflow.WithToolExecutor("ticket", ticketTool),
+)
+```
+
+详见 [docs/tools-ticket.md](docs/tools-ticket.md)。
+
 RAG 场景可组合 Embedder、VectorStore 和 Retriever Tool：
 
 ```go
@@ -463,7 +492,7 @@ mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
 - `github.com/aijustin/agentflow-go/pkg/runstate`
 - `github.com/aijustin/agentflow-go/pkg/security`
 
-内置工具适配器说明见 [docs/tools-http.md](docs/tools-http.md)、[docs/mcp-tools.md](docs/mcp-tools.md) 和 [docs/knowledge-rag.md](docs/knowledge-rag.md)。
+内置工具适配器说明见 [docs/tools-http.md](docs/tools-http.md)、[docs/tools-filesystem.md](docs/tools-filesystem.md)、[docs/tools-sql.md](docs/tools-sql.md)、[docs/tools-git.md](docs/tools-git.md)、[docs/tools-ticket.md](docs/tools-ticket.md)、[docs/mcp-tools.md](docs/mcp-tools.md) 和 [docs/knowledge-rag.md](docs/knowledge-rag.md)。
 
 ### 安装依赖
 
@@ -514,7 +543,7 @@ go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
 
 ### `agentctl run`
 
-运行一个场景。
+通过自主 runtime engine 运行场景。该命令适合 `orchestration.mode: autonomous`。`fixed_workflow` 或 `hybrid` 场景应使用根包 `Framework.Run`、debug 台工作流分支，或在宿主服务中嵌入 framework。
 
 ```sh
 go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "review this change"
@@ -544,10 +573,11 @@ go run ./cmd/agentctl resume \
   --state-dir ./data/agentflow
 ```
 
-加上 `--continue` 会调用 `ResumeAndContinue`，继续执行直到运行完成或再次暂停：
+加上 `--continue` 会调用 `ResumeAndContinue`，继续执行直到运行完成或再次暂停。`--continue` 必须同时提供 `-f` / `--file`：
 
 ```sh
 go run ./cmd/agentctl resume \
+  -f examples/human_in_loop.yaml \
   --continue \
   --token "$TOKEN" \
   --decision approve \
@@ -574,7 +604,7 @@ go run ./cmd/agentctl resume \
 
 ### `agentctl trigger`
 
-触发 `scenario.triggers` 中配置的外部事件：
+通过 `Framework.HandleEvent` 触发 `scenario.triggers` 中配置的外部事件：
 
 ```sh
 go run ./cmd/agentctl trigger \
@@ -583,7 +613,20 @@ go run ./cmd/agentctl trigger \
   --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
 ```
 
-## HTTP/Webhook HITL 桥接与调试页面
+常用 flags：
+
+| Flag | 说明 |
+| --- | --- |
+| `-f, --file` | 场景 YAML 文件。必填。 |
+| `--event` | `scenario.triggers` 中配置的事件类型。必填。 |
+| `--run-id` | 可选 run ID 覆盖。 |
+| `--payload` | 事件 payload JSON，默认 `{}`。 |
+| `--token-secret` | HITL Token HMAC 密钥。 |
+| `--state-dir` | 持久化 RunState 和 Blob 的目录。 |
+| `--token-ttl` | HITL Token 有效期，默认 `15m`。 |
+| `--json` | 输出机器可读 JSON。 |
+
+## HTTP 接口
 
 启动浏览器调试台和 HTTP resume bridge：
 
@@ -607,12 +650,23 @@ http://localhost:18080
 - 配置 OpenAI-compatible 本地模型端点进行真实模型调用。
 - 测试滑动窗口和摘要压缩等上下文治理能力。
 - 查看运行结果 JSON、RunSnapshot、StepOutputs、Token 和事件时间线。
-- 使用 `approve`、`reject` 或 `amend` 恢复 HITL checkpoint。
+- 使用 `approve`、`reject` 或 `amend` 恢复 HITL checkpoint（仅更新 RunState，不支持 `ResumeAndContinue`）。
 
-Resume 接口：
+Debug resume 接口（仅更新 RunState）：
 
 ```sh
 curl -X POST http://localhost:18080 \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "'"$TOKEN"'",
+    "decision": "approve"
+  }'
+```
+
+生产环境的 HITL 续跑使用 `NewProductionHTTPHandler` 或 `NewHumanHTTPHandler` 的 `POST /v1/hitl/resume`。设置 `"continue": true` 会调用 `ResumeAndContinue`：
+
+```sh
+curl -X POST http://localhost:8080/v1/hitl/resume \
   -H 'Content-Type: application/json' \
   -d '{
     "token": "'"$TOKEN"'",
@@ -621,9 +675,9 @@ curl -X POST http://localhost:18080 \
   }'
 ```
 
-设置 `"continue": true` 会恢复并继续执行（`ResumeAndContinue`）；省略或设为 `false` 时仅更新 RunState（`Resume`）。
+Webhook 事件在配置 `Framework` 时使用 `POST /v1/events`。详见 [docs/async-runtime.md](docs/async-runtime.md)。
 
-响应：
+Debug resume 响应：
 
 ```json
 {"status":"ok"}
@@ -636,6 +690,17 @@ curl -X POST http://localhost:18080 \
 所有场景配置都位于一个 `scenario:` 根节点下。
 
 如需编辑器补全、枚举提示和 CI 校验，可使用 JSON Schema：[schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json)。完整字段参考见 [docs/configuration-reference.md](docs/configuration-reference.md)，CLI 也可以通过 `agentctl schema` 输出同一份 schema。
+
+示例场景：
+
+| 文件 | 说明 |
+| --- | --- |
+| `examples/autonomous.yaml` | 自主工具循环基线 |
+| `examples/fixed_workflow.yaml` | 图工作流 + 条件 + HITL |
+| `examples/human_in_loop.yaml` | HITL 暂停与恢复 |
+| `examples/ticket_handling.yaml` | Ticket 工具 + triggers + 事件路由 |
+| `examples/code_review_pipeline.yaml` | Git 工具 + `parallel_group` 工作流 |
+| `examples/multi_expert_research.yaml` | Hybrid 模式 + planning.execute |
 
 ```yaml
 # yaml-language-server: $schema=schemas/agentflow.scenario.schema.json
@@ -768,8 +833,9 @@ import agentflow "github.com/aijustin/agentflow-go"
 
 | 包 | 作用 |
 | --- | --- |
-| root package | 框架门面：加载 YAML、校验、运行、恢复、注入扩展。 |
+| root package | 框架门面：加载 YAML、校验、运行、恢复、事件处理、注入扩展。 |
 | `pkg/async` | 异步执行所需的 Job Queue、Lease、Handler 和 Worker 契约。 |
+| `pkg/eventrouter` | 外部事件类型与 `scenario.triggers` 到 RunRequest 的路由。 |
 | `pkg/audit` | 合规记录所需的 Audit Event 模型和 Sink 契约。 |
 | `pkg/coordination` | 用于 Worker 和工作流协调的分布式租约契约。 |
 | `pkg/core` | Agent、Tool、Skill、Scenario、Workflow、HumanGate、Event 类型。 |

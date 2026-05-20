@@ -147,9 +147,9 @@ for chunk := range chunks {
 
 When an agent has tools and the configured LLM gateway supports `CapToolCall`, the runtime runs an autonomous tool loop: send tool specs to the LLM, validate returned tool calls against the agent whitelist, enforce approval and per-run `rate_cap`, retry classified transient LLM/tool errors from `retry_limit`/`max_retries` with exponential backoff, execute registered tool executors, append bounded tool results, and continue until the LLM returns a final answer or `max_steps` is reached. `Stream` also accepts tool-enabled agents; it runs the same governed tool loop and emits the final answer as a stream chunk.
 
-Set `orchestration.planning.enabled: true` to add a planning pass before the autonomous tool loop. The runtime asks the executing agent, or `orchestration.planning.agent` when set, for a concise JSON plan and injects that plan into the subsequent execution context.
+Set `orchestration.planning.enabled: true` to add a planning pass before the autonomous tool loop. The runtime asks the executing agent, or `orchestration.planning.agent` when set, for a concise JSON plan and injects that plan into the subsequent execution context. Set `orchestration.planning.execute: true` to track plan step completion in run state during the tool loop (see `examples/multi_expert_research.yaml`).
 
-Fixed workflows support `tool`, `agent`, `human_gate`, and `transform` nodes. Node `condition` expressions can read `steps.<node_id>` paths with `exists(...)`, `missing(...)`, `eq(...)`, and `ne(...)`; transform nodes can build structured outputs with `set` and `copy` mappings.
+Fixed workflows support `tool`, `agent`, `skill`, `human_gate`, `transform`, `parallel_group`, and `loop` nodes. Node `condition` expressions can read `steps.<node_id>` paths with `exists(...)`, `missing(...)`, `eq(...)`, and `ne(...)`; transform nodes can build structured outputs with `set` and `copy` mappings.
 
 When an agent binds `memory`, the runtime reads stored conversation/session messages before context preparation, injects them into the LLM context, and appends user prompts, assistant answers, and tool observations after execution. `in_memory` repositories are auto-created by the root facade unless a custom repository is supplied.
 
@@ -346,6 +346,41 @@ The executor defaults to named `SELECT` queries, rejects multi-statement SQL, ap
 
 The SQL tool accepts any `database/sql` driver, including PostgreSQL, MySQL, and ClickHouse. The host application imports the concrete driver and passes the opened `*sql.DB`; agentflow-go intentionally does not force driver dependencies.
 
+For code review pipelines, register the read-only Git tool executor:
+
+```go
+gitTool, err := agentflow.NewGitToolExecutor(agentflow.GitToolConfig{
+  AllowedRoots: []string{"/workspace/repos"},
+})
+if err != nil {
+  log.Fatal(err)
+}
+fw, err := agentflow.NewFromFile(
+  "examples/code_review_pipeline.yaml",
+  agentflow.WithToolExecutor("git", gitTool),
+)
+```
+
+See [docs/tools-git.md](docs/tools-git.md). Tool executors are not auto-registered by the CLI.
+
+For support-ticket workflows, register the ticket tool with a store adapter:
+
+```go
+store := agentflow.NewMemoryTicketStore(map[string]agentflow.Ticket{
+  "T-9": {ID: "T-9", Title: "Login issue", Status: "open"},
+})
+ticketTool, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{Store: store})
+if err != nil {
+  log.Fatal(err)
+}
+fw, err := agentflow.NewFromFile(
+  "examples/ticket_handling.yaml",
+  agentflow.WithToolExecutor("ticket", ticketTool),
+)
+```
+
+See [docs/tools-ticket.md](docs/tools-ticket.md).
+
 For RAG workloads, combine an embedder, vector store, and retriever tool:
 
 ```go
@@ -463,7 +498,7 @@ Low-level extension interfaces remain available through:
 - `github.com/aijustin/agentflow-go/pkg/runstate`
 - `github.com/aijustin/agentflow-go/pkg/security`
 
-Built-in tool adapters are documented in [docs/tools-http.md](docs/tools-http.md), [docs/mcp-tools.md](docs/mcp-tools.md), and [docs/knowledge-rag.md](docs/knowledge-rag.md).
+Built-in tool adapters are documented in [docs/tools-http.md](docs/tools-http.md), [docs/tools-filesystem.md](docs/tools-filesystem.md), [docs/tools-sql.md](docs/tools-sql.md), [docs/tools-git.md](docs/tools-git.md), [docs/tools-ticket.md](docs/tools-ticket.md), [docs/mcp-tools.md](docs/mcp-tools.md), and [docs/knowledge-rag.md](docs/knowledge-rag.md).
 
 ### Install dependencies
 
@@ -517,7 +552,7 @@ go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
 
 ### `agentctl run`
 
-Runs a scenario.
+Runs a scenario through the autonomous runtime engine. This path is intended for `orchestration.mode: autonomous` scenarios. For `fixed_workflow` or `hybrid` scenarios, use the root `Framework.Run` API, the debug console workflow runner, or embed the framework in your service.
 
 ```sh
 go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "review this change"
@@ -547,10 +582,11 @@ go run ./cmd/agentctl resume \
   --state-dir ./data/agentflow
 ```
 
-Add `--continue` to call `ResumeAndContinue` and keep executing until the run completes or pauses again:
+Add `--continue` to call `ResumeAndContinue` and keep executing until the run completes or pauses again. `--continue` requires `-f` / `--file` so the framework can reload the scenario:
 
 ```sh
 go run ./cmd/agentctl resume \
+  -f examples/human_in_loop.yaml \
   --continue \
   --token "$TOKEN" \
   --decision approve \
@@ -577,7 +613,7 @@ Use the same `--state-dir` for `run` and `resume` when a paused run must survive
 
 ### `agentctl trigger`
 
-Dispatches an external event configured in `scenario.triggers`:
+Dispatches an external event configured in `scenario.triggers` through `Framework.HandleEvent`:
 
 ```sh
 go run ./cmd/agentctl trigger \
@@ -586,7 +622,20 @@ go run ./cmd/agentctl trigger \
   --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
 ```
 
-## HTTP/Webhook HITL bridge
+Useful flags:
+
+| Flag | Description |
+| --- | --- |
+| `-f, --file` | Scenario YAML file. Required. |
+| `--event` | Event type configured in `scenario.triggers`. Required. |
+| `--run-id` | Optional run ID override. |
+| `--payload` | Event payload JSON. Defaults to `{}`. |
+| `--token-secret` | HMAC secret for HITL tokens. |
+| `--state-dir` | Directory for durable run state and blobs. |
+| `--token-ttl` | HITL token lifetime. Defaults to `15m`. |
+| `--json` | Emit machine-readable result JSON. |
+
+## HTTP surfaces
 
 Start the browser debug console and HTTP resume bridge:
 
@@ -610,12 +659,23 @@ The debug console lets you:
 - Configure an OpenAI-compatible local model endpoint for real model calls.
 - Exercise context governance with sliding-window and summary compression.
 - Inspect run result JSON, run-state snapshots, step outputs, tokens, and event timeline.
-- Resume HITL checkpoints with `approve`, `reject`, or `amend`.
+- Resume HITL checkpoints with `approve`, `reject`, or `amend` (state update only; no `ResumeAndContinue`).
 
-Resume endpoint:
+Debug resume endpoint (updates run state only):
 
 ```sh
 curl -X POST http://localhost:18080 \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "'"$TOKEN"'",
+    "decision": "approve"
+  }'
+```
+
+Production HITL continuation uses `NewProductionHTTPHandler` or `NewHumanHTTPHandler` at `POST /v1/hitl/resume`. Set `"continue": true` to call `ResumeAndContinue`:
+
+```sh
+curl -X POST http://localhost:8080/v1/hitl/resume \
   -H 'Content-Type: application/json' \
   -d '{
     "token": "'"$TOKEN"'",
@@ -624,9 +684,9 @@ curl -X POST http://localhost:18080 \
   }'
 ```
 
-Set `"continue": true` to resume and continue execution (`ResumeAndContinue`). Omit it or set `false` to update run state only (`Resume`).
+Webhook events use `POST /v1/events` on the same production handler when `Framework` is configured. See [docs/async-runtime.md](docs/async-runtime.md).
 
-Response:
+Debug resume response:
 
 ```json
 {"status":"ok"}
@@ -639,6 +699,17 @@ Network-delivered tokens are HMAC signed. In production, always set `AGENT_TOKEN
 All scenario configuration lives under one `scenario:` root.
 
 For editor completion, enum discovery, and CI validation, use the JSON Schema at [schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json). A full human-readable field reference is available in [docs/configuration-reference.md](docs/configuration-reference.md), and the CLI can print the same schema with `agentctl schema`.
+
+Example scenarios:
+
+| File | Highlights |
+| --- | --- |
+| `examples/autonomous.yaml` | Autonomous tool loop baseline |
+| `examples/fixed_workflow.yaml` | Graph workflow with conditions and HITL |
+| `examples/human_in_loop.yaml` | HITL pause and resume |
+| `examples/ticket_handling.yaml` | Ticket tool + triggers + event routing |
+| `examples/code_review_pipeline.yaml` | Git tool + `parallel_group` workflow |
+| `examples/multi_expert_research.yaml` | Hybrid mode + planning.execute |
 
 ```yaml
 # yaml-language-server: $schema=schemas/agentflow.scenario.schema.json
@@ -771,8 +842,9 @@ Public packages:
 
 | Package | Purpose |
 | --- | --- |
-| root package | Framework facade: load YAML, validate, run, resume, wire options. |
+| root package | Framework facade: load YAML, validate, run, resume, handle events, wire options. |
 | `pkg/async` | Job queue, lease, handler, and worker contracts for asynchronous execution. |
+| `pkg/eventrouter` | External event types and trigger-to-run routing for `scenario.triggers`. |
 | `pkg/audit` | Audit event model and sink contract for compliance records. |
 | `pkg/coordination` | Distributed lease contract for worker and workflow coordination. |
 | `pkg/core` | Agent, Tool, Skill, Scenario, Workflow, HumanGate, Event types. |

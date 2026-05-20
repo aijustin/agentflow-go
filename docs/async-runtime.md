@@ -253,6 +253,8 @@ agentctl resume -f examples/human_in_loop.yaml \
 
 CLI 的 `--continue` 与 HTTP `continue: true`、异步 `resume.continue` job 语义一致。
 
+`Framework.ResolveEvent` 仅解析 trigger 为 `RunRequest`，不执行运行；适合预检或自定义队列封装。
+
 ## 后续切片
 
 - 增加死信查看和重试 API。

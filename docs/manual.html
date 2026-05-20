@@ -958,6 +958,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
             <tbody>
               <tr><td>自主模式</td><td>模型规划并调用工具直到给出最终回答</td><td>planning pass、ToolCaller、agent whitelist、max_steps、rate_cap、tool result cap</td><td>工具安全、输出审计、预算治理、事件追踪</td></tr>
               <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition 表达式、transform set/copy、parallel batch、parallel_group、loop、retry、agent node</td><td>节点幂等、CAS 状态持久化、失败恢复</td></tr>
+              <tr><td>Hybrid</td><td>先跑确定性工作流，再进入自主综合/答复</td><td>workflow 阶段 + autonomous 阶段、planning.execute</td><td>阶段边界、RunState 持久化、示例 multi_expert_research</td></tr>
               <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、ResumeAndContinue、approve/reject/amend、PendingGate、工具 approval: pause</td><td>token secret、过期时间、actor identity、审计记录</td></tr>
               <tr><td>事件触发</td><td>Webhook、工单系统、消息总线驱动 Agent</td><td>scenario.triggers、HandleEvent、agentctl trigger、/v1/events</td><td>事件 schema、run_id 映射、幂等与重试</td></tr>
               <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、run/event/resume.continue job、PostgreSQL queue、lease、renew、dead-letter、cancel</td><td>lease TTL、续租间隔、重试策略、队列可观测性</td></tr>
@@ -1136,7 +1137,12 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
 worker, err := async.NewWorker(queue, jobHandler, async.WorkerConfig{
   WorkerID: "worker-1", Concurrency: 4,
 })</code></pre></div>
-        <div class="callout"><strong>续跑语义:</strong> <code>Resume</code> 只更新 RunState；<code>ResumeAndContinue</code> 会在审批后继续执行直到完成或下一次暂停。HTTP 请求设置 <code>"continue": true</code>，CLI 使用 <code>--continue</code>，异步队列使用 <code>resume.continue</code> job。完整路由矩阵见 <a href="async-runtime.md">docs/async-runtime.md</a>。</div>
+        <div class="callout"><strong>续跑语义:</strong> <code>Resume</code> 只更新 RunState；<code>ResumeAndContinue</code> 会在审批后继续执行直到完成或下一次暂停。HTTP 请求设置 <code>"continue": true</code>，CLI 使用 <code>--continue</code>（需同时传 <code>-f</code>），异步队列使用 <code>resume.continue</code> job。Debug 台 <code>agent-http</code> 的 resume 接口不支持 <code>continue: true</code>；生产续跑请使用 <code>/v1/hitl/resume</code>。完整路由矩阵见 <a href="async-runtime.md">docs/async-runtime.md</a>。</div>
+        <div class="grid three">
+          <div class="panel"><h4>ticket_handling</h4><p>工单分派 + triggers + HITL。</p><span class="tag">examples/ticket_handling.yaml</span></div>
+          <div class="panel"><h4>code_review_pipeline</h4><p>Git diff + parallel_group 审查。</p><span class="tag">examples/code_review_pipeline.yaml</span></div>
+          <div class="panel"><h4>multi_expert_research</h4><p>Hybrid + planning.execute 研报。</p><span class="tag">examples/multi_expert_research.yaml</span></div>
+        </div>
       </section>
 
       <section id="observability">
@@ -1268,8 +1274,10 @@ docker compose up --build</code></pre></div>
               <li>需要恢复的流程使用持久化 RunStateRepository。</li>
               <li>RAG 结果带 source metadata 和 citation，VectorStore 按 namespace 隔离。</li>
               <li>Webhook/工单场景为 <code>scenario.triggers</code> 定义 event、agent 和 JSON 路径映射。</li>
+              <li><code>agentctl run</code> 仅适合 autonomous 场景；fixed_workflow/hybrid 请用 <code>Framework.Run</code> 或 debug 工作流分支。</li>
               <li>需要削峰或 Worker 扩展时，优先走 <code>/v1/jobs/events</code> 和 <code>/v1/jobs/hitl/resume</code>。</li>
-              <li>审批后需立即续跑时使用 <code>ResumeAndContinue</code>（HTTP <code>continue: true</code> 或 CLI <code>--continue</code>）。</li>
+              <li>Git/ticket 工具需在宿主应用中通过 <code>WithToolExecutor</code> 注册，详见 <a href="tools-git.md">tools-git.md</a> 与 <a href="tools-ticket.md">tools-ticket.md</a>。</li>
+              <li>审批后需立即续跑时使用 <code>ResumeAndContinue</code>（生产 HTTP <code>continue: true</code> 或 CLI <code>--continue -f</code>）。</li>
               <li>事件 payload 只放运营元数据，敏感输出先走 redactor。</li>
               <li>新增公共 API 同步 README、CHANGELOG 和 godoc。</li>
             </ul>

@@ -9,7 +9,7 @@
 - 根包 `github.com/aijustin/agentflow-go`。
 - `pkg/` 下的包。
 - 示例和 README 中记录的 YAML 场景字段。
-- `cmd/agentctl` 下用于 validate、run、resume、version 的 CLI 命令。
+- `cmd/agentctl` 下用于 validate、run、resume、trigger、schema、version 的 CLI 命令。
 - `docs/` 中记录的生产 HTTP 行为。
 
 以下内容不是稳定公共 API：

@@ -87,4 +87,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Autonomous planning beyond tool-calling loops is still incomplete.
 - Redis run-state storage adapter beyond lease coordination is still pending.
 - Prometheus metrics and OpenTelemetry tracing adapters are still pending.
-- Specialized ingestion connectors, Helm chart packaging, and additional built-in enterprise tool packages for Git, tickets, and chatops are still pending.
+- Specialized ingestion connectors, Helm chart packaging, and additional built-in enterprise tool packages for chatops integrations are still pending.
