@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
@@ -446,6 +447,62 @@ func TestValidateScenario(t *testing.T) {
 	err := agentflow.ValidateScenario(core.Scenario{Name: "missing-agents"})
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+type contextCaptureGateway struct {
+	fakeGateway
+	lastReq llm.ChatRequest
+}
+
+func (g *contextCaptureGateway) Chat(ctx context.Context, profile string, req llm.ChatRequest) (llm.ChatResponse, error) {
+	g.lastReq = req
+	return g.fakeGateway.Chat(ctx, profile, req)
+}
+
+func TestFrameworkHybridHydratesWorkflowContext(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "hybrid-hydrate",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalNever},
+		},
+		Agents: map[string]core.Agent{
+			"analyst": {Name: "analyst", LLM: "default", Instructions: "analyze"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationHybrid,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "prep", Kind: core.NodeTool, Ref: "echo", Input: json.RawMessage(`{"message":"workflow-data"}`)},
+				},
+			},
+		},
+	}
+	gateway := &contextCaptureGateway{fakeGateway: fakeGateway{content: "hybrid-answer"}}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-hybrid", Agent: "analyst", Prompt: "summarize"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	foundContext := false
+	for _, msg := range gateway.lastReq.Messages {
+		if strings.Contains(msg.Content, `"steps"`) && strings.Contains(msg.Content, `"prep"`) {
+			foundContext = true
+		}
+	}
+	if !foundContext {
+		t.Fatalf("expected hydrated workflow context in LLM messages: %+v", gateway.lastReq.Messages)
 	}
 }
 

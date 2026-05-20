@@ -627,7 +627,7 @@ func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, e
 		return RunResult{}, err
 	}
 	if req.Context == nil && len(loaded.StepOutputs) > 0 {
-		if raw, merr := json.Marshal(loaded.StepOutputs); merr == nil {
+		if raw, merr := runstate.HydrateStepContext(ctx, f.blobs, loaded.StepOutputs); merr == nil {
 			req.Context = raw
 		}
 	}

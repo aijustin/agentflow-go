@@ -53,14 +53,22 @@ func WithWorkflowToolPolicy(policy governance.ToolPolicy) RunnerOption {
 	}
 }
 
+// WithOutputRedactor wires an output redactor for persisted workflow step outputs.
+func WithOutputRedactor(redactor governance.OutputRedactor) RunnerOption {
+	return func(r *WorkflowRunner) {
+		r.redactor = redactor
+	}
+}
+
 type WorkflowRunner struct {
 	tools   ToolRegistry
 	agents  AgentRegistry
 	gate    core.HumanGate
 	runs    runstate.Repository
 	blobs   runstate.BlobStore
-	events  core.EventSink
-	toolGov governance.ToolPolicy
+	events   core.EventSink
+	toolGov  governance.ToolPolicy
+	redactor governance.OutputRedactor
 }
 
 type WorkflowPausedError struct {
@@ -150,14 +158,33 @@ func (r *WorkflowRunner) run(ctx context.Context, scenario core.Scenario, runID 
 			return fmt.Errorf("orchestration: workflow has no ready nodes; remaining=%v", mapKeys(pending))
 		}
 		slices.Sort(ready)
-		if len(ready) > maxParallel {
-			ready = ready[:maxParallel]
+		runnable := make([]string, 0, len(ready))
+		for _, id := range ready {
+			skip, err := r.nodeShouldSkip(ctx, runID, workflow, id)
+			if err != nil {
+				return err
+			}
+			delete(pending, id)
+			if skip {
+				done[id] = true
+				r.emitJSON(ctx, core.EventStepCompleted, scenario.Name, runID, map[string]any{"node_id": id, "skipped": true, "reason": "edge_condition"})
+				continue
+			}
+			runnable = append(runnable, id)
 		}
-		if err := r.runBatch(ctx, scenario, runID, nodes, ready); err != nil {
+		if len(runnable) == 0 {
+			continue
+		}
+		if len(runnable) > maxParallel {
+			for _, id := range runnable[maxParallel:] {
+				pending[id] = true
+			}
+			runnable = runnable[:maxParallel]
+		}
+		if err := r.runBatch(ctx, scenario, runID, nodes, runnable); err != nil {
 			return err
 		}
-		for _, id := range ready {
-			delete(pending, id)
+		for _, id := range runnable {
 			done[id] = true
 		}
 	}
@@ -282,12 +309,16 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if tool.Name == "" {
 		tool.Name = node.Ref
 	}
+	input, err := r.resolveNodeInput(ctx, runID, node.Input)
+	if err != nil {
+		return err
+	}
 	if r.toolGov != nil {
 		if err := r.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
 			RunID:      runID,
 			Tool:       node.Ref,
 			SideEffect: tool.SideEffect,
-			Input:      node.Input,
+			Input:      input,
 		}); err != nil {
 			return fmt.Errorf("orchestration: tool %q denied by governance: %w", node.Ref, err)
 		}
@@ -299,7 +330,7 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if !ok {
 		return fmt.Errorf("orchestration: tool %q not found", node.Ref)
 	}
-	result, err := executor.Execute(ctx, core.ToolCall{RunID: runID, Tool: node.Ref, Input: node.Input})
+	result, err := executor.Execute(ctx, core.ToolCall{RunID: runID, Tool: node.Ref, Input: input})
 	if err != nil {
 		return err
 	}
@@ -314,7 +345,11 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 	if !ok {
 		return fmt.Errorf("orchestration: agent %q not found", node.Ref)
 	}
-	output, err := agent.Run(ctx, core.AgentInput{RunID: runID, Context: node.Input})
+	input, err := r.resolveNodeInput(ctx, runID, node.Input)
+	if err != nil {
+		return err
+	}
+	output, err := agent.Run(ctx, core.AgentInput{RunID: runID, Context: input})
 	if err != nil {
 		return err
 	}
@@ -362,7 +397,7 @@ func (r *WorkflowRunner) saveStepOutput(ctx context.Context, scenario core.Scena
 			snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
 		}
 		snapshot.CurrentNodeID = nodeID
-		ref, err := r.stepOutputRef(ctx, scenario.Runtime.StepOutputThreshold, raw)
+		ref, err := r.stepOutputRef(ctx, runID, nodeID, scenario.Runtime.StepOutputThreshold, raw)
 		if err != nil {
 			return err
 		}
@@ -387,9 +422,6 @@ func dependencies(workflow core.Workflow) map[string]map[string]bool {
 		}
 	}
 	for _, edge := range workflow.Edges {
-		if !staticConditionEnabled(edge.Condition) {
-			continue
-		}
 		if deps[edge.To] == nil {
 			deps[edge.To] = make(map[string]bool)
 		}
@@ -413,17 +445,6 @@ func readyNodes(pending, done map[string]bool, deps map[string]map[string]bool) 
 		}
 	}
 	return ready
-}
-
-func staticConditionEnabled(condition string) bool {
-	switch strings.TrimSpace(condition) {
-	case "", "true", "always":
-		return true
-	case "false", "never":
-		return false
-	default:
-		return true
-	}
 }
 
 func (r *WorkflowRunner) conditionEnabled(ctx context.Context, runID, condition string) (bool, error) {
@@ -466,7 +487,7 @@ func (r *WorkflowRunner) conditionEnabled(ctx context.Context, runID, condition 
 		expected := parseConditionValue(strings.TrimSpace(args[1]))
 		return !workflowValuesEqual(actual, expected), nil
 	}
-	return true, nil
+	return false, fmt.Errorf("orchestration: unsupported condition %q", condition)
 }
 
 func (r *WorkflowRunner) resolveWorkflowPath(ctx context.Context, runID, path string) (any, bool, error) {
@@ -608,7 +629,19 @@ func workflowTimeout(ctx context.Context, timeout time.Duration) (context.Contex
 	return context.WithTimeout(ctx, timeout)
 }
 
-func (r *WorkflowRunner) stepOutputRef(ctx context.Context, threshold int64, raw json.RawMessage) (runstate.StepOutputRef, error) {
+func (r *WorkflowRunner) stepOutputRef(ctx context.Context, runID, nodeID string, threshold int64, raw json.RawMessage) (runstate.StepOutputRef, error) {
+	if r.redactor != nil {
+		redacted, err := r.redactor.RedactOutput(ctx, governance.OutputRedaction{
+			RunID:  runID,
+			StepID: nodeID,
+			Kind:   "workflow_step_output",
+			Data:   raw,
+		})
+		if err != nil {
+			return runstate.StepOutputRef{}, err
+		}
+		raw = redacted
+	}
 	if threshold <= 0 || int64(len(raw)) <= threshold || r.blobs == nil {
 		return runstate.StepOutputRef{Inline: raw}, nil
 	}

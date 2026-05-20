@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `DemoOptions` for batteries-included CLI and server wiring (mock LLM fallback, echo/git/ticket/repo_search tools).
 - Production binaries `agent-server` (HTTP API) and `agent-worker` (async job consumer).
 - `agentctl run` now uses `Framework.Run` for all orchestration modes.
+- Workflow dynamic edge condition routing at runtime (`edges[].condition`).
+- Workflow node input templates: `copy_from` and `prompt_from` in node `input`.
+- `runstate.HydrateStepContext` for hybrid Phase 2 workflow context hydration.
+- Context window `compression.trigger_ratio` pre-compression for tool messages.
+- `memory_recall_limit` enforcement when replaying session memory into LLM context.
+- Workflow step output redaction via `WithOutputRedactor` on `WorkflowRunner`.
+- Memory write redaction using the configured `OutputRedactor`.
 - `Framework.ResumeAndContinue` for continuing paused autonomous, workflow, and tool-approval runs after HITL approval.
 - Tool approval policy `pause` for pausing before risky tool execution and resuming with `ResumeAndContinue`.
 - Workflow nodes `parallel_group` and `loop` for multi-agent parallelism and bounded iteration.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1071,4 +1072,88 @@ func toolScenario(approval core.ApprovalPolicy, sideEffect core.SideEffectLevel,
 	agent.Policy.MaxSteps = maxSteps
 	scenario.Agents["assistant"] = agent
 	return scenario
+}
+
+func TestEngineRunAppliesMemoryRecallLimit(t *testing.T) {
+	ctx := context.Background()
+	memRepo := memoryinmem.NewRepository()
+	ns := memory.Namespace{SessionID: "recall-session", Agent: "assistant", Scope: memory.ScopeSession}
+	for i := range 5 {
+		raw, err := json.Marshal(memoryMessage{Role: string(llm.RoleUser), Content: fmt.Sprintf("old-%d", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := memRepo.Append(ctx, ns, "messages", raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gateway := &capturingGateway{response: "answer"}
+	scenario := baseScenario(false)
+	scenario.LLMs = map[string]core.LLMProfileRef{
+		"default": {
+			Provider: "mock",
+			Model:    "test",
+			Context: contextwindow.Policy{
+				MemoryRecallLimit: 2,
+			},
+		},
+	}
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "recall-session"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:   runstateinmem.NewRepository(),
+		LLM:    gateway,
+		Memory: map[string]memory.Repository{"session": memRepo},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(ctx, RunRequest{RunID: "run-recall", Agent: "assistant", Prompt: "latest"}); err != nil {
+		t.Fatal(err)
+	}
+	recalled := 0
+	for _, msg := range gateway.req.Messages {
+		if msg.Role == llm.RoleUser && strings.HasPrefix(msg.Content, "old-") {
+			recalled++
+		}
+	}
+	if recalled > 2 {
+		t.Fatalf("expected at most 2 recalled memory messages, got %d: %+v", recalled, gateway.req.Messages)
+	}
+}
+
+func TestEngineRunRedactsMemoryWrites(t *testing.T) {
+	ctx := context.Background()
+	memRepo := memoryinmem.NewRepository()
+	ns := memory.Namespace{SessionID: "redact-session", Agent: "assistant", Scope: memory.ScopeSession}
+	scenario := baseScenario(false)
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "redact-session"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:           runstateinmem.NewRepository(),
+		LLM:            &capturingGateway{response: "echo"},
+		Memory:         map[string]memory.Repository{"session": memRepo},
+		OutputRedactor: governance.NewJSONFieldRedactor("content"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(ctx, RunRequest{RunID: "run-mem-redact", Agent: "assistant", Prompt: "classified"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := memRepo.Get(ctx, ns, "messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "classified") || !strings.Contains(string(raw), "[REDACTED]") {
+		t.Fatalf("memory not redacted: %s", raw)
+	}
 }

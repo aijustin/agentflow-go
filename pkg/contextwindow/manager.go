@@ -48,11 +48,20 @@ func New(policy Policy) *Manager {
 }
 
 func (m *Manager) Prepare(messages []Message) Result {
+	messages = cloneMessages(messages)
 	before := CountMessages(messages)
 	stats := Stats{
 		Strategy:       m.policy.Strategy,
 		BeforeTokens:   before,
 		MaxInputTokens: m.policy.MaxInputTokens,
+	}
+	if m.policy.Compression.Enabled && m.policy.MaxInputTokens > 0 {
+		trigger := int(float64(m.policy.MaxInputTokens) * m.policy.Compression.TriggerRatio)
+		if before > trigger {
+			messages = compressToolMessages(messages, m.policy.ToolResultMaxTokens)
+			before = CountMessages(messages)
+			stats.BeforeTokens = before
+		}
 	}
 	if m.policy.Strategy == StrategyNone || before <= m.policy.MaxInputTokens {
 		stats.AfterTokens = before
@@ -200,5 +209,27 @@ func compact(text string, limit int) string {
 func cloneMessages(messages []Message) []Message {
 	out := make([]Message, len(messages))
 	copy(out, messages)
+	return out
+}
+
+func compressToolMessages(messages []Message, maxToolTokens int) []Message {
+	if maxToolTokens <= 0 {
+		maxToolTokens = 256
+	}
+	out := make([]Message, len(messages))
+	for i, msg := range messages {
+		out[i] = msg
+		if msg.Role != RoleTool {
+			continue
+		}
+		if EstimateTokens(msg.Content) <= maxToolTokens {
+			continue
+		}
+		out[i].Content = compact(msg.Content, maxToolTokens*3)
+		if out[i].Metadata == nil {
+			out[i].Metadata = map[string]string{}
+		}
+		out[i].Metadata["context_window"] = "compressed"
+	}
 	return out
 }

@@ -106,7 +106,7 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 	}
 	req := hybridRunRequest(snapshot)
 	if req.Context == nil && len(snapshot.StepOutputs) > 0 {
-		if raw, err := json.Marshal(snapshot.StepOutputs); err == nil {
+		if raw, err := runstate.HydrateStepContext(ctx, f.blobs, snapshot.StepOutputs); err == nil {
 			req.Context = raw
 		}
 	}
@@ -135,6 +135,7 @@ func (f *Framework) newWorkflowRunner() *orchestration.WorkflowRunner {
 		orchestration.WithHumanGate(f.gate),
 		orchestration.WithBlobStore(f.blobs),
 		orchestration.WithWorkflowToolPolicy(f.toolGov),
+		orchestration.WithOutputRedactor(f.redactor),
 	)
 }
 

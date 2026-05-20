@@ -72,6 +72,33 @@ func TestManagerSlidingWindowWithSummary(t *testing.T) {
 	}
 }
 
+func TestManagerCompressionTriggerRatio(t *testing.T) {
+	longTool := strings.Repeat("tool-result ", 200)
+	messages := []Message{
+		{Role: RoleSystem, Content: "system"},
+		{Role: RoleTool, Content: longTool},
+		{Role: RoleUser, Content: "question"},
+	}
+	result := New(Policy{
+		Strategy:            StrategySlidingWindow,
+		MaxInputTokens:      100,
+		SystemPromptProtection: true,
+		ToolResultMaxTokens: 20,
+		Compression: CompressionPolicy{
+			Enabled:      true,
+			TriggerRatio: 0.5,
+		},
+	}).Prepare(messages)
+	for _, msg := range result.Messages {
+		if msg.Role == RoleTool && len(msg.Content) >= len(longTool) {
+			t.Fatalf("expected compressed tool message, got len=%d", len(msg.Content))
+		}
+	}
+	if result.Stats.AfterTokens > result.Stats.MaxInputTokens {
+		t.Fatalf("after tokens exceeded budget: %+v", result.Stats)
+	}
+}
+
 func TestEstimateTokens(t *testing.T) {
 	if EstimateTokens("") != 0 {
 		t.Fatal("empty text should have zero tokens")

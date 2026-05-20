@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 )
@@ -51,6 +52,12 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent)
 			})
 		}
 	}
+	if profile, ok := e.scenario.LLMs[agent.LLM]; ok {
+		limit := profile.Context.Normalize().MemoryRecallLimit
+		if limit > 0 && len(messages) > limit {
+			messages = messages[len(messages)-limit:]
+		}
+	}
 	e.emitJSON(ctx, core.EventMemoryRead, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": len(messages)})
 	return messages, nil
 }
@@ -62,6 +69,11 @@ func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent
 	}
 	for _, msg := range messages {
 		msg.Time = time.Now().UTC()
+		content, err := e.redactMemoryMessage(ctx, runID, msg)
+		if err != nil {
+			return err
+		}
+		msg.Content = content
 		raw, err := json.Marshal(msg)
 		if err != nil {
 			return err
@@ -95,4 +107,28 @@ func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Reposi
 		ns.SessionID = firstNonEmpty(ref.Namespace, e.scenario.Name)
 	}
 	return repo, ns, true
+}
+
+func (e *Engine) redactMemoryMessage(ctx context.Context, runID string, msg memoryMessage) (string, error) {
+	if e.redactor == nil {
+		return msg.Content, nil
+	}
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		return msg.Content, err
+	}
+	redacted, err := e.redactor.RedactOutput(ctx, governance.OutputRedaction{
+		RunID:  runID,
+		StepID: "memory",
+		Kind:   "memory." + msg.Role,
+		Data:   raw,
+	})
+	if err != nil {
+		return "", err
+	}
+	var out memoryMessage
+	if err := json.Unmarshal(redacted, &out); err != nil {
+		return msg.Content, nil
+	}
+	return out.Content, nil
 }
