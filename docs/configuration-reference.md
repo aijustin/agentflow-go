@@ -386,12 +386,13 @@ agentctl trigger -f examples/ticket_handling.yaml \
 
 | 命令 | 使用的运行时 | 支持的 `orchestration.mode` |
 | --- | --- | --- |
-| `agentctl run` | 直接调用 autonomous `Engine` | 仅适合 `autonomous`（或把 workflow 场景当作单 Agent 调试） |
+| `agentctl run` | `Framework.Run`（含 demo mock LLM 与内置工具） | `autonomous`、`fixed_workflow`、`hybrid` |
 | `agentctl trigger` | `Framework.HandleEvent` | `autonomous`、`fixed_workflow`、`hybrid` |
 | `agentctl resume --continue` | `Framework.ResumeAndContinue` | 同上 |
+| `agent-server` / `agent-worker` | 生产 HTTP API + 异步 Worker | 同上 |
 | 库 `Framework.Run` | 完整 mode 分发 | `autonomous`、`fixed_workflow`、`hybrid` |
 
-固定工作流和 hybrid 场景应通过 `Framework.Run`、debug UI（fixed workflow 分支）或 embedding 应用调用，而不是 `agentctl run`。
+`agentctl run` 会自动注册 `DemoOptions`（mock LLM、echo/git/ticket/repo_search 等 demo 工具）。生产服务应显式注册真实 LLM Gateway 与工具执行器，或使用 `agent-server` + `agent-worker`。
 
 ## 运行时
 

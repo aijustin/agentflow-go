@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `DemoOptions` for batteries-included CLI and server wiring (mock LLM fallback, echo/git/ticket/repo_search tools).
+- Production binaries `agent-server` (HTTP API) and `agent-worker` (async job consumer).
+- `agentctl run` now uses `Framework.Run` for all orchestration modes.
 - `Framework.ResumeAndContinue` for continuing paused autonomous, workflow, and tool-approval runs after HITL approval.
 - Tool approval policy `pause` for pausing before risky tool execution and resuming with `ResumeAndContinue`.
 - Workflow nodes `parallel_group` and `loop` for multi-agent parallelism and bounded iteration.

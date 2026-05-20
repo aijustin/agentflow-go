@@ -1,5 +1,8 @@
 /agentctl
 /agent-http
+/agent-server
+/agent-worker
+/agent-http
 /.!*!agentctl
 /.!*!agent-http
 /bin/

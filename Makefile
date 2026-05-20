@@ -29,6 +29,8 @@ security:
 build:
 	go build -ldflags="-s -w" ./cmd/agentctl
 	go build -ldflags="-s -w" ./cmd/agent-http
+	go build -ldflags="-s -w" ./cmd/agent-server
+	go build -ldflags="-s -w" ./cmd/agent-worker
 
 validate-examples:
 	@for file in examples/*.yaml; do \

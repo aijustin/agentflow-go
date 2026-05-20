@@ -1274,9 +1274,10 @@ docker compose up --build</code></pre></div>
               <li>需要恢复的流程使用持久化 RunStateRepository。</li>
               <li>RAG 结果带 source metadata 和 citation，VectorStore 按 namespace 隔离。</li>
               <li>Webhook/工单场景为 <code>scenario.triggers</code> 定义 event、agent 和 JSON 路径映射。</li>
-              <li><code>agentctl run</code> 仅适合 autonomous 场景；fixed_workflow/hybrid 请用 <code>Framework.Run</code> 或 debug 工作流分支。</li>
+              <li><code>agentctl run</code> 走完整 <code>Framework.Run</code>，支持 autonomous/fixed_workflow/hybrid；demo 工具由 <code>DemoOptions</code> 自动注册。</li>
+              <li>生产部署使用 <code>agent-server</code>（HTTP API）+ <code>agent-worker</code>（异步 Worker）；分离部署时 <code>AGENT_QUEUE=postgres</code>。</li>
               <li>需要削峰或 Worker 扩展时，优先走 <code>/v1/jobs/events</code> 和 <code>/v1/jobs/hitl/resume</code>。</li>
-              <li>Git/ticket 工具需在宿主应用中通过 <code>WithToolExecutor</code> 注册，详见 <a href="tools-git.md">tools-git.md</a> 与 <a href="tools-ticket.md">tools-ticket.md</a>。</li>
+              <li>Git/ticket 等 demo 工具在 CLI/<code>agent-server</code> 中自动注册；生产环境请替换为真实执行器，详见 <a href="tools-git.md">tools-git.md</a> 与 <a href="tools-ticket.md">tools-ticket.md</a>。</li>
               <li>审批后需立即续跑时使用 <code>ResumeAndContinue</code>（生产 HTTP <code>continue: true</code> 或 CLI <code>--continue -f</code>）。</li>
               <li>事件 payload 只放运营元数据，敏感输出先走 redactor。</li>
               <li>新增公共 API 同步 README、CHANGELOG 和 godoc。</li>

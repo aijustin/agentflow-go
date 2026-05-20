@@ -532,7 +532,21 @@ make build
 会构建：
 
 - `agentctl`：用于校验、运行、恢复和触发场景的 CLI。
-- `agent-http`：用于 Human-in-the-loop 恢复回调和浏览器调试台的 HTTP 服务。
+- `agent-http`：本地调试台。
+- `agent-server`：生产 HTTP API（`/v1/runs`、`/v1/events`、`/v1/hitl/resume` 及异步 job 路由）。
+- `agent-worker`：异步 job Worker（`run`、`event`、`resume.continue`）。
+
+生产 server/worker 环境变量：
+
+| 变量 | 说明 |
+| --- | --- |
+| `AGENT_SCENARIO_FILE` | 场景 YAML 路径，必填。 |
+| `AGENT_HTTP_ADDR` | API 监听地址，默认 `0.0.0.0:8080`。 |
+| `AGENT_TOKEN_SECRET` | HITL token HMAC 密钥。 |
+| `AGENT_STATE_DIR` | 可选持久化状态目录。 |
+| `AGENT_QUEUE` | `memory`（默认）或 `postgres`。 |
+| `AGENT_POSTGRES_DSN` | `AGENT_QUEUE=postgres` 时必填。 |
+| `AGENT_HTTP_API_KEY` | 非 loopback 部署时的 API Key。 |
 
 ## CLI 使用
 
@@ -543,10 +557,11 @@ go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
 
 ### `agentctl run`
 
-通过自主 runtime engine 运行场景。该命令适合 `orchestration.mode: autonomous`。`fixed_workflow` 或 `hybrid` 场景应使用根包 `Framework.Run`、debug 台工作流分支，或在宿主服务中嵌入 framework。
+通过完整 `Framework` 运行场景（支持全部编排模式）。`DemoOptions` 会自动注册 demo mock LLM 与内置工具执行器。
 
 ```sh
-go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "review this change"
+go run ./cmd/agentctl run -f examples/fixed_workflow.yaml --prompt "review this change"
+go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello"
 ```
 
 常用参数：

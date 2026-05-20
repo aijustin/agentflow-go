@@ -147,6 +147,30 @@ func TestRunAndResumeContinueCompletesRun(t *testing.T) {
 	}
 }
 
+func TestRunFixedWorkflowExample(t *testing.T) {
+	runCmd := newRootCommand()
+	var runOut, runErr bytes.Buffer
+	runCmd.SetOut(&runOut)
+	runCmd.SetErr(&runErr)
+	runCmd.SetArgs([]string{
+		"run",
+		"-f", filepath.Join("..", "..", "examples", "fixed_workflow.yaml"),
+		"--run-id", "cli-fixed-workflow",
+		"--prompt", "review",
+		"--json",
+	})
+	if err := runCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("run command failed: %v stderr=%s", err, runErr.String())
+	}
+	var result runstateResult
+	if err := json.Unmarshal(runOut.Bytes(), &result); err != nil {
+		t.Fatalf("run command stdout should be one JSON result, got %q: %v", runOut.String(), err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected completed fixed workflow, got %+v body=%s", result, runOut.String())
+	}
+}
+
 type runstateResult struct {
 	Status runstate.RunStatus `json:"status"`
 	Token  string             `json:"token"`

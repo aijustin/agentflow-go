@@ -538,7 +538,21 @@ make build
 This builds:
 
 - `agentctl`: CLI for validating, running, resuming, and triggering scenarios.
-- `agent-http`: HTTP/Webhook bridge for human-in-the-loop resume callbacks.
+- `agent-http`: debug console for local workflow inspection.
+- `agent-server`: production HTTP API (`/v1/runs`, `/v1/events`, `/v1/hitl/resume`, async job routes).
+- `agent-worker`: async job worker for `run`, `event`, and `resume.continue` jobs.
+
+Production server/worker environment variables:
+
+| Variable | Description |
+| --- | --- |
+| `AGENT_SCENARIO_FILE` | Scenario YAML path. Required. |
+| `AGENT_HTTP_ADDR` | API listen address. Defaults to `0.0.0.0:8080`. |
+| `AGENT_TOKEN_SECRET` | HMAC secret for HITL tokens. |
+| `AGENT_STATE_DIR` | Optional durable run state directory. |
+| `AGENT_QUEUE` | `memory` (default) or `postgres`. |
+| `AGENT_POSTGRES_DSN` | Required when `AGENT_QUEUE=postgres`. |
+| `AGENT_HTTP_API_KEY` | API key for non-loopback deployments. |
 
 ## CLI usage
 
@@ -552,10 +566,11 @@ go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
 
 ### `agentctl run`
 
-Runs a scenario through the autonomous runtime engine. This path is intended for `orchestration.mode: autonomous` scenarios. For `fixed_workflow` or `hybrid` scenarios, use the root `Framework.Run` API, the debug console workflow runner, or embed the framework in your service.
+Runs a scenario through the full `Framework` runtime (all orchestration modes). Demo mock LLM gateways and built-in tool executors are registered automatically via `DemoOptions`.
 
 ```sh
-go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "review this change"
+go run ./cmd/agentctl run -f examples/fixed_workflow.yaml --prompt "review this change"
+go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello"
 ```
 
 Useful flags:
