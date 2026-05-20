@@ -25,6 +25,7 @@ type Scenario struct {
 	Tools         map[string]Tool       `yaml:"tools"`
 	Skills        map[string]Skill      `yaml:"skills"`
 	Agents        map[string]Agent      `yaml:"agents"`
+	Triggers      []Trigger             `yaml:"triggers"`
 	Orchestration Orchestration         `yaml:"orchestration"`
 	Runtime       Runtime               `yaml:"runtime"`
 }
@@ -127,6 +128,16 @@ type PlanningPolicy struct {
 	Enabled  bool   `yaml:"enabled"`
 	Agent    string `yaml:"agent"`
 	MaxSteps int    `yaml:"max_steps"`
+	Execute  bool   `yaml:"execute"`
+}
+
+type Trigger struct {
+	Event         string `yaml:"event"`
+	Agent         string `yaml:"agent"`
+	PromptPath    string `yaml:"prompt_path"`
+	ContextPath   string `yaml:"context_path"`
+	RunIDPath     string `yaml:"run_id_path"`
+	DefaultPrompt string `yaml:"default_prompt"`
 }
 
 type HumanInLoopPolicy struct {
@@ -211,6 +222,7 @@ func (d Document) ToCore() (core.Scenario, error) {
 				Enabled:  d.Scenario.Orchestration.Planning.Enabled,
 				Agent:    d.Scenario.Orchestration.Planning.Agent,
 				MaxSteps: d.Scenario.Orchestration.Planning.MaxSteps,
+				Execute:  d.Scenario.Orchestration.Planning.Execute,
 			},
 		},
 		Runtime: core.RuntimePolicy{
@@ -310,6 +322,16 @@ func (d Document) ToCore() (core.Scenario, error) {
 			Policy:       core.AgentPolicy{MaxSteps: agent.MaxSteps, Timeout: agent.Timeout, RetryLimit: agent.RetryLimit, OutputSchema: outputSchema, HumanCheckpoints: agent.HumanCheckpoints},
 			Metadata:     agent.Metadata,
 		}
+	}
+	for _, trigger := range d.Scenario.Triggers {
+		s.Triggers = append(s.Triggers, core.Trigger{
+			Event:         trigger.Event,
+			Agent:         trigger.Agent,
+			PromptPath:    trigger.PromptPath,
+			ContextPath:   trigger.ContextPath,
+			RunIDPath:     trigger.RunIDPath,
+			DefaultPrompt: trigger.DefaultPrompt,
+		})
 	}
 	if d.Scenario.Orchestration.Workflow != nil {
 		workflow, err := d.Scenario.Orchestration.Workflow.toCore()

@@ -833,7 +833,7 @@ func TestEngineRunPausesForHumanGate(t *testing.T) {
 	if result.Status != runstate.RunStatusPaused || result.Token != "token" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	if gate.state.NodeID != "before_final_answer" || gate.state.Version != 1 {
+	if gate.state.NodeID != "before_final_answer" || gate.state.Version != 2 {
 		t.Fatalf("unexpected checkpoint state: %+v", gate.state)
 	}
 }

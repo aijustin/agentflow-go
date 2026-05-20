@@ -8,6 +8,8 @@ import (
 	toolfilesystem "github.com/aijustin/agentflow-go/internal/adapter/tool/filesystem"
 	toolhttp "github.com/aijustin/agentflow-go/internal/adapter/tool/http"
 	toolsql "github.com/aijustin/agentflow-go/internal/adapter/tool/sqlquery"
+	toolgit "github.com/aijustin/agentflow-go/internal/adapter/tool/git"
+	toolticket "github.com/aijustin/agentflow-go/internal/adapter/tool/ticket"
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
@@ -33,6 +35,14 @@ type SQLToolConfig struct {
 	AllowAdHocQuery bool
 	MaxRows         int
 	Timeout         time.Duration
+}
+
+type GitToolConfig struct {
+	AllowedRoots []string
+}
+
+type TicketToolConfig struct {
+	Store toolticket.Store
 }
 
 // NewHTTPToolExecutor creates a governed HTTP client tool executor.
@@ -64,3 +74,24 @@ func NewSQLToolExecutor(config SQLToolConfig) (core.ToolExecutor, error) {
 		Timeout:         config.Timeout,
 	})
 }
+
+// NewGitToolExecutor creates a read-only git tool executor.
+func NewGitToolExecutor(config GitToolConfig) (core.ToolExecutor, error) {
+	return toolgit.NewExecutor(toolgit.Config{AllowedRoots: config.AllowedRoots})
+}
+
+// NewTicketToolExecutor creates a ticket store backed tool executor.
+func NewTicketToolExecutor(config TicketToolConfig) (core.ToolExecutor, error) {
+	return toolticket.NewExecutor(config.Store)
+}
+
+// NewMemoryTicketStore creates an in-memory ticket store for tests and demos.
+func NewMemoryTicketStore(seed map[string]Ticket) TicketStore {
+	return toolticket.NewMemoryStore(seed)
+}
+
+// Ticket is a support ticket record manipulated by the ticket tool.
+type Ticket = toolticket.Ticket
+
+// TicketStore persists ticket records for the ticket tool executor.
+type TicketStore = toolticket.Store

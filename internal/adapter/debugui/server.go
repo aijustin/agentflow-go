@@ -144,7 +144,7 @@ func (s *Server) routes() {
 	s.mux.Handle("/api/run", s.protect(security.ActionRunSubmit, func(*http.Request) security.Resource { return security.Resource{Type: "run"} }, http.HandlerFunc(s.handleRun)))
 	s.mux.Handle("/api/resume", s.protect(security.ActionHITLResume, func(*http.Request) security.Resource { return security.Resource{Type: "hitl"} }, http.HandlerFunc(s.handleResume)))
 	s.mux.Handle("/api/runs/", s.protect(security.ActionRunRead, runResourceFromPath, http.HandlerFunc(s.handleRunDetail)))
-	s.mux.Handle("/api/hitl/resume", s.protect(security.ActionHITLResume, func(*http.Request) security.Resource { return security.Resource{Type: "hitl"} }, humanhttp.NewHandler(humancli.NewGate(s.repo, s.signer, nil))))
+	s.mux.Handle("/api/hitl/resume", s.protect(security.ActionHITLResume, func(*http.Request) security.Resource { return security.Resource{Type: "hitl"} }, humanhttp.NewLegacyHandler(humancli.NewGate(s.repo, s.signer, nil))))
 }
 
 func (s *Server) protect(action security.Action, resourceFunc securityhttp.ResourceFunc, handler http.Handler) http.Handler {

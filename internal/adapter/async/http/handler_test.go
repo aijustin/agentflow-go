@@ -17,6 +17,49 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
+func TestHandlerSubmitsEventAndResumeContinueJobs(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	audits := auditinmem.NewSink(20)
+	handler, err := NewHandler(HandlerConfig{Queue: queue, Policy: security.NewDefaultRolePolicy(), Audit: audits, IDGenerator: func() string { return "job-1" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "svc-1", Type: identity.PrincipalService, Scope: identity.Scope{TenantID: "tenant-1"}, Roles: []identity.Role{identity.RoleService}})
+	approverCtx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "approver-1", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-1"}, Roles: []identity.Role{identity.RoleApprover}})
+
+	eventSubmit := httptest.NewRecorder()
+	handler.ServeHTTP(eventSubmit, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/events", bytes.NewBufferString(`{"type":"ticket.created","job_id":"job-event","payload":{"id":"t-1"}}`)).WithContext(ctx))
+	if eventSubmit.Code != nethttp.StatusAccepted {
+		t.Fatalf("unexpected event submit response: %d %s", eventSubmit.Code, eventSubmit.Body.String())
+	}
+	var eventJob JobResponse
+	if err := json.Unmarshal(eventSubmit.Body.Bytes(), &eventJob); err != nil {
+		t.Fatal(err)
+	}
+	if eventJob.Job.Type != asyncpkg.EventJobType || eventJob.Job.State != asyncpkg.JobQueued {
+		t.Fatalf("unexpected event job: %+v", eventJob.Job)
+	}
+
+	resumeSubmit := httptest.NewRecorder()
+	handler.ServeHTTP(resumeSubmit, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/hitl/resume", bytes.NewBufferString(`{"token":"tok-1","decision":"approve","job_id":"job-resume"}`)).WithContext(approverCtx))
+	if resumeSubmit.Code != nethttp.StatusAccepted {
+		t.Fatalf("unexpected resume submit response: %d %s", resumeSubmit.Code, resumeSubmit.Body.String())
+	}
+	var resumeJob JobResponse
+	if err := json.Unmarshal(resumeSubmit.Body.Bytes(), &resumeJob); err != nil {
+		t.Fatal(err)
+	}
+	if resumeJob.Job.Type != asyncpkg.ResumeContinueJobType {
+		t.Fatalf("unexpected resume job type: %+v", resumeJob.Job)
+	}
+
+	status := httptest.NewRecorder()
+	handler.ServeHTTP(status, httptest.NewRequest(nethttp.MethodGet, "/v1/jobs/job-event", nil).WithContext(ctx))
+	if status.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected job status response: %d %s", status.Code, status.Body.String())
+	}
+}
+
 func TestHandlerSubmitsReadsAndCancelsRunJobs(t *testing.T) {
 	queue := queueinmem.NewQueue()
 	audits := auditinmem.NewSink(20)

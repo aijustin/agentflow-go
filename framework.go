@@ -57,22 +57,23 @@ type Plan struct {
 
 // Framework is an embeddable runtime wrapper for one scenario.
 type Framework struct {
-	scenario core.Scenario
-	engine   *appexec.Engine
-	runs     runstate.Repository
-	blobs    runstate.BlobStore
-	events   core.EventSink
-	gate     core.HumanGate
-	llm      llm.Gateway
-	tools    *toolRegistry
-	memory   map[string]memory.Repository
-	policy   security.Policy
-	audit    audit.Sink
-	toolGov  governance.ToolPolicy
-	redactor governance.OutputRedactor
-	recorder observability.Recorder
-	tracer   observability.Tracer
-	logger   appexec.Logger
+	scenario    core.Scenario
+	engine      *appexec.Engine
+	runs        runstate.Repository
+	blobs       runstate.BlobStore
+	events      core.EventSink
+	gate        core.HumanGate
+	tokenSigner *runstate.TokenSigner
+	llm         llm.Gateway
+	tools       *toolRegistry
+	memory      map[string]memory.Repository
+	policy      security.Policy
+	audit       audit.Sink
+	toolGov     governance.ToolPolicy
+	redactor    governance.OutputRedactor
+	recorder    observability.Recorder
+	tracer      observability.Tracer
+	logger      appexec.Logger
 }
 
 type options struct {
@@ -245,6 +246,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		}
 	}
 	tools := newToolRegistry(cfg.tools, cfg.resolver)
+	var tokenSigner *runstate.TokenSigner
 	if len(cfg.tokenSecret) > 0 {
 		if cfg.gate != nil {
 			return nil, fmt.Errorf("agentflow: WithHumanGate and WithHITLTokenSecret are mutually exclusive")
@@ -253,6 +255,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		if err != nil {
 			return nil, err
 		}
+		tokenSigner = signer
 		cfg.gate = humancli.NewGate(cfg.runs, signer, cfg.tokenWriter, humancli.WithTokenTTL(cfg.tokenTTL))
 	}
 	for name, ref := range scenario.Memories {
@@ -283,13 +286,14 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		return nil, err
 	}
 	return &Framework{
-		scenario: scenario,
-		engine:   engine,
-		runs:     cfg.runs,
-		blobs:    cfg.blobs,
-		events:   cfg.events,
-		gate:     cfg.gate,
-		llm:      cfg.llm,
+		scenario:    scenario,
+		engine:      engine,
+		runs:        cfg.runs,
+		blobs:       cfg.blobs,
+		events:      cfg.events,
+		gate:        cfg.gate,
+		tokenSigner: tokenSigner,
+		llm:         cfg.llm,
 		tools:    tools,
 		memory:   cfg.memory,
 		policy:   cfg.policy,
@@ -543,19 +547,12 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
+	saveRunResumeMetadata(&snapshot, req)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
 		return RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
-	runner := orchestration.NewWorkflowRunner(
-		f.tools,
-		f.runs,
-		f.events,
-		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: f.scenario.Agents, engine: f.engine}),
-		orchestration.WithHumanGate(f.gate),
-		orchestration.WithBlobStore(f.blobs),
-		orchestration.WithWorkflowToolPolicy(f.toolGov),
-	)
+	runner := f.newWorkflowRunner()
 	if err := runner.Run(ctx, f.scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
@@ -596,22 +593,18 @@ func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, e
 		RunID:        req.RunID,
 		ScenarioName: f.scenario.Name,
 		Status:       runstate.RunStatusRunning,
-		Variables:    map[string]json.RawMessage{"input": req.Context},
-		StepOutputs:  make(map[string]runstate.StepOutputRef),
+		Variables: map[string]json.RawMessage{
+			"input":              req.Context,
+			executionPhaseVar:    json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow)),
+		},
+		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
+	saveRunResumeMetadata(&snapshot, req)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
 		return RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
-	runner := orchestration.NewWorkflowRunner(
-		f.tools,
-		f.runs,
-		f.events,
-		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: f.scenario.Agents, engine: f.engine}),
-		orchestration.WithHumanGate(f.gate),
-		orchestration.WithBlobStore(f.blobs),
-		orchestration.WithWorkflowToolPolicy(f.toolGov),
-	)
+	runner := f.newWorkflowRunner()
 	if err := runner.Run(ctx, f.scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
@@ -624,6 +617,13 @@ func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, e
 	// Enrich context for Phase 2 with workflow step outputs.
 	loaded, err := f.runs.Load(ctx, req.RunID)
 	if err != nil {
+		return RunResult{}, err
+	}
+	if loaded.Variables == nil {
+		loaded.Variables = make(map[string]json.RawMessage)
+	}
+	loaded.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseAutonomous))
+	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return RunResult{}, err
 	}
 	if req.Context == nil && len(loaded.StepOutputs) > 0 {

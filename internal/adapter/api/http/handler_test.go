@@ -9,6 +9,18 @@ import (
 	queueinmem "github.com/aijustin/agentflow-go/internal/adapter/queue/inmem"
 )
 
+func TestHandlerMountsAsyncJobRoutes(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), IDGenerator: func() string { return "job-1" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/jobs/events", strings.NewReader(`{"type":"ping"}`)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected event job accepted, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandlerExposesHealthAndReadiness(t *testing.T) {
 	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), Version: "test"})
 	if err != nil {

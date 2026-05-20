@@ -733,6 +733,7 @@
           <li><a href="#tools">工具体系</a></li>
           <li><a href="#rag">RAG 与知识库</a></li>
           <li><a href="#enterprise">企业能力</a></li>
+          <li><a href="#events-async">事件与异步 API</a></li>
           <li><a href="#observability">可观测面板</a></li>
           <li><a href="#deployment">部署与发布</a></li>
           <li><a href="#checklist">落地检查表</a></li>
@@ -956,9 +957,10 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
             <thead><tr><th>模式</th><th>适用场景</th><th>关键能力</th><th>关注点</th></tr></thead>
             <tbody>
               <tr><td>自主模式</td><td>模型规划并调用工具直到给出最终回答</td><td>planning pass、ToolCaller、agent whitelist、max_steps、rate_cap、tool result cap</td><td>工具安全、输出审计、预算治理、事件追踪</td></tr>
-              <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition 表达式、transform set/copy、parallel batch、retry、agent node</td><td>节点幂等、CAS 状态持久化、失败恢复</td></tr>
-              <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、approve/reject/amend、PendingGate</td><td>token secret、过期时间、actor identity、审计记录</td></tr>
-              <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、PostgreSQL queue、lease、renew、dead-letter、cancel</td><td>lease TTL、续租间隔、重试策略、队列可观测性</td></tr>
+              <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition 表达式、transform set/copy、parallel batch、parallel_group、loop、retry、agent node</td><td>节点幂等、CAS 状态持久化、失败恢复</td></tr>
+              <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、ResumeAndContinue、approve/reject/amend、PendingGate、工具 approval: pause</td><td>token secret、过期时间、actor identity、审计记录</td></tr>
+              <tr><td>事件触发</td><td>Webhook、工单系统、消息总线驱动 Agent</td><td>scenario.triggers、HandleEvent、agentctl trigger、/v1/events</td><td>事件 schema、run_id 映射、幂等与重试</td></tr>
+              <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、run/event/resume.continue job、PostgreSQL queue、lease、renew、dead-letter、cancel</td><td>lease TTL、续租间隔、重试策略、队列可观测性</td></tr>
               <tr><td>结构化/流式</td><td>JSON 输出契约或实时答复体验</td><td>output_schema、StructuredOutputter、Streamer、tool-enabled stream</td><td>Provider capability 显式声明，失败时清晰报错</td></tr>
             </tbody>
           </table>
@@ -1062,7 +1064,7 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
             <tbody>
               <tr><td>运行状态</td><td>WithRunStateRepository</td><td>file, in-memory, PostgreSQL, Redis</td><td>PostgreSQL 适合审计型持久化，Redis 适合低延迟 CAS 快照。</td></tr>
               <tr><td>Blob 存储</td><td>WithBlobStore</td><td>file, in-memory, S3-compatible</td><td>大输出外部化到 MinIO/AWS S3；腾讯云 COS/阿里云 OSS 需使用并验证 S3 兼容接口，原生 API 可通过独立适配器接入。</td></tr>
-              <tr><td>异步队列</td><td>pkg/async, NewProductionHTTPHandler</td><td>in-memory, PostgreSQL</td><td>使用 worker 独立部署，HTTP API 挂载 submit/status/cancel。</td></tr>
+              <tr><td>异步队列</td><td>pkg/async, NewProductionHTTPHandler</td><td>in-memory, PostgreSQL</td><td>Worker 独立部署；HTTP 挂载 run/event/resume job 与可选同步 event/HITL 路由。</td></tr>
               <tr><td>可观测面板</td><td>NewObservabilityHTTPHandler</td><td>in-memory, PostgreSQL EventStore, SSE</td><td>挂在受保护路径下，PostgreSQL 默认自动建表，也可迁移先行。</td></tr>
               <tr><td>Identity/RBAC</td><td>pkg/identity, pkg/security</td><td>API key, static JWT, OIDC/JWKS, static RBAC</td><td>接入公司 OIDC，tenant/workspace/project 进入 Principal Scope。</td></tr>
               <tr><td>Audit</td><td>WithAuditSink</td><td>noop, in-memory, file, slog</td><td>高风险工具和 HITL 必须可追踪 actor。</td></tr>
@@ -1074,10 +1076,73 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
         </div>
       </section>
 
+      <section id="events-async">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">10 / 事件与异步</div>
+            <h3>事件路由与异步 API</h3>
+          </div>
+          <span class="tag">Webhook + Queue</span>
+        </div>
+        <p class="lead">复杂现场场景通常需要两类入口：外部系统通过 Webhook 触发 Agent，以及长任务通过队列异步执行。AgentFlow 用 <code>scenario.triggers</code> 描述事件映射，用 <code>NewProductionHTTPHandler</code> 统一挂载健康检查、异步 job API 和可选的同步 event/HITL 路由。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>方式</th><th>入口</th><th>适用场景</th></tr></thead>
+            <tbody>
+              <tr><td>同步事件</td><td><code>POST /v1/events</code>、<code>agentctl trigger</code>、<code>Framework.HandleEvent</code></td><td>Webhook 回调、低延迟工单分派</td></tr>
+              <tr><td>异步事件</td><td><code>POST /v1/jobs/events</code>、Worker job type <code>event</code></td><td>高峰削峰、Worker 水平扩展</td></tr>
+              <tr><td>同步续跑</td><td><code>POST /v1/hitl/resume</code> + <code>continue: true</code>、<code>agentctl resume --continue</code></td><td>审批后立即继续执行</td></tr>
+              <tr><td>异步续跑</td><td><code>POST /v1/jobs/hitl/resume</code>、job type <code>resume.continue</code></td><td>审批系统异步回调、队列重试</td></tr>
+              <tr><td>异步运行</td><td><code>POST /v1/runs</code>、job type <code>run</code></td><td>长 prompt、批量任务、离线执行</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid two">
+          <div class="panel">
+            <h4>场景触发器</h4>
+            <div class="code-block"><div class="code-title"><span>ticket_handling.yaml</span><button class="copy" type="button">复制</button></div><pre><code>scenario:
+  triggers:
+    - event: ticket.created
+      agent: support
+      prompt_path: body.summary
+      context_path: body
+      run_id_path: body.ticket_id</code></pre></div>
+            <div class="code-block"><div class="code-title"><span>CLI</span><button class="copy" type="button">复制</button></div><pre><code>agentctl trigger -f examples/ticket_handling.yaml \
+  --event ticket.created \
+  --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'</code></pre></div>
+          </div>
+          <div class="panel">
+            <h4>生产 HTTP Handler</h4>
+            <div class="code-block"><div class="code-title"><span>api.go</span><button class="copy" type="button">复制</button></div><pre><code>api, err := agentflow.NewProductionHTTPHandler(
+  agentflow.ProductionHTTPHandlerConfig{
+    Queue:     queue,
+    Framework: fw,
+    Policy:    policy,
+    Audit:     auditSink,
+    Version:   "v0.1.0",
+  })</code></pre></div>
+            <ul class="pill-list">
+              <li>GET /healthz</li>
+              <li>POST /v1/runs</li>
+              <li>POST /v1/jobs/events</li>
+              <li>POST /v1/jobs/hitl/resume</li>
+              <li>POST /v1/events</li>
+              <li>POST /v1/hitl/resume</li>
+            </ul>
+          </div>
+        </div>
+        <div class="code-block"><div class="code-title"><span>Worker</span><button class="copy" type="button">复制</button></div><pre><code>jobHandler, err := agentflow.NewFrameworkJobHandler(
+  agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+worker, err := async.NewWorker(queue, jobHandler, async.WorkerConfig{
+  WorkerID: "worker-1", Concurrency: 4,
+})</code></pre></div>
+        <div class="callout"><strong>续跑语义:</strong> <code>Resume</code> 只更新 RunState；<code>ResumeAndContinue</code> 会在审批后继续执行直到完成或下一次暂停。HTTP 请求设置 <code>"continue": true</code>，CLI 使用 <code>--continue</code>，异步队列使用 <code>resume.continue</code> job。完整路由矩阵见 <a href="async-runtime.md">docs/async-runtime.md</a>。</div>
+      </section>
+
       <section id="observability">
         <div class="section-head">
           <div>
-            <div class="section-kicker">10 / 实时运营视角</div>
+            <div class="section-kicker">11 / 实时运营视角</div>
             <h3>可观测面板</h3>
           </div>
           <span class="tag">EventStore + SSE</span>
@@ -1154,7 +1219,7 @@ mux.Handle("/observability/",
       <section id="deployment">
         <div class="section-head">
           <div>
-            <div class="section-kicker">11 / 运维发布</div>
+            <div class="section-kicker">12 / 运维发布</div>
             <h3>部署与发布</h3>
           </div>
         </div>
@@ -1179,7 +1244,7 @@ docker compose up --build</code></pre></div>
           </div>
           <div class="panel">
             <h4>HTTP 安全</h4>
-            <p>非 loopback HTTP 服务必须配置强 token secret、API key 或 JWT middleware；可观测面板、异步 run API 和 HITL bridge 都应在同一认证策略后面。</p>
+            <p>非 loopback HTTP 服务必须配置强 token secret、API key 或 JWT middleware；可观测面板、异步 run/event/resume API、同步 event/HITL 路由和 HITL bridge 都应在同一认证策略后面。</p>
             <ul class="pill-list"><li>AGENT_TOKEN_SECRET</li><li>AGENT_HTTP_API_KEY</li><li>OIDC/JWKS</li><li>RBAC policy</li></ul>
           </div>
         </div>
@@ -1188,7 +1253,7 @@ docker compose up --build</code></pre></div>
       <section id="checklist">
         <div class="section-head">
           <div>
-            <div class="section-kicker">12 / 落地采用</div>
+            <div class="section-kicker">13 / 落地采用</div>
             <h3>落地检查表</h3>
           </div>
         </div>
@@ -1202,6 +1267,9 @@ docker compose up --build</code></pre></div>
               <li>复杂自主任务开启 planning pass，并把计划写入后续上下文。</li>
               <li>需要恢复的流程使用持久化 RunStateRepository。</li>
               <li>RAG 结果带 source metadata 和 citation，VectorStore 按 namespace 隔离。</li>
+              <li>Webhook/工单场景为 <code>scenario.triggers</code> 定义 event、agent 和 JSON 路径映射。</li>
+              <li>需要削峰或 Worker 扩展时，优先走 <code>/v1/jobs/events</code> 和 <code>/v1/jobs/hitl/resume</code>。</li>
+              <li>审批后需立即续跑时使用 <code>ResumeAndContinue</code>（HTTP <code>continue: true</code> 或 CLI <code>--continue</code>）。</li>
               <li>事件 payload 只放运营元数据，敏感输出先走 redactor。</li>
               <li>新增公共 API 同步 README、CHANGELOG 和 godoc。</li>
             </ul>

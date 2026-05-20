@@ -139,15 +139,33 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
 
+	agent, agentErr := e.resolveAgent(req.Agent)
+	if agentErr != nil {
+		return RunResult{}, agentErr
+	}
+	checkpointVars := map[string]json.RawMessage{
+		checkpointPromptVar:  json.RawMessage(fmt.Sprintf("%q", req.Prompt)),
+		checkpointAgentVar:   json.RawMessage(fmt.Sprintf("%q", agent.Name)),
+		checkpointContextVar: req.Context,
+	}
 	if e.shouldPauseBeforeFinal() {
 		if e.gate == nil {
 			return RunResult{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
 		}
+		checkpointVars[checkpointKindVar] = json.RawMessage(`"before_final_answer"`)
+		if saveErr := e.saveCheckpointVariables(ctx, &snapshot, checkpointVars); saveErr != nil {
+			return RunResult{}, saveErr
+		}
+		loaded, loadErr := e.runs.Load(ctx, req.RunID)
+		if loadErr != nil {
+			return RunResult{}, loadErr
+		}
+		snapshot = loaded
 		state := core.CheckpointState{
 			RunID:   req.RunID,
 			Version: snapshot.Version,
 			NodeID:  "before_final_answer",
-			Payload: []byte(fmt.Sprintf(`{"prompt":%q}`, req.Prompt)),
+			Payload: []byte(fmt.Sprintf(`{"prompt":%q,"agent":%q}`, req.Prompt, agent.Name)),
 		}
 		token, err := e.gate.Pause(ctx, state)
 		if err != nil {
@@ -159,6 +177,10 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 
 	output, err := e.answer(ctx, req)
 	if err != nil {
+		var paused RunPausedError
+		if errorsAsRunPaused(err, &paused) {
+			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
+		}
 		e.markRunFailed(ctx, req.RunID, err)
 		e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
 			observability.Attribute{Key: "event", Value: string(core.EventRunFailed)},

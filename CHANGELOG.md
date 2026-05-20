@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `Framework.ResumeAndContinue` for continuing paused autonomous, workflow, and tool-approval runs after HITL approval.
+- Tool approval policy `pause` for pausing before risky tool execution and resuming with `ResumeAndContinue`.
+- Workflow nodes `parallel_group` and `loop` for multi-agent parallelism and bounded iteration.
+- Built-in Git and ticket tool executors (`NewGitToolExecutor`, `NewTicketToolExecutor`).
+- Planning pass execution tracking during autonomous runs.
+- Event routing via `scenario.triggers`, `Framework.HandleEvent`, `NewWebhookHTTPHandler`, and `agentctl trigger`.
+- Production HTTP handler sync routes `POST /v1/events` and `POST /v1/hitl/resume` when `Framework` is configured.
+- Async job types `event` and `resume.continue` with HTTP enqueue routes `POST /v1/jobs/events` and `POST /v1/jobs/hitl/resume`.
+- `NewFrameworkJobHandler` composite worker handler (`NewFrameworkRunJobHandler` alias).
+- `agentctl resume --continue` and HTTP HITL `continue: true` for `ResumeAndContinue`.
+- Example scenarios: `ticket_handling.yaml`, `code_review_pipeline.yaml`, `multi_expert_research.yaml`.
+
 ## [0.1.0] - 2026-05-17
 
 ### Added

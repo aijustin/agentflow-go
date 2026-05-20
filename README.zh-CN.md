@@ -232,7 +232,7 @@ if err != nil {
   log.Fatal(err)
 }
 
-runHandler, err := agentflow.NewFrameworkRunJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+runHandler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
 if err != nil {
   log.Fatal(err)
 }
@@ -246,7 +246,7 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`agentflow.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz` 和 `/v1/runs` 下的异步 run 提交/状态/取消接口。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
+`agentflow.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz`、异步 run/event/resume job API；当配置 `Framework` 时还会挂载同步 `/v1/events` 和 `/v1/hitl/resume`。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
 
 MCP Server 可以通过适配器变成普通受治理工具，无需改变 runtime core：
 
@@ -502,7 +502,7 @@ make build
 
 会构建：
 
-- `agentctl`：用于校验、运行和恢复场景的 CLI。
+- `agentctl`：用于校验、运行、恢复和触发场景的 CLI。
 - `agent-http`：用于 Human-in-the-loop 恢复回调和浏览器调试台的 HTTP 服务。
 
 ## CLI 使用
@@ -544,6 +544,16 @@ go run ./cmd/agentctl resume \
   --state-dir ./data/agentflow
 ```
 
+加上 `--continue` 会调用 `ResumeAndContinue`，继续执行直到运行完成或再次暂停：
+
+```sh
+go run ./cmd/agentctl resume \
+  --continue \
+  --token "$TOKEN" \
+  --decision approve \
+  --state-dir ./data/agentflow
+```
+
 支持的决策：
 
 - `approve`：继续。
@@ -561,6 +571,17 @@ go run ./cmd/agentctl resume \
 ```
 
 当暂停的运行需要被另一个 CLI 进程或终端会话恢复时，请在 `run` 和 `resume` 中使用同一个 `--state-dir`。
+
+### `agentctl trigger`
+
+触发 `scenario.triggers` 中配置的外部事件：
+
+```sh
+go run ./cmd/agentctl trigger \
+  -f examples/ticket_handling.yaml \
+  --event ticket.created \
+  --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
+```
 
 ## HTTP/Webhook HITL 桥接与调试页面
 
@@ -595,9 +616,12 @@ curl -X POST http://localhost:18080 \
   -H 'Content-Type: application/json' \
   -d '{
     "token": "'"$TOKEN"'",
-    "decision": "approve"
+    "decision": "approve",
+    "continue": true
   }'
 ```
+
+设置 `"continue": true` 会恢复并继续执行（`ResumeAndContinue`）；省略或设为 `false` 时仅更新 RunState（`Resume`）。
 
 响应：
 
@@ -828,7 +852,7 @@ if err != nil {
 
 队列状态、Worker 行为和后续生产化切片见 [docs/async-runtime.md](docs/async-runtime.md)。
 
-暴露异步 run submit/status/cancel endpoints：
+暴露异步 run/event/resume job endpoints：
 
 ```go
 queue := agentflow.NewInMemoryJobQueue()
@@ -842,6 +866,20 @@ if err != nil {
 }
 http.Handle("/v1/", middleware(handler))
 ```
+
+生产 Handler 可同时挂载可选的同步 event/HITL 路由：
+
+```go
+api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+  Queue:     queue,
+  Framework: fw,
+  Policy:    security.NewDefaultRolePolicy(),
+  Audit:     auditSink,
+  Version:   "v0.1.0",
+})
+```
+
+完整路由矩阵见 [docs/async-runtime.md](docs/async-runtime.md)（`/v1/runs`、`/v1/jobs/events`、`/v1/jobs/hitl/resume`、`/v1/events`、`/v1/hitl/resume`）。
 
 使用 API Key 保护 HTTP handler，并把企业 Principal 注入 request context：
 
@@ -970,12 +1008,13 @@ internal/
 - 自主执行支持可选 planning pass、LLM 工具调用循环、工具白名单、审批拒绝、每次运行 rate cap、分类重试、受限工具结果回填和生命周期事件。
 - 结构化输出使用 Agent 级 `output_schema` 和 Provider 的 `StructuredOutputter`；普通流式输出使用 `Streamer`，带工具 Agent 的流式输出会复用受治理工具循环，并在结束后持久化累积的最终答案。
 - Memory 绑定已接入 Runtime 读写，用于 conversation/session 历史。
-- 固定工作流按图依赖和边执行，支持有限并行、条件跳过、重试、transform/agent/human-gate 节点和 CAS 安全输出保存。
-- Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图。
+- 固定工作流按图依赖和边执行，支持有限并行、`parallel_group`/`loop` 节点、条件跳过、重试、transform/agent/human-gate 节点和 CAS 安全输出保存。
+- Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图；`ResumeAndContinue` 还支持自主、工作流和工具审批暂停路径的续跑。
+- 外部事件通过 `scenario.triggers` 映射到 `Framework.HandleEvent`、Webhook HTTP（`NewWebhookHTTPHandler`）、CLI `agentctl trigger`、同步 `/v1/events` 和异步 `event` job。
 - `sub_agents` 会在自主执行中作为虚拟 delegation tool 暴露给 supervisor Agent。
 - Skill prompt fragments、Agent policy、Tool policy 和 workflow segments 会在场景构建阶段展开为命名空间化的 workflow 节点。
 - Tool 的声明面和执行面已经分离：`scenario.tools` 向 LLM 和校验器暴露 manifest，`WithToolExecutor` 提前注册轻量 executor，`WithToolResolver` 则在允许的调用真正进入执行阶段时按需绑定重型或租户隔离 executor。
-- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储，支持 MinIO/AWS S3 风格 endpoint，以及经过验证的腾讯云 COS/阿里云 OSS S3 兼容接口；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约可用于长任务执行；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
+- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储，支持 MinIO/AWS S3 风格 endpoint，以及经过验证的腾讯云 COS/阿里云 OSS S3 兼容接口；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约支持 `run`、`event`、`resume.continue` 任务（`NewFrameworkJobHandler`），HTTP 路由由 `NewAsyncRunHTTPHandler` 和 `NewProductionHTTPHandler` 提供；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
 - 企业 identity context、API Key middleware、静态和 OIDC/JWKS JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewOIDCJWTAuthenticator`、`NewAPIKeyMiddleware`、`NewJWTMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
 - Audit event 契约和 noop/内存/文件 sink 可通过 `pkg/audit`、`NewNoopAuditSink`、`NewInMemoryAuditSink`、`NewFileAuditSink` 和 `WithAuditSink` 使用。
 - 运行时可观测面板、事件仓库、实时 EventHub 和 PostgreSQL 自动建表可通过 `NewPostgresEventStore`、`NewInMemoryEventStore`、`NewEventStoreSink`、`NewEventHub` 和 `NewObservabilityHTTPHandler` 使用。
@@ -1042,16 +1081,19 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 - 注册工具、OpenAI-compatible function calling 和 Anthropic Messages tool use 的自主工具调用循环
 - 通过 `WithToolResolver` 在运行时策略检查后惰性绑定重型或租户隔离工具 executor
 - Runtime memory integration：注入历史并持久化用户/助手/工具观察结果
-- 固定工作流图调度：依赖、并行、重试、条件、transform/agent/human-gate 节点、CAS 安全输出保存
-- Workflow-level HITL pause/resume
+- 固定工作流图调度：依赖、并行、`parallel_group`/`loop` 节点、重试、条件、transform/agent/human-gate 节点、CAS 安全输出保存
+- Workflow-level HITL pause/resume，以及 `ResumeAndContinue` 续跑路径
+- 事件触发器（`scenario.triggers`）、`HandleEvent`、Webhook HTTP、CLI `agentctl trigger` 和异步 `event` job
+- 内置 Git / ticket 工具 executor，适用于代码审查和客服工单场景
+- 自主运行中的 planning pass 执行跟踪
 - 通过虚拟 sub-agent tools 实现多 Agent delegation baseline
 - Skill prompt/workflow expansion、compatible-agent 校验、Agent policy overlay 和 Tool policy overlay
 - 文件版 RunState、Blob、Memory 持久化适配器，以及 PostgreSQL RunState、Redis RunState 和 S3-compatible BlobStore 持久化适配器
 - 用于 Worker 和工作流协调的 Redis 分布式租约适配器
-- 异步 Job Queue 和 Worker 契约、内存/PostgreSQL 队列适配器、租约续租，以及 HTTP submit/status/cancel handler
+- 异步 Job Queue 和 Worker 契约、内存/PostgreSQL 队列适配器、租约续租、支持 `run`/`event`/`resume.continue` 的 framework job handler，以及带可选同步 event/HITL 路由的生产 HTTP handler
 - 企业 identity context、API Key middleware、静态/JWKS Discovery JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization
 - Audit event 模型，以及 noop、内存和 JSONL 文件 sink，加上 framework audit wiring
-- 通过 `--state-dir` 支持 durable CLI resume
+- 通过 `--state-dir` 支持 durable CLI resume，以及 `agentctl resume --continue` 和 `agentctl trigger` 事件驱动运行
 - Runtime hardening：全局/Agent/Profile timeout、分类 LLM/Tool retry + 指数退避、Tool rate cap、工具结果回填上限、失败状态持久化、大输出 Blob 外置
 - 结构化输出和流式输出 Runtime 路径，包含带工具 Agent 的流式运行
 - 上下文治理：滑动窗口、启发式摘要压缩、丰富 LLM Profile 配置、`ContextPrepared` 事件

@@ -19,10 +19,12 @@ type ProductionHTTPHandlerConfig struct {
 	Now            func() time.Time
 	MaxBodyBytes   int64
 	Version        string
+	// Framework enables sync /v1/events and /v1/hitl/resume when set.
+	Framework *Framework
 }
 
 func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler, error) {
-	return apihttp.NewHandler(apihttp.HandlerConfig{
+	apiConfig := apihttp.HandlerConfig{
 		Queue:          config.Queue,
 		Policy:         config.Policy,
 		Audit:          config.Audit,
@@ -31,5 +33,20 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 		Now:            config.Now,
 		MaxBodyBytes:   config.MaxBodyBytes,
 		Version:        config.Version,
-	})
+	}
+	if config.Framework != nil {
+		eventsHandler, err := NewWebhookHTTPHandler(WebhookHTTPHandlerConfig{
+			Framework:    config.Framework,
+			MaxBodyBytes: config.MaxBodyBytes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		apiConfig.EventsHandler = eventsHandler
+		apiConfig.HITLHandler = NewHumanHTTPHandler(HumanHTTPHandlerConfig{
+			Framework:    config.Framework,
+			MaxBodyBytes: config.MaxBodyBytes,
+		})
+	}
+	return apihttp.NewHandler(apiConfig)
 }

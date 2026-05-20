@@ -305,6 +305,74 @@ func TestFrameworkRunJobHandlerRejectsInvalidJobs(t *testing.T) {
 	}
 }
 
+func TestFrameworkJobHandlerExecutesEventJob(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "ticket",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"support": {Name: "support", LLM: "default"},
+		},
+		Triggers: []core.Trigger{{
+			Event:      "ticket.created",
+			Agent:      "support",
+			PromptPath: "summary",
+		}},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(fakeGateway{content: "handled"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(asyncpkg.EventPayload{Type: "ticket.created", Payload: json.RawMessage(`{"summary":"hello"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.HandleJob(context.Background(), asyncpkg.Job{ID: "job-event", Type: asyncpkg.EventJobType, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFrameworkJobHandlerExecutesResumeContinueJob(t *testing.T) {
+	var tokenOut bytes.Buffer
+	fw, err := agentflow.NewFromFile(
+		"examples/human_in_loop.yaml",
+		agentflow.WithHITLTokenSecret([]byte("secret"), &tokenOut),
+		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-async-resume", Agent: "assistant", Prompt: "approve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused run, got %+v", result)
+	}
+	handler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(asyncpkg.ResumeContinuePayload{Token: result.Token, Decision: core.DecisionApprove})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.HandleJob(context.Background(), asyncpkg.Job{ID: "job-resume", Type: asyncpkg.ResumeContinueJobType, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-async-resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected completed run after resume.continue job, got %+v", snapshot)
+	}
+}
+
 func TestFrameworkHITLPauseResume(t *testing.T) {
 	var tokenOut bytes.Buffer
 	fw, err := agentflow.NewFromFile(

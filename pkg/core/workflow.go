@@ -10,11 +10,13 @@ type Workflow struct {
 type WorkflowNodeKind string
 
 const (
-	NodeAgent     WorkflowNodeKind = "agent"
-	NodeTool      WorkflowNodeKind = "tool"
-	NodeSkill     WorkflowNodeKind = "skill"
-	NodeHumanGate WorkflowNodeKind = "human_gate"
-	NodeTransform WorkflowNodeKind = "transform"
+	NodeAgent         WorkflowNodeKind = "agent"
+	NodeTool          WorkflowNodeKind = "tool"
+	NodeSkill         WorkflowNodeKind = "skill"
+	NodeHumanGate     WorkflowNodeKind = "human_gate"
+	NodeTransform     WorkflowNodeKind = "transform"
+	NodeParallelGroup WorkflowNodeKind = "parallel_group"
+	NodeLoop          WorkflowNodeKind = "loop"
 )
 
 type WorkflowNode struct {

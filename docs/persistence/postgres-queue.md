@@ -7,7 +7,7 @@
 适配器期望一张表，默认名为 `agentflow_jobs`，列与以下含义等价：
 
 - `id`：唯一任务标识。
-- `type`：任务类型，目前框架运行任务使用 `run`。
+- `type`：任务类型。框架 Worker 当前支持 `run`、`event`、`resume.continue`。
 - `run_id`：可选运行时运行标识。
 - `payload_json`：序列化任务载荷。
 - `state`：`queued`、`running`、`completed`、`failed`、`cancelled` 或 `dead_letter` 之一。
@@ -36,7 +36,7 @@ if err != nil {
     log.Fatal(err)
 }
 
-workerHandler, err := agentflow.NewFrameworkRunJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+workerHandler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
 if err != nil {
     log.Fatal(err)
 }

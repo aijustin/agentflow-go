@@ -232,7 +232,7 @@ if err != nil {
   log.Fatal(err)
 }
 
-runHandler, err := agentflow.NewFrameworkRunJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+runHandler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
 if err != nil {
   log.Fatal(err)
 }
@@ -246,7 +246,7 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`agentflow.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, and async run submit/status/cancel endpoints under `/v1/runs`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
+`agentflow.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, async run/event/resume job APIs, and—when `Framework` is set—sync `/v1/events` and `/v1/hitl/resume`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
 
 MCP servers can be adapted into regular governed tools without changing the runtime core:
 
@@ -502,7 +502,7 @@ make build
 
 This builds:
 
-- `agentctl`: CLI for validating, running, and resuming scenarios.
+- `agentctl`: CLI for validating, running, resuming, and triggering scenarios.
 - `agent-http`: HTTP/Webhook bridge for human-in-the-loop resume callbacks.
 
 ## CLI usage
@@ -547,6 +547,16 @@ go run ./cmd/agentctl resume \
   --state-dir ./data/agentflow
 ```
 
+Add `--continue` to call `ResumeAndContinue` and keep executing until the run completes or pauses again:
+
+```sh
+go run ./cmd/agentctl resume \
+  --continue \
+  --token "$TOKEN" \
+  --decision approve \
+  --state-dir ./data/agentflow
+```
+
 Supported decisions:
 
 - `approve`: continue.
@@ -564,6 +574,17 @@ go run ./cmd/agentctl resume \
 ```
 
 Use the same `--state-dir` for `run` and `resume` when a paused run must survive a separate CLI process or terminal session.
+
+### `agentctl trigger`
+
+Dispatches an external event configured in `scenario.triggers`:
+
+```sh
+go run ./cmd/agentctl trigger \
+  -f examples/ticket_handling.yaml \
+  --event ticket.created \
+  --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
+```
 
 ## HTTP/Webhook HITL bridge
 
@@ -598,9 +619,12 @@ curl -X POST http://localhost:18080 \
   -H 'Content-Type: application/json' \
   -d '{
     "token": "'"$TOKEN"'",
-    "decision": "approve"
+    "decision": "approve",
+    "continue": true
   }'
 ```
+
+Set `"continue": true` to resume and continue execution (`ResumeAndContinue`). Omit it or set `false` to update run state only (`Resume`).
 
 Response:
 
@@ -831,7 +855,7 @@ if err != nil {
 
 See [docs/async-runtime.md](docs/async-runtime.md) for queue states, worker behavior, and next production slices.
 
-Example: expose async run submit/status/cancel endpoints.
+Example: expose async run/event/resume job endpoints.
 
 ```go
 queue := agentflow.NewInMemoryJobQueue()
@@ -845,6 +869,20 @@ if err != nil {
 }
 http.Handle("/v1/", middleware(handler))
 ```
+
+Production handler with optional sync event/HITL routes:
+
+```go
+api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+  Queue:     queue,
+  Framework: fw,
+  Policy:    security.NewDefaultRolePolicy(),
+  Audit:     auditSink,
+  Version:   "v0.1.0",
+})
+```
+
+See [docs/async-runtime.md](docs/async-runtime.md) for the full route matrix (`/v1/runs`, `/v1/jobs/events`, `/v1/jobs/hitl/resume`, `/v1/events`, `/v1/hitl/resume`).
 
 Example: protect an HTTP handler with API key authentication and attach an enterprise principal to request context.
 
@@ -974,11 +1012,12 @@ Design boundaries:
 - Structured output runs use an agent-level `output_schema` and provider `StructuredOutputter`; streaming runs use provider `Streamer` for normal chat and the governed tool loop for tool-enabled agents, then persist the final accumulated answer.
 - Memory bindings are connected to runtime reads/writes for conversation and session history.
 - Fixed workflows run from graph dependencies and edges, with bounded parallel batches, false-condition skips, retry policy, transform nodes, agent nodes, human-gate nodes, and CAS-safe step output persistence.
-- Workflow human-gate nodes pause with persisted `CurrentNodeID`/`PendingGate` and can resume downstream execution after approval.
+- Workflow human-gate nodes pause with persisted `CurrentNodeID`/`PendingGate` and can resume downstream execution after approval; `ResumeAndContinue` continues autonomous, workflow, and tool-approval pause paths until completion or the next gate.
+- External events map through `scenario.triggers` to `Framework.HandleEvent`, Webhook HTTP (`NewWebhookHTTPHandler`), CLI `agentctl trigger`, sync `/v1/events`, and async `event` jobs.
 - `sub_agents` are available to supervisor agents as virtual delegation tools during autonomous execution.
 - Skill prompt fragments, agent policies, tool policies, and workflow segments are expanded during scenario build with namespaced workflow node IDs.
 - Tools have separate declaration and execution surfaces: `scenario.tools` exposes manifests to LLMs and validators, `WithToolExecutor` eagerly registers light executors, and `WithToolResolver` lazily binds heavy or tenant-scoped executors only when a permitted invocation reaches execution.
-- File-backed RunState, BlobStore, and Memory adapters are available from the root facade for durable local persistence; PostgreSQL-backed and Redis-backed RunState are available for production persistence; S3-compatible BlobStore is available for large runtime/workflow outputs and supports MinIO/AWS S3 style endpoints plus verified S3-compatible COS/OSS endpoints; Redis-backed leases are available for worker coordination; async queue and worker contracts are available for long-running execution; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
+- File-backed RunState, BlobStore, and Memory adapters are available from the root facade for durable local persistence; PostgreSQL-backed and Redis-backed RunState are available for production persistence; S3-compatible BlobStore is available for large runtime/workflow outputs and supports MinIO/AWS S3 style endpoints plus verified S3-compatible COS/OSS endpoints; Redis-backed leases are available for worker coordination; async queue and worker contracts support `run`, `event`, and `resume.continue` jobs through `NewFrameworkJobHandler`, with HTTP routes on `NewAsyncRunHTTPHandler` and `NewProductionHTTPHandler`; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
 - Enterprise identity context, API key middleware, static and OIDC/JWKS JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, `NewOIDCJWTAuthenticator`, `NewAPIKeyMiddleware`, `NewJWTMiddleware`, `NewAuthorizationMiddleware`, and `WithSecurityPolicy`.
 - Audit event contracts and noop/in-memory/file sinks are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.
 - Runtime observability dashboard, event store, live event hub, and automatic PostgreSQL schema setup are available through `NewPostgresEventStore`, `NewInMemoryEventStore`, `NewEventStoreSink`, `NewEventHub`, and `NewObservabilityHTTPHandler`.
@@ -1045,17 +1084,20 @@ Implemented:
 - Autonomous tool-calling loop for registered tools, OpenAI-compatible function calling, and Anthropic Messages tool use
 - Lazy tool resolution through `WithToolResolver` for heavy or tenant-scoped executors after runtime policy checks
 - Runtime memory integration for injected history and persisted user/assistant/tool observations
-- Fixed-workflow graph scheduler with dependencies, parallelism, retries, conditions, transform/agent/human-gate nodes, and CAS-safe output saves
-- Workflow-level HITL pause/resume with saved scheduler position
+- Fixed-workflow graph scheduler with dependencies, parallelism, `parallel_group` and `loop` nodes, retries, conditions, transform/agent/human-gate nodes, and CAS-safe output saves
+- Workflow-level HITL pause/resume with saved scheduler position, plus `ResumeAndContinue` for autonomous, workflow, and tool-approval pause paths
+- Event triggers (`scenario.triggers`) with `HandleEvent`, Webhook HTTP, CLI `agentctl trigger`, and async `event` jobs
+- Built-in Git and ticket tool executors for code-review and support-ticket scenarios
+- Planning pass execution tracking during autonomous runs
 - Multi-agent delegation through virtual sub-agent tools and persisted delegated outputs
 - Skill prompt/workflow expansion, compatible-agent checks, agent policy overlays, and tool policy overlays during scenario build
 - File-backed durable adapters for run state, blobs, and memory, plus PostgreSQL-backed run state, Redis-backed run state, PostgreSQL-backed async queue, and S3-compatible blob storage
 - Redis-backed distributed lease adapter for worker and workflow coordination
-- Async job queue and worker contracts with in-memory/PostgreSQL queue adapters, lease renewal, framework-run worker handler, and HTTP submit/status/cancel handler
+- Async job queue and worker contracts with in-memory/PostgreSQL queue adapters, lease renewal, framework job handler for `run`/`event`/`resume.continue`, HTTP submit/status/cancel handler, and production handler with optional sync event/HITL routes
 - Enterprise identity context, API key middleware, static/JWKS-discovered JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization
 - Audit event model with noop, in-memory, JSONL file, and structured `slog` sinks, plus framework audit wiring
 - Governance hooks for tool budgets, tool side-effect ceilings, and persisted output redaction
-- Durable CLI resume via `--state-dir`
+- Durable CLI resume via `--state-dir`, plus `agentctl resume --continue` and `agentctl trigger` for event-driven runs
 - Runtime hardening: global/agent/profile timeouts, classified LLM/tool retry with exponential backoff, tool rate caps, bounded tool-result context feedback, failed-run status persistence, and blob externalization for large outputs
 - Structured output and streaming runtime paths exposed through the root facade, including tool-enabled streaming runs
 - Context governance with sliding-window trimming, heuristic summary compression, richer LLM profile config, and `ContextPrepared` events

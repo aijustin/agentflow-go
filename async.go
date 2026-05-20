@@ -14,6 +14,7 @@ import (
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/identity"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
@@ -30,7 +31,7 @@ type FrameworkRunJobHandlerConfig struct {
 	Framework *Framework
 }
 
-type frameworkRunJobHandler struct {
+type frameworkJobHandler struct {
 	framework *Framework
 }
 
@@ -59,17 +60,33 @@ func NewAsyncRunHTTPHandler(config AsyncRunHTTPHandlerConfig) (http.Handler, err
 	})
 }
 
-func NewFrameworkRunJobHandler(config FrameworkRunJobHandlerConfig) (asyncpkg.Handler, error) {
+// NewFrameworkJobHandler executes framework run, event, and resume.continue jobs.
+func NewFrameworkJobHandler(config FrameworkRunJobHandlerConfig) (asyncpkg.Handler, error) {
 	if config.Framework == nil {
 		return nil, fmt.Errorf("agentflow: framework is nil")
 	}
-	return &frameworkRunJobHandler{framework: config.Framework}, nil
+	return &frameworkJobHandler{framework: config.Framework}, nil
 }
 
-func (handler *frameworkRunJobHandler) HandleJob(ctx context.Context, job asyncpkg.Job) error {
-	if job.Type != asyncpkg.RunJobType {
+// NewFrameworkRunJobHandler is an alias for NewFrameworkJobHandler.
+func NewFrameworkRunJobHandler(config FrameworkRunJobHandlerConfig) (asyncpkg.Handler, error) {
+	return NewFrameworkJobHandler(config)
+}
+
+func (handler *frameworkJobHandler) HandleJob(ctx context.Context, job asyncpkg.Job) error {
+	switch job.Type {
+	case asyncpkg.RunJobType:
+		return handler.handleRun(ctx, job)
+	case asyncpkg.EventJobType:
+		return handler.handleEvent(ctx, job)
+	case asyncpkg.ResumeContinueJobType:
+		return handler.handleResumeContinue(ctx, job)
+	default:
 		return fmt.Errorf("agentflow: unsupported async job type %q", job.Type)
 	}
+}
+
+func (handler *frameworkJobHandler) handleRun(ctx context.Context, job asyncpkg.Job) error {
 	var payload asyncpkg.RunPayload
 	if len(job.Payload) > 0 {
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
@@ -82,9 +99,52 @@ func (handler *frameworkRunJobHandler) HandleJob(ctx context.Context, job asyncp
 	if payload.RunID == "" {
 		payload.RunID = job.ID
 	}
-	if err := payload.Principal.Validate(); err == nil {
-		ctx = identity.WithPrincipal(ctx, payload.Principal)
-	}
-	_, err := handler.framework.Run(ctx, RunRequest{RunID: payload.RunID, Agent: payload.Agent, Prompt: payload.Prompt, Context: payload.Context})
+	ctx = withJobPrincipal(ctx, payload.Principal)
+	_, err := handler.framework.Run(ctx, RunRequest{
+		RunID:   payload.RunID,
+		Agent:   payload.Agent,
+		Prompt:  payload.Prompt,
+		Context: payload.Context,
+	})
 	return err
+}
+
+func (handler *frameworkJobHandler) handleEvent(ctx context.Context, job asyncpkg.Job) error {
+	var payload asyncpkg.EventPayload
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("agentflow: decode event job payload: %w", err)
+		}
+	}
+	ctx = withJobPrincipal(ctx, payload.Principal)
+	result, err := handler.framework.HandleEvent(ctx, payload.Event())
+	if err != nil {
+		return err
+	}
+	if result.Status == runstate.RunStatusPaused {
+		return nil
+	}
+	return nil
+}
+
+func (handler *frameworkJobHandler) handleResumeContinue(ctx context.Context, job asyncpkg.Job) error {
+	var payload asyncpkg.ResumeContinuePayload
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("agentflow: decode resume.continue job payload: %w", err)
+		}
+	}
+	if payload.Token == "" || !payload.Decision.Valid() {
+		return fmt.Errorf("agentflow: resume.continue job requires token and valid decision")
+	}
+	ctx = withJobPrincipal(ctx, payload.Principal)
+	_, err := handler.framework.ResumeAndContinue(ctx, payload.Token, payload.Decision, payload.Amendment)
+	return err
+}
+
+func withJobPrincipal(ctx context.Context, principal identity.Principal) context.Context {
+	if err := principal.Validate(); err != nil {
+		return ctx
+	}
+	return identity.WithPrincipal(ctx, principal)
 }

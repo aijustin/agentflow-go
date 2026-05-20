@@ -15,6 +15,8 @@ const (
 	ApprovalNever  ApprovalPolicy = "never"
 	ApprovalRisky  ApprovalPolicy = "risky"
 	ApprovalAlways ApprovalPolicy = "always"
+	// ApprovalPause pauses the run at a human gate instead of denying the tool call.
+	ApprovalPause ApprovalPolicy = "pause"
 )
 
 type SideEffectLevel string
@@ -94,8 +96,19 @@ type Scenario struct {
 	Tools         map[string]Tool          `json:"tools,omitempty"`
 	Skills        map[string]Skill         `json:"skills,omitempty"`
 	Agents        map[string]Agent         `json:"agents,omitempty"`
+	Triggers      []Trigger                `json:"triggers,omitempty"`
 	Orchestration Orchestration            `json:"orchestration"`
 	Runtime       RuntimePolicy            `json:"runtime"`
+}
+
+// Trigger maps an external event type to a run request template.
+type Trigger struct {
+	Event         string `json:"event"`
+	Agent         string `json:"agent,omitempty"`
+	PromptPath    string `json:"prompt_path,omitempty"`
+	ContextPath   string `json:"context_path,omitempty"`
+	RunIDPath     string `json:"run_id_path,omitempty"`
+	DefaultPrompt string `json:"default_prompt,omitempty"`
 }
 
 type LLMProfileRef struct {
@@ -143,6 +156,8 @@ type PlanningPolicy struct {
 	Enabled  bool   `json:"enabled,omitempty"`
 	Agent    string `json:"agent,omitempty"`
 	MaxSteps int    `json:"max_steps,omitempty"`
+	// Execute tracks plan step completion in run state during the tool loop.
+	Execute bool `json:"execute,omitempty"`
 }
 
 type HumanInLoopPolicy struct {

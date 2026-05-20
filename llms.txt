@@ -35,7 +35,10 @@ Scenario-configured Go toolkit for composing Agents, Tools, Skills, LLM gateways
 - `docs/persistence/postgres-queue.md`: PostgreSQL async queue adapter contract and usage notes.
 - `docs/persistence/s3-blobstore.md`: S3-compatible blob store contract and usage notes.
 - `docs/persistence/redis-locker.md`: Redis lease adapter contract and usage notes.
-- `docs/async-runtime.md`: async queue and worker foundation notes.
+- `eventrouter.go`: root Webhook/Human HTTP handler constructors for sync events and HITL resume.
+- `framework_event.go`: `Framework.HandleEvent` and event trigger resolution.
+- `framework_continue.go`: `Framework.ResumeAndContinue`.
+- `docs/async-runtime.md`: async queue, worker, production HTTP route matrix, and event/resume job types.
 - `docs/security-auth-tenancy.md`: enterprise identity, auth, RBAC, and tenancy design.
 - `docs/observability-governance.md`: observability, audit, and governance design.
 - `pkg/async`: public job queue and worker contracts.
@@ -75,13 +78,15 @@ make lint
 make security
 go run ./cmd/agentctl validate -f examples/autonomous.yaml
 go run ./cmd/agentctl schema
+go run ./cmd/agentctl trigger -f examples/ticket_handling.yaml --event ticket.created --payload '{"body":{"summary":"hello"}}'
+go run ./cmd/agentctl resume -f examples/human_in_loop.yaml --continue --token "$TOKEN" --decision approve
 AGENT_HTTP_ADDR=:18080 go run ./cmd/agent-http
 ```
 
 ## Design notes
 
 - Public API lives in `pkg/`.
-- The root package `github.com/aijustin/agentflow-go` wraps common framework usage: load YAML, validate, run, resume, and wire options.
+- The root package `github.com/aijustin/agentflow-go` wraps common framework usage: load YAML, validate, run, resume, handle events, and wire options.
 - Private wiring and adapters live in `internal/`.
 - `RunStateRepository` is separate from Memory and is responsible for resumable HITL snapshots.
 - Context governance is configured per LLM profile with `context_window_tokens`, `max_output_tokens`, `thinking`, `reasoning_effort`, `extra_body`, and `context.strategy` (`none`, `sliding_window`, `sliding_window_with_summary`).
@@ -96,7 +101,11 @@ AGENT_HTTP_ADDR=:18080 go run ./cmd/agent-http
 - PostgreSQL-backed run state is available through `NewPostgresRunStateRepository`; applications provide their own `database/sql` driver.
 - S3-compatible blob storage is available through `NewS3BlobStore` using standard-library SigV4 signing.
 - Redis-backed distributed leases are available through `NewRedisLocker` and `pkg/coordination`.
-- Async job queues and workers are available through `pkg/async`; local queues are exposed through `NewInMemoryJobQueue`, PostgreSQL queues through `NewPostgresJobQueue`, queued framework execution through `NewFrameworkRunJobHandler`, async run submit/status/cancel through `NewAsyncRunHTTPHandler`, and production health/API routing through `NewProductionHTTPHandler`.
+- Async job queues and workers are available through `pkg/async`; local queues are exposed through `NewInMemoryJobQueue`, PostgreSQL queues through `NewPostgresJobQueue`, queued framework execution through `NewFrameworkJobHandler` (`NewFrameworkRunJobHandler` alias) for `run`, `event`, and `resume.continue` jobs, async HTTP submit/status/cancel through `NewAsyncRunHTTPHandler`, and production health/API routing through `NewProductionHTTPHandler` with optional sync `/v1/events` and `/v1/hitl/resume` when `Framework` is configured.
+- External events map through `scenario.triggers` to `Framework.HandleEvent`, `NewWebhookHTTPHandler`, `agentctl trigger`, sync `/v1/events`, and async `event` jobs.
+- HITL continuation uses `Framework.ResumeAndContinue`, HTTP/CLI `continue: true`, and async `resume.continue` jobs.
+- Fixed workflows support `parallel_group` and `loop` nodes in addition to transform, agent, tool, skill, and human-gate nodes.
+- Built-in Git and ticket tools are available through root facade constructors for code-review and support-ticket scenarios.
 - Enterprise identity and RBAC foundations are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, and `NewAPIKeyMiddleware`.
 - Authorization middleware and runtime tool authorization are available through `NewAuthorizationMiddleware` and `WithSecurityPolicy`.
 - Audit foundations are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.

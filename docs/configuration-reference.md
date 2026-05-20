@@ -38,6 +38,7 @@ agentctl validate -f scenario.yaml
 | `scenario.skills` | 映射 | 否 | 声明式 prompt、policy 和 workflow 包。 |
 | `scenario.agents` | 映射 | 是 | Runtime 可执行的命名 Agent。 |
 | `scenario.orchestration` | 对象 | 否 | Runtime 编排模式和工作流图。 |
+| `scenario.triggers` | 数组 | 否 | 外部事件到 Agent 运行的路由规则。 |
 | `scenario.runtime` | 对象 | 否 | 全局运行限制和运维参数。 |
 
 ## LLM 配置
@@ -117,7 +118,7 @@ Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`re
 
 | 字段 | 类型 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
-| `type` | 字符串 | 是 | 工具执行器类型。内置示例包括 `builtin.echo`、`builtin.http`、`builtin.filesystem`、`builtin.sql`、`mcp.tool`；应用也可以注册自定义工具。 |
+| `type` | 字符串 | 是 | 工具执行器类型。内置示例包括 `builtin.echo`、`builtin.http`、`builtin.filesystem`、`builtin.sql`、`builtin.git`、`builtin.ticket`、`mcp.tool`；应用也可以注册自定义工具。 |
 | `description` | 字符串 | 否 | 工具的用途说明。 |
 | `input_schema` | 对象 | 否 | 工具输入的 JSON Schema 片段。 |
 | `output_schema` | 对象 | 否 | 工具输出的 JSON Schema 片段。 |
@@ -134,6 +135,7 @@ Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`re
 | `never` | 不需要人工审批。 |
 | `risky` | 由治理策略判断风险场景是否需要审批。 |
 | `always` | 每次执行都需要审批。 |
+| `pause` | 工具调用前暂停运行并返回 HITL token；审批后通过 `ResumeAndContinue` 继续。 |
 
 支持的 `side_effect` 值：
 
@@ -163,7 +165,7 @@ Skill 定义在 `scenario.skills.<name>` 下。它是可复用的能力包，不
 | `agent_policy` | 对象 | 否 | 覆盖绑定 Agent 的执行策略，支持 `max_steps`、`timeout`、`retry_limit`、`output_schema`、`human_checkpoints`。 |
 | `tool_policies` | 数组 | 否 | Skill 对工具审批、副作用等级和调用上限的策略覆盖。 |
 | `tool_policies[].tool` | 字符串 | 是 | 来自 `scenario.tools` 的工具名称。 |
-| `tool_policies[].approval` | 枚举 | 否 | 覆盖该工具的审批策略，支持 `never`、`risky`、`always`。 |
+| `tool_policies[].approval` | 枚举 | 否 | 覆盖该工具的审批策略，支持 `never`、`risky`、`always`、`pause`。 |
 | `tool_policies[].side_effect` | 枚举 | 否 | 覆盖工具副作用等级，支持 `none`、`read`、`write`、`external`、`dangerous`。 |
 | `tool_policies[].rate_cap` | 整数 | 否 | 覆盖该工具单次运行内最大调用次数。 |
 | `workflow` | 对象 | 否 | 可复用 workflow 子图；展开时节点 ID 会加上 `<agent>.<skill>.` 前缀。 |
@@ -276,6 +278,28 @@ Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
 | `skill` | 引用一个已配置 Skill。 |
 | `human_gate` | 暂停并等待人工审批。 |
 | `transform` | 转换工作流数据。 |
+| `parallel_group` | 并行执行多个 Agent，结果写入 `members` 映射。 |
+| `loop` | 重复执行 `body` 中的节点，直到 `until` 条件成立或达到 `max_iterations`。 |
+
+`parallel_group` 节点的 `input` 示例：
+
+```yaml
+- id: experts
+  kind: parallel_group
+  input:
+    refs: [researcher-a, researcher-b]
+```
+
+`loop` 节点的 `input` 示例：
+
+```yaml
+- id: revise
+  kind: loop
+  input:
+    body: [mark]
+    max_iterations: 3
+    until: eq(steps.mark.approved, true)
+```
 
 Workflow 边位于 `scenario.orchestration.workflow.edges`，使用 `from`、`to` 和可选 `condition`。
 
@@ -311,6 +335,48 @@ workflow:
 ```
 
 `set` 写入静态字段，`copy` 从已有步骤输出路径复制字段。没有 `set`/`copy` 的 transform 会保留旧行为：把静态 input 包装为该节点输出。
+
+## 事件触发器
+
+外部事件路由定义在 `scenario.triggers` 下。运行时通过 `Framework.HandleEvent` 或 Webhook HTTP Handler 接收事件，并按第一条匹配的 trigger 构造 `RunRequest`。
+
+| 字段 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `event` | 字符串 | 是 | 事件类型，例如 `ticket.created`。 |
+| `agent` | 字符串 | 是 | 要执行的 Agent 名称。 |
+| `prompt_path` | 字符串 | 否 | 从事件 payload JSON 提取 prompt 的路径。 |
+| `context_path` | 字符串 | 否 | 从事件 payload JSON 提取 context 的路径。 |
+| `run_id_path` | 字符串 | 否 | 从事件 payload JSON 提取 run ID 的路径。 |
+
+示例：
+
+```yaml
+scenario:
+  triggers:
+    - event: ticket.created
+      agent: support
+      prompt_path: body.summary
+      context_path: body
+      run_id_path: body.ticket_id
+```
+
+Webhook 请求体：
+
+```json
+{
+  "type": "ticket.created",
+  "run_id": "T-9",
+  "payload": {"body": {"ticket_id": "T-9", "summary": "Need help"}}
+}
+```
+
+CLI 等价命令：
+
+```sh
+agentctl trigger -f examples/ticket_handling.yaml \
+  --event ticket.created \
+  --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
+```
 
 ## 运行时
 

@@ -45,6 +45,11 @@ func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
 		return result
 	}
+	if tool.Approval == core.ApprovalPause && e.gate == nil {
+		result := core.ToolResult{Tool: call.Name, Error: "tool requires human gate for pause approval"}
+		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
+		return result
+	}
 	if tool.RateCap > 0 && callCounts[call.Name] >= tool.RateCap {
 		result := core.ToolResult{Tool: call.Name, Error: fmt.Sprintf("tool rate cap exceeded: %d call(s) per run", tool.RateCap)}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
@@ -231,7 +236,7 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 
 func approvalDenialReason(tool core.Tool) string {
 	switch tool.Approval {
-	case "", core.ApprovalNever:
+	case "", core.ApprovalNever, core.ApprovalPause:
 		return ""
 	case core.ApprovalAlways:
 		return "tool requires approval"
@@ -244,6 +249,24 @@ func approvalDenialReason(tool core.Tool) string {
 		}
 	default:
 		return fmt.Sprintf("unsupported approval policy %q", tool.Approval)
+	}
+}
+
+func approvalPauseRequired(tool core.Tool) bool {
+	switch tool.Approval {
+	case core.ApprovalPause:
+		return true
+	case core.ApprovalAlways:
+		return true
+	case core.ApprovalRisky:
+		switch tool.SideEffect {
+		case core.SideEffectWrite, core.SideEffectExternal, core.SideEffectDangerous:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
 	}
 }
 

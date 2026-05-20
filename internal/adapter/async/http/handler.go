@@ -14,6 +14,7 @@ import (
 
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
@@ -49,6 +50,25 @@ type SubmitRunRequest struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
+type SubmitEventRequest struct {
+	Type        string            `json:"type"`
+	RunID       string            `json:"run_id,omitempty"`
+	Payload     json.RawMessage   `json:"payload,omitempty"`
+	JobID       string            `json:"job_id,omitempty"`
+	MaxAttempts int               `json:"max_attempts,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+type SubmitResumeContinueRequest struct {
+	Token       string            `json:"token"`
+	Decision    string            `json:"decision"`
+	Amendment   json.RawMessage   `json:"amendment,omitempty"`
+	JobID       string            `json:"job_id,omitempty"`
+	RunID       string            `json:"run_id,omitempty"`
+	MaxAttempts int               `json:"max_attempts,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
 type JobResponse struct {
 	Job asyncpkg.Job `json:"job"`
 }
@@ -74,13 +94,30 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 
 func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
 	path := strings.Trim(r.URL.Path, "/")
-	if path == "v1/runs" {
+	switch path {
+	case "v1/runs":
 		if r.Method != nethttp.MethodPost {
 			w.Header().Set("Allow", nethttp.MethodPost)
 			nethttp.Error(w, "method not allowed", nethttp.StatusMethodNotAllowed)
 			return
 		}
-		handler.handleSubmit(w, r)
+		handler.handleSubmitRun(w, r)
+		return
+	case "v1/jobs/events":
+		if r.Method != nethttp.MethodPost {
+			w.Header().Set("Allow", nethttp.MethodPost)
+			nethttp.Error(w, "method not allowed", nethttp.StatusMethodNotAllowed)
+			return
+		}
+		handler.handleSubmitEvent(w, r)
+		return
+	case "v1/jobs/hitl/resume":
+		if r.Method != nethttp.MethodPost {
+			w.Header().Set("Allow", nethttp.MethodPost)
+			nethttp.Error(w, "method not allowed", nethttp.StatusMethodNotAllowed)
+			return
+		}
+		handler.handleSubmitResumeContinue(w, r)
 		return
 	}
 	if strings.HasPrefix(path, "v1/runs/") {
@@ -94,10 +131,21 @@ func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) 
 			return
 		}
 	}
+	if strings.HasPrefix(path, "v1/jobs/") {
+		parts := strings.Split(path, "/")
+		if len(parts) == 3 && r.Method == nethttp.MethodGet {
+			handler.handleRead(w, r, parts[2])
+			return
+		}
+		if len(parts) == 4 && parts[3] == "cancel" && r.Method == nethttp.MethodPost {
+			handler.handleCancel(w, r, parts[2])
+			return
+		}
+	}
 	nethttp.NotFound(w, r)
 }
 
-func (handler *Handler) handleSubmit(w nethttp.ResponseWriter, r *nethttp.Request) {
+func (handler *Handler) handleSubmitRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req SubmitRunRequest
 	if err := decodeJSON(w, r, handler.maxBodyBytes, &req); err != nil {
 		writeDecodeError(w, err)
@@ -139,6 +187,118 @@ func (handler *Handler) handleSubmit(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 	handler.recordAudit(r.Context(), audit.Event{Type: audit.EventRunSubmitted, Principal: principal, Action: security.ActionRunSubmit, Resource: resource, RunID: runID, Outcome: string(job.State)})
+	writeJSON(w, nethttp.StatusAccepted, JobResponse{Job: job})
+}
+
+func (handler *Handler) handleSubmitEvent(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req SubmitEventRequest
+	if err := decodeJSON(w, r, handler.maxBodyBytes, &req); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+	if strings.TrimSpace(req.Type) == "" {
+		nethttp.Error(w, "type is required", nethttp.StatusBadRequest)
+		return
+	}
+	jobID := strings.TrimSpace(req.JobID)
+	if jobID == "" {
+		jobID = strings.TrimSpace(req.RunID)
+	}
+	if jobID == "" {
+		jobID = strings.TrimSpace(handler.idGenerator())
+	}
+	resource := security.Resource{Type: "event", ID: jobID}
+	principal, ok := handler.authorize(w, r, security.ActionRunSubmit, resource)
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(asyncpkg.EventPayload{
+		Type:        req.Type,
+		RunID:       req.RunID,
+		Payload:     req.Payload,
+		MaxAttempts: req.MaxAttempts,
+		Metadata:    req.Metadata,
+		Principal:   principal,
+	})
+	if err != nil {
+		nethttp.Error(w, "encode job payload", nethttp.StatusInternalServerError)
+		return
+	}
+	now := handler.now().UTC()
+	job, err := handler.queue.Enqueue(r.Context(), asyncpkg.Job{
+		ID:          jobID,
+		Type:        asyncpkg.EventJobType,
+		RunID:       req.RunID,
+		Payload:     payload,
+		MaxAttempts: req.MaxAttempts,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		AvailableAt: now,
+	})
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusConflict)
+		return
+	}
+	handler.recordAudit(r.Context(), audit.Event{Type: audit.EventRunSubmitted, Principal: principal, Action: security.ActionRunSubmit, Resource: resource, RunID: req.RunID, Outcome: string(job.State)})
+	writeJSON(w, nethttp.StatusAccepted, JobResponse{Job: job})
+}
+
+func (handler *Handler) handleSubmitResumeContinue(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req SubmitResumeContinueRequest
+	if err := decodeJSON(w, r, handler.maxBodyBytes, &req); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+	var decision core.Decision
+	if err := decision.UnmarshalText([]byte(req.Decision)); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	if req.Token == "" {
+		nethttp.Error(w, "token is required", nethttp.StatusBadRequest)
+		return
+	}
+	jobID := strings.TrimSpace(req.JobID)
+	if jobID == "" {
+		jobID = strings.TrimSpace(req.RunID)
+	}
+	if jobID == "" {
+		jobID = strings.TrimSpace(handler.idGenerator())
+	}
+	resource := security.Resource{Type: "hitl", ID: jobID}
+	principal, ok := handler.authorize(w, r, security.ActionHITLResume, resource)
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(asyncpkg.ResumeContinuePayload{
+		Token:       req.Token,
+		Decision:    decision,
+		Amendment:   req.Amendment,
+		RunID:       req.RunID,
+		MaxAttempts: req.MaxAttempts,
+		Metadata:    req.Metadata,
+		Principal:   principal,
+	})
+	if err != nil {
+		nethttp.Error(w, "encode job payload", nethttp.StatusInternalServerError)
+		return
+	}
+	now := handler.now().UTC()
+	job, err := handler.queue.Enqueue(r.Context(), asyncpkg.Job{
+		ID:          jobID,
+		Type:        asyncpkg.ResumeContinueJobType,
+		RunID:       req.RunID,
+		Payload:     payload,
+		MaxAttempts: req.MaxAttempts,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		AvailableAt: now,
+	})
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusConflict)
+		return
+	}
+	handler.recordAudit(r.Context(), audit.Event{Type: audit.EventRunSubmitted, Principal: principal, Action: security.ActionHITLResume, Resource: resource, RunID: req.RunID, Outcome: string(job.State)})
 	writeJSON(w, nethttp.StatusAccepted, JobResponse{Job: job})
 }
 

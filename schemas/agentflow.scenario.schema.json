@@ -62,6 +62,13 @@
           },
           "description": "Named agents that can be executed by the runtime."
         },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trigger"
+          },
+          "description": "External event routes that map webhook payloads to runs."
+        },
         "orchestration": {
           "$ref": "#/$defs/orchestration"
         },
@@ -261,7 +268,7 @@
         },
         "approval": {
           "type": "string",
-          "enum": ["never", "risky", "always"]
+          "enum": ["never", "risky", "always", "pause"]
         },
         "llm": {
           "type": "string",
@@ -351,7 +358,7 @@
         },
         "approval": {
           "type": "string",
-          "enum": ["never", "risky", "always"]
+          "enum": ["never", "risky", "always", "pause"]
         },
         "side_effect": {
           "type": "string",
@@ -470,6 +477,40 @@
         "max_steps": {
           "type": "integer",
           "minimum": 0
+        },
+        "execute": {
+          "type": "boolean",
+          "description": "When true, track plan step completion in run state during the tool loop."
+        }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "required": ["event"],
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string"
+        },
+        "prompt_path": {
+          "type": "string",
+          "description": "Dot path into the event payload used as the run prompt."
+        },
+        "context_path": {
+          "type": "string",
+          "description": "Dot path into the event payload copied into run context."
+        },
+        "run_id_path": {
+          "type": "string",
+          "description": "Dot path into the event payload used as the run id."
+        },
+        "default_prompt": {
+          "type": "string",
+          "description": "Fallback prompt when prompt_path is missing."
         }
       }
     },
@@ -518,7 +559,7 @@
         },
         "kind": {
           "type": "string",
-          "enum": ["agent", "tool", "skill", "human_gate", "transform"]
+          "enum": ["agent", "tool", "skill", "human_gate", "transform", "parallel_group", "loop"]
         },
         "ref": {
           "type": "string",

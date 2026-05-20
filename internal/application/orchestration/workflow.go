@@ -129,7 +129,11 @@ func (r *WorkflowRunner) run(ctx context.Context, scenario core.Scenario, runID 
 	deps := dependencies(workflow)
 	pending := make(map[string]bool, len(nodes))
 	done := make(map[string]bool, len(nodes))
+	bodyOnly := loopBodyNodeIDs(workflow)
 	for id := range nodes {
+		if bodyOnly[id] {
+			continue
+		}
 		if alreadyDone[id] {
 			done[id] = true
 			continue
@@ -229,6 +233,10 @@ func (r *WorkflowRunner) runNode(ctx context.Context, scenario core.Scenario, no
 		return r.runTransformNode(ctx, scenario, node, runID)
 	case core.NodeHumanGate:
 		return r.runHumanGateNode(ctx, node, runID)
+	case core.NodeParallelGroup:
+		return r.runParallelGroupNode(ctx, scenario, node, runID)
+	case core.NodeLoop:
+		return r.runLoopNode(ctx, scenario, node, runID)
 	case core.NodeSkill:
 		return fmt.Errorf("orchestration: skill node %q requires skill workflow expansion before runtime", node.ID)
 	default:

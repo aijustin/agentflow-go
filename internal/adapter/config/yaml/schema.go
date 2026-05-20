@@ -20,6 +20,7 @@ var (
 		string(core.ApprovalNever),
 		string(core.ApprovalRisky),
 		string(core.ApprovalAlways),
+		string(core.ApprovalPause),
 	}
 	supportedSideEffects = []string{
 		string(core.SideEffectNone),
@@ -39,6 +40,8 @@ var (
 		string(core.NodeSkill),
 		string(core.NodeHumanGate),
 		string(core.NodeTransform),
+		string(core.NodeParallelGroup),
+		string(core.NodeLoop),
 	}
 	supportedLLMCapabilities = []string{
 		llm.CapChat.String(),

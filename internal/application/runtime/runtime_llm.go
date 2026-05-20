@@ -119,6 +119,11 @@ func (e *Engine) injectAutonomousPlan(ctx context.Context, runID string, agent c
 		rawPlan = []byte(resp.Message.Content)
 	}
 	planText := formatAutonomousPlan(rawPlan, maxSteps)
+	if e.scenario.Orchestration.Planning.Execute {
+		if err := e.persistPlan(ctx, runID, rawPlan, maxSteps); err != nil {
+			return nil, err
+		}
+	}
 	if strings.TrimSpace(planText) == "" {
 		return messages, nil
 	}
@@ -281,7 +286,11 @@ func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.A
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
 	toolSpecs := e.toolSpecs(agent)
 	messages := append([]llm.Message(nil), req.Messages...)
-	toolCalls := make(map[string]int)
+	toolCounts := make(map[string]int)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps)
+}
+
+func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int) (string, error) {
 	for step := 0; step < maxSteps; step++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -318,7 +327,12 @@ func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.A
 			return resp.Message.Content, nil
 		}
 		for _, toolCall := range resp.ToolCalls {
-			result := e.dispatchTool(ctx, runID, agent, toolCall, toolCalls)
+			if paused, err := e.maybePauseToolCall(ctx, runID, agent, toolCall, messages, toolCounts); err != nil {
+				return "", err
+			} else if paused != nil {
+				return "", *paused
+			}
+			result := e.dispatchTool(ctx, runID, agent, toolCall, toolCounts)
 			contextResult := compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
 			raw, err := json.Marshal(contextResult)
 			if err != nil {
@@ -330,6 +344,9 @@ func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.A
 				Name:       toolCall.Name,
 				ToolCallID: toolCall.ID,
 			})
+			if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
+				_ = e.markPlanStepDone(ctx, runID, toolCall.Name)
+			}
 		}
 	}
 	return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", maxSteps)

@@ -1,7 +1,9 @@
 package yaml
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
@@ -117,6 +119,9 @@ func Validate(s core.Scenario) error {
 			return fmt.Errorf("config: orchestration.planning.agent references unknown agent %q", s.Orchestration.Planning.Agent)
 		}
 	}
+	if err := validateTriggers(s); err != nil {
+		return err
+	}
 	switch s.Orchestration.Mode {
 	case "", core.OrchestrationAutonomous, core.OrchestrationHybrid:
 		return nil
@@ -224,6 +229,78 @@ func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
 		}
 	case core.NodeHumanGate, core.NodeTransform:
 		return nil
+	case core.NodeParallelGroup:
+		return validateParallelGroupNode(node, s)
+	case core.NodeLoop:
+		return validateLoopNode(node, s)
+	}
+	return nil
+}
+
+func validateParallelGroupNode(node core.WorkflowNode, s core.Scenario) error {
+	var spec struct {
+		Refs []string `json:"refs"`
+	}
+	if len(node.Input) > 0 {
+		if err := json.Unmarshal(node.Input, &spec); err != nil {
+			return fmt.Errorf("config: workflow node %q parallel_group input is invalid JSON", node.ID)
+		}
+	}
+	refs := spec.Refs
+	if len(refs) == 0 && node.Ref != "" {
+		refs = []string{node.Ref}
+	}
+	if len(refs) == 0 {
+		return fmt.Errorf("config: workflow node %q parallel_group requires refs", node.ID)
+	}
+	for _, ref := range refs {
+		if _, ok := s.Agents[ref]; !ok {
+			return fmt.Errorf("config: workflow node %q references unknown agent %q", node.ID, ref)
+		}
+	}
+	return nil
+}
+
+func validateLoopNode(node core.WorkflowNode, s core.Scenario) error {
+	if len(node.Input) == 0 {
+		return fmt.Errorf("config: workflow node %q loop input is required", node.ID)
+	}
+	var spec struct {
+		Body []string `json:"body"`
+	}
+	if err := json.Unmarshal(node.Input, &spec); err != nil {
+		return fmt.Errorf("config: workflow node %q loop input is invalid JSON", node.ID)
+	}
+	if len(spec.Body) == 0 {
+		return fmt.Errorf("config: workflow node %q loop requires body node ids", node.ID)
+	}
+	nodeIDs := make(map[string]bool, len(s.Orchestration.Workflow.Nodes))
+	for _, workflowNode := range s.Orchestration.Workflow.Nodes {
+		nodeIDs[workflowNode.ID] = true
+	}
+	for _, bodyID := range spec.Body {
+		if !nodeIDs[bodyID] {
+			return fmt.Errorf("config: workflow node %q loop references unknown body node %q", node.ID, bodyID)
+		}
+	}
+	return nil
+}
+
+func validateTriggers(s core.Scenario) error {
+	seen := make(map[string]bool, len(s.Triggers))
+	for index, trigger := range s.Triggers {
+		if strings.TrimSpace(trigger.Event) == "" {
+			return fmt.Errorf("config: triggers[%d].event is required", index)
+		}
+		if seen[trigger.Event] {
+			return fmt.Errorf("config: duplicate trigger event %q", trigger.Event)
+		}
+		seen[trigger.Event] = true
+		if trigger.Agent != "" {
+			if _, ok := s.Agents[trigger.Agent]; !ok {
+				return fmt.Errorf("config: triggers[%d].agent references unknown agent %q", index, trigger.Agent)
+			}
+		}
 	}
 	return nil
 }

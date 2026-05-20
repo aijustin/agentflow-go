@@ -21,6 +21,8 @@ type HandlerConfig struct {
 	Now            func() time.Time
 	MaxBodyBytes   int64
 	Version        string
+	EventsHandler  nethttp.Handler
+	HITLHandler    nethttp.Handler
 }
 
 type Handler struct {
@@ -43,7 +45,8 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	var runs nethttp.Handler = runHandler
+	jobHandler := nethttp.Handler(runHandler)
+	runs := jobHandler
 	if config.AuthMiddleware != nil {
 		runs = config.AuthMiddleware(runs)
 	}
@@ -52,6 +55,22 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	handler.mux.HandleFunc("/readyz", handler.handleHealth)
 	handler.mux.Handle("/v1/runs", runs)
 	handler.mux.Handle("/v1/runs/", runs)
+	handler.mux.Handle("/v1/jobs", jobHandler)
+	handler.mux.Handle("/v1/jobs/", jobHandler)
+	if config.EventsHandler != nil {
+		events := config.EventsHandler
+		if config.AuthMiddleware != nil {
+			events = config.AuthMiddleware(events)
+		}
+		handler.mux.Handle("/v1/events", events)
+	}
+	if config.HITLHandler != nil {
+		hitl := config.HITLHandler
+		if config.AuthMiddleware != nil {
+			hitl = config.AuthMiddleware(hitl)
+		}
+		handler.mux.Handle("/v1/hitl/resume", hitl)
+	}
 	return handler, nil
 }
 
