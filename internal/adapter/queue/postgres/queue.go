@@ -292,3 +292,64 @@ func validTableName(name string) bool {
 	}
 	return true
 }
+
+func (q *Queue) ListJobs(ctx context.Context, filter asyncpkg.JobFilter) ([]asyncpkg.Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`SELECT id, type, run_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at FROM %s`, q.table)
+	args := make([]any, 0, 2)
+	if filter.State != "" {
+		query += ` WHERE state = $1`
+		args = append(args, string(filter.State))
+	}
+	query += ` ORDER BY created_at ASC`
+	if filter.Limit > 0 {
+		if len(args) == 0 {
+			query += fmt.Sprintf(` LIMIT %d`, filter.Limit)
+		} else {
+			query += fmt.Sprintf(` LIMIT %d`, filter.Limit)
+		}
+	}
+	rows, err := q.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]asyncpkg.Job, 0)
+	for rows.Next() {
+		job, err := q.scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job)
+	}
+	return out, rows.Err()
+}
+
+func (q *Queue) Requeue(ctx context.Context, jobID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	now := q.now().UTC()
+	query := fmt.Sprintf(`UPDATE %s SET state = $1, attempts = 0, last_error = NULL, updated_at = $2, available_at = $2, lease_worker_id = NULL, lease_expires_at = NULL WHERE id = $3 AND state = $4`, q.table)
+	result, err := q.db.ExecContext(ctx, query, string(asyncpkg.JobQueued), now, jobID, string(asyncpkg.JobDeadLetter))
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		job, loadErr := q.Load(ctx, jobID)
+		if loadErr != nil {
+			return loadErr
+		}
+		if job.State != asyncpkg.JobDeadLetter {
+			return asyncpkg.ErrInvalidJob
+		}
+		return asyncpkg.ErrStaleLease
+	}
+	return nil
+}

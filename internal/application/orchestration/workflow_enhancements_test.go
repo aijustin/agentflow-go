@@ -145,7 +145,7 @@ func TestResolveNodeInputPromptFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := NewWorkflowRunner(nil, runs, nil)
-	raw, err := runner.resolveNodeInput(context.Background(), "run-1", json.RawMessage(`{"prompt_from":"steps.source.output.message","extra":1}`))
+	raw, err := runner.resolveNodeInput(context.Background(), "run-1", json.RawMessage(`{"prompt_from":"steps.source.output.message","extra":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

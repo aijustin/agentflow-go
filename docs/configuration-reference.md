@@ -279,8 +279,8 @@ Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
 | `skill` | 引用一个已配置 Skill。 |
 | `human_gate` | 暂停并等待人工审批。 |
 | `transform` | 转换工作流数据。 |
-| `parallel_group` | 并行执行多个 Agent，结果写入 `members` 映射。 |
-| `loop` | 重复执行 `body` 中的节点，直到 `until` 条件成立或达到 `max_iterations`。 |
+| `parallel_group` | 并行执行多个 Agent 或 Tool，结果写入 `members` 映射；可选 `on_error: collect_errors`。 |
+| `loop` | 重复执行 `body` 中的节点；每轮迭代开始前先评估 `until`，达到 `max_iterations` 后停止。 |
 
 `parallel_group` 节点的 `input` 示例：
 
@@ -289,9 +289,26 @@ Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
   kind: parallel_group
   input:
     refs: [researcher-a, researcher-b]
+    tools: [status_tool]
+    on_error: collect_errors
 ```
 
-`loop` 节点的 `input` 示例：
+Tool / Agent 节点的 `input` 支持 `copy_from`、`prompt_from` 和 `${secret:name}` 占位符（值来自 `scenario.runtime.secrets`）：
+
+```yaml
+- id: echo
+  kind: tool
+  ref: echo
+  input:
+    copy_from:
+      message: steps.source.output.message
+    prompt_from: steps.source.output.message
+    token: ${secret:api_key}
+```
+
+Hybrid 模式在 workflow 阶段完成后，会把 `runstate.HydrateStepContext` 生成的 JSON 注入 Phase-2 Agent 的 `context`。当 `orchestration.planning.after_workflow: true` 时，规划器也会读取该上下文。
+
+`parallel_group` 节点的 `input` 示例（仅 Agent）：
 
 ```yaml
 - id: revise

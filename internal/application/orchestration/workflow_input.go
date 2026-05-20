@@ -11,9 +11,13 @@ type nodeInputSpec struct {
 	PromptFrom string            `json:"prompt_from"`
 }
 
-func (r *WorkflowRunner) resolveNodeInput(ctx context.Context, runID string, raw json.RawMessage) (json.RawMessage, error) {
+func (r *WorkflowRunner) resolveNodeInput(ctx context.Context, runID string, raw json.RawMessage, secrets map[string]string) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return raw, nil
+	}
+	raw, err := resolveRuntimeSecrets(raw, secrets)
+	if err != nil {
+		return nil, err
 	}
 	var spec nodeInputSpec
 	if err := json.Unmarshal(raw, &spec); err != nil {

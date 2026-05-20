@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
 type memoryMessage struct {
@@ -21,6 +24,9 @@ type memoryMessage struct {
 }
 
 func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent) ([]llm.Message, error) {
+	if err := e.authorizeMemory(ctx, runID, agent, security.ActionMemoryRead); err != nil {
+		return nil, err
+	}
 	repo, ns, ok := e.memoryRepository(runID, agent)
 	if !ok {
 		return nil, nil
@@ -63,6 +69,9 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent)
 }
 
 func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent, messages []memoryMessage) error {
+	if err := e.authorizeMemory(ctx, runID, agent, security.ActionMemoryWrite); err != nil {
+		return err
+	}
 	repo, ns, ok := e.memoryRepository(runID, agent)
 	if !ok || len(messages) == 0 {
 		return nil
@@ -131,4 +140,21 @@ func (e *Engine) redactMemoryMessage(ctx context.Context, runID string, msg memo
 		return msg.Content, nil
 	}
 	return out.Content, nil
+}
+
+func (e *Engine) authorizeMemory(ctx context.Context, runID string, agent core.Agent, action security.Action) error {
+	if e.policy == nil || agent.Memory == "" {
+		return nil
+	}
+	resource := security.Resource{Type: "memory", ID: agent.Memory, Metadata: map[string]string{"agent": agent.Name}}
+	principal, err := identity.RequirePrincipal(ctx)
+	if err != nil {
+		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: identity.Principal{}, Action: action, Resource: resource, RunID: runID, Outcome: "denied", Reason: security.ErrUnauthenticated.Error()})
+		return security.ErrUnauthenticated
+	}
+	if err := e.policy.Authorize(ctx, principal, action, resource); err != nil {
+		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principal, Action: action, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})
+		return err
+	}
+	return nil
 }

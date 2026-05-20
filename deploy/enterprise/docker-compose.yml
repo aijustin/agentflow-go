@@ -89,6 +89,38 @@ services:
       minio-init:
         condition: service_completed_successfully
 
+  agent-server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        TARGET: agent-server
+    environment:
+      AGENT_SERVER_ADDR: 0.0.0.0:18081
+    ports:
+      - "${AGENT_SERVER_PORT:-18081}:18081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  agent-worker:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        TARGET: agent-worker
+    environment:
+      AGENT_WORKER_ID: ${AGENT_WORKER_ID:-worker-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      agent-server:
+        condition: service_started
+
 volumes:
   postgres-data:
   redis-data:

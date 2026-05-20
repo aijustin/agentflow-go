@@ -158,6 +158,9 @@ type PlanningPolicy struct {
 	MaxSteps int    `json:"max_steps,omitempty"`
 	// Execute tracks plan step completion in run state during the tool loop.
 	Execute bool `json:"execute,omitempty"`
+	// AfterWorkflow enables planning during hybrid phase-2 after workflow outputs
+	// are hydrated into run context.
+	AfterWorkflow bool `json:"after_workflow,omitempty"`
 }
 
 type HumanInLoopPolicy struct {

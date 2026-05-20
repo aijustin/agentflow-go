@@ -309,7 +309,7 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if tool.Name == "" {
 		tool.Name = node.Ref
 	}
-	input, err := r.resolveNodeInput(ctx, runID, node.Input)
+	input, err := r.resolveNodeInput(ctx, runID, node.Input, scenario.Runtime.Secrets)
 	if err != nil {
 		return err
 	}
@@ -345,7 +345,7 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 	if !ok {
 		return fmt.Errorf("orchestration: agent %q not found", node.Ref)
 	}
-	input, err := r.resolveNodeInput(ctx, runID, node.Input)
+	input, err := r.resolveNodeInput(ctx, runID, node.Input, scenario.Runtime.Secrets)
 	if err != nil {
 		return err
 	}
@@ -681,6 +681,7 @@ func (r *WorkflowRunner) emitJSON(ctx context.Context, typ core.EventType, scena
 }
 
 func (r *WorkflowRunner) emit(ctx context.Context, typ core.EventType, scenarioName, runID string, payload json.RawMessage) {
+	payload = governance.RedactEventPayload(ctx, r.redactor, runID, typ, payload)
 	_ = r.events.Emit(ctx, core.Event{
 		Type:         typ,
 		RunID:        runID,

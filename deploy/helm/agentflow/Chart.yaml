@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agentflow
+description: Helm chart for AgentFlow runtime services
+type: application
+version: 0.1.0
+appVersion: "latest"

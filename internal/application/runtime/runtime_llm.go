@@ -27,7 +27,7 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 		return "", err
 	}
 	messages, stats := e.prepareContext(agent, profile, req, history)
-	if e.scenario.Orchestration.Planning.Enabled {
+	if e.planningEnabled() {
 		var err error
 		messages, err = e.injectAutonomousPlan(ctx, req.RunID, agent, profile, req, messages)
 		if err != nil {
@@ -95,7 +95,7 @@ func (e *Engine) injectAutonomousPlan(ctx context.Context, runID string, agent c
 	planReq := llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: fmt.Sprintf("Create a concise execution plan with at most %d steps. Return JSON with a steps array; each step has goal and optional tool.", maxSteps)},
-			{Role: llm.RoleUser, Content: req.Prompt},
+			{Role: llm.RoleUser, Content: plannerUserContent(req)},
 		},
 		Temperature:     profile.Temperature,
 		TopP:            profile.TopP,
@@ -132,6 +132,31 @@ func (e *Engine) injectAutonomousPlan(ctx context.Context, runID string, agent c
 	planned = append(planned, messages...)
 	e.emitJSON(ctx, core.EventContextPrepared, runID, map[string]any{"planning": true, "steps": strings.Count(planText, "\n") + 1})
 	return planned, nil
+}
+
+func (e *Engine) planningEnabled() bool {
+	planning := e.scenario.Orchestration.Planning
+	if !planning.Enabled {
+		return false
+	}
+	if e.scenario.Orchestration.Mode != core.OrchestrationHybrid {
+		return true
+	}
+	if e.scenario.Orchestration.Workflow == nil {
+		return true
+	}
+	return planning.AfterWorkflow
+}
+
+func plannerUserContent(req RunRequest) string {
+	prompt := strings.TrimSpace(req.Prompt)
+	if len(req.Context) == 0 {
+		return prompt
+	}
+	if prompt == "" {
+		return "Workflow context:\n" + string(req.Context)
+	}
+	return prompt + "\n\nWorkflow context:\n" + string(req.Context)
 }
 
 func formatAutonomousPlan(raw []byte, maxSteps int) string {
@@ -233,7 +258,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		return nil, core.Agent{}, nil, err
 	}
 	messages, stats := e.prepareContext(agent, profile, req, history)
-	if e.scenario.Orchestration.Planning.Enabled {
+	if e.planningEnabled() {
 		messages, err = e.injectAutonomousPlan(ctx, req.RunID, agent, profile, req, messages)
 		if err != nil {
 			cancel()

@@ -214,3 +214,48 @@ func leaseable(job asyncpkg.Job, now time.Time) bool {
 	}
 	return false
 }
+
+func (queue *Queue) ListJobs(ctx context.Context, filter asyncpkg.JobFilter) ([]asyncpkg.Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	out := make([]asyncpkg.Job, 0)
+	for _, jobID := range queue.order {
+		job := queue.jobs[jobID]
+		if filter.State != "" && job.State != filter.State {
+			continue
+		}
+		out = append(out, asyncpkg.CloneJob(job))
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (queue *Queue) Requeue(ctx context.Context, jobID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	job, exists := queue.jobs[jobID]
+	if !exists {
+		return asyncpkg.ErrJobNotFound
+	}
+	if job.State != asyncpkg.JobDeadLetter {
+		return asyncpkg.ErrInvalidJob
+	}
+	now := queue.now()
+	job.State = asyncpkg.JobQueued
+	job.Attempts = 0
+	job.LastError = ""
+	job.AvailableAt = now
+	job.UpdatedAt = now
+	job.LeaseWorkerID = ""
+	job.LeaseExpiresAt = time.Time{}
+	queue.jobs[jobID] = job
+	return nil
+}

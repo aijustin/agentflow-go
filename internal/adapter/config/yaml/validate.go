@@ -123,7 +123,12 @@ func Validate(s core.Scenario) error {
 		return err
 	}
 	switch s.Orchestration.Mode {
-	case "", core.OrchestrationAutonomous, core.OrchestrationHybrid:
+	case "", core.OrchestrationAutonomous:
+		return nil
+	case core.OrchestrationHybrid:
+		if s.Orchestration.Workflow != nil {
+			return validateWorkflow(*s.Orchestration.Workflow, s)
+		}
 		return nil
 	case core.OrchestrationFixedWorkflow:
 		if s.Orchestration.Workflow == nil {
@@ -239,23 +244,33 @@ func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
 
 func validateParallelGroupNode(node core.WorkflowNode, s core.Scenario) error {
 	var spec struct {
-		Refs []string `json:"refs"`
+		Refs    []string `json:"refs"`
+		Tools   []string `json:"tools"`
+		OnError string   `json:"on_error"`
 	}
 	if len(node.Input) > 0 {
 		if err := json.Unmarshal(node.Input, &spec); err != nil {
 			return fmt.Errorf("config: workflow node %q parallel_group input is invalid JSON", node.ID)
 		}
 	}
+	if spec.OnError != "" && spec.OnError != "fail_fast" && spec.OnError != "collect_errors" {
+		return fmt.Errorf("config: workflow node %q parallel_group on_error %q is unsupported", node.ID, spec.OnError)
+	}
 	refs := spec.Refs
 	if len(refs) == 0 && node.Ref != "" {
 		refs = []string{node.Ref}
 	}
-	if len(refs) == 0 {
-		return fmt.Errorf("config: workflow node %q parallel_group requires refs", node.ID)
+	if len(refs) == 0 && len(spec.Tools) == 0 {
+		return fmt.Errorf("config: workflow node %q parallel_group requires refs or tools", node.ID)
 	}
 	for _, ref := range refs {
 		if _, ok := s.Agents[ref]; !ok {
 			return fmt.Errorf("config: workflow node %q references unknown agent %q", node.ID, ref)
+		}
+	}
+	for _, ref := range spec.Tools {
+		if _, ok := s.Tools[ref]; !ok {
+			return fmt.Errorf("config: workflow node %q references unknown tool %q", node.ID, ref)
 		}
 	}
 	return nil

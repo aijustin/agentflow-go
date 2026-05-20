@@ -13,6 +13,13 @@ type CompressionPolicy struct {
 	TriggerRatio float64 `json:"trigger_ratio,omitempty" yaml:"trigger_ratio,omitempty"`
 }
 
+type RoleBudgets struct {
+	System    int `json:"system,omitempty" yaml:"system,omitempty"`
+	User      int `json:"user,omitempty" yaml:"user,omitempty"`
+	Assistant int `json:"assistant,omitempty" yaml:"assistant,omitempty"`
+	Tool      int `json:"tool,omitempty" yaml:"tool,omitempty"`
+}
+
 type Policy struct {
 	Strategy               Strategy          `json:"strategy,omitempty" yaml:"strategy,omitempty"`
 	ContextWindowTokens    int               `json:"context_window_tokens,omitempty" yaml:"context_window_tokens,omitempty"`
@@ -23,6 +30,8 @@ type Policy struct {
 	MemoryRecallLimit      int               `json:"memory_recall_limit,omitempty" yaml:"memory_recall_limit,omitempty"`
 	SystemPromptProtection bool              `json:"system_prompt_protection,omitempty" yaml:"system_prompt_protection,omitempty"`
 	Compression            CompressionPolicy `json:"compression,omitempty" yaml:"compression,omitempty"`
+	RoleBudgets            RoleBudgets       `json:"role_budgets,omitempty" yaml:"role_budgets,omitempty"`
+	SummaryMode            string            `json:"summary_mode,omitempty" yaml:"summary_mode,omitempty"`
 }
 
 func (p Policy) Normalize() Policy {

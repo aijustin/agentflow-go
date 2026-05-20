@@ -1157,3 +1157,37 @@ func TestEngineRunRedactsMemoryWrites(t *testing.T) {
 		t.Fatalf("memory not redacted: %s", raw)
 	}
 }
+
+func TestEngineMemoryRBAC(t *testing.T) {
+	scenario := baseScenario(false)
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "rbac-session"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	agent.Tools = nil
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:   runstateinmem.NewRepository(),
+		LLM:    &capturingGateway{response: "ok"},
+		Memory: map[string]memory.Repository{"session": memoryinmem.NewRepository()},
+		Policy: security.NewDefaultRolePolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := identity.Principal{ID: "viewer", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-1"}, Roles: []identity.Role{identity.RoleViewer}}
+	ctx := identity.WithPrincipal(context.Background(), viewer)
+	if _, err := engine.readMemory(ctx, "run-rbac", agent); err != nil {
+		t.Fatalf("viewer should read memory: %v", err)
+	}
+	operator := identity.Principal{ID: "operator", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-1"}, Roles: []identity.Role{identity.RoleOperator}}
+	ctx = identity.WithPrincipal(context.Background(), operator)
+	if err := engine.writeMemory(ctx, "run-rbac-2", agent, []memoryMessage{{Role: string(llm.RoleUser), Content: "write test"}}); err != nil {
+		t.Fatalf("operator should write memory: %v", err)
+	}
+	ctx = identity.WithPrincipal(context.Background(), viewer)
+	if err := engine.writeMemory(ctx, "run-rbac-3", agent, []memoryMessage{{Role: string(llm.RoleUser), Content: "denied"}}); err == nil {
+		t.Fatal("viewer write should be denied")
+	}
+}

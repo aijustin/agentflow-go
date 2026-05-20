@@ -1,0 +1,44 @@
+scenario:
+  name: workflow-enhancements
+  llms:
+    planner:
+      provider: mock
+      model: test
+  tools:
+    echo:
+      type: builtin.echo
+    status:
+      type: builtin.echo
+  agents:
+    reviewer:
+      llm: planner
+      tools: [echo]
+      instructions: "Review workflow outputs."
+  runtime:
+    secrets:
+      api_key: dev-secret-value
+  orchestration:
+    mode: fixed_workflow
+    workflow:
+      nodes:
+        - id: status
+          kind: tool
+          ref: status
+          input:
+            message: ready
+        - id: ready_branch
+          kind: tool
+          ref: echo
+          input:
+            copy_from:
+              message: steps.status.output.message
+            prompt_from: steps.status.output.message
+        - id: experts
+          kind: parallel_group
+          input:
+            tools: [status, echo]
+            on_error: collect_errors
+      edges:
+        - from: status
+          to: ready_branch
+          condition: 'eq(steps.status.output.message, "ready")'

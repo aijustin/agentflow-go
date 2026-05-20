@@ -32,6 +32,7 @@ import (
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	appscenario "github.com/aijustin/agentflow-go/internal/application/scenario"
 	"github.com/aijustin/agentflow-go/pkg/audit"
+	"github.com/aijustin/agentflow-go/pkg/catalog"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -579,61 +580,62 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 // pure autonomous mode.
 func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, error) {
 	if f.scenario.Orchestration.Workflow == nil {
-		// No workflow phase – degrade gracefully to autonomous mode.
 		return f.engine.Run(ctx, req)
 	}
+	req, paused, err := f.prepareHybridAutonomousRun(ctx, req)
+	if err != nil || paused.Status != "" {
+		return paused, err
+	}
+	return f.engine.RunHybrid(ctx, req)
+}
+
+func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunRequest) (RunRequest, RunResult, error) {
 	ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
 	defer cancel()
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
-
-	// Phase 1: fixed workflow DAG.
 	snapshot := runstate.RunSnapshot{
 		RunID:        req.RunID,
 		ScenarioName: f.scenario.Name,
 		Status:       runstate.RunStatusRunning,
 		Variables: map[string]json.RawMessage{
-			"input":              req.Context,
-			executionPhaseVar:    json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow)),
+			"input":           req.Context,
+			executionPhaseVar: json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow)),
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
 	saveRunResumeMetadata(&snapshot, req)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
-		return RunResult{}, err
+		return req, RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	runner := f.newWorkflowRunner()
 	if err := runner.Run(ctx, f.scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
-			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
+			return req, RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
 		f.markWorkflowFailed(ctx, req.RunID, err)
-		return RunResult{}, err
+		return req, RunResult{}, err
 	}
-
-	// Enrich context for Phase 2 with workflow step outputs.
 	loaded, err := f.runs.Load(ctx, req.RunID)
 	if err != nil {
-		return RunResult{}, err
+		return req, RunResult{}, err
 	}
 	if loaded.Variables == nil {
 		loaded.Variables = make(map[string]json.RawMessage)
 	}
 	loaded.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseAutonomous))
 	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
+		return req, RunResult{}, err
 	}
 	if req.Context == nil && len(loaded.StepOutputs) > 0 {
 		if raw, merr := runstate.HydrateStepContext(ctx, f.blobs, loaded.StepOutputs); merr == nil {
 			req.Context = raw
 		}
 	}
-
-	// Phase 2: autonomous agent execution continuing the same run.
-	return f.engine.RunHybrid(ctx, req)
+	return req, RunResult{}, nil
 }
 
 func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause error) {
@@ -653,12 +655,43 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 // RunStructured executes an agent using its configured output_schema and a
 // gateway that implements llm.StructuredOutputter.
 func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResult, error) {
-	return f.engine.RunStructured(ctx, req)
+	switch f.scenario.Orchestration.Mode {
+	case core.OrchestrationFixedWorkflow:
+		if _, err := f.runWorkflow(ctx, req); err != nil {
+			return RunResult{}, err
+		}
+		return f.engine.RunStructured(ctx, req)
+	case core.OrchestrationHybrid:
+		req, paused, err := f.prepareHybridAutonomousRun(ctx, req)
+		if err != nil || paused.Status != "" {
+			return paused, err
+		}
+		return f.engine.RunStructured(ctx, req)
+	default:
+		return f.engine.RunStructured(ctx, req)
+	}
 }
 
 // Stream executes an agent using a gateway that implements llm.Streamer.
 func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
-	return f.engine.Stream(ctx, req)
+	switch f.scenario.Orchestration.Mode {
+	case core.OrchestrationFixedWorkflow:
+		if _, err := f.runWorkflow(ctx, req); err != nil {
+			return nil, err
+		}
+		return f.engine.Stream(ctx, req)
+	case core.OrchestrationHybrid:
+		req, paused, err := f.prepareHybridAutonomousRun(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if paused.Status == runstate.RunStatusPaused {
+			return nil, fmt.Errorf("agentflow: workflow paused at token %q", paused.Token)
+		}
+		return f.engine.Stream(ctx, req)
+	default:
+		return f.engine.Stream(ctx, req)
+	}
 }
 
 // Resume resumes a paused run through the configured human gate.
@@ -667,6 +700,10 @@ func (f *Framework) Resume(ctx context.Context, token string, decision core.Deci
 		return fmt.Errorf("agentflow: human gate is not configured")
 	}
 	return f.gate.Resume(ctx, token, decision, amendment)
+}
+
+func (f *Framework) Catalog() catalog.Catalog {
+	return catalog.FromScenario(f.scenario)
 }
 
 // Scenario returns the scenario used by this framework.
@@ -685,6 +722,7 @@ func (f *Framework) BlobStore() runstate.BlobStore {
 }
 
 func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {
+	payload = governance.RedactEventPayload(ctx, f.redactor, runID, typ, payload)
 	_ = f.events.Emit(ctx, core.Event{
 		Type:         typ,
 		RunID:        runID,

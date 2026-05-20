@@ -73,6 +73,10 @@ type JobResponse struct {
 	Job asyncpkg.Job `json:"job"`
 }
 
+type JobsResponse struct {
+	Jobs []asyncpkg.Job `json:"jobs"`
+}
+
 func NewHandler(config HandlerConfig) (*Handler, error) {
 	if config.Queue == nil {
 		return nil, fmt.Errorf("async http: queue is nil")
@@ -119,6 +123,14 @@ func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) 
 		}
 		handler.handleSubmitResumeContinue(w, r)
 		return
+	case "v1/jobs":
+		if r.Method != nethttp.MethodGet {
+			w.Header().Set("Allow", nethttp.MethodGet)
+			nethttp.Error(w, "method not allowed", nethttp.StatusMethodNotAllowed)
+			return
+		}
+		handler.handleListJobs(w, r)
+		return
 	}
 	if strings.HasPrefix(path, "v1/runs/") {
 		parts := strings.Split(path, "/")
@@ -139,6 +151,10 @@ func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) 
 		}
 		if len(parts) == 4 && parts[3] == "cancel" && r.Method == nethttp.MethodPost {
 			handler.handleCancel(w, r, parts[2])
+			return
+		}
+		if len(parts) == 4 && parts[3] == "requeue" && r.Method == nethttp.MethodPost {
+			handler.handleRequeue(w, r, parts[2])
 			return
 		}
 	}
@@ -312,6 +328,50 @@ func (handler *Handler) handleRead(w nethttp.ResponseWriter, r *nethttp.Request,
 		writeQueueError(w, err)
 		return
 	}
+	writeJSON(w, nethttp.StatusOK, JobResponse{Job: job})
+}
+
+func (handler *Handler) handleListJobs(w nethttp.ResponseWriter, r *nethttp.Request) {
+	admin, ok := handler.queue.(asyncpkg.JobAdmin)
+	if !ok {
+		nethttp.Error(w, "job listing is not supported", nethttp.StatusNotImplemented)
+		return
+	}
+	resource := security.Resource{Type: "queue", ID: "jobs"}
+	if _, ok := handler.authorize(w, r, security.ActionRunRead, resource); !ok {
+		return
+	}
+	state := asyncpkg.JobState(strings.TrimSpace(r.URL.Query().Get("state")))
+	filter := asyncpkg.JobFilter{State: state}
+	jobs, err := admin.ListJobs(r.Context(), filter)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, JobsResponse{Jobs: jobs})
+}
+
+func (handler *Handler) handleRequeue(w nethttp.ResponseWriter, r *nethttp.Request, jobID string) {
+	admin, ok := handler.queue.(asyncpkg.JobAdmin)
+	if !ok {
+		nethttp.Error(w, "job requeue is not supported", nethttp.StatusNotImplemented)
+		return
+	}
+	resource := security.Resource{Type: "job", ID: jobID}
+	principal, ok := handler.authorize(w, r, security.ActionRunSubmit, resource)
+	if !ok {
+		return
+	}
+	if err := admin.Requeue(r.Context(), jobID); err != nil {
+		writeQueueError(w, err)
+		return
+	}
+	job, err := handler.queue.Load(r.Context(), jobID)
+	if err != nil {
+		writeQueueError(w, err)
+		return
+	}
+	handler.recordAudit(r.Context(), audit.Event{Type: audit.EventRunSubmitted, Principal: principal, Action: security.ActionRunSubmit, Resource: resource, RunID: job.RunID, Outcome: string(job.State)})
 	writeJSON(w, nethttp.StatusOK, JobResponse{Job: job})
 }
 

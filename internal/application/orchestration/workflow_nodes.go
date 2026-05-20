@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
 type parallelGroupSpec struct {
-	Refs []string `json:"refs"`
+	Refs    []string `json:"refs"`
+	Tools   []string `json:"tools"`
+	OnError string   `json:"on_error,omitempty"`
 }
 
 type loopSpec struct {
@@ -47,48 +50,105 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	if len(spec.Refs) == 0 && node.Ref != "" {
 		spec.Refs = []string{node.Ref}
 	}
-	if len(spec.Refs) == 0 {
-		return fmt.Errorf("orchestration: parallel_group node %q requires refs", node.ID)
+	if len(spec.Refs) == 0 && len(spec.Tools) == 0 {
+		return fmt.Errorf("orchestration: parallel_group node %q requires refs or tools", node.ID)
 	}
+	collectErrors := strings.EqualFold(spec.OnError, "collect_errors")
+	memberCount := len(spec.Refs) + len(spec.Tools)
 	var wg sync.WaitGroup
-	errs := make(chan error, len(spec.Refs))
-	outputs := make(map[string]any, len(spec.Refs))
+	errs := make(chan error, memberCount)
+	outputs := make(map[string]any, memberCount)
 	var mu sync.Mutex
+	var collected []string
+
+	runMember := func(memberKey string, run func() error, decode func() (any, error)) {
+		defer wg.Done()
+		if err := run(); err != nil {
+			if collectErrors {
+				mu.Lock()
+				collected = append(collected, err.Error())
+				mu.Unlock()
+				errs <- nil
+				return
+			}
+			errs <- err
+			return
+		}
+		value, err := decode()
+		if err != nil {
+			if collectErrors {
+				mu.Lock()
+				collected = append(collected, err.Error())
+				mu.Unlock()
+				errs <- nil
+				return
+			}
+			errs <- err
+			return
+		}
+		mu.Lock()
+		outputs[memberKey] = value
+		mu.Unlock()
+	}
+
 	for _, ref := range spec.Refs {
 		wg.Add(1)
 		go func(agentName string) {
-			defer wg.Done()
-			childID := node.ID + "." + agentName
+			childID := node.ID + ".agent." + agentName
 			child := core.WorkflowNode{ID: childID, Kind: core.NodeAgent, Ref: agentName}
-			if err := r.runAgentNode(ctx, scenario, child, runID); err != nil {
-				errs <- err
-				return
-			}
-			raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
-			if err != nil {
-				errs <- err
-				return
-			}
-			if !ok {
-				errs <- fmt.Errorf("orchestration: parallel_group node %q missing output for agent %q", node.ID, agentName)
-				return
-			}
-			var value any
-			if err := json.Unmarshal(raw, &value); err != nil {
-				errs <- fmt.Errorf("orchestration: parallel_group node %q decode output for agent %q: %w", node.ID, agentName, err)
-				return
-			}
-			mu.Lock()
-			outputs[agentName] = value
-			mu.Unlock()
+			runMember(agentName, func() error {
+				return r.runAgentNode(ctx, scenario, child, runID)
+			}, func() (any, error) {
+				raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					return nil, fmt.Errorf("orchestration: parallel_group node %q missing output for agent %q", node.ID, agentName)
+				}
+				var value any
+				if err := json.Unmarshal(raw, &value); err != nil {
+					return nil, fmt.Errorf("orchestration: parallel_group node %q decode output for agent %q: %w", node.ID, agentName, err)
+				}
+				return value, nil
+			})
+		}(ref)
+	}
+	for _, ref := range spec.Tools {
+		wg.Add(1)
+		go func(toolName string) {
+			childID := node.ID + ".tool." + toolName
+			child := core.WorkflowNode{ID: childID, Kind: core.NodeTool, Ref: toolName}
+			runMember("tool:"+toolName, func() error {
+				return r.runToolNode(ctx, scenario, child, runID)
+			}, func() (any, error) {
+				raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					return nil, fmt.Errorf("orchestration: parallel_group node %q missing output for tool %q", node.ID, toolName)
+				}
+				var value any
+				if err := json.Unmarshal(raw, &value); err != nil {
+					return nil, fmt.Errorf("orchestration: parallel_group node %q decode output for tool %q: %w", node.ID, toolName, err)
+				}
+				return value, nil
+			})
 		}(ref)
 	}
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		return err
+		if err != nil {
+			return err
+		}
 	}
-	return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]any{"members": outputs})
+	result := map[string]any{"members": outputs}
+	if len(collected) > 0 {
+		result["errors"] = collected
+	}
+	return r.saveStepOutput(ctx, scenario, runID, node.ID, result)
 }
 
 func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
@@ -104,8 +164,20 @@ func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario
 	}
 	nodes := workflowNodesByID(scenario)
 	maxIterations := firstPositive(spec.MaxIterations, 3)
-	var lastErr error
+	actualIterations := 0
+	completed := true
 	for iteration := 1; iteration <= maxIterations; iteration++ {
+		if spec.Until != "" {
+			ok, err := r.conditionEnabled(ctx, runID, spec.Until)
+			if err != nil {
+				return err
+			}
+			if ok {
+				break
+			}
+		}
+		actualIterations = iteration
+		var lastErr error
 		for _, bodyID := range spec.Body {
 			bodyNode, ok := nodes[bodyID]
 			if !ok {
@@ -121,22 +193,13 @@ func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario
 			}
 		}
 		if lastErr != nil {
+			completed = false
 			return fmt.Errorf("orchestration: loop node %q failed on iteration %d: %w", node.ID, iteration, lastErr)
-		}
-		if spec.Until == "" {
-			break
-		}
-		ok, err := r.conditionEnabled(ctx, runID, spec.Until)
-		if err != nil {
-			return err
-		}
-		if ok {
-			break
 		}
 	}
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]any{
-		"iterations": maxIterations,
-		"completed":  true,
+		"iterations": actualIterations,
+		"completed":  completed,
 	})
 }
 

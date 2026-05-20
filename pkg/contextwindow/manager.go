@@ -39,16 +39,26 @@ type Result struct {
 }
 
 type Manager struct {
-	policy Policy
+	policy     Policy
+	summarizer Summarizer
 }
+
+type Summarizer func(messages []Message, budget int) string
 
 func New(policy Policy) *Manager {
 	normalized := policy.Normalize()
 	return &Manager{policy: normalized}
 }
 
+func NewWithSummarizer(policy Policy, summarizer Summarizer) *Manager {
+	manager := New(policy)
+	manager.summarizer = summarizer
+	return manager
+}
+
 func (m *Manager) Prepare(messages []Message) Result {
 	messages = cloneMessages(messages)
+	messages = applyRoleBudgets(messages, m.policy.RoleBudgets)
 	before := CountMessages(messages)
 	stats := Stats{
 		Strategy:       m.policy.Strategy,
@@ -77,7 +87,7 @@ func (m *Manager) Prepare(messages []Message) Result {
 		stats.AfterTokens = CountMessages(out)
 		return Result{Messages: out, Stats: stats}
 	case StrategySlidingWindowWithSummary:
-		summary, remaining, dropped := summarizeAndKeep(candidates, m.policy.MaxInputTokens-CountMessages(protected), m.policy.SummaryTokens)
+		summary, remaining, dropped := m.summarizeAndKeep(candidates, m.policy.MaxInputTokens-CountMessages(protected), m.policy.SummaryTokens)
 		out := cloneMessages(protected)
 		if summary.Content != "" {
 			out = append(out, summary)
@@ -154,7 +164,7 @@ func keepRecent(messages []Message, budget int) ([]Message, int) {
 	return out, len(messages) - len(out)
 }
 
-func summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, []Message, int) {
+func (m *Manager) summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, []Message, int) {
 	if budget <= 0 {
 		return Message{}, nil, len(messages)
 	}
@@ -165,6 +175,9 @@ func summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, [
 	remaining, dropped := keepRecent(messages, recentBudget)
 	droppedMessages := messages[:max(0, len(messages)-len(remaining))]
 	summaryText := buildSummary(droppedMessages, summaryBudget)
+	if m.summarizer != nil && (m.policy.SummaryMode == "llm" || m.policy.SummaryMode == "custom") {
+		summaryText = strings.TrimSpace(m.summarizer(droppedMessages, summaryBudget))
+	}
 	if summaryText == "" {
 		return Message{}, remaining, dropped
 	}
@@ -176,6 +189,47 @@ func summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, [
 		},
 	}
 	return summary, remaining, dropped
+}
+
+func applyRoleBudgets(messages []Message, budgets RoleBudgets) []Message {
+	if budgets == (RoleBudgets{}) {
+		return messages
+	}
+	usage := map[Role]int{}
+	out := make([]Message, 0, len(messages))
+	for _, msg := range messages {
+		limit := roleBudgetLimit(budgets, msg.Role)
+		if limit <= 0 {
+			out = append(out, msg)
+			continue
+		}
+		cost := EstimateTokens(msg.Content)
+		if usage[msg.Role]+cost > limit {
+			continue
+		}
+		usage[msg.Role] += cost
+		out = append(out, msg)
+	}
+	return out
+}
+
+func roleBudgetLimit(budgets RoleBudgets, role Role) int {
+	switch role {
+	case RoleSystem:
+		return budgets.System
+	case RoleUser:
+		return budgets.User
+	case RoleAssistant:
+		return budgets.Assistant
+	case RoleTool:
+		return budgets.Tool
+	default:
+		return 0
+	}
+}
+
+func summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, []Message, int) {
+	return New(Policy{}).summarizeAndKeep(messages, budget, summaryBudget)
 }
 
 func buildSummary(messages []Message, budget int) string {

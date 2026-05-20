@@ -251,6 +251,7 @@ func (e *Engine) shouldPauseBeforeFinal() bool {
 }
 
 func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {
+	payload = governance.RedactEventPayload(ctx, e.redactor, runID, typ, payload)
 	event := core.Event{
 		Type:         typ,
 		RunID:        runID,
