@@ -176,6 +176,65 @@ tools:
 
 Agent 通过标准自主工具循环使用它。这意味着检索与其他工具一样，会受到运行时审计、授权、审批、速率限制、超时、重试和脱敏能力覆盖。
 
+## YAML 知识集合绑定
+
+场景可以声明知识集合，由 `KnowledgeWiringOptions` 自动绑定 retriever 执行器：
+
+```yaml
+knowledge:
+  collections:
+    - name: docs
+      namespace: docs
+      tool: knowledge.retrieve
+      embed_profile: embed
+      search_mode: hybrid
+      tenant_scoped: true
+```
+
+```go
+scenario, _ := agentflow.LoadScenarioFile("examples/rag_knowledge.yaml")
+knowledgeOpts, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+  Embedder: provider,
+  Store:    store,
+  Reranker: agentflow.NewScoreReranker(),
+})
+fw, err := agentflow.NewFromFile(
+  "examples/rag_knowledge.yaml",
+  append(knowledgeOpts,
+    agentflow.WithLLMGateway(provider),
+  )...,
+)
+```
+
+`tenant_scoped: true` 会在运行时把 principal 的 `tenant_id` 前缀注入检索 namespace，实现租户隔离。
+
+## 内置 Reranker
+
+根包导出两个开箱即用的 reranker：
+
+- `NewScoreReranker()`：基于得分与词面重叠的重排。
+- `NewLLMReranker(gateway, profile)`：使用 LLM 对候选文档重排。
+
+PostgreSQL pgvector 适配器已实现 `HybridQuery`（向量 + FTS + RRF 融合）。
+
+## Agentic RAG 工作流节点
+
+固定工作流支持三个 RAG 相关节点：
+
+| 节点 | 作用 |
+|------|------|
+| `query_router` | 按关键词将请求路由到 `rag` / `direct` / `hitl` |
+| `rag_grade` | 评估检索结果相关性，必要时生成 `rewrite_query` |
+| `supervisor` | 并行调用多个 agent 并汇总输出 |
+
+示例场景：
+
+- `examples/corrective_rag.yaml` — 检索 → 评分 → 改写重检
+- `examples/self_rag.yaml` — 检索 → 评分 → agent 合成
+- `examples/adaptive_rag.yaml` — 路由 → 按需检索
+
+详见 [competitive-analysis.md](./competitive-analysis.md) 与 [orchestration-flow.md](./orchestration-flow.md)。
+
 ## 当前边界
 
 这一切片提供 Provider 能力辅助函数、OpenAI-compatible API 和 mock test 的 embedding 支持、文件/HTTP 文档加载、文本分块、批量索引、公共向量存储端口、pgvector 基线适配器、混合检索扩展端口、重排扩展端口，以及支持引用的检索工具。更专用的摄取连接器可以实现 `knowledge.Loader`，无需改变索引流水线。

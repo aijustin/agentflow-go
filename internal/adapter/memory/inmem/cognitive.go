@@ -1,4 +1,4 @@
-package memoryinmem
+package inmem
 
 import (
 	"context"

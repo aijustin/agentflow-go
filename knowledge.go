@@ -10,6 +10,7 @@ import (
 	vectorpostgres "github.com/aijustin/agentflow-go/internal/adapter/vector/postgres"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/knowledge"
+	rerankpkg "github.com/aijustin/agentflow-go/pkg/knowledge/rerank"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
 
@@ -99,6 +100,16 @@ func NewHTTPKnowledgeLoader(config HTTPKnowledgeLoaderConfig) (knowledge.Loader,
 		MaxBytes:  config.MaxBytes,
 		Client:    config.Client,
 	})
+}
+
+// NewScoreReranker creates a lexical score reranker for retrieval tools.
+func NewScoreReranker() knowledge.Reranker {
+	return rerankpkg.NewScoreReranker()
+}
+
+// NewLLMReranker creates an LLM reranker for retrieval tools.
+func NewLLMReranker(gateway llm.Gateway, profile string) knowledge.Reranker {
+	return rerankpkg.NewLLMReranker(gateway, profile)
 }
 
 // NewKnowledgeIndexer creates a document chunking, embedding, and vector upsert pipeline.

@@ -69,6 +69,12 @@
           },
           "description": "External event routes that map webhook payloads to runs."
         },
+        "knowledge": {
+          "$ref": "#/$defs/knowledge"
+        },
+        "mcp": {
+          "$ref": "#/$defs/mcp"
+        },
         "orchestration": {
           "$ref": "#/$defs/orchestration"
         },
@@ -204,6 +210,19 @@
         },
         "compression": {
           "$ref": "#/$defs/compressionPolicy"
+        },
+        "summary_mode": {
+          "type": "string",
+          "description": "Summary backend for sliding_window_with_summary. Use llm for model-generated summaries."
+        },
+        "tool_schema_pruning": {
+          "type": "boolean",
+          "description": "When true, expose only tools relevant to the active planning step."
+        },
+        "stale_tool_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Drop tool result messages older than this many assistant turns."
         }
       }
     },
@@ -481,6 +500,10 @@
         "execute": {
           "type": "boolean",
           "description": "When true, track plan step completion in run state during the tool loop."
+        },
+        "replan_on_failure": {
+          "type": "boolean",
+          "description": "When true, regenerate the plan after a failed tool step."
         }
       }
     },
@@ -511,6 +534,103 @@
         "default_prompt": {
           "type": "string",
           "description": "Fallback prompt when prompt_path is missing."
+        }
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "collections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/knowledgeCollection"
+          }
+        }
+      }
+    },
+    "knowledgeCollection": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string",
+          "description": "Scenario tool name bound to this collection. Defaults to knowledge.<name>."
+        },
+        "embed_profile": {
+          "type": "string"
+        },
+        "search_mode": {
+          "type": "string",
+          "enum": ["vector", "hybrid"]
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tenant_scoped": {
+          "type": "boolean"
+        }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "servers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mcpServer"
+          }
+        }
+      }
+    },
+    "mcpServer": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transport": {
+          "type": "string",
+          "enum": ["http", "stdio"]
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Command and args for stdio transport."
+        },
+        "url": {
+          "type": "string",
+          "description": "Endpoint for http transport."
+        },
+        "tool_prefix": {
+          "type": "string",
+          "description": "Optional prefix used to derive metadata.mcp_tool from scenario tool names."
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     },
@@ -559,7 +679,7 @@
         },
         "kind": {
           "type": "string",
-          "enum": ["agent", "tool", "skill", "human_gate", "transform", "parallel_group", "loop"]
+          "enum": ["agent", "tool", "skill", "human_gate", "transform", "parallel_group", "loop", "query_router", "rag_grade", "supervisor"]
         },
         "ref": {
           "type": "string",

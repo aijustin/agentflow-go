@@ -316,9 +316,15 @@ func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.A
 }
 
 func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int) (string, error) {
+	if hint := e.planningToolHint(ctx, runID); hint != "" {
+		messages = appendPlanningHint(messages, hint)
+	}
 	for step := 0; step < maxSteps; step++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
+		}
+		if profile.Context.StaleToolTurns > 0 {
+			messages = evictStaleToolMessages(messages, profile.Context.StaleToolTurns)
 		}
 		prepared, stats := e.prepareMessages(messages, profile)
 		e.emitJSON(ctx, core.EventContextPrepared, runID, stats)
@@ -372,6 +378,15 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 			if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
 				_ = e.markPlanStepDone(ctx, runID, toolCall.Name)
 			}
+		}
+	}
+	if !e.planningComplete(ctx, runID) {
+		replanned, err := e.maybeReplan(ctx, runID, agent, profile, RunRequest{RunID: runID, Agent: agent.Name, Prompt: req.Messages[len(req.Messages)-1].Content}, messages)
+		if err != nil {
+			return "", err
+		}
+		if len(replanned) > len(messages) {
+			return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts, maxSteps)
 		}
 	}
 	return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", maxSteps)

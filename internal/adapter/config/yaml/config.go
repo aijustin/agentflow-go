@@ -22,6 +22,8 @@ type Scenario struct {
 	Description   string                `yaml:"description"`
 	LLMs          map[string]LLMProfile `yaml:"llms"`
 	Memories      map[string]Memory     `yaml:"memories"`
+	Knowledge     Knowledge             `yaml:"knowledge"`
+	MCP           MCP                   `yaml:"mcp"`
 	Tools         map[string]Tool       `yaml:"tools"`
 	Skills        map[string]Skill      `yaml:"skills"`
 	Agents        map[string]Agent      `yaml:"agents"`
@@ -125,10 +127,39 @@ type Orchestration struct {
 }
 
 type PlanningPolicy struct {
-	Enabled  bool   `yaml:"enabled"`
-	Agent    string `yaml:"agent"`
-	MaxSteps int    `yaml:"max_steps"`
-	Execute  bool   `yaml:"execute"`
+	Enabled         bool   `yaml:"enabled"`
+	Agent           string `yaml:"agent"`
+	MaxSteps        int    `yaml:"max_steps"`
+	Execute         bool   `yaml:"execute"`
+	ReplanOnFailure bool   `yaml:"replan_on_failure"`
+}
+
+type Knowledge struct {
+	Collections []KnowledgeCollection `yaml:"collections"`
+}
+
+type KnowledgeCollection struct {
+	Name         string   `yaml:"name"`
+	Description  string   `yaml:"description"`
+	Namespace    string   `yaml:"namespace"`
+	Tool         string   `yaml:"tool"`
+	EmbedProfile string   `yaml:"embed_profile"`
+	SearchMode   string   `yaml:"search_mode"`
+	Agents       []string `yaml:"agents"`
+	TenantScoped bool     `yaml:"tenant_scoped"`
+}
+
+type MCP struct {
+	Servers []MCPServer `yaml:"servers"`
+}
+
+type MCPServer struct {
+	Name       string            `yaml:"name"`
+	Transport  string            `yaml:"transport"`
+	Command    []string          `yaml:"command"`
+	URL        string            `yaml:"url"`
+	ToolPrefix string            `yaml:"tool_prefix"`
+	Metadata   map[string]string `yaml:"metadata"`
 }
 
 type Trigger struct {
@@ -219,10 +250,11 @@ func (d Document) ToCore() (core.Scenario, error) {
 				Checkpoints: d.Scenario.Orchestration.HumanInLoop.Checkpoints,
 			},
 			Planning: core.PlanningPolicy{
-				Enabled:  d.Scenario.Orchestration.Planning.Enabled,
-				Agent:    d.Scenario.Orchestration.Planning.Agent,
-				MaxSteps: d.Scenario.Orchestration.Planning.MaxSteps,
-				Execute:  d.Scenario.Orchestration.Planning.Execute,
+				Enabled:         d.Scenario.Orchestration.Planning.Enabled,
+				Agent:           d.Scenario.Orchestration.Planning.Agent,
+				MaxSteps:        d.Scenario.Orchestration.Planning.MaxSteps,
+				Execute:         d.Scenario.Orchestration.Planning.Execute,
+				ReplanOnFailure: d.Scenario.Orchestration.Planning.ReplanOnFailure,
 			},
 		},
 		Runtime: core.RuntimePolicy{
@@ -260,6 +292,28 @@ func (d Document) ToCore() (core.Scenario, error) {
 			Namespace: mem.Namespace,
 			Metadata:  mem.Metadata,
 		}
+	}
+	for _, collection := range d.Scenario.Knowledge.Collections {
+		s.Knowledge.Collections = append(s.Knowledge.Collections, core.KnowledgeCollection{
+			Name:         collection.Name,
+			Description:  collection.Description,
+			Namespace:    collection.Namespace,
+			Tool:         collection.Tool,
+			EmbedProfile: collection.EmbedProfile,
+			SearchMode:   collection.SearchMode,
+			Agents:       collection.Agents,
+			TenantScoped: collection.TenantScoped,
+		})
+	}
+	for _, server := range d.Scenario.MCP.Servers {
+		s.MCP.Servers = append(s.MCP.Servers, core.MCPServer{
+			Name:       server.Name,
+			Transport:  server.Transport,
+			Command:    server.Command,
+			URL:        server.URL,
+			ToolPrefix: server.ToolPrefix,
+			Metadata:   server.Metadata,
+		})
 	}
 	for name, tool := range d.Scenario.Tools {
 		inputSchema, err := marshalRaw(tool.InputSchema)

@@ -42,6 +42,9 @@ var (
 		string(core.NodeTransform),
 		string(core.NodeParallelGroup),
 		string(core.NodeLoop),
+		string(core.NodeQueryRouter),
+		string(core.NodeRAGGrade),
+		string(core.NodeSupervisor),
 	}
 	supportedLLMCapabilities = []string{
 		llm.CapChat.String(),

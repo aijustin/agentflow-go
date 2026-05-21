@@ -12,8 +12,8 @@ import (
 
 	auditfile "github.com/aijustin/agentflow-go/internal/adapter/audit/file"
 	"github.com/aijustin/agentflow-go/internal/adapter/auth/apikey"
-	"github.com/aijustin/agentflow-go/pkg/core"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/security"
 

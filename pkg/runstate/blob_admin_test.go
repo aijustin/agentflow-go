@@ -6,13 +6,13 @@ import (
 )
 
 type blobAdminStub struct {
-	list   []BlobRef
+	list    []BlobRef
 	deleted []string
 }
 
 func (s *blobAdminStub) Put(context.Context, []byte) (BlobRef, error) { return BlobRef{}, nil }
 func (s *blobAdminStub) Get(context.Context, BlobRef) ([]byte, error) { return nil, ErrNotFound }
-func (s *blobAdminStub) List(context.Context) ([]BlobRef, error)     { return s.list, nil }
+func (s *blobAdminStub) List(context.Context) ([]BlobRef, error)      { return s.list, nil }
 func (s *blobAdminStub) Delete(_ context.Context, ref BlobRef) error {
 	s.deleted = append(s.deleted, ref.ID)
 	return nil

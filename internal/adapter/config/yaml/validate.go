@@ -238,6 +238,13 @@ func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
 		return validateParallelGroupNode(node, s)
 	case core.NodeLoop:
 		return validateLoopNode(node, s)
+	case core.NodeQueryRouter, core.NodeRAGGrade:
+		return nil
+	case core.NodeSupervisor:
+		if node.Ref == "" && len(node.Input) == 0 {
+			return fmt.Errorf("config: workflow node %q supervisor requires ref or input.refs", node.ID)
+		}
+		return nil
 	}
 	return nil
 }

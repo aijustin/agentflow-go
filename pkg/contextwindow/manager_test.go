@@ -80,10 +80,10 @@ func TestManagerCompressionTriggerRatio(t *testing.T) {
 		{Role: RoleUser, Content: "question"},
 	}
 	result := New(Policy{
-		Strategy:            StrategySlidingWindow,
-		MaxInputTokens:      100,
+		Strategy:               StrategySlidingWindow,
+		MaxInputTokens:         100,
 		SystemPromptProtection: true,
-		ToolResultMaxTokens: 20,
+		ToolResultMaxTokens:    20,
 		Compression: CompressionPolicy{
 			Enabled:      true,
 			TriggerRatio: 0.5,

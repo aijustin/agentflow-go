@@ -6,9 +6,9 @@ import (
 	"time"
 
 	toolfilesystem "github.com/aijustin/agentflow-go/internal/adapter/tool/filesystem"
+	toolgit "github.com/aijustin/agentflow-go/internal/adapter/tool/git"
 	toolhttp "github.com/aijustin/agentflow-go/internal/adapter/tool/http"
 	toolsql "github.com/aijustin/agentflow-go/internal/adapter/tool/sqlquery"
-	toolgit "github.com/aijustin/agentflow-go/internal/adapter/tool/git"
 	toolticketadapter "github.com/aijustin/agentflow-go/internal/adapter/tool/ticket"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/toolticket"

@@ -1,0 +1,88 @@
+scenario:
+  name: corrective-rag
+  description: Corrective RAG workflow that grades retrieval quality and rewrites the query when evidence is weak.
+  llms:
+    chat:
+      provider: mock
+      model: test-chat
+      capabilities: [chat, tool_call]
+    embed:
+      provider: mock
+      model: test-embed
+      capabilities: [embed]
+  knowledge:
+    collections:
+      - name: docs
+        namespace: docs
+        tool: knowledge.retrieve
+        embed_profile: embed
+        search_mode: hybrid
+  tools:
+    knowledge.retrieve:
+      type: knowledge.retriever
+      description: Retrieve relevant documents from the knowledge store.
+      approval: never
+      side_effect: read
+      input_schema:
+        type: object
+        required: [query]
+        properties:
+          query:
+            type: string
+          namespace:
+            type: string
+          limit:
+            type: integer
+  agents:
+    assistant:
+      llm: chat
+      tools: [knowledge.retrieve]
+      instructions: "Answer using retrieved evidence. If grade.relevant is false, call knowledge.retrieve again with grade.rewrite_query."
+  orchestration:
+    mode: fixed_workflow
+    workflow:
+      nodes:
+        - id: route
+          kind: query_router
+          input:
+            query: "{{prompt}}"
+        - id: retrieve
+          kind: tool
+          ref: knowledge.retrieve
+          depends_on: [route]
+          condition: 'eq(steps.route.output.route, "rag")'
+          input:
+            query: "{{prompt}}"
+            namespace: docs
+            limit: 5
+        - id: grade
+          kind: rag_grade
+          depends_on: [retrieve]
+          input:
+            query: "{{prompt}}"
+            min_score: 0.35
+            results: steps.retrieve.output
+        - id: rewrite
+          kind: tool
+          ref: knowledge.retrieve
+          depends_on: [grade]
+          condition: 'eq(steps.grade.output.relevant, false)'
+          input:
+            query_from: steps.grade.output.rewrite_query
+            namespace: docs
+            limit: 5
+        - id: answer
+          kind: agent
+          ref: assistant
+          depends_on: [grade, rewrite]
+      edges:
+        - from: route
+          to: retrieve
+        - from: retrieve
+          to: grade
+        - from: grade
+          to: rewrite
+        - from: rewrite
+          to: answer
+        - from: grade
+          to: answer

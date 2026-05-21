@@ -5,12 +5,21 @@ scenario:
       provider: mock
       model: test
       capabilities: [chat, tool_call]
+  mcp:
+    servers:
+      - name: docs
+        transport: http
+        url: http://127.0.0.1:3333/mcp
+        tool_prefix: docs
   tools:
     docs.search:
       type: mcp.tool
       description: Search documentation through an MCP server registered by the host application.
       approval: never
       side_effect: read
+      metadata:
+        mcp_server: docs
+        mcp_tool: search
       input_schema:
         type: object
         required: [query]

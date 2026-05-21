@@ -1,0 +1,70 @@
+scenario:
+  name: self-rag
+  description: Self-RAG workflow that grades retrieval before the agent synthesizes an answer with explicit relevance feedback.
+  llms:
+    chat:
+      provider: mock
+      model: test-chat
+      capabilities: [chat, tool_call]
+      context:
+        strategy: sliding_window_with_summary
+        summary_mode: llm
+        stale_tool_turns: 2
+        tool_schema_pruning: true
+    embed:
+      provider: mock
+      model: test-embed
+      capabilities: [embed]
+  knowledge:
+    collections:
+      - name: docs
+        namespace: docs
+        tool: knowledge.retrieve
+        embed_profile: embed
+  tools:
+    knowledge.retrieve:
+      type: knowledge.retriever
+      description: Retrieve relevant documents from the knowledge store.
+      approval: never
+      side_effect: read
+      input_schema:
+        type: object
+        required: [query]
+        properties:
+          query:
+            type: string
+          namespace:
+            type: string
+          limit:
+            type: integer
+  agents:
+    assistant:
+      llm: chat
+      tools: [knowledge.retrieve]
+      instructions: "Use grade output to decide whether retrieved evidence is sufficient before answering."
+  orchestration:
+    mode: fixed_workflow
+    workflow:
+      nodes:
+        - id: retrieve
+          kind: tool
+          ref: knowledge.retrieve
+          input:
+            query: "{{prompt}}"
+            namespace: docs
+            limit: 5
+        - id: grade
+          kind: rag_grade
+          depends_on: [retrieve]
+          input:
+            query: "{{prompt}}"
+            results: steps.retrieve.output
+        - id: answer
+          kind: agent
+          ref: assistant
+          depends_on: [grade]
+      edges:
+        - from: retrieve
+          to: grade
+        - from: grade
+          to: answer

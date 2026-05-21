@@ -264,6 +264,12 @@ func (r *WorkflowRunner) runNode(ctx context.Context, scenario core.Scenario, no
 		return r.runParallelGroupNode(ctx, scenario, node, runID)
 	case core.NodeLoop:
 		return r.runLoopNode(ctx, scenario, node, runID)
+	case core.NodeQueryRouter:
+		return r.runQueryRouterNode(ctx, scenario, node, runID)
+	case core.NodeRAGGrade:
+		return r.runRAGGradeNode(ctx, scenario, node, runID)
+	case core.NodeSupervisor:
+		return r.runSupervisorNode(ctx, scenario, node, runID)
 	case core.NodeSkill:
 		return fmt.Errorf("orchestration: skill node %q requires skill workflow expansion before runtime", node.ID)
 	default:

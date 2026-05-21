@@ -106,7 +106,7 @@ func (e *Engine) prepareRawMessages(raw []contextwindow.Message, profile core.LL
 	if policy.ReservedOutputTokens == 0 {
 		policy.ReservedOutputTokens = profile.MaxOutputTokens
 	}
-	result := contextwindow.New(policy).Prepare(raw)
+	result := e.contextManager(policy).Prepare(raw)
 	messages := make([]llm.Message, 0, len(result.Messages))
 	for _, msg := range result.Messages {
 		messages = append(messages, llm.Message{
@@ -122,6 +122,7 @@ func (e *Engine) prepareRawMessages(raw []contextwindow.Message, profile core.LL
 
 func (e *Engine) toolSpecs(agent core.Agent) []llm.ToolSpec {
 	specs := make([]llm.ToolSpec, 0, len(agent.Tools)+len(agent.SubAgents))
+	allowed := planAllowedTools(e, agent)
 	for _, name := range agent.Tools {
 		tool, ok := e.scenario.Tools[name]
 		if !ok {
@@ -133,6 +134,7 @@ func (e *Engine) toolSpecs(agent core.Agent) []llm.ToolSpec {
 			Schema:      tool.InputSchema,
 		})
 	}
+	specs = pruneToolSpecs(specs, allowed)
 	for _, name := range agent.SubAgents {
 		sub, ok := e.scenario.Agents[name]
 		if !ok {
