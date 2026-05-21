@@ -125,8 +125,8 @@
 - 工具包格式、schema 校验和副作用元数据。
 - 内部 skill/tool catalog 的注册表接口；根门面已提供 `WithToolResolver`，用于在工具调用通过 allowlist、审批、RBAC 和治理策略后按需绑定重型或租户隔离 executor。
 - HTTP、SQL、Git、文件系统、工单、ChatOps 的内置企业工具。初始受约束 HTTP、文件系统读取和 SQL 查询工具执行器已实现。
-- Docker Compose 本地企业栈。初始 PostgreSQL+pgvector、Redis、MinIO 和 `agent-http` 栈已在 `deploy/enterprise` 下实现。
-- Helm chart 和 Kubernetes manifests。`agent-http` 的初始 Kustomize base 已在 `deploy/kubernetes/base` 下实现。
+- PostgreSQL 迁移 SQL 位于 `migrations/postgres/`，由宿主应用自行部署数据库与进程拓扑。
+- 可运行集成示例位于 `examples/go/`（minimal、postgres、http-worker、hitl-resume、event-trigger）。
 - 审批、代码评审、工单处理、RAG 问答和多 Agent 工作流示例场景。
 - v0 API 稳定性策略和迁移指南。已在 `docs/api-stability.md` 中实现，发布验证指南位于 `docs/release-checklist.md`。
 

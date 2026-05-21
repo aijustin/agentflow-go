@@ -125,7 +125,7 @@ eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventS
 })
 ```
 
-For production environments where DDL must be reviewed, run outside application startup, or coordinated for large existing tables, apply [deploy/migrations/postgres/0001_agentflow_core.up.sql](../deploy/migrations/postgres/0001_agentflow_core.up.sql) and then disable automatic schema setup:
+For production environments where DDL must be reviewed, run outside application startup, or coordinated for large existing tables, apply [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/0001_agentflow_core.up.sql) and then disable automatic schema setup:
 
 ```go
 eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{

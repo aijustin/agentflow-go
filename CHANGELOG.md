@@ -6,11 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Library-only positioning:** removed `cmd/agentctl`, `cmd/agent-http`, `cmd/agent-server`, `cmd/agent-worker`, debug UI, and `deploy/` templates. Integrate via `go get` and `examples/go/*`.
+- Moved test/example wiring to `pkg/testutil` (`WiringOptions`). Removed `DemoOptions`, `DevelopmentOptions`, and env-based `NewProduction*` helpers from the root package.
+- PostgreSQL migrations live under `migrations/postgres/` (was `deploy/migrations/postgres/`).
+- Release workflow runs `make release-check` only (no binary artifacts).
+
 ### Added
 
-- `DemoOptions` for batteries-included CLI and server wiring (mock LLM fallback, echo/git/ticket/repo_search tools).
-- Production binaries `agent-server` (HTTP API) and `agent-worker` (async job consumer).
-- `agentctl run` now uses `Framework.Run` for all orchestration modes.
+- `examples/go/validate` for scenario YAML wiring checks in CI and local dev.
+- `NewMockLLMGateway` remains on the root package; demo tool wiring is in `pkg/testutil`.
 - Workflow dynamic edge condition routing at runtime (`edges[].condition`).
 - Workflow node input templates: `copy_from` and `prompt_from` in node `input`.
 - `runstate.HydrateStepContext` for hybrid Phase 2 workflow context hydration.
@@ -26,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Event routing via `scenario.triggers`, `Framework.HandleEvent`, `NewWebhookHTTPHandler`, and `agentctl trigger`.
 - Production HTTP handler sync routes `POST /v1/events` and `POST /v1/hitl/resume` when `Framework` is configured.
 - Async job types `event` and `resume.continue` with HTTP enqueue routes `POST /v1/jobs/events` and `POST /v1/jobs/hitl/resume`.
-- `NewFrameworkJobHandler` composite worker handler (`NewFrameworkRunJobHandler` alias).
+- `NewFrameworkJobHandler` composite worker handler.
 - `agentctl resume --continue` and HTTP HITL `continue: true` for `ResumeAndContinue`.
 - Example scenarios: `ticket_handling.yaml`, `code_review_pipeline.yaml`, `multi_expert_research.yaml`.
 

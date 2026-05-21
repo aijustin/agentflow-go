@@ -40,18 +40,18 @@ func (NoopTool) Execute(context.Context, core.ToolCall) (core.ToolResult, error)
 	return core.ToolResult{}, nil
 }
 
-// NewTestFramework builds a Framework with development wiring for a scenario file.
+// NewTestFramework builds a Framework with test wiring for a scenario file.
 func NewTestFramework(t *testing.T, scenarioFile string, extra ...agentflow.Option) *agentflow.Framework {
 	t.Helper()
 	scenario, err := agentflow.LoadScenarioFile(scenarioFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	workDir, err := agentflow.DemoWorkDir(scenarioFile)
+	workDir, err := ScenarioWorkDir(scenarioFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts, err := agentflow.DevelopmentOptions(scenario, agentflow.DevelopmentConfig{WorkDir: workDir})
+	opts, err := WiringOptions(scenario, WiringConfig{WorkDir: workDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +60,5 @@ func NewTestFramework(t *testing.T, scenarioFile string, extra ...agentflow.Opti
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = fw.Close(context.Background()) })
 	return fw
 }

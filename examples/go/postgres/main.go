@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/testutil"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -18,12 +20,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	workDir, err := agentflow.DemoWorkDir(scenarioFile)
+	workDir, err := testutil.ScenarioWorkDir(scenarioFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	opts, err := agentflow.DevelopmentOptions(scenario, agentflow.DevelopmentConfig{WorkDir: workDir})
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -49,11 +51,15 @@ func main() {
 			log.Fatal(err)
 		}
 		defer os.RemoveAll(stateDir)
-		fileOpts, err := agentflow.ProductionOptions(agentflow.ProductionConfig{StateDir: stateDir}, scenario, workDir)
+		repo, err := agentflow.NewFileRunStateRepository(filepath.Join(stateDir, "runs"))
 		if err != nil {
 			log.Fatal(err)
 		}
-		opts = append(opts, fileOpts...)
+		blobs, err := agentflow.NewFileBlobStore(filepath.Join(stateDir, "blobs"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		opts = append(opts, agentflow.WithRunStateRepository(repo), agentflow.WithBlobStore(blobs))
 		fmt.Println("AGENT_POSTGRES_DSN not set; using file-backed run-state in", stateDir)
 	}
 

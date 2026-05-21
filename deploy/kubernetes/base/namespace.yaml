@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: agentflow
-  labels:
-    app.kubernetes.io/name: agentflow-go

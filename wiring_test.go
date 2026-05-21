@@ -5,6 +5,7 @@ import (
 
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 
 func TestValidateWiringRequiresToolExecutor(t *testing.T) {
@@ -25,12 +26,12 @@ func TestValidateWiringRequiresToolExecutor(t *testing.T) {
 	}
 }
 
-func TestValidateWiringDevelopmentOptions(t *testing.T) {
+func TestValidateWiringTestOptions(t *testing.T) {
 	scenario, err := agentflow.LoadScenarioFile("examples/autonomous.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts, err := agentflow.DevelopmentOptions(scenario, agentflow.DevelopmentConfig{WorkDir: "examples"})
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: "examples"})
 	if err != nil {
 		t.Fatal(err)
 	}

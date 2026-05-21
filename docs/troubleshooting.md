@@ -7,31 +7,17 @@
 ## 推荐调试顺序
 
 ```bash
-# 1. YAML 结构与引用
-go run ./cmd/agentctl validate -f examples/autonomous.yaml
+# 1. YAML 结构与引用 + testutil 接线
+go run ./examples/go/validate examples/autonomous.yaml
 
-# 2. 工具/内存/HITL 是否能在 agentctl run 下跑通（强烈推荐）
-go run ./cmd/agentctl validate -f examples/autonomous.yaml --wiring
+# 2. 最小 in-process 运行
+go run ./examples/go/minimal/main.go
 
-# 3. Mock 运行，stdout 看结果
-go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json
-
-# 4. 看逐步 runtime 事件（stderr）
-go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --verbose
-
-# 5. 浏览器 Debug 台（step 输出、事件、HITL token）
-go run ./cmd/agent-http
-# 打开 http://127.0.0.1:18080
+# 3. HTTP + 异步 Worker（库 Handler 挂到自有 Server）
+go run ./examples/go/http-worker/main.go
 ```
 
-**`validate` 与 `validate --wiring` 的区别**
-
-| 命令 | 检查内容 |
-|------|----------|
-| `validate` | YAML 语法、必填字段、agent/tool/llm 引用、workflow DAG |
-| `validate --wiring` | 上述全部 + **与 `agentctl run` 相同的 demo 装配** 是否覆盖每个 tool executor、memory、HITL secret |
-
-库集成时请在 `agentflow.New()` 前调用 `agentflow.ValidateWiring(scenario, opts...)`，等价于生产环境的 `--wiring` 深度检查。
+`examples/go/validate` 在加载 YAML 后调用 `ValidateWiring`（含 `testutil.WiringOptions`）。库集成时请在 `agentflow.New()` 前用相同的 `opts` 调用 `ValidateWiring`。
 
 ---
 
@@ -49,7 +35,7 @@ go run ./cmd/agent-http
 | `orchestration.mode "x" is unsupported` | mode 拼写错误 | 使用 `autonomous` / `fixed_workflow` / `hybrid` |
 | `workflow node "x" kind "y" is unsupported` | 节点 kind 无效 | 见 [configuration-reference — 编排](./configuration-reference.md#编排) |
 
-**处理**：先 `agentctl validate -f your.yaml`，按前缀 `config:` 定位字段。
+**处理**：先 `go run ./examples/go/validate your.yaml`，按前缀 `config:` 定位字段。
 
 ---
 
@@ -60,14 +46,14 @@ go run ./cmd/agent-http
 **常见原因**
 
 1. 只跑了 `validate`，没有 `--wiring`，直到 `run` 才发现。
-2. 工具类型不是 demo 内置的（如 `builtin.http`、`knowledge.retriever`、`mcp.tool`），`agentctl run` 不会自动注册。
+2. 工具类型不是 testutil 内置的（如 `builtin.http`、`knowledge.retriever`、`mcp.tool`），需显式 `WithToolExecutor`。
 3. 库集成时忘记 `WithToolExecutor` / `KnowledgeWiringOptions` / `WireMCPTools`。
 
 **修复**
 
 ```bash
 # 提前发现
-go run ./cmd/agentctl validate -f scenario.yaml --wiring
+go run ./examples/go/validate scenario.yaml
 ```
 
 ```go
@@ -99,7 +85,7 @@ err := agentflow.ValidateWiring(scenario, agentflow.WithToolExecutor("http.statu
 
 **修复**
 
-- CLI：`agentctl run` 默认带 `--token-secret dev-secret`；`validate --wiring` 同样默认。
+- 示例：`examples/go/hitl-resume` 使用 `dev-secret`；生产请使用强密钥。
 - 库：`WithHITLTokenSecret([]byte("secret"), tokenWriter)` 或 `WithHumanGate(gate)`。
 
 ---
@@ -122,19 +108,15 @@ err := agentflow.ValidateWiring(scenario, agentflow.WithToolExecutor("http.statu
 
 | 原因 | 修复 |
 |------|------|
-| `run` 与 `resume` 的 `--token-secret` 不一致 | 两边使用相同 secret |
-| 未使用 `--state-dir`，run 在内存中，resume 找不到 snapshot | 两者都加 `--state-dir ./data` |
-| token 过期 | 调大 `--token-ttl` 或尽快 resume |
-| 复制 token 不完整 | 使用 `--json` 从 JSON 字段读取 `token` |
+| Run 与 resume 使用的 HITL secret 不一致 | 同一 `WithHITLTokenSecret` 字节序列 |
+| 未持久化 RunState，resume 找不到 snapshot | `WithRunStateRepository` 使用 file/postgres/redis |
+| token 过期 | 调大 `WithHITLTokenTTL` 或尽快 resume |
+| 复制 token 不完整 | HITL token 由 `WithHITLTokenSecret` 的 writer 输出 |
 
-**完整 HITL 续跑**
+**完整 HITL 续跑示例**
 
 ```bash
-go run ./cmd/agentctl run -f examples/human_in_loop.yaml \
-  --prompt "draft" --state-dir ./data --json
-
-go run ./cmd/agentctl resume -f examples/human_in_loop.yaml --continue \
-  --token "$TOKEN" --decision approve --state-dir ./data --json
+go run ./examples/go/hitl-resume/main.go
 ```
 
 ---
@@ -143,7 +125,7 @@ go run ./cmd/agentctl resume -f examples/human_in_loop.yaml --continue \
 
 **含义**：请求的 `run_id` 在 RunState 仓库中不存在。
 
-**修复**：确认 `--run-id` 一致；CLI 跨命令使用相同 `--state-dir`；Debug UI 重启后内存 run 会丢失。
+**修复**：确认 `run_id` 一致；使用持久化 `RunStateRepository`；进程重启后内存 run 会丢失。
 
 ---
 
@@ -159,7 +141,7 @@ go run ./cmd/agentctl resume -f examples/human_in_loop.yaml --continue \
 
 **含义**：HTTP/API 请求未带有效身份或未通过 RBAC。
 
-**修复**：检查 API key、JWT、租户 header；Debug 控制台默认 loopback + dev secret。生产见 [security-auth-tenancy.md](./security-auth-tenancy.md)。
+**修复**：检查 API key、JWT、租户 header。生产见 [security-auth-tenancy.md](./security-auth-tenancy.md)。
 
 ---
 
@@ -179,7 +161,7 @@ go run ./cmd/agentctl resume -f examples/human_in_loop.yaml --continue \
 
 1. 用 `--verbose` 看 `StepStarted` / `StepCompleted` 事件。
 2. 路径以 `steps.<node_id>` 开头；tool 输出多在 `steps.<id>.output.*`。
-3. 用 Debug UI 查看 `step_outputs`。
+3. 从 RunState 加载 snapshot 查看 `step_outputs`。
 4. 表达式支持：`eq` / `ne` / `exists` / `missing` / `true` / `false`。
 
 ---
@@ -209,22 +191,14 @@ YAML 中 `knowledge.collections[].tenant_scoped: true` 会在运行时注入 `te
 
 ---
 
-## CLI 调试开关
+## 库集成调试建议
 
-| 开关 | 作用 |
+| 做法 | 作用 |
 |------|------|
-| `validate --wiring` | 模拟 `agentctl run` 的 demo 装配，提前发现缺 executor |
-| `run --verbose` | 将 runtime 事件（含 payload）打到 **stderr**，不污染 stdout/`--json` |
-| `run --json` | 机器可读结果；HITL token 在 JSON 的 `token` 字段 |
-| `run --state-dir` | 持久化 run / blob，支持跨进程 resume |
-| `agent-http` | 浏览器查看 runs、events、step outputs |
-
-**`--verbose` 事件示例（stderr）**
-
-```
-level=INFO msg="agentflow runtime event" event_type=RunStarted run_id=... scenario_name=...
-level=INFO msg="agentflow runtime event" event_type=ToolCalled run_id=... payload=...
-```
+| `ValidateWiring` + `testutil.WiringOptions` | 启动前发现缺 executor / HITL 配置 |
+| `WithEventSink(NewSlogEventSink(logger))` | 将 runtime 事件打到结构化日志 |
+| `WithRunStateRepository`（file/postgres） | 持久化 run，支持跨请求 resume |
+| `NewObservabilityHTTPHandler` | 查询 runs、events、step outputs（需自建路由与认证） |
 
 ---
 
@@ -253,8 +227,7 @@ level=INFO msg="agentflow runtime event" event_type=ToolCalled run_id=... payloa
 
 ## 相关文档
 
-- [library-integration.md](./library-integration.md) — ValidateWiring、DevelopmentOptions
+- [library-integration.md](./library-integration.md) — ValidateWiring、testutil.WiringOptions
 - [orchestration-flow.md](./orchestration-flow.md) — 执行链路与 HITL
 - [configuration-reference.md](./configuration-reference.md) — YAML 字段
 - [async-runtime.md](./async-runtime.md) — 异步 job 与 resume.continue
-- [manual.html](./manual.html) — 可视化手册

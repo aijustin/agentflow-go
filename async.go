@@ -68,11 +68,6 @@ func NewFrameworkJobHandler(config FrameworkRunJobHandlerConfig) (asyncpkg.Handl
 	return &frameworkJobHandler{framework: config.Framework}, nil
 }
 
-// NewFrameworkRunJobHandler is an alias for NewFrameworkJobHandler.
-func NewFrameworkRunJobHandler(config FrameworkRunJobHandlerConfig) (asyncpkg.Handler, error) {
-	return NewFrameworkJobHandler(config)
-}
-
 func (handler *frameworkJobHandler) HandleJob(ctx context.Context, job asyncpkg.Job) error {
 	switch job.Type {
 	case asyncpkg.RunJobType:

@@ -2,14 +2,14 @@
 
 This guide helps teams embed `github.com/aijustin/agentflow-go` as a Go library.
 
-For API stability rules see [api-stability.md](./api-stability.md).
+For API stability rules see [api-stability.md](./api-stability.md). For a browser-friendly guide see [manual.html](./manual.html).
 
 ## Choose an integration path
 
 ```text
 Need synchronous in-process runs?
   └─ yes → Minimal embed (New + Run)
-  └─ no  → HTTP API + async worker
+  └─ no  → HTTP handler + async worker in your service
 
 Need durable run state?
   └─ yes → Postgres / Redis / file repositories
@@ -28,37 +28,36 @@ Need multi-tenant isolation?
 
 ```go
 scenario, _ := agentflow.LoadScenarioFile("scenario.yaml")
-workDir, _ := agentflow.DemoWorkDir("scenario.yaml")
-opts, _ := agentflow.DevelopmentOptions(scenario, agentflow.DevelopmentConfig{WorkDir: workDir})
+workDir, _ := testutil.ScenarioWorkDir("scenario.yaml")
+opts, _ := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
 if err := agentflow.ValidateWiring(scenario, opts...); err != nil { /* fail fast */ }
 fw, _ := agentflow.New(scenario, opts...)
 defer fw.Close(context.Background())
 result, _ := fw.Run(ctx, agentflow.RunRequest{RunID: "run-1", Agent: "assistant", Prompt: "hello"})
 ```
 
+`testutil.WiringOptions` is for examples and tests only. Production embedders must register real LLM gateways and tool executors with `WithLLMGateway` and `WithToolExecutor` / `WithToolResolver`.
+
 Runnable example: [examples/go/minimal/main.go](../examples/go/minimal/main.go)
 
-## Production-style wiring
+## Production-style wiring in your service
 
-Use the public production helpers instead of copying `internal/cmd/agentruntime`:
-
-```go
-cfg, _ := agentflow.LoadProductionConfigFromEnv()
-fw, _ := agentflow.NewProduction(cfg, os.Stderr)
-defer fw.Close(context.Background())
-queue, _ := agentflow.NewProductionQueue(cfg, &db)
-handler, _ := agentflow.BuildProductionHTTPHandler(cfg, fw, queue)
-worker, _ := agentflow.NewProductionWorker(cfg, queue, fw)
-```
-
-When opening Postgres yourself, register cleanup:
+Wire explicitly in your `main` or DI layer:
 
 ```go
-db, _ := sql.Open("pgx", dsn)
+scenario, _ := agentflow.LoadScenarioFile(path)
 fw, _ := agentflow.New(scenario,
-    agentflow.WithRunStateRepository(repo),
-    agentflow.WithDatabase(db),
+  agentflow.WithLLMGateway(yourGateway),
+  agentflow.WithRunStateRepository(repo),
+  agentflow.WithToolExecutor("my.tool", executor),
+  agentflow.WithHITLTokenSecret(secret, os.Stderr),
 )
+queue, _ := agentflow.NewPostgresJobQueue(db) // or NewInMemoryJobQueue()
+handler, _ := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+  Queue: queue, Policy: policy, Framework: fw,
+})
+jobHandler, _ := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+worker, _ := async.NewWorker(queue, jobHandler, async.WorkerConfig{WorkerID: "w1"})
 ```
 
 Runnable examples:
@@ -66,16 +65,19 @@ Runnable examples:
 - [examples/go/postgres/main.go](../examples/go/postgres/main.go)
 - [examples/go/http-worker/main.go](../examples/go/http-worker/main.go)
 - [examples/go/hitl-resume/main.go](../examples/go/hitl-resume/main.go)
+- [examples/go/event-trigger/main.go](../examples/go/event-trigger/main.go)
 
 ## Wiring validation
-
-Call `ValidateWiring` before `New` to catch missing executors, memories, or HITL config:
 
 ```go
 agentflow.ValidateWiring(scenario, opts...)
 ```
 
-Use `WithRequireLLM()` when mock echo fallback is unacceptable in production.
+Use `WithRequireLLM()` when mock echo fallback is unacceptable.
+
+## PostgreSQL schema
+
+Apply [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/0001_agentflow_core.up.sql) with your migration runner before using Postgres adapters in production.
 
 ## Extension ports (`pkg/`)
 
@@ -83,20 +85,10 @@ Use `WithRequireLLM()` when mock echo fallback is unacceptable in production.
 |---------|----------|
 | `pkg/core` | Defining agents, tools, workflows programmatically |
 | `pkg/llm` | Implementing custom LLM gateways |
-| `pkg/llm/mock` | Local development and deterministic tests |
+| `pkg/llm/mock` | Deterministic tests |
 | `pkg/runstate` | Custom persistence or tenant enforcement |
-| `pkg/toolticket` | Custom ticket store backends |
-| `pkg/log` | Custom runtime log sinks (`WithLogger`) |
-| `pkg/testutil` | Test helpers (`NewTestFramework`, `StaticGateway`) |
+| `pkg/testutil` | Test wiring and `NewTestFramework` |
 | `pkg/observability/prometheus` | Prometheus metrics recorder |
-
-## Schema and version
-
-```go
-agentflow.Version          // library version
-agentflow.SchemaVersion    // JSON Schema draft
-agentflow.ScenarioJSONSchema()
-```
 
 ## Shutdown order
 

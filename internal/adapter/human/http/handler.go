@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	nethttp "net/http"
 
@@ -95,13 +94,4 @@ func (h *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
-}
-
-// NewLegacyHandler preserves the previous constructor for callers that only
-// need gate.Resume semantics.
-func NewLegacyHandler(gate Gate) *Handler {
-	if gate == nil {
-		panic(fmt.Sprintf("human http: gate is nil"))
-	}
-	return NewHandler(HandlerConfig{Gate: gate})
 }

@@ -3,41 +3,94 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/aijustin/agentflow-go.svg)](https://pkg.go.dev/github.com/aijustin/agentflow-go)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+[简体中文](./README.md) | English
 
-`agentflow-go` 是一个以场景 YAML 为配置中心的 Go Agent 框架，用于组合 Agent、Tool、Skill、LLM Gateway、上下文治理、Memory、Run State 和 Human-in-the-loop 编排能力。
+Scenario-configured Go library for composing Agents, Tools, Skills, LLM gateways, Memory, Run State, and Human-in-the-loop orchestration.
 
-该项目既可以作为 Go 库被其他项目引入，也可以作为 CLI/HTTP 应用运行。业务场景通过 YAML 声明，再映射到 Agent、工具、LLM 配置、记忆后端、运行状态持久化和编排策略。
+Import `github.com/aijustin/agentflow-go` in your service, declare scenarios in YAML, wire gateways and executors explicitly, then call `Framework.Run` in-process or mount the provided HTTP handlers in your own server.
 
-## 快速演示
+## Quick start
 
 ```sh
-go run ./cmd/agentctl validate -f examples/autonomous.yaml
-go run ./cmd/agentctl validate -f examples/autonomous.yaml --wiring
-go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json
-go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --verbose
+go get github.com/aijustin/agentflow-go
+go run ./examples/go/minimal/main.go
+go run ./examples/go/validate examples/autonomous.yaml
+make test
 ```
 
-发布前建议运行 `GOTOOLCHAIN=auto make release-check`。发版检查和 v0 兼容策略见 [docs/release-checklist.md](docs/release-checklist.md) 与 [docs/api-stability.md](docs/api-stability.md)。
+Before tagging a release, run `GOTOOLCHAIN=auto make release-check`. See [docs/release-checklist.md](docs/release-checklist.md) and [docs/api-stability.md](docs/api-stability.md).
 
-如需更完整的可视化使用指南，可直接打开独立 HTML 手册：[docs/manual.html](docs/manual.html)。
+For a guided HTML manual, open [docs/manual.html](docs/manual.html) in your browser.
 
-## 快速开始
+## Integration paths
 
-### 环境要求
+| Goal | Start here |
+|------|------------|
+| Embed in an existing Go service | [docs/library-integration.md](docs/library-integration.md) |
+| Minimal in-process run | [examples/go/minimal/main.go](examples/go/minimal/main.go) |
+| Postgres / file persistence | [examples/go/postgres/main.go](examples/go/postgres/main.go) |
+| HTTP API + async worker | [examples/go/http-worker/main.go](examples/go/http-worker/main.go) |
+| HITL pause and resume | [examples/go/hitl-resume/main.go](examples/go/hitl-resume/main.go) |
+| Event triggers | [examples/go/event-trigger/main.go](examples/go/event-trigger/main.go) |
+| Tests and examples wiring | [pkg/testutil](pkg/testutil/testutil.go) |
+
+Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHandler`, `NewFrameworkJobHandler`, `ScenarioJSONSchema`, `Version`.
+
+## Example paths
+
+### Runnable Go examples (`examples/go/`)
+
+| Directory | Purpose | Command |
+|-----------|---------|---------|
+| [minimal](examples/go/minimal/main.go) | Minimal in-process embed: `LoadScenario` → `testutil.WiringOptions` → `New` → `Run` | `go run ./examples/go/minimal/main.go` |
+| [postgres](examples/go/postgres/main.go) | Postgres RunState / JobQueue persistence | `go run ./examples/go/postgres/main.go` |
+| [http-worker](examples/go/http-worker/main.go) | `NewProductionHTTPHandler` + async worker | `go run ./examples/go/http-worker/main.go` |
+| [hitl-resume](examples/go/hitl-resume/main.go) | HITL pause and `ResumeAndContinue` | `go run ./examples/go/hitl-resume/main.go` |
+| [event-trigger](examples/go/event-trigger/main.go) | Event-driven runs via `scenario.triggers` | `go run ./examples/go/event-trigger/main.go` |
+| [validate](examples/go/validate/main.go) | Validate scenario YAML and wiring (same as CI) | `go run ./examples/go/validate examples/autonomous.yaml` |
+
+Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.WiringOptions`. See [pkg/testutil](pkg/testutil/testutil.go) for test wiring.
+
+### Scenario YAML examples (`examples/`)
+
+| File | Mode | Focus |
+|------|------|-------|
+| [autonomous.yaml](examples/autonomous.yaml) | `autonomous` | Minimal agent + echo tool |
+| [human_in_loop.yaml](examples/human_in_loop.yaml) | `autonomous` | `before_final_answer` approval |
+| [context_governance.yaml](examples/context_governance.yaml) | `autonomous` | Context window / summarization / stale tools |
+| [fixed_workflow.yaml](examples/fixed_workflow.yaml) | `fixed_workflow` | Fixed DAG workflow |
+| [workflow_enhancements.yaml](examples/workflow_enhancements.yaml) | `fixed_workflow` | `parallel_group`, `loop`, `human_gate`, etc. |
+| [code_review_pipeline.yaml](examples/code_review_pipeline.yaml) | `fixed_workflow` | Git diff + parallel review + gate |
+| [hybrid.yaml](examples/hybrid.yaml) | `hybrid` | Workflow phase then autonomous synthesis |
+| [multi_expert_research.yaml](examples/multi_expert_research.yaml) | `hybrid` | Parallel experts + `planning.execute` |
+| [adaptive_rag.yaml](examples/adaptive_rag.yaml) | `fixed_workflow` | `query_router` adaptive RAG |
+| [corrective_rag.yaml](examples/corrective_rag.yaml) | `fixed_workflow` | `rag_grade` + conditional re-retrieval |
+| [self_rag.yaml](examples/self_rag.yaml) | `fixed_workflow` | Self-RAG quality gate |
+| [rag_knowledge.yaml](examples/rag_knowledge.yaml) | — | RAG knowledge base and citations |
+| [ticket_handling.yaml](examples/ticket_handling.yaml) | `autonomous` | Ticket triggers + HITL |
+| [http_tool.yaml](examples/http_tool.yaml) | — | HTTP tool declaration |
+| [sql_tool.yaml](examples/sql_tool.yaml) | — | SQL tool |
+| [filesystem_tool.yaml](examples/filesystem_tool.yaml) | — | Filesystem tool |
+| [mcp_tool.yaml](examples/mcp_tool.yaml) | — | MCP tool integration |
+
+Validate all scenarios: `make validate-examples` or `go run ./examples/go/validate examples/<file>.yaml`. Mode selection: [docs/orchestration-flow.md](docs/orchestration-flow.md).
+
+## Getting started
+
+### Requirements
 
 - Go 1.25.10+
 - macOS/Linux shell
 
-### 作为框架在其他 Go 项目中使用
+### Use as a framework in another Go project
 
-添加依赖：
+Add the module:
 
 ```sh
 go get github.com/aijustin/agentflow-go
 ```
 
-引入根门面包：
+Import the root facade package:
 
 ```go
 package main
@@ -69,7 +122,7 @@ func main() {
 }
 ```
 
-如需接入自定义 LLM、Memory、RunState、EventSink 或 HumanGate，可使用 Option API：
+For custom LLM, Memory, RunState, EventSink, or HumanGate implementations, use the option-based API:
 
 ```go
 fw, err := agentflow.NewFromFile(
@@ -82,7 +135,7 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-常见 LLM Provider 的构造函数已从根包暴露：
+Built-in provider constructors are exposed from the root package for common LLM wiring:
 
 ```go
 gateway := agentflow.NewOpenAICompatibleGateway([]llm.Profile{{
@@ -96,7 +149,7 @@ gateway := agentflow.NewOpenAICompatibleGateway([]llm.Profile{{
 fw, err := agentflow.NewFromFile("scenario.yaml", agentflow.WithLLMGateway(gateway))
 ```
 
-如果需要同时接 OpenAI-compatible 聊天与 Embedding，可使用 `NewOpenAICompatibleProvider`，并显式声明 profile 能力：
+For OpenAI-compatible chat plus embeddings, use `NewOpenAICompatibleProvider` and declare profile capabilities explicitly:
 
 ```go
 provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
@@ -105,7 +158,7 @@ provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
 }, nil)
 ```
 
-混合 Provider 场景可使用 `NewLLMProviderRouter` 按 profile 路由 chat/tool/structured/stream 和 embedding 调用。能力会显式检查：Provider 不支持的能力会清晰失败，不会被静默模拟。
+For mixed-provider applications, `NewLLMProviderRouter` routes chat/tool/structured/stream and embedding calls by profile name. Capabilities are explicit: unsupported features fail clearly instead of being silently emulated.
 
 ```go
 openaiProvider := agentflow.NewOpenAICompatibleProvider(openaiProfiles, nil)
@@ -117,7 +170,7 @@ provider := agentflow.NewLLMProviderRouter(map[string]llm.Gateway{
 })
 ```
 
-结构化输出：在 `agents.<name>.output_schema` 中配置 JSON Schema，并调用 `RunStructured`。LLM Gateway 需要实现 `llm.StructuredOutputter`：
+For structured output, configure `agents.<name>.output_schema` and call `RunStructured`; the gateway must implement `llm.StructuredOutputter`:
 
 ```go
 result, err := fw.RunStructured(ctx, agentflow.RunRequest{
@@ -128,7 +181,7 @@ result, err := fw.RunStructured(ctx, agentflow.RunRequest{
 fmt.Println(string(result.StructuredOutput))
 ```
 
-流式输出：使用实现了 `llm.Streamer` 的 Gateway：
+For streaming, use a gateway that implements `llm.Streamer`:
 
 ```go
 chunks, err := fw.Stream(ctx, agentflow.RunRequest{
@@ -147,15 +200,15 @@ for chunk := range chunks {
 }
 ```
 
-当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 对分类后的临时 LLM/工具错误做指数退避重试，执行注册的 ToolExecutor，将受限后的工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。`Stream` 也支持带工具的 Agent：它会运行同一套受治理工具循环，并把最终答案作为流式 chunk 输出。
+When an agent has tools and the configured LLM gateway supports `CapToolCall`, the runtime runs an autonomous tool loop: send tool specs to the LLM, validate returned tool calls against the agent whitelist, enforce approval and per-run `rate_cap`, retry classified transient LLM/tool errors from `retry_limit`/`max_retries` with exponential backoff, execute registered tool executors, append bounded tool results, and continue until the LLM returns a final answer or `max_steps` is reached. `Stream` also accepts tool-enabled agents; it runs the same governed tool loop and emits the final answer as a stream chunk.
 
-配置 `orchestration.planning.enabled: true` 后，Runtime 会在自主工具循环前先执行规划 pass。规划默认使用当前执行 Agent，也可以通过 `orchestration.planning.agent` 指定专门规划 Agent；生成的简短 JSON 计划会注入后续执行上下文。设置 `orchestration.planning.execute: true` 可在 tool loop 中跟踪 plan step 完成状态（见 `examples/multi_expert_research.yaml`）。
+Set `orchestration.planning.enabled: true` to add a planning pass before the autonomous tool loop. The runtime asks the executing agent, or `orchestration.planning.agent` when set, for a concise JSON plan and injects that plan into the subsequent execution context. Set `orchestration.planning.execute: true` to track plan step completion in run state during the tool loop (see `examples/multi_expert_research.yaml`).
 
-固定工作流支持 `tool`、`agent`、`skill`、`human_gate`、`transform`、`parallel_group` 和 `loop` 节点。`condition` 可使用 `exists(...)`、`missing(...)`、`eq(...)`、`ne(...)` 读取 `steps.<node_id>` 路径，`transform` 节点可用 `set`/`copy` 从前序步骤构造结构化输出。
+Fixed workflows support `tool`, `agent`, `skill`, `human_gate`, `transform`, `parallel_group`, and `loop` nodes. Node `condition` expressions can read `steps.<node_id>` paths with `exists(...)`, `missing(...)`, `eq(...)`, and `ne(...)`; transform nodes can build structured outputs with `set` and `copy` mappings.
 
-当 Agent 绑定 `memory` 时，Runtime 会在上下文准备前读取 conversation/session 记忆并注入 LLM 上下文，执行后追加用户输入、助手回复和工具观察结果。根门面会自动为 `in_memory` 类型创建内存仓库，除非调用方显式传入自定义仓库。
+When an agent binds `memory`, the runtime reads stored conversation/session messages before context preparation, injects them into the LLM context, and appends user prompts, assistant answers, and tool observations after execution. `in_memory` repositories are auto-created by the root facade unless a custom repository is supplied.
 
-启用内置 HMAC Token 的 HITL Gate：
+Enable the built-in HMAC-token HITL gate:
 
 ```go
 fw, err := agentflow.NewFromFile(
@@ -176,7 +229,7 @@ if result.Token != "" {
 }
 ```
 
-需要进程重启后仍能恢复运行时，可使用文件持久化适配器：
+Use file-backed persistence when runs must survive process restarts:
 
 ```go
 runs, _ := agentflow.NewFileRunStateRepository("./data/runs")
@@ -191,7 +244,7 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-生产环境需要 PostgreSQL RunState 时，可在应用侧注册 `database/sql` driver，并把初始化后的连接池传给根门面构造器：
+For production PostgreSQL-backed run state, register a `database/sql` driver in your application and pass the initialized pool to the root constructor:
 
 ```go
 db, err := sql.Open("pgx", os.Getenv("AGENTFLOW_POSTGRES_DSN"))
@@ -209,9 +262,9 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-表结构契约和运维注意事项见 [docs/persistence/postgres-runstate.md](docs/persistence/postgres-runstate.md)。
+See [docs/persistence/postgres-runstate.md](docs/persistence/postgres-runstate.md) for the table contract and operational notes.
 
-如果希望使用 Redis 存储低延迟 CAS RunState，也可以使用 Redis RunState 适配器：
+Redis-backed run state is also available when you want low-latency CAS snapshots without a SQL database:
 
 ```go
 runs, err := agentflow.NewRedisRunStateRepository(agentflow.RedisRunStateRepositoryConfig{
@@ -224,9 +277,9 @@ if err != nil {
 }
 ```
 
-存储语义和运维注意事项见 [docs/persistence/redis-runstate.md](docs/persistence/redis-runstate.md)。
+See [docs/persistence/redis-runstate.md](docs/persistence/redis-runstate.md) for storage semantics and operational notes.
 
-生产环境异步执行可使用队列和 Worker。PostgreSQL 队列适配器基于 `database/sql`，不强制绑定具体驱动：
+For asynchronous production execution, use a queue plus workers. The PostgreSQL queue adapter uses `database/sql` and does not force a driver dependency:
 
 ```go
 queue, err := agentflow.NewPostgresJobQueue(db)
@@ -248,9 +301,9 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`agentflow.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz`、异步 run/event/resume job API；当配置 `Framework` 时还会挂载同步 `/v1/events` 和 `/v1/hitl/resume`。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
+`agentflow.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, async run/event/resume job APIs, and—when `Framework` is set—sync `/v1/events` and `/v1/hitl/resume`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
 
-MCP Server 可以通过适配器变成普通受治理工具，无需改变 runtime core：
+MCP servers can be adapted into regular governed tools without changing the runtime core:
 
 ```go
 mcpClient, err := agentflow.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
@@ -267,9 +320,9 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-适配模型和安全注意事项见 [docs/mcp-tools.md](docs/mcp-tools.md)。
+See [docs/mcp-tools.md](docs/mcp-tools.md) for the adapter model and security notes.
 
-重型或租户隔离的工具不需要在框架启动时全部构造。可以先在 `scenario.tools` 声明 manifest，然后通过 `WithToolResolver` 在运行时完成 allowlist、审批、RBAC、治理策略和 rate cap 检查后，再按需解析真正的 executor：
+Heavy or tenant-scoped tools do not need to be constructed during framework startup. Declare their manifest in `scenario.tools`, then resolve the executor only after the runtime has checked the agent allowlist, approval policy, RBAC, governance policy, and rate caps:
 
 ```go
 resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
@@ -289,9 +342,9 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-`WithToolExecutor` 仍适合轻量或常驻工具，并且优先级高于 resolver。resolver 解析出的 executor 会按场景工具名缓存在 framework 生命周期内。Skill 不负责初始化工具；它只在场景构建阶段展开 prompt 片段、策略覆盖和 workflow 片段，真实 executor 绑定由 resolver 在调用时完成。
+`WithToolExecutor` remains useful for light or always-on tools and takes precedence over the resolver. Resolved executors are cached by scenario tool name for the lifetime of the framework. Skills do not initialize tools; they expand prompt fragments, policy overlays, and workflow segments during scenario build, while the resolver owns real executor binding at invocation time.
 
-读取内部 API 可注册受限 HTTP Tool Executor：
+For read-only internal API calls, register the constrained HTTP tool executor:
 
 ```go
 httpTool, err := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{
@@ -306,9 +359,9 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-该执行器必须配置 host allowlist，默认只允许 `GET`/`HEAD`。详见 [docs/tools-http.md](docs/tools-http.md)。
+The executor requires an explicit host allowlist and defaults to `GET`/`HEAD`. See [docs/tools-http.md](docs/tools-http.md).
 
-读取本地 runbook 或已检出的文档，可注册受限文件系统读取 Tool Executor：
+For local runbooks and checked-out documentation, register the constrained filesystem read tool executor:
 
 ```go
 filesystemTool, err := agentflow.NewFilesystemToolExecutor(agentflow.FilesystemToolConfig{
@@ -323,9 +376,9 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-该执行器必须配置 root allowlist，会拒绝路径逃逸和符号链接逃逸，并限制文件大小。详见 [docs/tools-filesystem.md](docs/tools-filesystem.md)。
+The executor requires explicit root allowlists, rejects traversal and symlink escapes, and limits file size. See [docs/tools-filesystem.md](docs/tools-filesystem.md).
 
-需要读取业务库、工单库或报表库时，可注册受限 SQL 查询 Tool Executor，并使用命名 allowlist 查询：
+For database-backed lookups, register the constrained SQL query tool executor with named allowlisted queries:
 
 ```go
 sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
@@ -344,40 +397,46 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-该执行器默认只执行命名 `SELECT` 查询，拒绝多语句 SQL，带超时并限制返回行数。详见 [docs/tools-sql.md](docs/tools-sql.md)。
+The executor defaults to named `SELECT` queries, rejects multi-statement SQL, applies a timeout, and caps returned rows. See [docs/tools-sql.md](docs/tools-sql.md).
 
-SQL 工具可接入任意 `database/sql` 驱动，包括 PostgreSQL、MySQL 和 ClickHouse。宿主应用自行导入具体驱动并传入已打开的 `*sql.DB`；agentflow-go 不强制引入数据库驱动依赖。
+The SQL tool accepts any `database/sql` driver, including PostgreSQL, MySQL, and ClickHouse. The host application imports the concrete driver and passes the opened `*sql.DB`; agentflow-go intentionally does not force driver dependencies.
 
-代码审查流水线可注册只读 Git 工具：
+For code review pipelines, register the read-only Git tool executor:
 
 ```go
 gitTool, err := agentflow.NewGitToolExecutor(agentflow.GitToolConfig{
   AllowedRoots: []string{"/workspace/repos"},
 })
+if err != nil {
+  log.Fatal(err)
+}
 fw, err := agentflow.NewFromFile(
   "examples/code_review_pipeline.yaml",
   agentflow.WithToolExecutor("git", gitTool),
 )
 ```
 
-详见 [docs/tools-git.md](docs/tools-git.md)。CLI 不会自动注册 tool executor。
+See [docs/tools-git.md](docs/tools-git.md). Tool executors must be registered explicitly with `WithToolExecutor` (or `WithToolResolver`).
 
-客服工单场景可注册 ticket 工具并注入 store：
+For support-ticket workflows, register the ticket tool with a store adapter:
 
 ```go
 store := agentflow.NewMemoryTicketStore(map[string]agentflow.Ticket{
   "T-9": {ID: "T-9", Title: "Login issue", Status: "open"},
 })
 ticketTool, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{Store: store})
+if err != nil {
+  log.Fatal(err)
+}
 fw, err := agentflow.NewFromFile(
   "examples/ticket_handling.yaml",
   agentflow.WithToolExecutor("ticket", ticketTool),
 )
 ```
 
-详见 [docs/tools-ticket.md](docs/tools-ticket.md)。
+See [docs/tools-ticket.md](docs/tools-ticket.md).
 
-RAG 场景可组合 Embedder、VectorStore 和 Retriever Tool：
+For RAG workloads, combine an embedder, vector store, and retriever tool:
 
 ```go
 store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{DB: db})
@@ -401,19 +460,11 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-公共契约和 pgvector 表结构见 [docs/knowledge-rag.md](docs/knowledge-rag.md) 与 [docs/persistence/pgvector.md](docs/persistence/pgvector.md)。
+See [docs/knowledge-rag.md](docs/knowledge-rag.md) and [docs/persistence/pgvector.md](docs/persistence/pgvector.md) for the public contracts and table schema.
 
-本地企业栈可直接使用 [deploy/enterprise](deploy/enterprise) 中的 Compose 模板，包含 PostgreSQL+pgvector、Redis、MinIO 和 `agent-http`：
+Apply PostgreSQL schema from [migrations/postgres](migrations/postgres) with your migration runner before using Postgres adapters. See [docs/persistence/postgres-runstate.md](docs/persistence/postgres-runstate.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
 
-```sh
-cd deploy/enterprise
-cp .env.example .env
-docker compose up --build
-```
-
-各服务和根门面构造器、生产迁移 SQL、Kubernetes base manifests 的映射见 [docs/deployment-enterprise.md](docs/deployment-enterprise.md)。
-
-大输出需要进入 S3-compatible 对象存储时，可单独配置 BlobStore：
+For S3-compatible blob storage, configure the blob store separately from run state:
 
 ```go
 blobs, err := agentflow.NewS3BlobStore(agentflow.S3BlobStoreConfig{
@@ -434,9 +485,9 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-对象路径和安全注意事项见 [docs/persistence/s3-blobstore.md](docs/persistence/s3-blobstore.md)。
+See [docs/persistence/s3-blobstore.md](docs/persistence/s3-blobstore.md) for object layout and security notes.
 
-企业级可观测和治理能力保持可选且低依赖：
+Enterprise observability and governance hooks are optional and dependency-light:
 
 ```go
 fw, err := agentflow.NewFromFile(
@@ -451,9 +502,9 @@ fw, err := agentflow.NewFromFile(
 )
 ```
 
-治理策略会在工具执行前生效，输出脱敏会在运行时 step output 持久化前执行。
+Governance policies run before tool execution, and output redaction is applied before runtime step outputs are persisted.
 
-AgentFlow 也内置了运行时可观测面板，用于查看实时会话、编排时序和事件详情。PostgreSQL 事件仓库默认自动创建表和索引，开启面板只需要接入事件 sink 并挂载 HTTP handler：
+AgentFlow also ships a runtime observability dashboard for live sessions and event detail drill-downs. The PostgreSQL event store creates its table and indexes automatically by default, so enabling the panel only requires wiring an event sink and mounting the handler:
 
 ```go
 eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{DB: db})
@@ -477,9 +528,9 @@ dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityH
 mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
 ```
 
-数据库配置、自动建表、接口列表和安全建议见 [docs/observability-dashboard.md](docs/observability-dashboard.md)。
+See [docs/observability-dashboard.md](docs/observability-dashboard.md) for database configuration, automatic schema setup, endpoints, and security notes.
 
-底层扩展接口位于：
+Low-level extension interfaces remain available through:
 
 - `github.com/aijustin/agentflow-go/pkg/core`
 - `github.com/aijustin/agentflow-go/pkg/llm`
@@ -494,200 +545,44 @@ mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
 - `github.com/aijustin/agentflow-go/pkg/runstate`
 - `github.com/aijustin/agentflow-go/pkg/security`
 
-内置工具适配器说明见 [docs/tools-http.md](docs/tools-http.md)、[docs/tools-filesystem.md](docs/tools-filesystem.md)、[docs/tools-sql.md](docs/tools-sql.md)、[docs/tools-git.md](docs/tools-git.md)、[docs/tools-ticket.md](docs/tools-ticket.md)、[docs/mcp-tools.md](docs/mcp-tools.md) 和 [docs/knowledge-rag.md](docs/knowledge-rag.md)。
+Built-in tool adapters are documented in [docs/tools-http.md](docs/tools-http.md), [docs/tools-filesystem.md](docs/tools-filesystem.md), [docs/tools-sql.md](docs/tools-sql.md), [docs/tools-git.md](docs/tools-git.md), [docs/tools-ticket.md](docs/tools-ticket.md), [docs/mcp-tools.md](docs/mcp-tools.md), and [docs/knowledge-rag.md](docs/knowledge-rag.md).
 
-### 安装依赖
+### Install dependencies
 
 ```sh
 go mod download
 ```
 
-### 校验示例场景
+### Validate example scenarios
 
 ```sh
-go run ./cmd/agentctl validate -f examples/autonomous.yaml
+go run ./examples/go/validate examples/autonomous.yaml
+make validate-examples
 ```
 
-期望输出：
+### Runnable examples
 
-```text
-ok
-```
-
-### 运行场景
-
-```sh
-go run ./cmd/agentctl run \
-  -f examples/autonomous.yaml \
-  --prompt "hello agent" \
-  --json
-```
-
-当前 CLI 未注入具体 LLM Gateway 时会回显 prompt。
-
-### 构建二进制
-
-```sh
-make build
-```
-
-会构建：
-
-- `agentctl`：用于校验、运行、恢复和触发场景的 CLI。
-- `agent-http`：本地调试台。
-- `agent-server`：生产 HTTP API（`/v1/runs`、`/v1/events`、`/v1/hitl/resume` 及异步 job 路由）。
-- `agent-worker`：异步 job Worker（`run`、`event`、`resume.continue`）。
-
-生产 server/worker 环境变量：
-
-| 变量 | 说明 |
+| Example | Purpose |
 | --- | --- |
-| `AGENT_SCENARIO_FILE` | 场景 YAML 路径，必填。 |
-| `AGENT_HTTP_ADDR` | API 监听地址，默认 `0.0.0.0:8080`。 |
-| `AGENT_TOKEN_SECRET` | HITL token HMAC 密钥。 |
-| `AGENT_STATE_DIR` | 可选持久化状态目录。 |
-| `AGENT_QUEUE` | `memory`（默认）或 `postgres`。 |
-| `AGENT_POSTGRES_DSN` | `AGENT_QUEUE=postgres` 时必填。 |
-| `AGENT_HTTP_API_KEY` | 非 loopback 部署时的 API Key。 |
+| [examples/go/minimal](examples/go/minimal/main.go) | In-process `Run` with test wiring |
+| [examples/go/postgres](examples/go/postgres/main.go) | File or Postgres run state |
+| [examples/go/http-worker](examples/go/http-worker/main.go) | Production HTTP handler + async worker |
+| [examples/go/hitl-resume](examples/go/hitl-resume/main.go) | HITL pause and `ResumeAndContinue` |
+| [examples/go/event-trigger](examples/go/event-trigger/main.go) | `HandleEvent` and scenario triggers |
 
-## CLI 使用
+Copy these `main` programs into your service and replace `testutil.WiringOptions` with explicit `WithLLMGateway` / `WithToolExecutor` registration.
 
-### `agentctl validate`
+See [docs/troubleshooting.md](docs/troubleshooting.md) for common errors and fixes.
 
-校验 YAML 结构、引用、编排模式与 workflow 图完整性。加 `--wiring` 可额外检查 demo 装配是否覆盖全部 tool/memory/HITL（与 `agentctl run` 一致），可在运行前发现缺 executor 的问题。
+## HTTP surfaces
 
-```sh
-go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
-go run ./cmd/agentctl validate -f examples/autonomous.yaml --wiring
-```
-
-### `agentctl run`
-
-通过完整 `Framework` 运行场景（支持全部编排模式）。`DemoOptions` 会自动注册 demo mock LLM 与内置工具执行器。
+Mount library handlers in your own HTTP server. The example listens on `127.0.0.1:8080`:
 
 ```sh
-go run ./cmd/agentctl run -f examples/fixed_workflow.yaml --prompt "review this change"
-go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello"
+go run ./examples/go/http-worker/main.go
 ```
 
-常用参数：
-
-| 参数 | 说明 |
-| --- | --- |
-| `-f, --file` | 场景 YAML 文件，必填。 |
-| `--prompt` | 传给 Runtime 的用户输入。 |
-| `--run-id` | 可选 Run ID；不传会自动生成。 |
-| `--token-secret` | HITL Token 的 HMAC 密钥，本地演示默认 `dev-secret`；共享环境请使用强密钥。 |
-| `--token-ttl` | HITL Token 有效期，默认 `15m`。 |
-| `--state-dir` | 持久化 RunState 和 Blob 的目录；跨独立 CLI 进程 resume 时需要保持一致。 |
-| `--json` | 输出机器可读 JSON。 |
-| `--verbose` | 将 runtime 事件（含 payload）输出到 stderr，便于逐步调试。 |
-
-排障见 [docs/troubleshooting.md](docs/troubleshooting.md)。
-
-### `agentctl resume`
-
-使用签名 Token 恢复暂停的 Human-in-the-loop 运行。
-
-```sh
-go run ./cmd/agentctl resume \
-  --token "$TOKEN" \
-  --decision approve \
-  --token-secret "strong-secret" \
-  --state-dir ./data/agentflow
-```
-
-加上 `--continue` 会调用 `ResumeAndContinue`，继续执行直到运行完成或再次暂停。`--continue` 必须同时提供 `-f` / `--file`：
-
-```sh
-go run ./cmd/agentctl resume \
-  -f examples/human_in_loop.yaml \
-  --continue \
-  --token "$TOKEN" \
-  --decision approve \
-  --state-dir ./data/agentflow
-```
-
-支持的决策：
-
-- `approve`：继续。
-- `reject`：取消运行。
-- `amend`：携带修正数据继续。
-
-携带 amendment 的示例：
-
-```sh
-go run ./cmd/agentctl resume \
-  --token "$TOKEN" \
-  --decision amend \
-  --amendment '{"instruction":"make the answer shorter"}' \
-  --state-dir ./data/agentflow
-```
-
-当暂停的运行需要被另一个 CLI 进程或终端会话恢复时，请在 `run` 和 `resume` 中使用同一个 `--state-dir`。
-
-### `agentctl trigger`
-
-通过 `Framework.HandleEvent` 触发 `scenario.triggers` 中配置的外部事件：
-
-```sh
-go run ./cmd/agentctl trigger \
-  -f examples/ticket_handling.yaml \
-  --event ticket.created \
-  --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
-```
-
-常用 flags：
-
-| Flag | 说明 |
-| --- | --- |
-| `-f, --file` | 场景 YAML 文件。必填。 |
-| `--event` | `scenario.triggers` 中配置的事件类型。必填。 |
-| `--run-id` | 可选 run ID 覆盖。 |
-| `--payload` | 事件 payload JSON，默认 `{}`。 |
-| `--token-secret` | HITL Token HMAC 密钥。 |
-| `--state-dir` | 持久化 RunState 和 Blob 的目录。 |
-| `--token-ttl` | HITL Token 有效期，默认 `15m`。 |
-| `--json` | 输出机器可读 JSON。 |
-
-## HTTP 接口
-
-启动浏览器调试台和 HTTP resume bridge：
-
-```sh
-AGENT_TOKEN_SECRET=strong-secret go run ./cmd/agent-http
-```
-
-打开：
-
-```text
-http://localhost:18080
-```
-
-调试台默认监听 `127.0.0.1:18080`，可使用开发默认密钥。若将 `AGENT_HTTP_ADDR` 设置为 `:18080` 等非 loopback 监听地址，则必须显式提供 `AGENT_TOKEN_SECRET` 和 `AGENT_HTTP_API_KEY`。可选的 `AGENT_HTTP_AUDIT_FILE` 会把审计事件写成 JSONL。
-
-调试台支持：
-
-- 选择内置场景：autonomous mock、fixed workflow、human-in-loop、real local model、context governance。
-- 在浏览器中编辑场景 YAML。
-- 输入 prompt、运行时上下文 JSON，并执行场景。
-- 配置 OpenAI-compatible 本地模型端点进行真实模型调用。
-- 测试滑动窗口和摘要压缩等上下文治理能力。
-- 查看运行结果 JSON、RunSnapshot、StepOutputs、Token 和事件时间线。
-- 使用 `approve`、`reject` 或 `amend` 恢复 HITL checkpoint（仅更新 RunState，不支持 `ResumeAndContinue`）。
-
-Debug resume 接口（仅更新 RunState）：
-
-```sh
-curl -X POST http://localhost:18080 \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "token": "'"$TOKEN"'",
-    "decision": "approve"
-  }'
-```
-
-生产环境的 HITL 续跑使用 `NewProductionHTTPHandler` 或 `NewHumanHTTPHandler` 的 `POST /v1/hitl/resume`。设置 `"continue": true` 会调用 `ResumeAndContinue`：
+Production HITL continuation uses `NewProductionHTTPHandler` or `NewHumanHTTPHandler` at `POST /v1/hitl/resume`. Set `"continue": true` to call `ResumeAndContinue`:
 
 ```sh
 curl -X POST http://localhost:8080/v1/hitl/resume \
@@ -699,32 +594,32 @@ curl -X POST http://localhost:8080/v1/hitl/resume \
   }'
 ```
 
-Webhook 事件在配置 `Framework` 时使用 `POST /v1/events`。详见 [docs/async-runtime.md](docs/async-runtime.md)。
+Webhook events use `POST /v1/events` on the same production handler when `Framework` is configured. See [docs/async-runtime.md](docs/async-runtime.md).
 
-Debug resume 响应：
+Debug resume response:
 
 ```json
 {"status":"ok"}
 ```
 
-网络传递的 Token 使用 HMAC 签名。生产环境必须设置强 `AGENT_TOKEN_SECRET`，并使用持久化 RunState 仓库。
+Network-delivered tokens are HMAC signed. In production, always set `AGENT_TOKEN_SECRET` to a strong secret and use a persistent run-state repository.
 
-## YAML 场景格式
+## YAML scenario format
 
-所有场景配置都位于一个 `scenario:` 根节点下。
+All scenario configuration lives under one `scenario:` root.
 
-如需编辑器补全、枚举提示和 CI 校验，可使用 JSON Schema：[schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json)。完整字段参考见 [docs/configuration-reference.md](docs/configuration-reference.md)，编排执行流程与**模式/节点选型指南**见 [docs/orchestration-flow.md](docs/orchestration-flow.md)，CLI 也可以通过 `agentctl schema` 输出同一份 schema。
+For editor completion, enum discovery, and CI validation, use the JSON Schema at [schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json). A full human-readable field reference is available in [docs/configuration-reference.md](docs/configuration-reference.md), orchestration execution flow and **mode/node selection guide** in [docs/orchestration-flow.md](docs/orchestration-flow.md), or load it in Go with `agentflow.ScenarioJSONSchema()`.
 
-示例场景：
+Example scenarios:
 
-| 文件 | 说明 |
+| File | Highlights |
 | --- | --- |
-| `examples/autonomous.yaml` | 自主工具循环基线 |
-| `examples/fixed_workflow.yaml` | 图工作流 + 条件 + HITL |
-| `examples/human_in_loop.yaml` | HITL 暂停与恢复 |
-| `examples/ticket_handling.yaml` | Ticket 工具 + triggers + 事件路由 |
-| `examples/code_review_pipeline.yaml` | Git 工具 + `parallel_group` 工作流 |
-| `examples/multi_expert_research.yaml` | Hybrid 模式 + planning.execute |
+| `examples/autonomous.yaml` | Autonomous tool loop baseline |
+| `examples/fixed_workflow.yaml` | Graph workflow with conditions and HITL |
+| `examples/human_in_loop.yaml` | HITL pause and resume |
+| `examples/ticket_handling.yaml` | Ticket tool + triggers + event routing |
+| `examples/code_review_pipeline.yaml` | Git tool + `parallel_group` workflow |
+| `examples/multi_expert_research.yaml` | Hybrid mode + planning.execute |
 
 ```yaml
 # yaml-language-server: $schema=schemas/agentflow.scenario.schema.json
@@ -770,21 +665,21 @@ scenario:
     step_output_threshold: 65536
 ```
 
-### 顶层配置段
+### Top-level sections
 
-| 配置段 | 作用 |
+| Section | Purpose |
 | --- | --- |
-| `llms` | 命名 LLM Profile。Agent 和 Tool 可以绑定不同 Profile。 |
-| `memories` | 命名 Memory 后端和作用域。当前支持内存和文件持久化仓库。 |
-| `tools` | Tool 声明、副作用等级、审批策略、可选 LLM 覆盖和每次运行的 `rate_cap`。 |
-| `skills` | 声明式 prompt/policy/workflow 包。Skill 不是独立运行时 Actor，也不初始化工具；它会在场景构建阶段展开为 Agent 指令、工具策略和 workflow 子图。 |
-| `agents` | Agent 角色、指令、LLM 绑定、Memory 绑定、工具和技能。 |
-| `orchestration` | autonomous、fixed_workflow 或 hybrid 编排策略。 |
-| `runtime` | Runtime 限制、输出阈值、密钥和运行参数。 |
+| `llms` | Named LLM profiles. Agents and tools can bind to different profiles. |
+| `memories` | Named memory backends and scopes. In-memory and file-backed repositories are available. |
+| `tools` | Tool declarations, side-effect metadata, approval policy, optional LLM override, and per-run `rate_cap`. |
+| `skills` | Declarative prompt/policy/workflow packages. Skills are not runtime actors and do not initialize tools; they expand into agent instructions, tool policies, and workflow subgraphs during scenario build. |
+| `agents` | Agent role, instructions, LLM binding, memory binding, tools, and skills. |
+| `orchestration` | Autonomous, fixed workflow, or hybrid HITL execution policy. |
+| `runtime` | Runtime limits, output thresholds, secrets, and operational settings. |
 
-### LLM Profile 与上下文治理
+### LLM profile and context governance
 
-每个 LLM Profile 可定义提供商参数、输出限制、thinking/reasoning 选项、提供商扩展字段和上下文窗口策略：
+Each LLM profile can define provider settings, output limits, thinking/reasoning options, provider-specific request fields, and a context-window policy:
 
 ```yaml
 scenario:
@@ -817,21 +712,21 @@ scenario:
           trigger_ratio: 0.5
 ```
 
-支持的上下文策略包括 `none`、`sliding_window`、`sliding_window_with_summary`。每次 LLM 调用前，Runtime 会发出 `ContextPrepared` 事件，包含裁剪前后 token 估算、丢弃消息数、是否生成摘要和当前输入预算。
+Supported context strategies are `none`, `sliding_window`, and `sliding_window_with_summary`. Before each LLM call, the runtime emits `ContextPrepared` with before/after token estimates, dropped message count, summary status, and active input budget. When `tool_result_max_tokens` is set, large tool observations are compacted before they are sent back into the next LLM turn while the full persisted step output remains available through run state/blob storage.
 
-对于本地 Qwen reasoning 模型，应将 `max_output_tokens` 设置得足够大，因为一些 OpenAI-compatible 服务会把 reasoning output 计入 `max_tokens`。如果响应为空且 `finish_reason=length`，Runtime 会返回错误，避免把错误配置误判成成功的空回答。
+For local Qwen reasoning models, keep `max_output_tokens` high enough for reasoning tokens because some OpenAI-compatible servers count reasoning output against `max_tokens`. The runtime treats an empty response with `finish_reason=length` as an error so misconfigured reasoning budgets do not look like successful empty answers.
 
-### 编排模式
+### Orchestration modes
 
-| 模式 | 说明 |
+| Mode | Description |
 | --- | --- |
-| `autonomous` | LLM 驱动的规划/执行。Orchestrator 负责工具调度和审批检查。 |
-| `fixed_workflow` | 确定性图工作流。执行前校验节点和边。 |
-| `hybrid` | 为固定流程 + 自主子步骤 + HITL Gate 的组合场景预留。 |
+| `autonomous` | LLM-driven planning/execution. The orchestrator owns tool dispatch and approval checks. |
+| `fixed_workflow` | Deterministic graph. Workflow nodes and edges are validated before execution. |
+| `hybrid` | Designed for combining workflow control with autonomous substeps and HITL gates. |
 
 ### Human-in-the-loop
 
-通过 checkpoints 启用 HITL：
+Enable HITL by adding checkpoints:
 
 ```yaml
 scenario:
@@ -843,34 +738,34 @@ scenario:
         - before_final_answer
 ```
 
-Checkpoint 打开时，Runtime 会持久化 `RunSnapshot`，签发包含 `(RunID, Version)` 的 Token，并等待人工决策。
+When a checkpoint opens, runtime persists a `RunSnapshot`, signs a token containing `(RunID, Version)`, and waits for a human decision.
 
-## 库 API
+## Library usage
 
-大多数应用只需要引入根门面：
+Most applications should import the root facade:
 
 ```go
 import agentflow "github.com/aijustin/agentflow-go"
 ```
 
-公共包：
+Public packages:
 
-| 包 | 作用 |
+| Package | Purpose |
 | --- | --- |
-| root package | 框架门面：加载 YAML、校验、运行、恢复、事件处理、注入扩展。 |
-| `pkg/async` | 异步执行所需的 Job Queue、Lease、Handler 和 Worker 契约。 |
-| `pkg/eventrouter` | 外部事件类型与 `scenario.triggers` 到 RunRequest 的路由。 |
-| `pkg/audit` | 合规记录所需的 Audit Event 模型和 Sink 契约。 |
-| `pkg/coordination` | 用于 Worker 和工作流协调的分布式租约契约。 |
-| `pkg/core` | Agent、Tool、Skill、Scenario、Workflow、HumanGate、Event 类型。 |
-| `pkg/llm` | 提供商无关的 LLM 能力接口和请求/响应类型。 |
-| `pkg/contextwindow` | 上下文窗口策略管理、token 估算、裁剪和压缩统计。 |
-| `pkg/identity` | Principal、角色、租户/工作区/项目作用域和 context helpers。 |
-| `pkg/memory` | Memory Namespace 和 Repository 契约。 |
-| `pkg/runstate` | RunSnapshot、CAS Repository 端口、Blob 引用和 Token 签名。 |
-| `pkg/security` | API Key 认证器、授权 action/resource 和 RBAC policy 契约。 |
+| root package | Framework facade: load YAML, validate, run, resume, handle events, wire options. |
+| `pkg/async` | Job queue, lease, handler, and worker contracts for asynchronous execution. |
+| `pkg/eventrouter` | External event types and trigger-to-run routing for `scenario.triggers`. |
+| `pkg/audit` | Audit event model and sink contract for compliance records. |
+| `pkg/coordination` | Distributed lease contract for worker and workflow coordination. |
+| `pkg/core` | Agent, Tool, Skill, Scenario, Workflow, HumanGate, Event types. |
+| `pkg/llm` | Provider-neutral LLM capability ports and request/response types. |
+| `pkg/contextwindow` | Context-window policy manager, token estimates, trimming, and compression stats. |
+| `pkg/identity` | Principal, role, tenant/workspace/project scope, and context helpers. |
+| `pkg/memory` | Memory namespace and repository contract. |
+| `pkg/runstate` | Run snapshots, CAS repository port, blob references, token signing. |
+| `pkg/security` | API key authenticator, authorization action/resource, and RBAC policy contracts. |
 
-创建并保存运行快照：
+Example: create and save a run snapshot.
 
 ```go
 repo := runstateinmem.NewRepository()
@@ -884,7 +779,7 @@ if err := repo.Save(context.Background(), &snapshot, 0); err != nil {
 }
 ```
 
-签发并验证 HITL Token：
+Example: sign and verify a HITL token.
 
 ```go
 signer, err := runstate.NewTokenSigner([]byte("secret"))
@@ -902,7 +797,7 @@ if err != nil {
 fmt.Println(payload.RunID)
 ```
 
-获取 Redis 分布式租约，用于 Worker 协调：
+Example: acquire a Redis-backed distributed lease for worker coordination.
 
 ```go
 locker, err := agentflow.NewRedisLocker(agentflow.RedisLockerConfig{
@@ -922,9 +817,9 @@ if acquired {
 }
 ```
 
-租约语义和运维注意事项见 [docs/persistence/redis-locker.md](docs/persistence/redis-locker.md)。
+See [docs/persistence/redis-locker.md](docs/persistence/redis-locker.md) for lease semantics and operational notes.
 
-通过 async worker foundation 执行异步任务：
+Example: run jobs through the async worker foundation.
 
 ```go
 queue := agentflow.NewInMemoryJobQueue()
@@ -940,9 +835,9 @@ if err != nil {
 }
 ```
 
-队列状态、Worker 行为和后续生产化切片见 [docs/async-runtime.md](docs/async-runtime.md)。
+See [docs/async-runtime.md](docs/async-runtime.md) for queue states, worker behavior, and next production slices.
 
-暴露异步 run/event/resume job endpoints：
+Example: expose async run/event/resume job endpoints.
 
 ```go
 queue := agentflow.NewInMemoryJobQueue()
@@ -957,7 +852,7 @@ if err != nil {
 http.Handle("/v1/", middleware(handler))
 ```
 
-生产 Handler 可同时挂载可选的同步 event/HITL 路由：
+Production handler with optional sync event/HITL routes:
 
 ```go
 api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
@@ -969,9 +864,9 @@ api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerCo
 })
 ```
 
-完整路由矩阵见 [docs/async-runtime.md](docs/async-runtime.md)（`/v1/runs`、`/v1/jobs/events`、`/v1/jobs/hitl/resume`、`/v1/events`、`/v1/hitl/resume`）。
+See [docs/async-runtime.md](docs/async-runtime.md) for the full route matrix (`/v1/runs`, `/v1/jobs/events`, `/v1/jobs/hitl/resume`, `/v1/events`, `/v1/hitl/resume`).
 
-使用 API Key 保护 HTTP handler，并把企业 Principal 注入 request context：
+Example: protect an HTTP handler with API key authentication and attach an enterprise principal to request context.
 
 ```go
 auth, err := agentflow.NewStaticAPIKeyAuthenticator(map[string]identity.Principal{
@@ -995,7 +890,7 @@ handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Reque
 }))
 ```
 
-生产 OIDC/OAuth2 网关可使用 OIDC Discovery/JWKS 自动刷新来校验 JWT：
+For production OIDC/OAuth2 gateways, use JWKS discovery and refresh-backed JWT validation:
 
 ```go
 auth, err := agentflow.NewOIDCJWTAuthenticator(agentflow.OIDCJWTAuthenticatorConfig{
@@ -1010,7 +905,7 @@ if err != nil {
 middleware, err := agentflow.NewJWTMiddleware(agentflow.JWTMiddlewareConfig{Authenticator: auth})
 ```
 
-为 HTTP handler 添加授权检查：
+Example: enforce authorization around a handler.
 
 ```go
 authz, err := agentflow.NewAuthorizationMiddleware(agentflow.AuthorizationMiddlewareConfig{
@@ -1025,7 +920,7 @@ if err != nil {
 handler = middleware(authz(handler))
 ```
 
-使用 runtime 工具授权和审计记录运行框架：
+Example: run the framework with runtime tool authorization and audit records.
 
 ```go
 fw, err := agentflow.New(
@@ -1042,7 +937,7 @@ ctx := identity.WithPrincipal(context.Background(), identity.Principal{
 result, err := fw.Run(ctx, agentflow.RunRequest{RunID: "run-1", Agent: "assistant", Prompt: "hello"})
 ```
 
-将审计事件写入 append-only JSONL 文件：
+Example: record audit events to an append-only JSONL file.
 
 ```go
 auditSink, err := agentflow.NewFileAuditSink("./data/audit/events.jsonl")
@@ -1056,14 +951,13 @@ err = auditSink.Record(ctx, audit.Event{
 })
 ```
 
-## 架构
+## Architecture
 
-项目采用 DDD 风格分层和 Hexagonal Ports/Adapters：
+The project follows DDD-oriented layering with hexagonal ports/adapters:
 
 ```text
 cmd/
-  agentctl/
-  agent-http/
+  examples/go/
 pkg/
   core/
   llm/
@@ -1088,44 +982,44 @@ internal/
     blob/inmem/
 ```
 
-设计边界：
+Design boundaries:
 
-- `Skill = prompt fragments + tool whitelist/policy + 可内联的 workflow 子图`。
-- `Tool = 带 Schema 的执行单元`。
-- `Agent = 拥有 LLM 和 Memory 绑定的实体`。
-- `RunStateRepository` 与 Memory 分离，专门处理可恢复的运行快照。
-- 上下文治理按 LLM Profile 生效：不同 Agent/Tool 可以路由到具有不同窗口、输出、thinking 和压缩策略的 LLM Profile。
-- 自主执行支持可选 planning pass、LLM 工具调用循环、工具白名单、审批拒绝、每次运行 rate cap、分类重试、受限工具结果回填和生命周期事件。
-- 结构化输出使用 Agent 级 `output_schema` 和 Provider 的 `StructuredOutputter`；普通流式输出使用 `Streamer`，带工具 Agent 的流式输出会复用受治理工具循环，并在结束后持久化累积的最终答案。
-- Memory 绑定已接入 Runtime 读写，用于 conversation/session 历史。
-- 固定工作流按图依赖和边执行，支持有限并行、`parallel_group`/`loop` 节点、条件跳过、重试、transform/agent/human-gate 节点和 CAS 安全输出保存。
-- Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图；`ResumeAndContinue` 还支持自主、工作流和工具审批暂停路径的续跑。
-- 外部事件通过 `scenario.triggers` 映射到 `Framework.HandleEvent`、Webhook HTTP（`NewWebhookHTTPHandler`）、CLI `agentctl trigger`、同步 `/v1/events` 和异步 `event` job。
-- `sub_agents` 会在自主执行中作为虚拟 delegation tool 暴露给 supervisor Agent。
-- Skill prompt fragments、Agent policy、Tool policy 和 workflow segments 会在场景构建阶段展开为命名空间化的 workflow 节点。
-- Tool 的声明面和执行面已经分离：`scenario.tools` 向 LLM 和校验器暴露 manifest，`WithToolExecutor` 提前注册轻量 executor，`WithToolResolver` 则在允许的调用真正进入执行阶段时按需绑定重型或租户隔离 executor。
-- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储，支持 MinIO/AWS S3 风格 endpoint，以及经过验证的腾讯云 COS/阿里云 OSS S3 兼容接口；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约支持 `run`、`event`、`resume.continue` 任务（`NewFrameworkJobHandler`），HTTP 路由由 `NewAsyncRunHTTPHandler` 和 `NewProductionHTTPHandler` 提供；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
-- 企业 identity context、API Key middleware、静态和 OIDC/JWKS JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewOIDCJWTAuthenticator`、`NewAPIKeyMiddleware`、`NewJWTMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
-- Audit event 契约和 noop/内存/文件 sink 可通过 `pkg/audit`、`NewNoopAuditSink`、`NewInMemoryAuditSink`、`NewFileAuditSink` 和 `WithAuditSink` 使用。
-- 运行时可观测面板、事件仓库、实时 EventHub 和 PostgreSQL 自动建表可通过 `NewPostgresEventStore`、`NewInMemoryEventStore`、`NewEventStoreSink`、`NewEventHub` 和 `NewObservabilityHTTPHandler` 使用。
-- 企业认证/租户和可观测/治理设计见 [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md)、[docs/observability-governance.md](docs/observability-governance.md) 与 [docs/observability-dashboard.md](docs/observability-dashboard.md)。
-- 内存适配器是并发安全的，并按 run/session 命名空间隔离。
+- `Skill = prompt fragments + agent/tool policy overlays + inline-able workflow sub-graph`.
+- `Tool = schema-backed execution unit`.
+- `Agent = entity that owns LLM and memory binding`.
+- `RunStateRepository` is separate from Memory and handles resumable workflow snapshots.
+- Context governance is profile-scoped: different agents/tools can route to different LLM profiles with different window, output, thinking, and compression policies.
+- Autonomous execution supports an optional planning pass plus LLM tool-calling loops with tool whitelist checks, approval-policy denial, per-run rate caps, classified retry, bounded tool result feedback, and LLM/tool lifecycle events.
+- Structured output runs use an agent-level `output_schema` and provider `StructuredOutputter`; streaming runs use provider `Streamer` for normal chat and the governed tool loop for tool-enabled agents, then persist the final accumulated answer.
+- Memory bindings are connected to runtime reads/writes for conversation and session history.
+- Fixed workflows run from graph dependencies and edges, with bounded parallel batches, false-condition skips, retry policy, transform nodes, agent nodes, human-gate nodes, and CAS-safe step output persistence.
+- Workflow human-gate nodes pause with persisted `CurrentNodeID`/`PendingGate` and can resume downstream execution after approval; `ResumeAndContinue` continues autonomous, workflow, and tool-approval pause paths until completion or the next gate.
+- External events map through `scenario.triggers` to `Framework.HandleEvent`, Webhook HTTP (`NewWebhookHTTPHandler`),  sync `/v1/events`, and async `event` jobs.
+- `sub_agents` are available to supervisor agents as virtual delegation tools during autonomous execution.
+- Skill prompt fragments, agent policies, tool policies, and workflow segments are expanded during scenario build with namespaced workflow node IDs.
+- Tools have separate declaration and execution surfaces: `scenario.tools` exposes manifests to LLMs and validators, `WithToolExecutor` eagerly registers light executors, and `WithToolResolver` lazily binds heavy or tenant-scoped executors only when a permitted invocation reaches execution.
+- File-backed RunState, BlobStore, and Memory adapters are available from the root facade for durable local persistence; PostgreSQL-backed and Redis-backed RunState are available for production persistence; S3-compatible BlobStore is available for large runtime/workflow outputs and supports MinIO/AWS S3 style endpoints plus verified S3-compatible COS/OSS endpoints; Redis-backed leases are available for worker coordination; async queue and worker contracts support `run`, `event`, and `resume.continue` jobs through `NewFrameworkJobHandler`, with HTTP routes on `NewAsyncRunHTTPHandler` and `NewProductionHTTPHandler`; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
+- Enterprise identity context, API key middleware, static and OIDC/JWKS JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, `NewOIDCJWTAuthenticator`, `NewAPIKeyMiddleware`, `NewJWTMiddleware`, `NewAuthorizationMiddleware`, and `WithSecurityPolicy`.
+- Audit event contracts and noop/in-memory/file sinks are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.
+- Runtime observability dashboard, event store, live event hub, and automatic PostgreSQL schema setup are available through `NewPostgresEventStore`, `NewInMemoryEventStore`, `NewEventStoreSink`, `NewEventHub`, and `NewObservabilityHTTPHandler`.
+- Enterprise auth/tenancy and observability/governance designs are documented in [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md), [docs/observability-governance.md](docs/observability-governance.md), and [docs/observability-dashboard.md](docs/observability-dashboard.md).
+- In-memory adapters are concurrency-safe and namespaced by run/session where applicable.
 
-## 测试
+## Testing
 
-默认单元测试：
+Default unit tests:
 
 ```sh
 make test
 ```
 
-集成测试：
+Integration tests:
 
 ```sh
 make test-integration
 ```
 
-真实本地模型流程测试：
+Real local-model flow test:
 
 ```sh
 export AGENT_REALMODEL_BASE_URL="http://127.0.0.1:1234/v1"
@@ -1134,13 +1028,13 @@ export AGENT_REALMODEL_API_KEY="..."
 make test-realmodel
 ```
 
-并发内存适配器 Race 测试：
+Race tests for concurrent in-memory adapters:
 
 ```sh
 make test-race
 ```
 
-静态检查和漏洞扫描：
+Static checks and vulnerability scanning:
 
 ```sh
 make vet
@@ -1148,7 +1042,7 @@ make lint
 make security
 ```
 
-直接运行：
+Direct commands:
 
 ```sh
 CGO_ENABLED=0 go test -ldflags="-w" ./...
@@ -1157,50 +1051,51 @@ CGO_ENABLED=0 go test -ldflags="-w" -tags=realmodel -run TestRealModel -v .
 go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem ./internal/adapter/blob/inmem
 ```
 
-在较旧的 Darwin 本地工具链 + `CGO_ENABLED=0` 环境中，`-ldflags="-w"` 可规避本地 `dyld` 测试二进制问题。
+On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a local `dyld` test-binary issue.
 
-## 当前状态
+## Current status
 
-已实现：
+Implemented:
 
-- YAML loader 和 validator
-- Autonomous runtime engine，包含自主执行前的可选 planning pass
-- 已接入根门面的 Fixed-workflow runner
-- In-memory Memory、RunStateRepository、BlobStore
-- LLM 抽象，以及 OpenAI-compatible、Anthropic、local、router 和 mock 测试路径的根包构造函数
-- 注册工具、OpenAI-compatible function calling 和 Anthropic Messages tool use 的自主工具调用循环
-- 通过 `WithToolResolver` 在运行时策略检查后惰性绑定重型或租户隔离工具 executor
-- Runtime memory integration：注入历史并持久化用户/助手/工具观察结果
-- 固定工作流图调度：依赖、并行、`parallel_group`/`loop` 节点、重试、条件、transform/agent/human-gate 节点、CAS 安全输出保存
-- Workflow-level HITL pause/resume，以及 `ResumeAndContinue` 续跑路径
-- 事件触发器（`scenario.triggers`）、`HandleEvent`、Webhook HTTP、CLI `agentctl trigger` 和异步 `event` job
-- 内置 Git / ticket 工具 executor，适用于代码审查和客服工单场景
-- 自主运行中的 planning pass 执行跟踪
-- 通过虚拟 sub-agent tools 实现多 Agent delegation baseline
-- Skill prompt/workflow expansion、compatible-agent 校验、Agent policy overlay 和 Tool policy overlay
-- 文件版 RunState、Blob、Memory 持久化适配器，以及 PostgreSQL RunState、Redis RunState 和 S3-compatible BlobStore 持久化适配器
-- 用于 Worker 和工作流协调的 Redis 分布式租约适配器
-- 异步 Job Queue 和 Worker 契约、内存/PostgreSQL 队列适配器、租约续租、支持 `run`/`event`/`resume.continue` 的 framework job handler，以及带可选同步 event/HITL 路由的生产 HTTP handler
-- 企业 identity context、API Key middleware、静态/JWKS Discovery JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization
-- Audit event 模型，以及 noop、内存和 JSONL 文件 sink，加上 framework audit wiring
-- 通过 `--state-dir` 支持 durable CLI resume，以及 `agentctl resume --continue` 和 `agentctl trigger` 事件驱动运行
-- Runtime hardening：全局/Agent/Profile timeout、分类 LLM/Tool retry + 指数退避、Tool rate cap、工具结果回填上限、失败状态持久化、大输出 Blob 外置
-- 结构化输出和流式输出 Runtime 路径，包含带工具 Agent 的流式运行
-- 上下文治理：滑动窗口、启发式摘要压缩、丰富 LLM Profile 配置、`ContextPrepared` 事件
-- CLI 和 HTTP HITL 界面，包含可过期 CLI Token 和更安全的调试台密钥默认值
-- GitHub Actions CI、golangci-lint 配置、govulncheck/CodeQL 工作流、Dependabot、GoReleaser、Dockerfile、安全和社区文档
-- 单元测试和集成测试
+- YAML loader and validator
+- Autonomous runtime engine with optional planning pass before governed execution
+- Fixed-workflow runner wired through the root facade
+- In-memory Memory, RunStateRepository, and BlobStore
+- LLM abstractions plus root constructors for OpenAI-compatible, Anthropic, local, router, and mock testing paths
+- Autonomous tool-calling loop for registered tools, OpenAI-compatible function calling, and Anthropic Messages tool use
+- Lazy tool resolution through `WithToolResolver` for heavy or tenant-scoped executors after runtime policy checks
+- Runtime memory integration for injected history and persisted user/assistant/tool observations
+- Fixed-workflow graph scheduler with dependencies, parallelism, `parallel_group` and `loop` nodes, retries, conditions, transform/agent/human-gate nodes, and CAS-safe output saves
+- Workflow-level HITL pause/resume with saved scheduler position, plus `ResumeAndContinue` for autonomous, workflow, and tool-approval pause paths
+- Event triggers (`scenario.triggers`) with `HandleEvent`, Webhook HTTP,  and async `event` jobs
+- Built-in Git and ticket tool executors for code-review and support-ticket scenarios
+- Planning pass execution tracking during autonomous runs
+- Multi-agent delegation through virtual sub-agent tools and persisted delegated outputs
+- Skill prompt/workflow expansion, compatible-agent checks, agent policy overlays, and tool policy overlays during scenario build
+- File-backed durable adapters for run state, blobs, and memory, plus PostgreSQL-backed run state, Redis-backed run state, PostgreSQL-backed async queue, and S3-compatible blob storage
+- Redis-backed distributed lease adapter for worker and workflow coordination
+- Async job queue and worker contracts with in-memory/PostgreSQL queue adapters, lease renewal, framework job handler for `run`/`event`/`resume.continue`, HTTP submit/status/cancel handler, and production handler with optional sync event/HITL routes
+- Enterprise identity context, API key middleware, static/JWKS-discovered JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization
+- Audit event model with noop, in-memory, JSONL file, and structured `slog` sinks, plus framework audit wiring
+- Governance hooks for tool budgets, tool side-effect ceilings, and persisted output redaction
+- `ResumeAndContinue` and `HandleEvent` for event-driven runs
+- Runtime hardening: global/agent/profile timeouts, classified LLM/tool retry with exponential backoff, tool rate caps, bounded tool-result context feedback, failed-run status persistence, and blob externalization for large outputs
+- Structured output and streaming runtime paths exposed through the root facade, including tool-enabled streaming runs
+- Context governance with sliding-window trimming, heuristic summary compression, richer LLM profile config, and `ContextPrepared` events
+- HTTP HITL and Webhook routes via `NewHumanHTTPHandler` and `NewWebhookHTTPHandler`
+- GitHub Actions CI, golangci-lint, govulncheck/CodeQL, Dependabot, and module release checks
+- Unit and integration tests
 
-后续生产路线：
+Remaining production roadmap:
 
-- 在现有 recorder/tracer 端口之上补充具体 Prometheus/OpenTelemetry exporter
-- 在当前 Compose 和 Kustomize base 之外补充 Helm chart 打包
-- 完善 Tool/Skill catalog manifest 校验、打包流程，以及针对托管服务的集成测试矩阵
+- Concrete Prometheus/OpenTelemetry exporters on top of the existing recorder/tracer ports
+- Helm chart examples for host applications (not shipped as first-party binaries)
+- Tool/Skill catalog manifest validation, packaging workflows, and integration test matrices for managed services
 
-## 贡献
+## Contributing
 
-参见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-本项目使用 [Apache License 2.0](./LICENSE)。
+Licensed under the [Apache License 2.0](./LICENSE).

@@ -78,7 +78,7 @@ dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityH
 })
 ```
 
-`NewPostgresEventStore` 默认自动执行幂等建表，创建 `agentflow_runtime_events` 和查询索引；受控生产环境也可以先执行 [deploy/migrations/postgres/0001_agentflow_core.up.sql](../deploy/migrations/postgres/0001_agentflow_core.up.sql)，再设置 `SkipSchemaSetup: true`。完整说明见 [docs/observability-dashboard.md](observability-dashboard.md)。
+`NewPostgresEventStore` 默认自动执行幂等建表，创建 `agentflow_runtime_events` 和查询索引；受控生产环境也可以先执行 [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/0001_agentflow_core.up.sql)，再设置 `SkipSchemaSetup: true`。完整说明见 [docs/observability-dashboard.md](observability-dashboard.md)。
 
 ### 链路追踪
 

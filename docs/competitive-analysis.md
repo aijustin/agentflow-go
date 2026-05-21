@@ -23,7 +23,7 @@
 | Corrective RAG 模板 | ✅ | `examples/corrective_rag.yaml` |
 | Adaptive RAG / Query Router | ✅ | `query_router` workflow 节点 |
 | Planning 闭环 | ✅ | `planning.execute` + replan + tool 引导 |
-| 分层记忆 | ✅ | `pkg/memory/tier` + long_term recall |
+| 分层记忆 | ✅ | `memory_recall_limit` + `long_term` scope |
 | Tool schema 裁剪 | ✅ | `context.tool_schema_pruning` |
 | Stale tool 结果淘汰 | ✅ | `context.stale_tool_turns` |
 | 认知记忆端口 | ✅ | `pkg/memory/cognitive` |

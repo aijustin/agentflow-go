@@ -1,127 +1,32 @@
 # agentflow-go
 
-Scenario-configured Go toolkit for composing Agents, Tools, Skills, LLM gateways, context governance, Memory, Run State, and Human-in-the-loop orchestration.
+Scenario-configured Go library for Agents, Tools, Skills, LLM gateways, context governance, Memory, Run State, and Human-in-the-loop orchestration.
 
 ## Important files
 
-- `README.md`: primary user documentation.
-- `docs/manual.html`: standalone professional HTML usage manual for guided framework adoption.
-- `schemas/agentflow.scenario.schema.json`: JSON Schema for scenario YAML editor completion, enum discovery, and CI validation.
-- `docs/configuration-reference.md`: human-readable scenario YAML field and enum reference.
+- `README.md`: primary documentation (Chinese, library-first).
+- `README.en.md`: English documentation.
+- `docs/manual.html`: standalone HTML integration manual (open in browser).
+- `docs/library-integration.md`: how to embed the library in Go services.
+- `schemas/agentflow.scenario.schema.json`: JSON Schema for scenario YAML.
 - `examples/*.yaml`: scenario examples.
-- `framework.go`: root importable facade for other Go projects.
-- `async.go`: root async queue, HTTP, and framework-run worker constructors.
-- `api.go`: production HTTP handler constructor.
-- `observability.go`: root `slog` event and audit sink constructors.
-- `providers.go`: root constructors for built-in LLM gateways and router.
-- `mcp.go`: root constructors for MCP HTTP clients and MCP-backed tool executors.
-- `tools.go`: root constructors for built-in tool executors such as constrained HTTP, filesystem reads, SQL queries, Git, and ticket tools.
-- `knowledge.go`: root constructors for retriever tools and pgvector-backed vector stores.
-- `docs/enterprise-roadmap.md`: enterprise P0-P2 milestone roadmap.
-- `docs/api-stability.md`: v0 public API stability and migration policy.
-- `docs/release-checklist.md`: release validation checklist and required checks.
-- `docs/mcp-tools.md`: MCP client and tool adapter model.
-- `docs/tools-http.md`: constrained HTTP tool executor wiring and safety model.
-- `docs/tools-filesystem.md`: constrained filesystem read tool wiring and safety model.
-- `docs/tools-sql.md`: constrained SQL query tool wiring and safety model.
-- `docs/tools-git.md`: read-only Git tool wiring and safety model.
-- `docs/tools-ticket.md`: ticket store tool wiring and safety model.
-- `docs/knowledge-rag.md`: RAG contracts, retriever tool wiring, and current scope.
-- `docs/deployment-enterprise.md`: local enterprise Compose stack and deployment mapping notes.
-- `docs/persistence/pgvector.md`: PostgreSQL pgvector vector-store table contract and notes.
-- `deploy/enterprise/docker-compose.yml`: local PostgreSQL+pgvector, Redis, MinIO, and agent-http stack.
-- `deploy/enterprise/postgres/init/001-agentflow.sql`: local bootstrap SQL for run state, async jobs, and knowledge embeddings.
-- `deploy/migrations/postgres/*.sql`: production-oriented PostgreSQL migration SQL for default adapter tables.
-- `deploy/kubernetes/base`: Kustomize base for `agent-http`, plus secret and worker examples.
-- `docs/persistence/postgres-runstate.md`: PostgreSQL run-state adapter contract and usage notes.
-- `docs/persistence/postgres-queue.md`: PostgreSQL async queue adapter contract and usage notes.
-- `docs/persistence/s3-blobstore.md`: S3-compatible blob store contract and usage notes.
-- `docs/persistence/redis-locker.md`: Redis lease adapter contract and usage notes.
-- `eventrouter.go`: root Webhook/Human HTTP handler constructors for sync events and HITL resume.
-- `framework_event.go`: `Framework.HandleEvent` and event trigger resolution.
-- `framework_continue.go`: `Framework.ResumeAndContinue`.
-- `docs/async-runtime.md`: async queue, worker, production HTTP route matrix, and event/resume job types.
-- `docs/security-auth-tenancy.md`: enterprise identity, auth, RBAC, and tenancy design.
-- `docs/observability-governance.md`: observability, audit, and governance design.
-- `pkg/async`: public job queue and worker contracts.
-- `pkg/audit`: public audit event and sink contract.
-- `pkg/coordination`: public distributed lease contract.
-- `pkg/governance`: public tool governance and output redaction contracts.
-- `pkg/knowledge`: public document embedding and vector-store contracts.
-- `pkg/mcp`: public MCP tool listing and tool-call client contracts.
-- `pkg/identity`: public enterprise principal, scope, role, and context helpers.
-- `pkg/security`: public API key authenticator and RBAC policy contracts.
-- `.github/workflows/*.yml`: CI, lint, security, and release automation.
-- `.golangci.yml`: lint configuration.
-- `.goreleaser.yml`: release binary configuration.
-- `Dockerfile`: container build for `agent-http` or `agentctl`.
-- `pkg/core`: public agent, tool, skill, workflow, HITL, and event types.
-- `pkg/eventrouter`: external event types and trigger-to-run routing.
-- `pkg/llm`: LLM gateway capability interfaces and request/response types.
-- `pkg/contextwindow`: context-window policies, token estimation, sliding-window trimming, and summary compression.
-- `pkg/memory`: memory namespace and repository port.
-- `pkg/runstate`: run snapshot, CAS repository, blob references, and signed token helpers.
-- `internal/adapter/config/yaml`: YAML loader and validator.
-- `internal/application/runtime`: autonomous runtime engine.
-- `internal/application/orchestration`: workflow runner.
-- `cmd/agentctl`: CLI entrypoint.
-- `cmd/agent-http`: browser debug console and basic HITL resume bridge (not the production webhook/event API).
-- `internal/adapter/debugui`: debug UI server, built-in scenarios, API handlers, and embedded HTML.
+- `examples/go/*`: runnable integration examples (minimal, postgres, http-worker, hitl-resume, event-trigger, validate).
+- `framework.go`: root importable facade.
+- `migrations/postgres/*.sql`: PostgreSQL schema for default adapters.
+- `pkg/testutil`: test and example wiring helpers (`WiringOptions`).
+- `docs/api-stability.md`: v0 public API stability policy.
 
 ## Commands
 
 ```sh
 make test
-make test-integration
-make test-race
-make test-realmodel
-make build
-make vet
-make lint
-make security
-go run ./cmd/agentctl validate -f examples/autonomous.yaml
-go run ./cmd/agentctl schema
-go run ./cmd/agentctl trigger -f examples/ticket_handling.yaml --event ticket.created --payload '{"body":{"summary":"hello"}}'
-go run ./cmd/agentctl resume -f examples/human_in_loop.yaml --continue --token "$TOKEN" --decision approve
-AGENT_HTTP_ADDR=:18080 go run ./cmd/agent-http
+make validate-examples
+make release-check
+go run ./examples/go/minimal/main.go
 ```
 
-## Design notes
+## Library capabilities
 
-- Public API lives in `pkg/`.
-- The root package `github.com/aijustin/agentflow-go` wraps common framework usage: load YAML, validate, run, resume, handle events, and wire options.
-- Private wiring and adapters live in `internal/`.
-- `RunStateRepository` is separate from Memory and is responsible for resumable HITL snapshots.
-- Context governance is configured per LLM profile with `context_window_tokens`, `max_output_tokens`, `thinking`, `reasoning_effort`, `extra_body`, and `context.strategy` (`none`, `sliding_window`, `sliding_window_with_summary`).
-- Autonomous execution supports LLM tool-calling loops when the gateway implements `ToolCaller`; tools are validated against the agent whitelist and scenario approval policy before registered executors run.
-- Agent memory bindings are active at runtime: conversation/session memory is read into context and user/assistant/tool observations are appended after execution.
-- Fixed workflows use graph dependencies and edges, bounded parallel batches, false-condition skips, retry policy, transform/agent/human-gate nodes, and CAS-safe step output persistence.
-- The root facade dispatches `fixed_workflow` scenarios through the workflow runner.
-- Workflow human-gate nodes pause with persisted run state and resume downstream graph execution after approval.
-- Supervisor agents can delegate to configured `sub_agents` through virtual delegation tools in the autonomous loop.
-- Skill prompt fragments and workflow segments are expanded during scenario build with namespaced workflow IDs.
-- File-backed durable adapters are available through root facade constructors for run state, blobs, and memory.
-- PostgreSQL-backed run state is available through `NewPostgresRunStateRepository`; applications provide their own `database/sql` driver.
-- S3-compatible blob storage is available through `NewS3BlobStore` using standard-library SigV4 signing.
-- Redis-backed distributed leases are available through `NewRedisLocker` and `pkg/coordination`.
-- Async job queues and workers are available through `pkg/async`; local queues are exposed through `NewInMemoryJobQueue`, PostgreSQL queues through `NewPostgresJobQueue`, queued framework execution through `NewFrameworkJobHandler` (`NewFrameworkRunJobHandler` alias) for `run`, `event`, and `resume.continue` jobs, async HTTP submit/status/cancel through `NewAsyncRunHTTPHandler`, and production health/API routing through `NewProductionHTTPHandler` with optional sync `/v1/events` and `/v1/hitl/resume` when `Framework` is configured.
-- External events map through `scenario.triggers` to `Framework.HandleEvent`, `NewWebhookHTTPHandler`, `agentctl trigger`, sync `/v1/events`, and async `event` jobs.
-- HITL continuation uses `Framework.ResumeAndContinue`, HTTP/CLI `continue: true`, and async `resume.continue` jobs on production handlers (`/v1/hitl/resume`), not on the debug console resume endpoint.
-- Fixed workflows support `parallel_group` and `loop` nodes; `hybrid` mode runs a workflow stage then an autonomous stage.
-- `Framework.ResolveEvent` resolves triggers without executing; `planning.execute` tracks plan step completion during autonomous runs.
-- Enterprise identity and RBAC foundations are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, and `NewAPIKeyMiddleware`.
-- Authorization middleware and runtime tool authorization are available through `NewAuthorizationMiddleware` and `WithSecurityPolicy`.
-- Audit foundations are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.
-- Structured logging sinks are available through `NewSlogEventSink` and `NewSlogAuditSink`.
-- Governance foundations are available through `pkg/governance`, `WithToolGovernancePolicy`, and `WithOutputRedactor`.
-- `agent-http` requires `AGENT_TOKEN_SECRET` and `AGENT_HTTP_API_KEY` when listening on a non-loopback address; `AGENT_HTTP_AUDIT_FILE` enables JSONL audit output.
-- CLI `run` and `resume` can share durable state with `--state-dir`; CLI HITL tokens can expire via `--token-ttl`.
-- The debug HTTP server allows a development default secret only on loopback listeners; exposed listeners require `AGENT_TOKEN_SECRET` and `AGENT_HTTP_API_KEY`.
-- Runtime hardening includes global/agent/profile timeouts, context-aware LLM/tool retries, per-run tool rate caps, failed-run status persistence, and BlobStore externalization for large outputs.
-- Structured output uses agent `output_schema` plus `llm.StructuredOutputter`; streaming uses `llm.Streamer` and persists accumulated final text.
-- Skills are declarative prompt/policy/workflow packages expanded during scenario build; they do not initialize tools.
-- Tools have separate declaration and execution surfaces: manifests live in `scenario.tools`, light executors can be registered with `WithToolExecutor`, and heavy or tenant-scoped executors can be lazily bound with `WithToolResolver` at invocation time.
-- MCP servers are integrated as adapters that implement `core.ToolExecutor`, keeping governance and audit in the existing runtime path.
-- The built-in HTTP tool executor is deny-by-default: host allowlist required, GET/HEAD by default, response size limit.
-- RAG foundations include `llm.Embedder`, `knowledge.Loader`, `knowledge.Chunker`, `knowledge.VectorStore`, file/HTTP loaders, OpenAI-compatible embeddings, pgvector storage, indexing, citations, and a retriever tool.
-- Local enterprise deployment templates live under `deploy/enterprise`; production services should still own migrations, secrets, and process topology.
+- YAML scenarios with autonomous, fixed_workflow, and hybrid orchestration modes.
+- Root facade constructors for LLM gateways, run state, blob store, tools, MCP, RAG, async queue, and HTTP handlers.
+- Host applications own process topology, migrations, secrets, and HTTP servers.

@@ -11,32 +11,41 @@ import (
 	"time"
 
 	agentflow "github.com/aijustin/agentflow-go"
-	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
+	"github.com/aijustin/agentflow-go/pkg/async"
+	"github.com/aijustin/agentflow-go/pkg/security"
+	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 
 func main() {
 	scenarioFile := "../../autonomous.yaml"
-	cfg := agentflow.ProductionConfig{
-		ScenarioFile: scenarioFile,
-		TokenSecret:  "dev-secret",
-		HTTPAddr:     "127.0.0.1:8080",
-		QueueKind:    "memory",
-		Version:      agentflow.Version,
-		WorkerID:     "example-worker",
-		Concurrency:  2,
+	scenario, err := agentflow.LoadScenarioFile(scenarioFile)
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	fw, err := agentflow.NewProduction(cfg, os.Stderr)
+	workDir, err := testutil.ScenarioWorkDir(scenarioFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
+	if err != nil {
+		log.Fatal(err)
+	}
+	opts = append(opts,
+		agentflow.WithHITLTokenSecret([]byte("dev-secret"), os.Stderr),
+	)
+	fw, err := agentflow.New(scenario, opts...)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer fw.Close(context.Background())
 
-	queue, err := agentflow.NewProductionQueue(cfg, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	handler, err := agentflow.BuildProductionHTTPHandler(cfg, fw, queue)
+	queue := agentflow.NewInMemoryJobQueue()
+	handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+		Queue:     queue,
+		Policy:    security.NewDefaultRolePolicy(),
+		Framework: fw,
+		Version:   agentflow.Version,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,14 +54,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	worker, err := asyncpkg.NewWorker(queue, jobHandler, asyncpkg.WorkerConfig{
-		WorkerID:    cfg.WorkerID,
-		Concurrency: cfg.Concurrency,
+	worker, err := async.NewWorker(queue, jobHandler, async.WorkerConfig{
+		WorkerID:    "example-worker",
+		Concurrency: 2,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	addr := "127.0.0.1:8080"
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -62,9 +72,9 @@ func main() {
 		}
 	}()
 
-	server := &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
+	server := &http.Server{Addr: addr, Handler: handler}
 	go func() {
-		fmt.Printf("HTTP server listening on %s\n", cfg.HTTPAddr)
+		fmt.Printf("HTTP server listening on %s\n", addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("server stopped: %v", err)
 			cancel()

@@ -11,17 +11,16 @@ scenario:
       instructions: "回答时仅使用获批工具。"
 ```
 
-通过 CLI 输出 Schema：
+在 Go 中加载 Schema：
 
-```sh
-agentctl schema
-agentctl schema --format json
+```go
+schema := agentflow.ScenarioJSONSchema()
 ```
 
 校验场景文件：
 
 ```sh
-agentctl validate -f scenario.yaml
+go run ./examples/go/validate scenario.yaml
 ```
 
 ## 顶层结构
@@ -401,25 +400,22 @@ Webhook 请求体：
 }
 ```
 
-CLI 等价命令：
+示例等价代码：
 
 ```sh
-agentctl trigger -f examples/ticket_handling.yaml \
-  --event ticket.created \
-  --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
+go run ./examples/go/event-trigger/main.go
 ```
 
-## CLI 与编排模式
+## 库 API 与编排模式
 
-| 命令 | 使用的运行时 | 支持的 `orchestration.mode` |
+| API | 使用的运行时 | 支持的 `orchestration.mode` |
 | --- | --- | --- |
-| `agentctl run` | `Framework.Run`（含 demo mock LLM 与内置工具） | `autonomous`、`fixed_workflow`、`hybrid` |
-| `agentctl trigger` | `Framework.HandleEvent` | `autonomous`、`fixed_workflow`、`hybrid` |
-| `agentctl resume --continue` | `Framework.ResumeAndContinue` | 同上 |
-| `agent-server` / `agent-worker` | 生产 HTTP API + 异步 Worker | 同上 |
-| 库 `Framework.Run` | 完整 mode 分发 | `autonomous`、`fixed_workflow`、`hybrid` |
+| `Framework.Run` | 自主/工作流/hybrid 分发 | `autonomous`、`fixed_workflow`、`hybrid` |
+| `Framework.HandleEvent` | 按 `scenario.triggers` 路由 | 同上 |
+| `Framework.ResumeAndContinue` | HITL 续跑 | 同上 |
+| `NewProductionHTTPHandler` + Worker | 宿主 HTTP 服务 + 异步队列 | 同上 |
 
-`agentctl run` 会自动注册 `DemoOptions`（mock LLM、echo/git/ticket/repo_search 等 demo 工具）。生产服务应显式注册真实 LLM Gateway 与工具执行器，或使用 `agent-server` + `agent-worker`。
+测试与 `examples/` 可使用 `testutil.WiringOptions`（mock LLM 与 demo 工具）。生产嵌入应显式 `WithLLMGateway` 与 `WithToolExecutor` / `WithToolResolver`。
 
 ## 运行时
 
@@ -447,4 +443,4 @@ agentctl trigger -f examples/ticket_handling.yaml \
 | `reasoning_effort` | 不同 Provider 的标签和语义可能不同。 |
 | `metadata` | 运维团队可能加入部署、归属、合规等标签。 |
 
-建议用 JSON Schema 获得编写阶段的字段和枚举提示，用 `agentctl validate` 做运行时引用关系和工作流图校验，再用测试承载组织内部的额外策略规则。
+建议用 JSON Schema 获得编写阶段的字段和枚举提示，用 `ValidateWiring` 或 `examples/go/validate` 做引用与工作流图校验，再用测试承载组织内部的额外策略规则。

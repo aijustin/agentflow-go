@@ -10,7 +10,7 @@
 - Worker 循环支持有界并发、上下文取消、轮询、任务超时、租约完成和失败上报。
 - 本地队列根构造函数：`agentflow.NewInMemoryJobQueue()`。
 - 异步 run / event / resume.continue submit/status/cancel 的根 HTTP handler：`agentflow.NewAsyncRunHTTPHandler(...)`。
-- 框架 Worker Handler：`agentflow.NewFrameworkJobHandler(...)`（`NewFrameworkRunJobHandler` 为其别名）。
+- 框架 Worker Handler：`agentflow.NewFrameworkJobHandler(...)`。
 - 带健康检查、异步 API，以及可选同步事件/HITL 路由的生产 HTTP Handler：`agentflow.NewProductionHTTPHandler(...)`。
 
 ## 任务类型
@@ -240,22 +240,17 @@ events, _ := agentflow.NewWebhookHTTPHandler(agentflow.WebhookHTTPHandlerConfig{
 hitl := agentflow.NewHumanHTTPHandler(agentflow.HumanHTTPHandlerConfig{Framework: fw})
 ```
 
-## CLI 等价操作
+## 示例等价操作
 
 ```sh
 # 同步触发事件
-agentctl trigger -f examples/ticket_handling.yaml \
-  --event ticket.created \
-  --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'
+go run ./examples/go/event-trigger/main.go
 
 # 同步续跑（ResumeAndContinue）
-agentctl resume -f examples/human_in_loop.yaml \
-  --continue \
-  --token "$TOKEN" \
-  --decision approve
+go run ./examples/go/hitl-resume/main.go
 ```
 
-CLI 的 `--continue` 与 HTTP `continue: true`、异步 `resume.continue` job 语义一致。
+HTTP `continue: true` 与异步 `resume.continue` job 语义一致。
 
 `Framework.ResolveEvent` 仅解析 trigger 为 `RunRequest`，不执行运行；适合预检或自定义队列封装。
 

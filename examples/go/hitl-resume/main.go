@@ -9,6 +9,7 @@ import (
 
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 
 func main() {
@@ -17,13 +18,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	workDir, err := agentflow.DemoWorkDir(scenarioFile)
+	workDir, err := testutil.ScenarioWorkDir(scenarioFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	var tokenBuf bytes.Buffer
-	opts, err := agentflow.DevelopmentOptions(scenario, agentflow.DevelopmentConfig{WorkDir: workDir})
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
 	if err != nil {
 		log.Fatal(err)
 	}

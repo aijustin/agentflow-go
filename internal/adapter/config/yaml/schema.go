@@ -60,7 +60,7 @@ var (
 	}
 )
 
-// ScenarioJSONSchema returns the JSON Schema used by editors, CI, and agentctl.
+// ScenarioJSONSchema returns the JSON Schema used by editors and CI.
 func ScenarioJSONSchema() []byte {
 	return schemas.ScenarioJSONSchema()
 }

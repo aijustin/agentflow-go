@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -10,7 +11,7 @@ import (
 )
 
 func main() {
-	scenarioFile := "../../autonomous.yaml"
+	scenarioFile := "../../ticket_handling.yaml"
 	scenario, err := agentflow.LoadScenarioFile(scenarioFile)
 	if err != nil {
 		log.Fatal(err)
@@ -23,22 +24,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := agentflow.ValidateWiring(scenario, opts...); err != nil {
-		log.Fatal(err)
-	}
+	opts = append(opts, agentflow.WithHITLTokenSecret([]byte("dev-secret"), nil))
 	fw, err := agentflow.New(scenario, opts...)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer fw.Close(context.Background())
 
-	result, err := fw.Run(context.Background(), agentflow.RunRequest{
-		RunID:  "run-1",
-		Agent:  "assistant",
-		Prompt: "hello",
+	result, err := fw.HandleEvent(context.Background(), agentflow.IncomingEvent{
+		Type: "ticket.created",
+		Payload: json.RawMessage(`{
+			"body": {
+				"ticket_id": "T-9",
+				"summary": "Customer cannot reset password"
+			}
+		}`),
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("status=%s output=%s\n", result.Status, result.Output)
+	fmt.Printf("run_id=%s status=%s output=%s\n", result.RunID, result.Status, result.Output)
 }

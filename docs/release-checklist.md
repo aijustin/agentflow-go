@@ -10,17 +10,15 @@
 GOTOOLCHAIN=auto make release-check
 ```
 
-该目标会执行格式化、单元测试、`go vet`、二进制构建、`govulncheck`，并校验 `examples/` 下的每一个示例场景。
+该目标会执行格式化、单元测试、`go vet`、`govulncheck`，并校验 `examples/` 下的每一个示例场景。
 
 ## 推荐的人工检查
 
-当发布内容涉及部署、持久化或并发行为时，运行以下检查：
+当发布内容涉及持久化或并发行为时，运行以下检查：
 
 ```sh
 GOTOOLCHAIN=auto make test-integration
 GOTOOLCHAIN=auto make test-race
-docker compose -f deploy/enterprise/docker-compose.yml config
-kubectl kustomize deploy/kubernetes/base
 ```
 
 只有在有意配置了本地或兼容模型端点时，才运行真实模型测试：
@@ -31,9 +29,9 @@ GOTOOLCHAIN=auto make test-realmodel
 
 ## 文档检查
 
-- README 和 README.zh-CN 已描述新的用户可见行为。
-- 新增示例可以通过 `agentctl validate`。
-- `CHANGELOG.md` 包含公共 API、场景、CLI 和部署相关变更。
+- `README.md`（中文，默认）与 `README.en.md`（英文）已描述新的用户可见行为；示例路径见 README「示例路径对照表」。
+- 新增示例可以通过 `go run ./examples/go/validate <file>` 校验。
+- `CHANGELOG.md` 包含公共 API 与场景相关变更。
 - 破坏性变更包含迁移说明。
 - 安全敏感能力记录了安全默认值和运维责任。
 

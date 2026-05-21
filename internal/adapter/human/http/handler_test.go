@@ -33,7 +33,7 @@ func TestHandlerServeHTTP(t *testing.T) {
 			gate := &fakeGate{err: tt.gateErr}
 			req := httptest.NewRequest(tt.method, "/resume", bytes.NewBufferString(tt.body))
 			rec := httptest.NewRecorder()
-			NewLegacyHandler(gate).ServeHTTP(rec, req)
+			NewHandler(HandlerConfig{Gate: gate}).ServeHTTP(rec, req)
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("got status %d, want %d: %s", rec.Code, tt.wantStatus, rec.Body.String())
 			}

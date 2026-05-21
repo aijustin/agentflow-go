@@ -15,7 +15,7 @@
 - 创建：`internal/adapter/runstate/postgres/repository.go`，用于 PostgreSQL 兼容运行状态持久化。
 - 创建：`internal/adapter/runstate/postgres/repository_test.go`，使用本地测试驱动或集成 build tag 测试 repository 契约。
 - 修改：`framework.go`，在适配器可以作为公共扩展点时暴露根构造函数。
-- 修改：`README.md` 和 `README.zh-CN.md`，增加生产持久化示例。
+- 修改：`README.md` 和 `README.en.md`，增加生产持久化示例。
 - 修改：`docs/enterprise-roadmap.md`，随着里程碑完成更新。
 
 ## 任务 1：PostgreSQL RunStateRepository

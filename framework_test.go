@@ -266,7 +266,7 @@ func TestFrameworkRunJobHandlerExecutesRunPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := agentflow.NewFrameworkRunJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+	handler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,10 +291,10 @@ func TestFrameworkRunJobHandlerRejectsInvalidJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentflow.NewFrameworkRunJobHandler(agentflow.FrameworkRunJobHandlerConfig{}); err == nil {
+	if _, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{}); err == nil {
 		t.Fatal("expected missing framework error")
 	}
-	handler, err := agentflow.NewFrameworkRunJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+	handler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
 	if err != nil {
 		t.Fatal(err)
 	}

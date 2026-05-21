@@ -9,13 +9,11 @@ permissions:
   contents: write
 
 jobs:
-  goreleaser:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -23,11 +21,5 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release checks
+        run: make release-check

@@ -1,4 +1,4 @@
-.PHONY: test test-integration test-race test-realmodel vet lint security build fmt validate-examples release-check
+.PHONY: test test-integration test-race test-realmodel vet lint security fmt validate-examples release-check
 
 GO_TEST_LDFLAGS ?= -w
 
@@ -26,16 +26,10 @@ lint:
 security:
 	govulncheck ./...
 
-build:
-	go build -ldflags="-s -w" ./cmd/agentctl
-	go build -ldflags="-s -w" ./cmd/agent-http
-	go build -ldflags="-s -w" ./cmd/agent-server
-	go build -ldflags="-s -w" ./cmd/agent-worker
-
 validate-examples:
 	@for file in examples/*.yaml; do \
 		echo "validating $$file"; \
-		go run ./cmd/agentctl validate -f "$$file" >/dev/null; \
+		go run ./examples/go/validate "$$file" >/dev/null; \
 	done
 
-release-check: fmt test vet build security validate-examples
+release-check: fmt test vet security validate-examples

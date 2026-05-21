@@ -714,7 +714,7 @@
       <div class="brand">
         <div class="mark" aria-hidden="true">AF</div>
         <h1>AgentFlow Go 使用手册</h1>
-        <p>面向企业 Agent 应用的 Go 框架指南</p>
+        <p>库集成指南 — import 后嵌入自有服务</p>
       </div>
       <div class="tools">
         <button type="button" id="themeToggle" title="切换明暗主题">主题</button>
@@ -726,6 +726,7 @@
         <ul class="nav" id="nav">
           <li><a href="#overview">框架概览</a></li>
           <li><a href="#quickstart">快速开始</a></li>
+          <li><a href="#examples">示例路径</a></li>
           <li><a href="#concepts">核心概念</a></li>
           <li><a href="#scenario">场景 YAML</a></li>
           <li><a href="#embed">嵌入 Go 项目</a></li>
@@ -735,7 +736,8 @@
           <li><a href="#enterprise">企业能力</a></li>
           <li><a href="#events-async">事件与异步 API</a></li>
           <li><a href="#observability">可观测面板</a></li>
-          <li><a href="#deployment">部署与发布</a></li>
+          <li><a href="#deployment">宿主部署与发布</a></li>
+          <li><a href="library-integration.md">库集成文档 (Markdown)</a></li>
           <li><a href="#checklist">落地检查表</a></li>
         </ul>
       </nav>
@@ -745,13 +747,14 @@
       <header class="hero" id="top">
         <div class="hero-copy">
           <span class="eyebrow">agentflow-go 使用手册</span>
-          <h2>把 Agent 应用从 Demo 带到企业现场</h2>
-          <p>AgentFlow Go 用 YAML 描述场景，用 Go 接入模型、工具、记忆、运行状态、治理、人工审批和实时可观测面板。它适合被公司内部平台、业务系统和自动化工作流作为基础框架引用。</p>
+          <h2>把 Agent 能力嵌入你的 Go 服务</h2>
+          <p>AgentFlow Go 是可被 <code>import</code> 的场景驱动库：YAML 声明 Agent、工具与工作流，Go 代码注入模型、持久化、治理与 HTTP Handler。不提供官方 CLI 或独立 Server 二进制，由宿主应用负责进程拓扑与运维。</p>
           <div class="hero-actions">
             <a class="button-link primary-action" href="#quickstart">开始接入</a>
             <a class="button-link" href="#observability">开启可观测</a>
             <a class="button-link" href="#enterprise">查看企业能力</a>
             <a class="button-link" href="../README.md">阅读 README</a>
+            <a class="button-link" href="#examples">示例路径</a>
           </div>
         </div>
         <div class="console" aria-label="快速命令示例">
@@ -761,12 +764,8 @@
           </div>
           <pre><code>go get github.com/aijustin/agentflow-go
 
-go run ./cmd/agentctl validate \
-  -f examples/autonomous.yaml
-
-go run ./cmd/agentctl run \
-  -f examples/autonomous.yaml \
-  --prompt "hello" --json
+go run ./examples/go/validate examples/autonomous.yaml
+go run ./examples/go/minimal/main.go
 
 GOTOOLCHAIN=auto make release-check</code></pre>
         </div>
@@ -780,7 +779,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           </div>
           <span class="tag">Go 1.25.10+</span>
         </div>
-        <p class="lead">AgentFlow Go 是一个以场景为中心的 Agent 框架。业务把 Agent、LLM profile、工具、Skill、记忆、工作流、人工审批和策略写进 YAML，Go 代码负责把真实模型、数据库、HTTP、文件系统、对象存储、身份治理和可观测能力注入运行时。</p>
+        <p class="lead">AgentFlow Go 是一个以场景为中心的 Go 库。业务把 Agent、LLM profile、工具、Skill、记忆、工作流、人工审批和策略写进 YAML，在自有 <code>main</code> 中通过 <code>agentflow.New</code> 与 <code>With*</code> 选项注入模型、数据库、HTTP Handler、身份治理和可观测能力。</p>
         <div class="metric-strip" aria-label="能力摘要">
           <div class="metric"><strong>场景</strong><span>声明 Agent、Tool、Skill、workflow、policy</span></div>
           <div class="metric"><strong>模型</strong><span>Provider Router、结构化输出、流式输出、规划 pass</span></div>
@@ -816,14 +815,14 @@ GOTOOLCHAIN=auto make release-check</code></pre>
             <div class="step-index">2</div>
             <div>
               <h4>校验场景</h4>
-              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./cmd/agentctl validate -f examples/autonomous.yaml</code></pre></div>
+              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/validate examples/autonomous.yaml</code></pre></div>
             </div>
           </div>
           <div class="step">
             <div class="step-index">3</div>
             <div>
               <h4>运行 Agent</h4>
-              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json</code></pre></div>
+              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/minimal/main.go</code></pre></div>
             </div>
           </div>
           <div class="step">
@@ -834,6 +833,44 @@ GOTOOLCHAIN=auto make release-check</code></pre>
             </div>
           </div>
         </div>
+      </section>
+
+      <section id="examples">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">示例 / 路径对照</div>
+            <h3>示例路径对照表</h3>
+          </div>
+          <a class="button-link" href="../README.md#示例路径对照表">README 完整表</a>
+        </div>
+        <p class="lead">仓库内示例分两类：<code>examples/go/</code> 为可复制的 Go 接入代码；<code>examples/*.yaml</code> 为场景声明，可用 <code>examples/go/validate</code> 或 <code>make validate-examples</code> 批量校验。</p>
+        <h4>可运行 Go 示例</h4>
+        <table>
+          <thead><tr><th>路径</th><th>说明</th><th>命令</th></tr></thead>
+          <tbody>
+            <tr><td><code>examples/go/minimal</code></td><td>进程内最小嵌入</td><td><code>go run ./examples/go/minimal/main.go</code></td></tr>
+            <tr><td><code>examples/go/postgres</code></td><td>Postgres 持久化接线</td><td><code>go run ./examples/go/postgres/main.go</code></td></tr>
+            <tr><td><code>examples/go/http-worker</code></td><td>HTTP Handler + 异步 Worker</td><td><code>go run ./examples/go/http-worker/main.go</code></td></tr>
+            <tr><td><code>examples/go/hitl-resume</code></td><td>HITL 暂停与续跑</td><td><code>go run ./examples/go/hitl-resume/main.go</code></td></tr>
+            <tr><td><code>examples/go/event-trigger</code></td><td>事件 trigger 驱动 Run</td><td><code>go run ./examples/go/event-trigger/main.go</code></td></tr>
+            <tr><td><code>examples/go/validate</code></td><td>场景 YAML + 接线校验</td><td><code>go run ./examples/go/validate examples/autonomous.yaml</code></td></tr>
+          </tbody>
+        </table>
+        <h4>场景 YAML（节选）</h4>
+        <table>
+          <thead><tr><th>文件</th><th>模式</th><th>侧重</th></tr></thead>
+          <tbody>
+            <tr><td><code>examples/autonomous.yaml</code></td><td>autonomous</td><td>最小自主 Agent</td></tr>
+            <tr><td><code>examples/human_in_loop.yaml</code></td><td>autonomous</td><td>最终答案审批</td></tr>
+            <tr><td><code>examples/fixed_workflow.yaml</code></td><td>fixed_workflow</td><td>固定 DAG</td></tr>
+            <tr><td><code>examples/hybrid.yaml</code></td><td>hybrid</td><td>工作流 + 自主综合</td></tr>
+            <tr><td><code>examples/code_review_pipeline.yaml</code></td><td>fixed_workflow</td><td>代码审查流水线</td></tr>
+            <tr><td><code>examples/multi_expert_research.yaml</code></td><td>hybrid</td><td>多专家 + planning</td></tr>
+            <tr><td><code>examples/adaptive_rag.yaml</code></td><td>fixed_workflow</td><td>query_router RAG</td></tr>
+            <tr><td><code>examples/ticket_handling.yaml</code></td><td>autonomous</td><td>工单 trigger + HITL</td></tr>
+          </tbody>
+        </table>
+        <div class="callout">生产环境用 <code>WithLLMGateway</code> / <code>WithToolExecutor</code>；<code>pkg/testutil.WiringOptions</code> 仅用于测试与上述 Go 示例。编排选型见 <a href="orchestration-flow.md">orchestration-flow.md</a>。</div>
       </section>
 
       <section id="concepts">
@@ -864,7 +901,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           </div>
         </div>
         <p class="lead">YAML 是 AgentFlow 的产品界面。它让业务团队能审阅 Agent 能力、工具风险、审批策略和运行模式，而不是把这些策略散落在 Go 代码里。</p>
-        <div class="callout"><strong>配置发现:</strong> 使用 <a href="../schemas/agentflow.scenario.schema.json">JSON Schema</a> 获得编辑器补全和枚举提示；运行 <code>agentctl schema</code> 可输出同一份契约；完整字段说明见 <a href="configuration-reference.md">配置参考</a>。</div>
+        <div class="callout"><strong>配置发现:</strong> 使用 <a href="../schemas/agentflow.scenario.schema.json">JSON Schema</a> 获得编辑器补全；Go 中通过 <code>agentflow.ScenarioJSONSchema()</code> 加载同一份契约；校验可用 <code>examples/go/validate</code> 或 <code>ValidateWiring</code>。完整字段见 <a href="configuration-reference.md">配置参考</a>。</div>
         <div class="code-block"><div class="code-title"><span>scenario.yaml</span><button class="copy" type="button">复制</button></div><pre><code># yaml-language-server: $schema=../schemas/agentflow.scenario.schema.json
       scenario:
   name: support-assistant
@@ -960,7 +997,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
               <tr><td>固定工作流</td><td>流程明确的审批、处理、生成、复核链路</td><td>depends_on、condition 表达式、transform set/copy、parallel batch、parallel_group、loop、retry、agent node</td><td>节点幂等、CAS 状态持久化、失败恢复</td></tr>
               <tr><td>Hybrid</td><td>先跑确定性工作流，再进入自主综合/答复</td><td>workflow 阶段 + autonomous 阶段、planning.execute</td><td>阶段边界、RunState 持久化、示例 multi_expert_research</td></tr>
               <tr><td>人工在环</td><td>高风险动作、预算批准、人工复核</td><td>HMAC token、pause/resume、ResumeAndContinue、approve/reject/amend、PendingGate、工具 approval: pause</td><td>token secret、过期时间、actor identity、审计记录</td></tr>
-              <tr><td>事件触发</td><td>Webhook、工单系统、消息总线驱动 Agent</td><td>scenario.triggers、HandleEvent、agentctl trigger、/v1/events</td><td>事件 schema、run_id 映射、幂等与重试</td></tr>
+              <tr><td>事件触发</td><td>Webhook、工单系统、消息总线驱动 Agent</td><td>scenario.triggers、HandleEvent、/v1/events</td><td>事件 schema、run_id 映射、幂等与重试</td></tr>
               <tr><td>异步 Worker</td><td>长运行任务和多实例水平扩展</td><td>JobQueue、Worker、run/event/resume.continue job、PostgreSQL queue、lease、renew、dead-letter、cancel</td><td>lease TTL、续租间隔、重试策略、队列可观测性</td></tr>
               <tr><td>结构化/流式</td><td>JSON 输出契约或实时答复体验</td><td>output_schema、StructuredOutputter、Streamer、tool-enabled stream</td><td>Provider capability 显式声明，失败时清晰报错</td></tr>
             </tbody>
@@ -1090,9 +1127,9 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
           <table>
             <thead><tr><th>方式</th><th>入口</th><th>适用场景</th></tr></thead>
             <tbody>
-              <tr><td>同步事件</td><td><code>POST /v1/events</code>、<code>agentctl trigger</code>、<code>Framework.HandleEvent</code></td><td>Webhook 回调、低延迟工单分派</td></tr>
+              <tr><td>同步事件</td><td><code>POST /v1/events</code>、<code>Framework.HandleEvent</code></td><td>Webhook 回调、低延迟工单分派</td></tr>
               <tr><td>异步事件</td><td><code>POST /v1/jobs/events</code>、Worker job type <code>event</code></td><td>高峰削峰、Worker 水平扩展</td></tr>
-              <tr><td>同步续跑</td><td><code>POST /v1/hitl/resume</code> + <code>continue: true</code>、<code>agentctl resume --continue</code></td><td>审批后立即继续执行</td></tr>
+              <tr><td>同步续跑</td><td><code>POST /v1/hitl/resume</code> + <code>continue: true</code>、<code>ResumeAndContinue</code></td><td>审批后立即继续执行</td></tr>
               <tr><td>异步续跑</td><td><code>POST /v1/jobs/hitl/resume</code>、job type <code>resume.continue</code></td><td>审批系统异步回调、队列重试</td></tr>
               <tr><td>异步运行</td><td><code>POST /v1/runs</code>、job type <code>run</code></td><td>长 prompt、批量任务、离线执行</td></tr>
             </tbody>
@@ -1108,9 +1145,8 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
       prompt_path: body.summary
       context_path: body
       run_id_path: body.ticket_id</code></pre></div>
-            <div class="code-block"><div class="code-title"><span>CLI</span><button class="copy" type="button">复制</button></div><pre><code>agentctl trigger -f examples/ticket_handling.yaml \
-  --event ticket.created \
-  --payload '{"body":{"ticket_id":"T-9","summary":"Need help"}}'</code></pre></div>
+            <div class="code-block"><div class="code-title"><span>Go</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/event-trigger/main.go
+// 或 fw.HandleEvent(ctx, agentflow.IncomingEvent{...})</code></pre></div>
           </div>
           <div class="panel">
             <h4>生产 HTTP Handler</h4>
@@ -1137,7 +1173,7 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
 worker, err := async.NewWorker(queue, jobHandler, async.WorkerConfig{
   WorkerID: "worker-1", Concurrency: 4,
 })</code></pre></div>
-        <div class="callout"><strong>续跑语义:</strong> <code>Resume</code> 只更新 RunState；<code>ResumeAndContinue</code> 会在审批后继续执行直到完成或下一次暂停。HTTP 请求设置 <code>"continue": true</code>，CLI 使用 <code>--continue</code>（需同时传 <code>-f</code>），异步队列使用 <code>resume.continue</code> job。Debug 台 <code>agent-http</code> 的 resume 接口不支持 <code>continue: true</code>；生产续跑请使用 <code>/v1/hitl/resume</code>。完整路由矩阵见 <a href="async-runtime.md">docs/async-runtime.md</a>。</div>
+        <div class="callout"><strong>续跑语义:</strong> <code>Resume</code> 只更新 RunState；<code>ResumeAndContinue</code> 会在审批后继续执行直到完成或下一次暂停。HTTP 请求设置 <code>"continue": true</code>，示例见 <code>examples/go/hitl-resume</code>，异步队列使用 <code>resume.continue</code> job。完整路由矩阵见 <a href="async-runtime.md">async-runtime.md</a>。</div>
         <div class="grid three">
           <div class="panel"><h4>ticket_handling</h4><p>工单分派 + triggers + HITL。</p><span class="tag">examples/ticket_handling.yaml</span></div>
           <div class="panel"><h4>code_review_pipeline</h4><p>Git diff + parallel_group 审查。</p><span class="tag">examples/code_review_pipeline.yaml</span></div>
@@ -1219,38 +1255,36 @@ mux.Handle("/observability/",
           <li>支持 SkipSchemaSetup</li>
           <li>事件 payload 需先脱敏</li>
         </ul>
-        <div class="callout"><strong>生产建议:</strong> 默认自动建表适合首次启用和开发环境；权限受控或大表环境建议先执行 <a href="../deploy/migrations/postgres/0001_agentflow_core.up.sql">PostgreSQL migration</a>，再设置 <code>SkipSchemaSetup: true</code>。外部暴露面板前必须加 API Key、JWT 或公司网关认证。</div>
+        <div class="callout"><strong>生产建议:</strong> 默认自动建表适合首次启用和开发环境；权限受控或大表环境建议先执行 <a href="../migrations/postgres/0001_agentflow_core.up.sql">PostgreSQL migration</a>，再设置 <code>SkipSchemaSetup: true</code>。外部暴露面板前必须加 API Key、JWT 或公司网关认证。</div>
       </section>
 
       <section id="deployment">
         <div class="section-head">
           <div>
             <div class="section-kicker">12 / 运维发布</div>
-            <h3>部署与发布</h3>
+            <h3>宿主部署与发布</h3>
           </div>
         </div>
         <div class="grid two">
           <div class="panel">
-            <h4>本地企业栈</h4>
-            <p><code>deploy/enterprise</code> 包含 PostgreSQL+pgvector、Redis、MinIO 和 <code>agent-http</code> 的 Compose 模板，适合本地验证生产拓扑。</p>
-            <div class="code-block"><div class="code-title"><span>Compose 启动</span><button class="copy" type="button">复制</button></div><pre><code>cd deploy/enterprise
-cp .env.example .env
-docker compose up --build</code></pre></div>
+            <h4>可运行示例</h4>
+            <p>完整路径与命令见 <a href="#examples">示例路径对照表</a>；复制 <code>examples/go/</code> 到你的服务即可。</p>
+            <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/http-worker/main.go</code></pre></div>
           </div>
           <div class="panel">
             <h4>发布检查</h4>
-            <p><code>make release-check</code> 会运行格式化、单元测试、<code>go vet</code>、二进制构建、<code>govulncheck</code> 和所有示例 YAML 校验。</p>
+            <p><code>make release-check</code> 会运行格式化、单元测试、<code>go vet</code>、<code>govulncheck</code> 和所有示例 YAML 校验。</p>
             <div class="code-block"><div class="code-title"><span>发布检查</span><button class="copy" type="button">复制</button></div><pre><code>GOTOOLCHAIN=auto make release-check</code></pre></div>
           </div>
           <div class="panel">
             <h4>生产数据库</h4>
             <p>PostgreSQL 迁移包含 RunState、JobQueue、Runtime Events 和 pgvector 表。可观测事件仓库会默认自动建表，生产可改为迁移先行。</p>
             <div class="code-block"><div class="code-title"><span>PostgreSQL</span><button class="copy" type="button">复制</button></div><pre><code>psql "$AGENTFLOW_POSTGRES_DSN" \
-  -f deploy/migrations/postgres/0001_agentflow_core.up.sql</code></pre></div>
+  -f migrations/postgres/0001_agentflow_core.up.sql</code></pre></div>
           </div>
           <div class="panel">
             <h4>HTTP 安全</h4>
-            <p>非 loopback HTTP 服务必须配置强 token secret、API key 或 JWT middleware；可观测面板、异步 run/event/resume API、同步 event/HITL 路由和 HITL bridge 都应在同一认证策略后面。</p>
+            <p>非 loopback HTTP 服务必须配置强 token secret、API key 或 JWT middleware；可观测面板、异步 run/event/resume API、同步 event/HITL 路由都应在同一认证策略后面。</p>
             <ul class="pill-list"><li>AGENT_TOKEN_SECRET</li><li>AGENT_HTTP_API_KEY</li><li>OIDC/JWKS</li><li>RBAC policy</li></ul>
           </div>
         </div>
@@ -1274,11 +1308,12 @@ docker compose up --build</code></pre></div>
               <li>需要恢复的流程使用持久化 RunStateRepository。</li>
               <li>RAG 结果带 source metadata 和 citation，VectorStore 按 namespace 隔离。</li>
               <li>Webhook/工单场景为 <code>scenario.triggers</code> 定义 event、agent 和 JSON 路径映射。</li>
-              <li><code>agentctl run</code> 走完整 <code>Framework.Run</code>，支持 autonomous/fixed_workflow/hybrid；demo 工具由 <code>DemoOptions</code> 自动注册。</li>
-              <li>生产部署使用 <code>agent-server</code>（HTTP API）+ <code>agent-worker</code>（异步 Worker）；分离部署时 <code>AGENT_QUEUE=postgres</code>。</li>
-              <li>需要削峰或 Worker 扩展时，优先走 <code>/v1/jobs/events</code> 和 <code>/v1/jobs/hitl/resume</code>。</li>
-              <li>Git/ticket 等 demo 工具在 CLI/<code>agent-server</code> 中自动注册；生产环境请替换为真实执行器，详见 <a href="tools-git.md">tools-git.md</a> 与 <a href="tools-ticket.md">tools-ticket.md</a>。</li>
-              <li>审批后需立即续跑时使用 <code>ResumeAndContinue</code>（生产 HTTP <code>continue: true</code> 或 CLI <code>--continue -f</code>）。</li>
+              <li>用 <code>ValidateWiring</code> 在 <code>New</code> 前校验场景；示例可用 <code>examples/go/validate</code>。</li>
+              <li>生产环境显式 <code>WithLLMGateway</code> 与 <code>WithToolExecutor</code>；测试可用 <code>pkg/testutil.WiringOptions</code>。</li>
+              <li>HTTP + Worker 参考 <code>examples/go/http-worker</code>，挂载 <code>NewProductionHTTPHandler</code> 与 <code>NewFrameworkJobHandler</code>。</li>
+              <li>需要削峰时走 <code>/v1/jobs/events</code> 和 <code>/v1/jobs/hitl/resume</code>。</li>
+              <li>Git/ticket 等工具须显式注册执行器，详见 <a href="tools-git.md">tools-git.md</a> 与 <a href="tools-ticket.md">tools-ticket.md</a>。</li>
+              <li>审批后续跑使用 <code>ResumeAndContinue</code>（HTTP <code>continue: true</code> 或示例 <code>hitl-resume</code>）。</li>
               <li>事件 payload 只放运营元数据，敏感输出先走 redactor。</li>
               <li>新增公共 API 同步 README、CHANGELOG 和 godoc。</li>
             </ul>
@@ -1286,7 +1321,7 @@ docker compose up --build</code></pre></div>
           <div class="panel">
             <h4>生产阶段</h4>
             <ul>
-              <li>非 loopback HTTP 服务配置 `AGENT_TOKEN_SECRET` 和 `AGENT_HTTP_API_KEY`。</li>
+              <li>宿主 HTTP 服务配置 HITL token secret、API key 或 JWT middleware。</li>
               <li>可观测面板挂载在受保护路径，并启用 PostgreSQL EventStore。</li>
               <li>受控数据库环境先跑 migration，再对 EventStore 设置 `SkipSchemaSetup`。</li>
               <li>企业认证优先接入 OIDC/JWKS JWT，并保留 tenant/workspace/project scope。</li>
