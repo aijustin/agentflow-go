@@ -17,6 +17,9 @@ const (
 	NodeTransform     WorkflowNodeKind = "transform"
 	NodeParallelGroup WorkflowNodeKind = "parallel_group"
 	NodeLoop          WorkflowNodeKind = "loop"
+	NodeQueryRouter   WorkflowNodeKind = "query_router"
+	NodeRAGGrade      WorkflowNodeKind = "rag_grade"
+	NodeSupervisor    WorkflowNodeKind = "supervisor"
 )
 
 type WorkflowNode struct {

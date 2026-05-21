@@ -93,12 +93,19 @@ type Scenario struct {
 	Description   string                   `json:"description,omitempty"`
 	LLMs          map[string]LLMProfileRef `json:"llms,omitempty"`
 	Memories      map[string]MemoryRef     `json:"memories,omitempty"`
+	Knowledge     KnowledgeConfig          `json:"knowledge,omitempty"`
+	MCP           MCPConfig                `json:"mcp,omitempty"`
 	Tools         map[string]Tool          `json:"tools,omitempty"`
 	Skills        map[string]Skill         `json:"skills,omitempty"`
 	Agents        map[string]Agent         `json:"agents,omitempty"`
 	Triggers      []Trigger                `json:"triggers,omitempty"`
 	Orchestration Orchestration            `json:"orchestration"`
 	Runtime       RuntimePolicy            `json:"runtime"`
+}
+
+// KnowledgeConfig groups knowledge collections for scenario-level RAG binding.
+type KnowledgeConfig struct {
+	Collections []KnowledgeCollection `json:"collections,omitempty"`
 }
 
 // Trigger maps an external event type to a run request template.
@@ -158,6 +165,8 @@ type PlanningPolicy struct {
 	MaxSteps int    `json:"max_steps,omitempty"`
 	// Execute tracks plan step completion in run state during the tool loop.
 	Execute bool `json:"execute,omitempty"`
+	// Replan retries planning when execute mode stalls before max steps.
+	ReplanOnFailure bool `json:"replan_on_failure,omitempty"`
 	// AfterWorkflow enables planning during hybrid phase-2 after workflow outputs
 	// are hydrated into run context.
 	AfterWorkflow bool `json:"after_workflow,omitempty"`

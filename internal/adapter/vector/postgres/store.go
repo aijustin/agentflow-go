@@ -138,6 +138,71 @@ LIMIT $%d`, s.table, where, len(args))
 	return results, nil
 }
 
+// HybridQuery combines vector and full-text search with reciprocal rank fusion.
+func (s *Store) HybridQuery(ctx context.Context, query knowledge.Query) ([]knowledge.SearchResult, error) {
+	vectorResults, err := s.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	textResults, err := s.textSearch(ctx, query)
+	if err != nil {
+		return vectorResults, nil
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+	return knowledge.MergeRRF([][]knowledge.SearchResult{vectorResults, textResults}, 60, limit), nil
+}
+
+func (s *Store) textSearch(ctx context.Context, query knowledge.Query) ([]knowledge.SearchResult, error) {
+	if strings.TrimSpace(query.Text) == "" {
+		return nil, nil
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+	args := []any{query.Namespace, query.Text}
+	where := "WHERE namespace = $1 AND to_tsvector('simple', content) @@ plainto_tsquery('simple', $2)"
+	if len(query.Filter) > 0 {
+		metadataFilter, err := json.Marshal(query.Filter)
+		if err != nil {
+			return nil, fmt.Errorf("postgres vector store: marshal metadata filter: %w", err)
+		}
+		args = append(args, metadataFilter)
+		where += fmt.Sprintf(" AND metadata_json @> $%d::jsonb", len(args))
+	}
+	args = append(args, limit)
+	statement := fmt.Sprintf(`SELECT document_id, content, metadata_json, ts_rank(to_tsvector('simple', content), plainto_tsquery('simple', $2)) AS score
+FROM %s
+%s
+ORDER BY score DESC
+LIMIT $%d`, s.table, where, len(args))
+	rows, err := s.db.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres vector store: text search: %w", err)
+	}
+	defer rows.Close()
+	results := make([]knowledge.SearchResult, 0)
+	for rows.Next() {
+		var id, content string
+		var metadataRaw []byte
+		var score float64
+		if err := rows.Scan(&id, &content, &metadataRaw, &score); err != nil {
+			return nil, fmt.Errorf("postgres vector store: scan text result: %w", err)
+		}
+		metadata := make(map[string]string)
+		if len(metadataRaw) > 0 && string(metadataRaw) != "null" {
+			if err := json.Unmarshal(metadataRaw, &metadata); err != nil {
+				return nil, fmt.Errorf("postgres vector store: decode metadata for %q: %w", id, err)
+			}
+		}
+		results = append(results, knowledge.SearchResult{Document: knowledge.Document{ID: id, Namespace: query.Namespace, Content: content, Metadata: metadata}, Score: score})
+	}
+	return results, rows.Err()
+}
+
 func (s *Store) Delete(ctx context.Context, req knowledge.DeleteRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err

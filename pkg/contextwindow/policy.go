@@ -32,6 +32,8 @@ type Policy struct {
 	Compression            CompressionPolicy `json:"compression,omitempty" yaml:"compression,omitempty"`
 	RoleBudgets            RoleBudgets       `json:"role_budgets,omitempty" yaml:"role_budgets,omitempty"`
 	SummaryMode            string            `json:"summary_mode,omitempty" yaml:"summary_mode,omitempty"`
+	ToolSchemaPruning      bool              `json:"tool_schema_pruning,omitempty" yaml:"tool_schema_pruning,omitempty"`
+	StaleToolTurns         int               `json:"stale_tool_turns,omitempty" yaml:"stale_tool_turns,omitempty"`
 }
 
 func (p Policy) Normalize() Policy {
