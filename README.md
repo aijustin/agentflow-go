@@ -726,7 +726,7 @@ Network-delivered tokens are HMAC signed. In production, always set `AGENT_TOKEN
 
 All scenario configuration lives under one `scenario:` root.
 
-For editor completion, enum discovery, and CI validation, use the JSON Schema at [schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json). A full human-readable field reference is available in [docs/configuration-reference.md](docs/configuration-reference.md), and the CLI can print the same schema with `agentctl schema`.
+For editor completion, enum discovery, and CI validation, use the JSON Schema at [schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json). A full human-readable field reference is available in [docs/configuration-reference.md](docs/configuration-reference.md), orchestration execution flow and **mode/node selection guide** in [docs/orchestration-flow.md](docs/orchestration-flow.md), and the CLI can print the same schema with `agentctl schema`.
 
 Example scenarios:
 

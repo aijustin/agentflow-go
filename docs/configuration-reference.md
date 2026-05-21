@@ -251,6 +251,7 @@ Agent 定义在 `scenario.agents.<name>` 下。
 | `planning.agent` | 字符串 | 否 | 专门用于生成计划的 Agent；为空时使用当前执行 Agent。 |
 | `planning.max_steps` | 整数 | 否 | 规划输出的最大步骤数；`0` 表示使用运行时默认值。 |
 | `planning.execute` | 布尔值 | 否 | 在自主 tool loop 中跟踪 plan step 完成状态并写入 RunState。 |
+| `planning.replan_on_failure` | 布尔值 | 否 | 工具步骤失败时重新生成计划并继续执行。 |
 
 支持的 `mode` 值：
 
@@ -259,6 +260,8 @@ Agent 定义在 `scenario.agents.<name>` 下。
 | `autonomous` | LLM 驱动的自主执行，可选 planning pass，随后进入受治理工具调用循环。 |
 | `fixed_workflow` | 确定性工作流图。 |
 | `hybrid` | 先执行固定工作流阶段，再进入自主执行阶段（例如多专家并行分析后由 lead author 综合）。 |
+
+**场景选型说明**（何时用哪种 mode、各节点适用场景、常见组合模式）见 [orchestration-flow.md — 编排模式与节点选型指南](./orchestration-flow.md#九编排模式与节点选型指南)。
 
 Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
 
@@ -283,6 +286,9 @@ Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
 | `transform` | 转换工作流数据。 |
 | `parallel_group` | 并行执行多个 Agent 或 Tool，结果写入 `members` 映射；可选 `on_error: collect_errors`。 |
 | `loop` | 重复执行 `body` 中的节点；每轮迭代开始前先评估 `until`，达到 `max_iterations` 后停止。 |
+| `query_router` | 按关键词将请求路由到 `rag` / `direct` / `hitl` 路径（Adaptive RAG 入口）。 |
+| `rag_grade` | 评估检索结果相关性，输出 `relevant`、`score` 与可选 `rewrite_query`（Corrective/Self-RAG）。 |
+| `supervisor` | 并行调用多个 Agent 并汇总输出（多专家协调，不依赖 LLM 路由）。 |
 
 `parallel_group` 节点的 `input` 示例：
 

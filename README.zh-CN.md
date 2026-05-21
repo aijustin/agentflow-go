@@ -704,7 +704,7 @@ Debug resume 响应：
 
 所有场景配置都位于一个 `scenario:` 根节点下。
 
-如需编辑器补全、枚举提示和 CI 校验，可使用 JSON Schema：[schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json)。完整字段参考见 [docs/configuration-reference.md](docs/configuration-reference.md)，CLI 也可以通过 `agentctl schema` 输出同一份 schema。
+如需编辑器补全、枚举提示和 CI 校验，可使用 JSON Schema：[schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json)。完整字段参考见 [docs/configuration-reference.md](docs/configuration-reference.md)，编排执行流程与**模式/节点选型指南**见 [docs/orchestration-flow.md](docs/orchestration-flow.md)，CLI 也可以通过 `agentctl schema` 输出同一份 schema。
 
 示例场景：
 
