@@ -134,6 +134,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
+	runstate.StampTenant(ctx, &snapshot)
 	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
 		return RunResult{}, err
 	}
@@ -187,7 +188,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 		return RunResult{}, err
 	}
-	loaded, err := e.runs.Load(ctx, req.RunID)
+	loaded, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -222,7 +223,7 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	loaded, err := e.runs.Load(ctx, req.RunID)
+	loaded, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -301,7 +302,7 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, error) {
 	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
 	defer cancel()
-	loaded, err := e.runs.Load(ctx, req.RunID)
+	loaded, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -316,7 +317,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	loaded, err = e.runs.Load(ctx, req.RunID)
+	loaded, err = runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
 	}

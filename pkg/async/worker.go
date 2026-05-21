@@ -2,6 +2,7 @@ package async
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -139,18 +140,53 @@ func (worker *Worker) handleLeasedJob(ctx context.Context, lease Lease) error {
 	renewCtx, stopRenew := context.WithCancel(ctx)
 	defer stopRenew()
 	worker.startLeaseRenewal(renewCtx, lease)
-	jobCtx := ctx
-	cancel := func() {}
+	jobCtx, jobCancel := context.WithCancel(ctx)
+	defer jobCancel()
 	if worker.jobTimeout > 0 {
-		jobCtx, cancel = context.WithTimeout(ctx, worker.jobTimeout)
+		var timeoutCancel context.CancelFunc
+		jobCtx, timeoutCancel = context.WithTimeout(jobCtx, worker.jobTimeout)
+		defer timeoutCancel()
 	}
-	defer cancel()
+	stopWatch := worker.watchJobCancellation(ctx, lease.JobID, jobCancel)
+	defer stopWatch()
 	err = worker.handler.HandleJob(jobCtx, job)
-	stopRenew()
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			if current, loadErr := worker.queue.Load(ctx, lease.JobID); loadErr == nil && current.State == JobCancelled {
+				return nil
+			}
+		}
 		return worker.queue.Fail(ctx, lease, err)
 	}
 	return worker.queue.Complete(ctx, lease)
+}
+
+func (worker *Worker) watchJobCancellation(ctx context.Context, jobID string, cancel context.CancelFunc) func() {
+	done := make(chan struct{})
+	var once sync.Once
+	stop := func() { once.Do(func() { close(done) }) }
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				job, err := worker.queue.Load(ctx, jobID)
+				if err != nil {
+					continue
+				}
+				if job.State == JobCancelled {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return stop
 }
 
 func (worker *Worker) startLeaseRenewal(ctx context.Context, lease Lease) {

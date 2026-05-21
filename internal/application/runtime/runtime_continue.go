@@ -35,7 +35,7 @@ func (e RunPausedError) Error() string {
 
 // ContinueAfterCheckpoint resumes execution for a run that was approved at a checkpoint.
 func (e *Engine) ContinueAfterCheckpoint(ctx context.Context, runID string) (RunResult, error) {
-	snapshot, err := e.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -196,7 +196,7 @@ func (e *Engine) executeToolAfterApproval(ctx context.Context, runID string, age
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {
-	loaded, err := e.runs.Load(ctx, runID)
+	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -278,7 +278,7 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if e.gate == nil {
 		return nil, nil
 	}
-	snapshot, err := e.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +304,7 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err := e.saveCheckpointVariables(ctx, &snapshot, vars); err != nil {
 		return nil, err
 	}
-	snapshot, err = e.runs.Load(ctx, runID)
+	snapshot, err = runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return nil, err
 	}

@@ -25,9 +25,11 @@ Each run is stored as one Redis hash:
 
 - key: `<KeyPrefix><run_id>`
 - field `version`: current `RunSnapshot.Version`
-- field `snapshot`: JSON-encoded `runstate.RunSnapshot`
+- field `snapshot`: JSON-encoded `runstate.RunSnapshot`（含 `created_at`、`updated_at`、`tenant_id`）
 
 `Save` uses a Lua compare-and-swap script. The write succeeds only when the stored version matches `expectedVersion`; otherwise it returns `runstate.ErrStaleSnapshot`. This preserves the same optimistic concurrency contract as the file and PostgreSQL repositories.
+
+每次保存都会刷新 snapshot JSON 内的 `updated_at`，供 `Framework.PurgeExpired` 按 age 清理终态 run。
 
 ## Operational Notes
 

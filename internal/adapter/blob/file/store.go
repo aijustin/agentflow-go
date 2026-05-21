@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
@@ -52,6 +53,46 @@ func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
 		return nil, fmt.Errorf("blob file: size mismatch for %s", ref.ID)
 	}
 	return data, nil
+}
+
+func (s *Store) List(ctx context.Context) ([]runstate.BlobRef, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]runstate.BlobRef, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".blob" {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".blob")
+		data, err := os.ReadFile(filepath.Join(s.dir, entry.Name()))
+		if err != nil {
+			return out, err
+		}
+		out = append(out, runstate.NewBlobRef(id, data))
+	}
+	return out, nil
+}
+
+func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if ref.ID == "" {
+		return fmt.Errorf("blob file: id is required")
+	}
+	err := os.Remove(filepath.Join(s.dir, ref.ID+".blob"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func writeAtomic(path string, data []byte, perm os.FileMode) error {

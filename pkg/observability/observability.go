@@ -9,6 +9,9 @@ const (
 	MetricRunDurationSeconds  MetricName = "agentflow_run_duration_seconds"
 	MetricToolDurationSeconds MetricName = "agentflow_tool_duration_seconds"
 	MetricQueueJobsTotal      MetricName = "agentflow_queue_jobs_total"
+	MetricQueueJobsQueued     MetricName = "agentflow_queue_jobs_queued"
+	MetricQueueJobsRunning    MetricName = "agentflow_queue_jobs_running"
+	MetricQueueJobsDeadLetter MetricName = "agentflow_queue_jobs_dead_letter"
 )
 
 type SpanName string

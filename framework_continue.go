@@ -50,7 +50,7 @@ func (f *Framework) runIDFromToken(token string) (string, error) {
 }
 
 func (f *Framework) continueRun(ctx context.Context, runID string) (RunResult, error) {
-	snapshot, err := f.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -74,7 +74,7 @@ func (f *Framework) continueWorkflowRun(ctx context.Context, runID string) (RunR
 		f.markWorkflowFailed(ctx, runID, err)
 		return RunResult{}, err
 	}
-	loaded, err := f.runs.Load(ctx, runID)
+	loaded, err := runstate.LoadAuthorized(ctx, f.runs, runID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -96,7 +96,7 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 		if err != nil || result.Status == runstate.RunStatusPaused {
 			return result, err
 		}
-		snapshot, err = f.runs.Load(ctx, runID)
+		snapshot, err = runstate.LoadAuthorized(ctx, f.runs, runID)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -109,7 +109,7 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 		}
 	}
 	req := hybridRunRequest(snapshot)
-	snapshot, err = f.runs.Load(ctx, runID)
+	snapshot, err = runstate.LoadAuthorized(ctx, f.runs, runID)
 	if err != nil {
 		return RunResult{}, err
 	}

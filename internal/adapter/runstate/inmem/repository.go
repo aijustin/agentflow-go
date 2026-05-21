@@ -88,6 +88,9 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 		if filter.ScenarioName != "" && snap.ScenarioName != filter.ScenarioName {
 			continue
 		}
+		if filter.TenantID != "" && snap.TenantID != filter.TenantID {
+			continue
+		}
 		out = append(out, cloneSnapshot(snap))
 		if filter.Limit > 0 && len(out) >= filter.Limit {
 			break

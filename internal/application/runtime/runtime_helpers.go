@@ -49,7 +49,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
-	existing, err := e.runs.Load(ctx, req.RunID)
+	existing, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err == nil {
 		switch existing.Status {
 		case runstate.RunStatusCompleted:
@@ -77,6 +77,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
+	runstate.StampTenant(ctx, &snapshot)
 	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
 		return false, err
 	}

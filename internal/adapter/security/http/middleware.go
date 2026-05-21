@@ -42,6 +42,7 @@ func NewMiddleware(config MiddlewareConfig) (func(nethttp.Handler) nethttp.Handl
 				nethttp.Error(w, "unauthorized", nethttp.StatusUnauthorized)
 				return
 			}
+			resource = security.BindTenant(principal, resource)
 			if err := config.Policy.Authorize(r.Context(), principal, config.Action, resource); err != nil {
 				recordDenied(r, config.Audit, principal, config.Action, resource, err)
 				status := nethttp.StatusInternalServerError

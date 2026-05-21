@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
@@ -59,6 +60,15 @@ func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, e
 	if err := snapshot.Validate(); err != nil {
 		return err
 	}
+	var previous *runstate.RunSnapshot
+	if expectedVersion > 0 {
+		prev, loadErr := r.Load(ctx, snapshot.RunID)
+		if loadErr != nil {
+			return loadErr
+		}
+		previous = &prev
+	}
+	runstate.StampSnapshot(snapshot, previous, time.Now().UTC())
 	next := snapshot.Version
 	if next <= expectedVersion {
 		next = expectedVersion + 1
@@ -174,6 +184,9 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 		var snap runstate.RunSnapshot
 		if err := json.Unmarshal(data, &snap); err != nil {
 			return nil, fmt.Errorf("postgres runstate: decode snapshot: %w", err)
+		}
+		if filter.TenantID != "" && snap.TenantID != filter.TenantID {
+			continue
 		}
 		out = append(out, snap)
 	}

@@ -404,6 +404,7 @@ func (handler *Handler) authorize(w nethttp.ResponseWriter, r *nethttp.Request, 
 		nethttp.Error(w, "unauthorized", nethttp.StatusUnauthorized)
 		return identity.Principal{}, false
 	}
+	resource = security.BindTenant(principal, resource)
 	if err := handler.policy.Authorize(r.Context(), principal, action, resource); err != nil {
 		handler.recordDenied(r.Context(), principal, action, resource, err)
 		status := nethttp.StatusInternalServerError

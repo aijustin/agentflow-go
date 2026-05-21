@@ -1247,3 +1247,32 @@ func TestEngineMemoryRBAC(t *testing.T) {
 		t.Fatal("viewer write should be denied")
 	}
 }
+
+func TestEngineRunStampsAndEnforcesTenant(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: &capturingGateway{response: "ok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantA := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "svc-a", Type: identity.PrincipalService, Scope: identity.Scope{TenantID: "tenant-a"}, Roles: []identity.Role{identity.RoleService},
+	})
+	result, err := engine.Run(tenantA, RunRequest{RunID: "run-tenant", Agent: "assistant", Prompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.Load(tenantA, result.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.TenantID != "tenant-a" {
+		t.Fatalf("expected tenant-a on snapshot, got %q", loaded.TenantID)
+	}
+	tenantB := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "svc-b", Type: identity.PrincipalService, Scope: identity.Scope{TenantID: "tenant-b"}, Roles: []identity.Role{identity.RoleService},
+	})
+	_, err = engine.RunHybrid(tenantB, RunRequest{RunID: result.RunID, Agent: "assistant", Prompt: "again"})
+	if !errors.Is(err, runstate.ErrTenantMismatch) {
+		t.Fatalf("expected tenant mismatch, got %v", err)
+	}
+}

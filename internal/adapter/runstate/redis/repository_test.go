@@ -15,6 +15,29 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
+func TestRepositorySaveStampsTimestamps(t *testing.T) {
+	ctx := context.Background()
+	server := newFakeRedis(t)
+	repo, err := NewRepository(Config{Addr: server.addr, KeyPrefix: "agentflow:test:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := runstate.RunSnapshot{RunID: "run-1", ScenarioName: "scenario", Status: runstate.RunStatusRunning}
+	if err := repo.Save(ctx, &snapshot, 0); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.CreatedAt.IsZero() || snapshot.UpdatedAt.IsZero() {
+		t.Fatalf("expected timestamps on save, got created=%v updated=%v", snapshot.CreatedAt, snapshot.UpdatedAt)
+	}
+	loaded, err := repo.Load(ctx, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CreatedAt.IsZero() || loaded.UpdatedAt.IsZero() {
+		t.Fatalf("expected persisted timestamps, got %+v", loaded)
+	}
+}
+
 func TestRepositorySavesLoadsAndDeletesSnapshots(t *testing.T) {
 	ctx := context.Background()
 	server := newFakeRedis(t)

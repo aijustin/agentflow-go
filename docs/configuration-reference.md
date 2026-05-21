@@ -108,9 +108,11 @@ Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`re
 | 值 | 含义 |
 | --- | --- |
 | `conversation` | 短生命周期会话记忆。 |
-| `session` | Session 级记忆。 |
+| `session` | Session 级记忆。运行时实际键为 `{namespace}:{agent_name}`，同一 session 下不同 Agent 隔离。 |
 | `long_term` | 长期记忆命名空间。 |
 | `audit` | 面向审计的记忆命名空间。 |
+
+`scope: session` 时，`namespace` 配置的是 session 前缀；运行时会在前缀后追加 `:agent_name`，避免多 Agent 共享同一份 `messages` 历史。预填充或调试记忆数据时，应使用完整 session 键（例如 `support-session:assistant`）。
 
 ## 工具
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -44,6 +45,9 @@ func (f *Framework) PurgeExpired(ctx context.Context, maxAge time.Duration) (int
 		return 0, nil
 	}
 	filter := runstate.ListFilter{ScenarioName: f.scenario.Name}
+	if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
+		filter.TenantID = principal.Scope.TenantID
+	}
 	snapshots, err := f.runs.List(ctx, filter)
 	if err != nil {
 		return 0, err
@@ -91,6 +95,11 @@ func (f *Framework) purgeExpiredWithLimit(ctx context.Context, policy RetentionP
 	}
 	if filter.ScenarioName == "" {
 		filter.ScenarioName = f.scenario.Name
+	}
+	if filter.TenantID == "" {
+		if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
+			filter.TenantID = principal.Scope.TenantID
+		}
 	}
 	snapshots, err := f.runs.List(ctx, filter)
 	if err != nil {

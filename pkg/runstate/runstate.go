@@ -70,6 +70,7 @@ type RunSnapshot struct {
 	RunID         string                     `json:"run_id"`
 	Version       int64                      `json:"version"`
 	ScenarioName  string                     `json:"scenario_name"`
+	TenantID      string                     `json:"tenant_id,omitempty"`
 	CurrentNodeID string                     `json:"current_node_id,omitempty"`
 	Status        RunStatus                  `json:"status"`
 	Variables     map[string]json.RawMessage `json:"variables,omitempty"`
@@ -105,6 +106,8 @@ type ListFilter struct {
 	Status RunStatus
 	// ScenarioName, when non-empty, restricts results to a specific scenario.
 	ScenarioName string
+	// TenantID, when non-empty, restricts results to a specific tenant.
+	TenantID string
 	// Limit is the maximum number of results to return. 0 means no limit.
 	Limit int
 }

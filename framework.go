@@ -549,6 +549,7 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
 	saveRunResumeMetadata(&snapshot, req)
+	runstate.StampTenant(ctx, &snapshot)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
 		return RunResult{}, err
 	}
@@ -562,7 +563,7 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 		f.markWorkflowFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	loaded, err := f.runs.Load(ctx, req.RunID)
+	loaded, err := runstate.LoadAuthorized(ctx, f.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -606,6 +607,7 @@ func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunReque
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
 	saveRunResumeMetadata(&snapshot, req)
+	runstate.StampTenant(ctx, &snapshot)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
 		return req, RunResult{}, err
 	}
@@ -619,7 +621,7 @@ func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunReque
 		f.markWorkflowFailed(ctx, req.RunID, err)
 		return req, RunResult{}, err
 	}
-	loaded, err := f.runs.Load(ctx, req.RunID)
+	loaded, err := runstate.LoadAuthorized(ctx, f.runs, req.RunID)
 	if err != nil {
 		return req, RunResult{}, err
 	}
@@ -639,7 +641,7 @@ func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunReque
 }
 
 func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause error) {
-	if snapshot, err := f.runs.Load(ctx, runID); err == nil {
+	if snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID); err == nil {
 		snapshot.Status = runstate.RunStatusFailed
 		if saveErr := f.runs.Save(ctx, &snapshot, snapshot.Version); saveErr != nil {
 			if f.logger != nil {

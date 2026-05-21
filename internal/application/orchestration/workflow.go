@@ -106,7 +106,7 @@ func (r *WorkflowRunner) Resume(ctx context.Context, scenario core.Scenario, run
 	if r.runs == nil {
 		return fmt.Errorf("orchestration: run-state repository is required for workflow resume")
 	}
-	snapshot, err := r.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
 	if err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func (r *WorkflowRunner) runHumanGateNode(ctx context.Context, node core.Workflo
 	if r.runs == nil {
 		return fmt.Errorf("orchestration: run-state repository is required for human gate")
 	}
-	snapshot, err := r.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
 	if err != nil {
 		return err
 	}
@@ -389,7 +389,7 @@ func (r *WorkflowRunner) saveStepOutput(ctx context.Context, scenario core.Scena
 		return err
 	}
 	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err := r.runs.Load(ctx, runID)
+		snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
 		if err != nil {
 			return err
 		}
@@ -532,7 +532,7 @@ func (r *WorkflowRunner) stepOutputRaw(ctx context.Context, runID, nodeID string
 	if r.runs == nil {
 		return nil, false, fmt.Errorf("orchestration: run-state repository is required for workflow expressions")
 	}
-	snapshot, err := r.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
 	if err != nil {
 		return nil, false, err
 	}

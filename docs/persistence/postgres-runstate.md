@@ -50,8 +50,10 @@ func openRunState(dsn string) agentflow.Option {
 | `scenario_name` | 场景名称，便于运维查询。 |
 | `status` | 当前运行状态。 |
 | `current_node_id` | 工作流恢复位置。 |
-| `snapshot_json` | 完整序列化的 `RunSnapshot` JSON 载荷。 |
-| `updated_at` | 适配器保存时更新的时间戳。 |
+| `snapshot_json` | 完整序列化的 `RunSnapshot` JSON 载荷，包含 `created_at`、`updated_at` 和 `tenant_id`。 |
+| `updated_at` | 适配器保存时更新的数据库列时间戳。 |
+
+`PurgeExpired` 依据 `snapshot_json` 内的 `updated_at` 判断 age；旧数据若缺少该字段会被跳过而不是误删。
 
 迁移 SQL 应放在拥有生产 schema 评审的部署包中。适配器有意不自动创建或修改数据库 schema。
 
