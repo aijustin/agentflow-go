@@ -9,8 +9,9 @@ import (
 	toolhttp "github.com/aijustin/agentflow-go/internal/adapter/tool/http"
 	toolsql "github.com/aijustin/agentflow-go/internal/adapter/tool/sqlquery"
 	toolgit "github.com/aijustin/agentflow-go/internal/adapter/tool/git"
-	toolticket "github.com/aijustin/agentflow-go/internal/adapter/tool/ticket"
+	toolticketadapter "github.com/aijustin/agentflow-go/internal/adapter/tool/ticket"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/toolticket"
 )
 
 type ToolResolver = core.ToolResolver
@@ -82,7 +83,7 @@ func NewGitToolExecutor(config GitToolConfig) (core.ToolExecutor, error) {
 
 // NewTicketToolExecutor creates a ticket store backed tool executor.
 func NewTicketToolExecutor(config TicketToolConfig) (core.ToolExecutor, error) {
-	return toolticket.NewExecutor(config.Store)
+	return toolticketadapter.NewExecutor(config.Store)
 }
 
 // NewMemoryTicketStore creates an in-memory ticket store for tests and demos.

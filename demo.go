@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aijustin/agentflow-go/internal/adapter/llm/mock"
 	"github.com/aijustin/agentflow-go/internal/adapter/tool/builtin"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -46,14 +45,7 @@ func DemoOptions(scenario core.Scenario, config DemoConfig) ([]Option, error) {
 }
 
 func demoLLMGateway(scenario core.Scenario) llm.Gateway {
-	gateway := mock.NewFallbackGateway()
-	for name, ref := range scenario.LLMs {
-		if ref.Provider != "mock" {
-			continue
-		}
-		gateway.SetCapabilities(name, llm.CapChat, llm.CapToolCall, llm.CapStructuredOutput, llm.CapStream, llm.CapEmbed)
-	}
-	return gateway
+	return NewMockLLMGateway(scenario)
 }
 
 func demoToolExecutor(name string, tool core.Tool, workDir string, gitRoots []string) (core.ToolExecutor, error) {

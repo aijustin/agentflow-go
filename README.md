@@ -20,6 +20,19 @@ Before tagging a release, run `GOTOOLCHAIN=auto make release-check`. See [docs/r
 
 For a polished guided overview, open the standalone HTML manual at [docs/manual.html](docs/manual.html).
 
+## Library quick paths
+
+| Goal | Start here |
+|------|------------|
+| Embed in an existing Go service | [docs/library-integration.md](docs/library-integration.md) |
+| Minimal in-process run | [examples/go/minimal/main.go](examples/go/minimal/main.go) |
+| Postgres / file persistence | [examples/go/postgres/main.go](examples/go/postgres/main.go) |
+| HTTP API + async worker | [examples/go/http-worker/main.go](examples/go/http-worker/main.go) |
+| HITL pause and resume | [examples/go/hitl-resume/main.go](examples/go/hitl-resume/main.go) |
+| Test helpers | [pkg/testutil](pkg/testutil/testutil.go) |
+
+Library helpers: `DevelopmentOptions`, `ValidateWiring`, `NewProduction`, `BuildProductionHTTPHandler`, `Framework.Close`, `ScenarioJSONSchema`, `Version`.
+
 ## Getting started
 
 ### Requirements

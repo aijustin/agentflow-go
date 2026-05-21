@@ -35,6 +35,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/catalog"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
+	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/observability"
@@ -74,7 +75,8 @@ type Framework struct {
 	redactor    governance.OutputRedactor
 	recorder    observability.Recorder
 	tracer      observability.Tracer
-	logger      appexec.Logger
+	logger      log.Logger
+	closers     []func(context.Context) error
 }
 
 type options struct {
@@ -95,7 +97,9 @@ type options struct {
 	redactor    governance.OutputRedactor
 	recorder    observability.Recorder
 	tracer      observability.Tracer
-	logger      appexec.Logger
+	logger      log.Logger
+	requireLLM  bool
+	closers     []func(context.Context) error
 }
 
 type toolRegistry struct {
@@ -230,19 +234,26 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 	if err := ValidateScenario(scenario); err != nil {
 		return nil, err
 	}
-	cfg := options{
-		runs:        runstateinmem.NewRepository(),
-		blobs:       blobinmem.NewStore(),
-		events:      core.EventSinkFunc(func(context.Context, core.Event) error { return nil }),
-		tools:       make(map[string]core.ToolExecutor),
-		memory:      make(map[string]memory.Repository),
-		tokenWriter: io.Discard,
-	}
+	cfg := defaultOptions()
+	cfg.runs = runstateinmem.NewRepository()
+	cfg.blobs = blobinmem.NewStore()
+	cfg.events = core.EventSinkFunc(func(context.Context, core.Event) error { return nil })
 	for _, opt := range opts {
 		if opt == nil {
 			continue
 		}
 		if err := opt(&cfg); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.requireLLM {
+		autoMemory := make(map[string]bool)
+		for name, ref := range scenario.Memories {
+			if ref.Type == "in_memory" {
+				autoMemory[name] = true
+			}
+		}
+		if err := validateWiring(scenario, cfg, autoMemory, WiringOptions{RequireLLM: true}); err != nil {
 			return nil, err
 		}
 	}
@@ -295,15 +306,16 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		gate:        cfg.gate,
 		tokenSigner: tokenSigner,
 		llm:         cfg.llm,
-		tools:    tools,
-		memory:   cfg.memory,
-		policy:   cfg.policy,
-		audit:    cfg.audit,
-		toolGov:  cfg.toolGov,
-		redactor: cfg.redactor,
-		recorder: cfg.recorder,
-		tracer:   cfg.tracer,
-		logger:   cfg.logger,
+		tools:       tools,
+		memory:      cfg.memory,
+		policy:      cfg.policy,
+		audit:       cfg.audit,
+		toolGov:     cfg.toolGov,
+		redactor:    cfg.redactor,
+		recorder:    cfg.recorder,
+		tracer:      cfg.tracer,
+		logger:      cfg.logger,
+		closers:     append([]func(context.Context) error(nil), cfg.closers...),
 	}, nil
 }
 
@@ -396,10 +408,8 @@ func WithOutputRedactor(redactor governance.OutputRedactor) Option {
 }
 
 // WithLogger wires a structured logger that receives warning and error
-// messages from the runtime.  The logger implementation must satisfy
-// appexec.Logger (Warn and Error methods).  If not provided, messages are
-// silently discarded.
-func WithLogger(logger appexec.Logger) Option {
+// messages from the runtime. If not provided, messages are silently discarded.
+func WithLogger(logger log.Logger) Option {
 	return func(o *options) error {
 		if logger == nil {
 			return fmt.Errorf("agentflow: logger is nil")

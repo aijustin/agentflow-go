@@ -8,12 +8,13 @@ import (
 )
 
 // FallbackGateway wraps a mock gateway and returns a deterministic assistant
-// reply when no queued response is available. This makes CLI and demo servers
+// reply when no queued response is available. This makes local development
 // usable without manually seeding mock responses.
 type FallbackGateway struct {
 	*Gateway
 }
 
+// NewFallbackGateway creates a mock gateway with echo-style fallbacks.
 func NewFallbackGateway() *FallbackGateway {
 	return &FallbackGateway{Gateway: NewGateway()}
 }

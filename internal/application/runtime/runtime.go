@@ -11,6 +11,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
+	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/observability"
@@ -33,16 +34,11 @@ type Engine struct {
 	redactor governance.OutputRedactor
 	recorder observability.Recorder
 	tracer   observability.Tracer
-	logger   Logger
+	logger   log.Logger
 }
 
-// Logger is a minimal structured-logging interface.  Wire an implementation
-// via Dependencies.Logger or WithLogger to capture warning and error messages
-// from the runtime (e.g. silent save failures, retry events).
-type Logger interface {
-	Warn(ctx context.Context, msg string, keysAndValues ...any)
-	Error(ctx context.Context, msg string, keysAndValues ...any)
-}
+// Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
+type Logger = log.Logger
 
 type ToolRegistry interface {
 	ResolveTool(ctx context.Context, tool core.Tool) (core.ToolExecutor, bool, error)
@@ -66,7 +62,7 @@ type Dependencies struct {
 	Tracer observability.Tracer
 	// Logger receives structured log messages for warning and error paths.
 	// If nil, messages are silently discarded.
-	Logger Logger
+	Logger log.Logger
 }
 
 func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {

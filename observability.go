@@ -12,6 +12,7 @@ import (
 	observabilityhttp "github.com/aijustin/agentflow-go/internal/adapter/observability/http"
 	observabilityinmem "github.com/aijustin/agentflow-go/internal/adapter/observability/inmem"
 	observabilitypostgres "github.com/aijustin/agentflow-go/internal/adapter/observability/postgres"
+	promrecorder "github.com/aijustin/agentflow-go/pkg/observability/prometheus"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/observability"
@@ -71,4 +72,17 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 		Hub:            config.Hub,
 		AuthMiddleware: config.AuthMiddleware,
 	})
+}
+
+// PrometheusRecorder exposes in-process Prometheus text metrics for agentflow runtime signals.
+type PrometheusRecorder = promrecorder.Recorder
+
+// NewPrometheusRecorder creates a Prometheus-compatible observability recorder.
+func NewPrometheusRecorder() *PrometheusRecorder {
+	return promrecorder.NewRecorder()
+}
+
+// PrometheusMetricsHandler returns an http.Handler that serves recorder metrics.
+func PrometheusMetricsHandler(recorder *PrometheusRecorder) http.Handler {
+	return recorder.Handler()
 }

@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/toolticket"
 )
 
 func TestExecutorGetAndUpdate(t *testing.T) {
-	store := NewMemoryStore(map[string]Ticket{
+	store := NewMemoryStore(map[string]toolticket.Ticket{
 		"T-1": {ID: "T-1", Title: "Login issue", Status: "open"},
 	})
 	executor, err := NewExecutor(store)
@@ -29,7 +30,7 @@ func TestExecutorGetAndUpdate(t *testing.T) {
 	if err != nil || result.Error != "" {
 		t.Fatalf("update failed: err=%v error=%s", err, result.Error)
 	}
-	var ticket Ticket
+	var ticket toolticket.Ticket
 	if err := json.Unmarshal(result.Output, &ticket); err != nil {
 		t.Fatal(err)
 	}
