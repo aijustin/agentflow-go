@@ -14,7 +14,7 @@ import (
 func newRunCommand() *cobra.Command {
 	var file, prompt, runID, tokenSecret, stateDir string
 	var tokenTTL time.Duration
-	var outputJSON bool
+	var outputJSON, verbose bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run a scenario YAML file",
@@ -23,7 +23,7 @@ func newRunCommand() *cobra.Command {
 			if outputJSON {
 				tokenWriter = io.Discard
 			}
-			fw, err := newFrameworkFromFlags(file, stateDir, tokenSecret, tokenTTL, tokenWriter)
+			fw, err := newFrameworkFromFlags(file, stateDir, tokenSecret, tokenTTL, tokenWriter, verbose, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -45,6 +45,7 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&stateDir, "state-dir", "", "directory for durable run state and blobs")
 	cmd.Flags().DurationVar(&tokenTTL, "token-ttl", 15*time.Minute, "human approval token lifetime")
 	cmd.Flags().BoolVar(&outputJSON, "json", false, "write machine-readable JSON output")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "log runtime events to stderr")
 	_ = cmd.MarkFlagRequired("file")
 	return cmd
 }

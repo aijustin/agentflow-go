@@ -39,7 +39,7 @@ func newResumeCommand() *cobra.Command {
 				if outputJSON {
 					tokenWriter = io.Discard
 				}
-				fw, err := newFrameworkFromFlags(file, stateDir, tokenSecret, tokenTTL, tokenWriter)
+				fw, err := newFrameworkFromFlags(file, stateDir, tokenSecret, tokenTTL, tokenWriter, false, nil)
 				if err != nil {
 					return err
 				}
@@ -54,7 +54,7 @@ func newResumeCommand() *cobra.Command {
 				return err
 			}
 			if file != "" {
-				fw, err := newFrameworkFromFlags(file, stateDir, tokenSecret, tokenTTL, cmd.OutOrStdout())
+				fw, err := newFrameworkFromFlags(file, stateDir, tokenSecret, tokenTTL, cmd.OutOrStdout(), false, nil)
 				if err != nil {
 					return err
 				}

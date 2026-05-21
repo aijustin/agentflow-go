@@ -34,6 +34,11 @@ func NewSlogEventSink(logger *stdslog.Logger) core.EventSink {
 	return eventslog.NewSink(logger)
 }
 
+// NewVerboseSlogEventSink logs runtime events with redacted-safe payload details to stderr-friendly sinks.
+func NewVerboseSlogEventSink(logger *stdslog.Logger) core.EventSink {
+	return eventslog.NewSink(logger, eventslog.WithPayload())
+}
+
 func NewSlogAuditSink(logger *stdslog.Logger) audit.Sink {
 	return auditslog.NewSink(logger)
 }

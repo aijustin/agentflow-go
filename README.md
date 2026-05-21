@@ -13,7 +13,9 @@ The project can be used both as a Go library and as a CLI/HTTP application. Scen
 
 ```sh
 go run ./cmd/agentctl validate -f examples/autonomous.yaml
+go run ./cmd/agentctl validate -f examples/autonomous.yaml --wiring
 go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json
+go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --verbose
 ```
 
 Before tagging a release, run `GOTOOLCHAIN=auto make release-check`. See [docs/release-checklist.md](docs/release-checklist.md) and [docs/api-stability.md](docs/api-stability.md) for release validation and v0 compatibility policy.
@@ -571,10 +573,11 @@ Production server/worker environment variables:
 
 ### `agentctl validate`
 
-Validates YAML shape, references, orchestration mode, and fixed-workflow graph integrity.
+Validates YAML shape, references, orchestration mode, and fixed-workflow graph integrity. Add `--wiring` to also verify demo wiring covers every tool, memory backend, and HITL requirement (same as `agentctl run`).
 
 ```sh
 go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
+go run ./cmd/agentctl validate -f examples/autonomous.yaml --wiring
 ```
 
 ### `agentctl run`
@@ -597,6 +600,9 @@ Useful flags:
 | `--token-ttl` | HITL token lifetime. Defaults to `15m`. |
 | `--state-dir` | Directory for durable run state and blobs. Required for resume across separate CLI processes. |
 | `--json` | Emit machine-readable result JSON. |
+| `--verbose` | Log runtime events (with payload) to stderr for step-by-step debugging. |
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for common errors and fixes.
 
 ### `agentctl resume`
 

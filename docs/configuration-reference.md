@@ -263,6 +263,8 @@ Agent 定义在 `scenario.agents.<name>` 下。
 
 **场景选型说明**（何时用哪种 mode、各节点适用场景、常见组合模式）见 [orchestration-flow.md — 编排模式与节点选型指南](./orchestration-flow.md#九编排模式与节点选型指南)。
 
+**排障与调试**（常见报错、`validate --wiring`、`run --verbose`）见 [troubleshooting.md](./troubleshooting.md)。
+
 Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
 
 | 字段 | 类型 | 是否必填 | 说明 |

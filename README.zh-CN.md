@@ -13,7 +13,9 @@
 
 ```sh
 go run ./cmd/agentctl validate -f examples/autonomous.yaml
+go run ./cmd/agentctl validate -f examples/autonomous.yaml --wiring
 go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --json
+go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello" --verbose
 ```
 
 发布前建议运行 `GOTOOLCHAIN=auto make release-check`。发版检查和 v0 兼容策略见 [docs/release-checklist.md](docs/release-checklist.md) 与 [docs/api-stability.md](docs/api-stability.md)。
@@ -552,7 +554,11 @@ make build
 
 ### `agentctl validate`
 
+校验 YAML 结构、引用、编排模式与 workflow 图完整性。加 `--wiring` 可额外检查 demo 装配是否覆盖全部 tool/memory/HITL（与 `agentctl run` 一致），可在运行前发现缺 executor 的问题。
+
+```sh
 go run ./cmd/agentctl validate -f examples/fixed_workflow.yaml
+go run ./cmd/agentctl validate -f examples/autonomous.yaml --wiring
 ```
 
 ### `agentctl run`
@@ -575,6 +581,9 @@ go run ./cmd/agentctl run -f examples/autonomous.yaml --prompt "hello"
 | `--token-ttl` | HITL Token 有效期，默认 `15m`。 |
 | `--state-dir` | 持久化 RunState 和 Blob 的目录；跨独立 CLI 进程 resume 时需要保持一致。 |
 | `--json` | 输出机器可读 JSON。 |
+| `--verbose` | 将 runtime 事件（含 payload）输出到 stderr，便于逐步调试。 |
+
+排障见 [docs/troubleshooting.md](docs/troubleshooting.md)。
 
 ### `agentctl resume`
 

@@ -24,7 +24,7 @@ func newTriggerCommand() *cobra.Command {
 			if outputJSON {
 				tokenWriter = io.Discard
 			}
-			fw, err := newFrameworkFromFlags(file, stateDir, tokenSecret, tokenTTL, tokenWriter)
+			fw, err := newFrameworkFromFlags(file, stateDir, tokenSecret, tokenTTL, tokenWriter, false, nil)
 			if err != nil {
 				return err
 			}

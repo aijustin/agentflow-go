@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	runstatefile "github.com/aijustin/agentflow-go/internal/adapter/runstate/file"
@@ -168,6 +169,67 @@ func TestRunFixedWorkflowExample(t *testing.T) {
 	}
 	if result.Status != runstate.RunStatusCompleted {
 		t.Fatalf("expected completed fixed workflow, got %+v body=%s", result, runOut.String())
+	}
+}
+
+func TestValidateCommandWiringPassesAutonomousExample(t *testing.T) {
+	cmd := newRootCommand()
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{
+		"validate",
+		"-f", filepath.Join("..", "..", "examples", "autonomous.yaml"),
+		"--wiring",
+	})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("validate --wiring failed: %v stderr=%s", err, stderr.String())
+	}
+	if strings.TrimSpace(out.String()) != "ok" {
+		t.Fatalf("expected ok, got %q", out.String())
+	}
+}
+
+func TestValidateCommandWiringFailsWithoutExecutor(t *testing.T) {
+	cmd := newRootCommand()
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{
+		"validate",
+		"-f", filepath.Join("..", "..", "examples", "http_tool.yaml"),
+		"--wiring",
+	})
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatalf("expected wiring error, got stdout=%q", out.String())
+	}
+	if !strings.Contains(err.Error(), "has no executor or resolver") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunVerboseLogsEventsToStderr(t *testing.T) {
+	runCmd := newRootCommand()
+	var runOut, runErr bytes.Buffer
+	runCmd.SetOut(&runOut)
+	runCmd.SetErr(&runErr)
+	runCmd.SetArgs([]string{
+		"run",
+		"-f", filepath.Join("..", "..", "examples", "autonomous.yaml"),
+		"--run-id", "cli-verbose",
+		"--prompt", "hello",
+		"--verbose",
+		"--json",
+	})
+	if err := runCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("run --verbose failed: %v stderr=%s", err, runErr.String())
+	}
+	if !strings.Contains(runErr.String(), "agentflow runtime event") {
+		t.Fatalf("expected runtime events on stderr, got %q", runErr.String())
+	}
+	if !strings.Contains(runErr.String(), "RunStarted") {
+		t.Fatalf("expected RunStarted event on stderr, got %q", runErr.String())
 	}
 }
 
