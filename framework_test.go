@@ -506,6 +506,75 @@ func TestFrameworkHybridHydratesWorkflowContext(t *testing.T) {
 	}
 }
 
+func TestFrameworkRunStructuredAfterFixedWorkflow(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "structured-workflow",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {
+				Name: "assistant",
+				LLM:  "default",
+				Policy: core.AgentPolicy{
+					OutputSchema: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`),
+				},
+			},
+		},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalNever},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "prep", Kind: core.NodeTool, Ref: "echo", Input: json.RawMessage(`{"message":"prep"}`)},
+					{ID: "finish", Kind: core.NodeAgent, Ref: "assistant", DependsOn: []string{"prep"}},
+				},
+			},
+		},
+	}
+	gateway := structuredFakeGateway{payload: json.RawMessage(`{"answer":"ok"}`)}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.RunStructured(context.Background(), agentflow.RunRequest{
+		RunID:  "run-structured",
+		Agent:  "assistant",
+		Prompt: "summarize",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || string(result.StructuredOutput) != `{"answer":"ok"}` {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-structured")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.StepOutputs["prep"]; !ok {
+		t.Fatal("workflow step output should be preserved")
+	}
+}
+
+type structuredFakeGateway struct {
+	payload json.RawMessage
+}
+
+func (g structuredFakeGateway) Supports(string, llm.Capability) bool { return true }
+
+func (g structuredFakeGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatResponse, error) {
+	return llm.ChatResponse{Message: llm.Message{Content: string(g.payload)}}, nil
+}
+
+func (g structuredFakeGateway) StructuredChat(context.Context, string, json.RawMessage, llm.ChatRequest) (json.RawMessage, error) {
+	return g.payload, nil
+}
+
 type fakeGateway struct {
 	content string
 }

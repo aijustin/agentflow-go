@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
@@ -74,6 +75,8 @@ type RunSnapshot struct {
 	Variables     map[string]json.RawMessage `json:"variables,omitempty"`
 	StepOutputs   map[string]StepOutputRef   `json:"step_outputs,omitempty"`
 	PendingGate   *core.CheckpointState      `json:"pending_gate,omitempty"`
+	CreatedAt     time.Time                  `json:"created_at,omitempty"`
+	UpdatedAt     time.Time                  `json:"updated_at,omitempty"`
 }
 
 func (s RunSnapshot) Validate() error {

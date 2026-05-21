@@ -5,13 +5,16 @@ import "testing"
 func TestApplyRoleBudgets(t *testing.T) {
 	messages := []Message{
 		{Role: RoleSystem, Content: "system prompt with enough tokens"},
-		{Role: RoleUser, Content: "user one"},
-		{Role: RoleUser, Content: "user two"},
+		{Role: RoleUser, Content: "u1"},
+		{Role: RoleUser, Content: "u2"},
 		{Role: RoleTool, Content: "tool output"},
 	}
 	out := applyRoleBudgets(messages, RoleBudgets{System: 1000, User: 1, Tool: 1000})
-	if len(out) != 2 {
-		t.Fatalf("expected user budget to drop one message, got %d", len(out))
+	if len(out) != 3 {
+		t.Fatalf("expected three messages after role budget, got %d", len(out))
+	}
+	if out[len(out)-2].Content != "u2" {
+		t.Fatalf("expected most recent user message to be kept, got %+v", out)
 	}
 }
 

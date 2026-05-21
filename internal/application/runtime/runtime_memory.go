@@ -112,6 +112,9 @@ func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Reposi
 	switch scope {
 	case memory.ScopeConversation, memory.ScopeAudit:
 		ns.RunID = runID
+	case memory.ScopeSession:
+		sessionID := firstNonEmpty(ref.Namespace, e.scenario.Name)
+		ns.SessionID = sessionID + ":" + agent.Name
 	default:
 		ns.SessionID = firstNonEmpty(ref.Namespace, e.scenario.Name)
 	}
@@ -146,11 +149,17 @@ func (e *Engine) authorizeMemory(ctx context.Context, runID string, agent core.A
 	if e.policy == nil || agent.Memory == "" {
 		return nil
 	}
-	resource := security.Resource{Type: "memory", ID: agent.Memory, Metadata: map[string]string{"agent": agent.Name}}
 	principal, err := identity.RequirePrincipal(ctx)
 	if err != nil {
+		resource := security.Resource{Type: "memory", ID: agent.Memory, Metadata: map[string]string{"agent": agent.Name}}
 		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: identity.Principal{}, Action: action, Resource: resource, RunID: runID, Outcome: "denied", Reason: security.ErrUnauthenticated.Error()})
 		return security.ErrUnauthenticated
+	}
+	resource := security.Resource{
+		Type:     "memory",
+		ID:       agent.Memory,
+		TenantID: principal.Scope.TenantID,
+		Metadata: map[string]string{"agent": agent.Name},
 	}
 	if err := e.policy.Authorize(ctx, principal, action, resource); err != nil {
 		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principal, Action: action, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})

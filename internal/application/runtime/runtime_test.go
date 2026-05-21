@@ -118,7 +118,7 @@ func TestEngineRunAppliesContextGovernance(t *testing.T) {
 func TestEngineRunReadsAndWritesMemory(t *testing.T) {
 	ctx := context.Background()
 	memRepo := memoryinmem.NewRepository()
-	ns := memory.Namespace{SessionID: "test-session", Agent: "assistant", Scope: memory.ScopeSession}
+	ns := memory.Namespace{SessionID: "test-session:assistant", Agent: "assistant", Scope: memory.ScopeSession}
 	prior, err := json.Marshal(memoryMessage{Role: string(llm.RoleAssistant), Content: "prior answer"})
 	if err != nil {
 		t.Fatal(err)
@@ -652,6 +652,62 @@ func TestEngineRunStructuredUsesAgentOutputSchema(t *testing.T) {
 	}
 }
 
+func TestEngineRunStructuredContinuesExistingRun(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapStructuredOutput)
+	gateway.QueueStructured("default", json.RawMessage(`{"answer":"ok"}`))
+	scenario := baseScenario(false)
+	agent := scenario.Agents["assistant"]
+	agent.Policy.OutputSchema = json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID:        "run-existing",
+		ScenarioName: scenario.Name,
+		Status:       runstate.RunStatusRunning,
+		StepOutputs: map[string]runstate.StepOutputRef{
+			"prep": {Inline: json.RawMessage(`{"output":{"message":"prep"}}`)},
+		},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.RunStructured(context.Background(), RunRequest{RunID: "run-existing", Agent: "assistant", Prompt: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result.StructuredOutput) != `{"answer":"ok"}` {
+		t.Fatalf("unexpected structured result: %+v", result)
+	}
+	loaded, err := repo.Load(context.Background(), "run-existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.StepOutputs["prep"]; !ok {
+		t.Fatal("existing workflow output should be preserved")
+	}
+}
+
+func TestEngineRunHybridRejectsCompletedRun(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: &capturingGateway{response: "ok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-done", ScenarioName: "scenario", Status: runstate.RunStatusCompleted,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.RunHybrid(context.Background(), RunRequest{RunID: "run-done", Agent: "assistant", Prompt: "again"})
+	if !errors.Is(err, ErrRunAlreadyCompleted) {
+		t.Fatalf("expected ErrRunAlreadyCompleted, got %v", err)
+	}
+}
+
 func TestEngineStreamCompletesRunAndWritesMemory(t *testing.T) {
 	ctx := context.Background()
 	repo := runstateinmem.NewRepository()
@@ -693,7 +749,7 @@ func TestEngineStreamCompletesRunAndWritesMemory(t *testing.T) {
 	if loaded.Status != runstate.RunStatusCompleted {
 		t.Fatalf("run not completed: %+v", loaded)
 	}
-	raw, err := memRepo.Get(ctx, memory.Namespace{SessionID: "stream-session", Agent: "assistant", Scope: memory.ScopeSession}, "messages")
+	raw, err := memRepo.Get(ctx, memory.Namespace{SessionID: "stream-session:assistant", Agent: "assistant", Scope: memory.ScopeSession}, "messages")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1077,7 +1133,7 @@ func toolScenario(approval core.ApprovalPolicy, sideEffect core.SideEffectLevel,
 func TestEngineRunAppliesMemoryRecallLimit(t *testing.T) {
 	ctx := context.Background()
 	memRepo := memoryinmem.NewRepository()
-	ns := memory.Namespace{SessionID: "recall-session", Agent: "assistant", Scope: memory.ScopeSession}
+	ns := memory.Namespace{SessionID: "recall-session:assistant", Agent: "assistant", Scope: memory.ScopeSession}
 	for i := range 5 {
 		raw, err := json.Marshal(memoryMessage{Role: string(llm.RoleUser), Content: fmt.Sprintf("old-%d", i)})
 		if err != nil {
@@ -1129,7 +1185,7 @@ func TestEngineRunAppliesMemoryRecallLimit(t *testing.T) {
 func TestEngineRunRedactsMemoryWrites(t *testing.T) {
 	ctx := context.Background()
 	memRepo := memoryinmem.NewRepository()
-	ns := memory.Namespace{SessionID: "redact-session", Agent: "assistant", Scope: memory.ScopeSession}
+	ns := memory.Namespace{SessionID: "redact-session:assistant", Agent: "assistant", Scope: memory.ScopeSession}
 	scenario := baseScenario(false)
 	scenario.Memories = map[string]core.MemoryRef{
 		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "redact-session"},

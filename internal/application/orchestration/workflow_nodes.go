@@ -55,15 +55,20 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	}
 	collectErrors := strings.EqualFold(spec.OnError, "collect_errors")
 	memberCount := len(spec.Refs) + len(spec.Tools)
+	groupCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var wg sync.WaitGroup
 	errs := make(chan error, memberCount)
 	outputs := make(map[string]any, memberCount)
 	var mu sync.Mutex
 	var collected []string
 
-	runMember := func(memberKey string, run func() error, decode func() (any, error)) {
+	runMember := func(memberKey string, run func(context.Context) error, decode func() (any, error)) {
 		defer wg.Done()
-		if err := run(); err != nil {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		if err := run(groupCtx); err != nil {
 			if collectErrors {
 				mu.Lock()
 				collected = append(collected, err.Error())
@@ -71,6 +76,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 				errs <- nil
 				return
 			}
+			cancel()
 			errs <- err
 			return
 		}
@@ -83,6 +89,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 				errs <- nil
 				return
 			}
+			cancel()
 			errs <- err
 			return
 		}
@@ -91,13 +98,13 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 		mu.Unlock()
 	}
 
-	for _, ref := range spec.Refs {
+	for index, ref := range spec.Refs {
 		wg.Add(1)
-		go func(agentName string) {
-			childID := node.ID + ".agent." + agentName
+		go func(index int, agentName string) {
+			childID := fmt.Sprintf("%s.agent.%s.%d", node.ID, agentName, index)
 			child := core.WorkflowNode{ID: childID, Kind: core.NodeAgent, Ref: agentName}
-			runMember(agentName, func() error {
-				return r.runAgentNode(ctx, scenario, child, runID)
+			runMember(agentName, func(runCtx context.Context) error {
+				return r.runAgentNode(runCtx, scenario, child, runID)
 			}, func() (any, error) {
 				raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
 				if err != nil {
@@ -112,15 +119,19 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 				}
 				return value, nil
 			})
-		}(ref)
+		}(index, ref)
 	}
-	for _, ref := range spec.Tools {
+	for index, ref := range spec.Tools {
 		wg.Add(1)
-		go func(toolName string) {
-			childID := node.ID + ".tool." + toolName
+		go func(index int, toolName string) {
+			childID := fmt.Sprintf("%s.tool.%s.%d", node.ID, toolName, index)
 			child := core.WorkflowNode{ID: childID, Kind: core.NodeTool, Ref: toolName}
-			runMember("tool:"+toolName, func() error {
-				return r.runToolNode(ctx, scenario, child, runID)
+			memberKey := "tool:" + toolName
+			if index > 0 {
+				memberKey = fmt.Sprintf("%s:%d", memberKey, index)
+			}
+			runMember(memberKey, func(runCtx context.Context) error {
+				return r.runToolNode(runCtx, scenario, child, runID)
 			}, func() (any, error) {
 				raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
 				if err != nil {
@@ -135,7 +146,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 				}
 				return value, nil
 			})
-		}(ref)
+		}(index, ref)
 	}
 	wg.Wait()
 	close(errs)
@@ -165,7 +176,7 @@ func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario
 	nodes := workflowNodesByID(scenario)
 	maxIterations := firstPositive(spec.MaxIterations, 3)
 	actualIterations := 0
-	completed := true
+	untilMet := spec.Until == ""
 	for iteration := 1; iteration <= maxIterations; iteration++ {
 		if spec.Until != "" {
 			ok, err := r.conditionEnabled(ctx, runID, spec.Until)
@@ -173,6 +184,7 @@ func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario
 				return err
 			}
 			if ok {
+				untilMet = true
 				break
 			}
 		}
@@ -193,13 +205,12 @@ func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario
 			}
 		}
 		if lastErr != nil {
-			completed = false
 			return fmt.Errorf("orchestration: loop node %q failed on iteration %d: %w", node.ID, iteration, lastErr)
 		}
 	}
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]any{
 		"iterations": actualIterations,
-		"completed":  completed,
+		"completed":  untilMet,
 	})
 }
 

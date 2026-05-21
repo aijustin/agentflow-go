@@ -214,20 +214,9 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, error) {
 	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
 	defer cancel()
-	if req.RunID == "" {
-		req.RunID = generateRunID()
-	}
-	snapshot := runstate.RunSnapshot{
-		RunID:        req.RunID,
-		ScenarioName: e.scenario.Name,
-		Status:       runstate.RunStatusRunning,
-		Variables:    map[string]json.RawMessage{"input": req.Context},
-		StepOutputs:  make(map[string]runstate.StepOutputRef),
-	}
-	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
+	if _, err := e.beginRun(ctx, &req); err != nil {
 		return RunResult{}, err
 	}
-	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	raw, err := e.structuredAnswer(ctx, req)
 	if err != nil {
 		e.markRunFailed(ctx, req.RunID, err)
@@ -253,21 +242,10 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 
 func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
 	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
-	if req.RunID == "" {
-		req.RunID = generateRunID()
-	}
-	snapshot := runstate.RunSnapshot{
-		RunID:        req.RunID,
-		ScenarioName: e.scenario.Name,
-		Status:       runstate.RunStatusRunning,
-		Variables:    map[string]json.RawMessage{"input": req.Context},
-		StepOutputs:  make(map[string]runstate.StepOutputRef),
-	}
-	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
+	if _, err := e.beginRun(ctx, &req); err != nil {
 		cancel()
 		return nil, err
 	}
-	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	source, agent, streamCancel, err := e.streamAnswer(ctx, req)
 	if err != nil {
 		e.markRunFailed(ctx, req.RunID, err)
@@ -323,12 +301,22 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, error) {
 	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
 	defer cancel()
+	loaded, err := e.runs.Load(ctx, req.RunID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if loaded.Status == runstate.RunStatusCompleted {
+		return RunResult{}, ErrRunAlreadyCompleted
+	}
+	if loaded.Status == runstate.RunStatusCancelled {
+		return RunResult{}, ErrRunCancelled
+	}
 	output, err := e.answer(ctx, req)
 	if err != nil {
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	loaded, err := e.runs.Load(ctx, req.RunID)
+	loaded, err = e.runs.Load(ctx, req.RunID)
 	if err != nil {
 		return RunResult{}, err
 	}

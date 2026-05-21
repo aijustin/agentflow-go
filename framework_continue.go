@@ -87,6 +87,10 @@ func (f *Framework) continueWorkflowRun(ctx context.Context, runID string) (RunR
 }
 
 func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapshot runstate.RunSnapshot) (RunResult, error) {
+	if result, ok := completedHybridResult(snapshot); ok {
+		return result, nil
+	}
+	var err error
 	if variableJSONString(snapshot.Variables, executionPhaseVar) != executionPhaseAutonomous {
 		result, err := f.continueWorkflowRun(ctx, runID)
 		if err != nil || result.Status == runstate.RunStatusPaused {
@@ -105,10 +109,13 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 		}
 	}
 	req := hybridRunRequest(snapshot)
-	if req.Context == nil && len(snapshot.StepOutputs) > 0 {
-		if raw, err := runstate.HydrateStepContext(ctx, f.blobs, snapshot.StepOutputs); err == nil {
-			req.Context = raw
-		}
+	snapshot, err = f.runs.Load(ctx, runID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	req, err = f.hydrateRunRequest(ctx, req, snapshot)
+	if err != nil {
+		return RunResult{}, err
 	}
 	return f.engine.RunHybrid(ctx, req)
 }

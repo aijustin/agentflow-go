@@ -253,7 +253,7 @@ func validateParallelGroupNode(node core.WorkflowNode, s core.Scenario) error {
 			return fmt.Errorf("config: workflow node %q parallel_group input is invalid JSON", node.ID)
 		}
 	}
-	if spec.OnError != "" && spec.OnError != "fail_fast" && spec.OnError != "collect_errors" {
+	if spec.OnError != "" && !strings.EqualFold(spec.OnError, "fail_fast") && !strings.EqualFold(spec.OnError, "collect_errors") {
 		return fmt.Errorf("config: workflow node %q parallel_group on_error %q is unsupported", node.ID, spec.OnError)
 	}
 	refs := spec.Refs
@@ -262,6 +262,12 @@ func validateParallelGroupNode(node core.WorkflowNode, s core.Scenario) error {
 	}
 	if len(refs) == 0 && len(spec.Tools) == 0 {
 		return fmt.Errorf("config: workflow node %q parallel_group requires refs or tools", node.ID)
+	}
+	if dup := duplicateStrings(refs); dup != "" {
+		return fmt.Errorf("config: workflow node %q parallel_group refs contains duplicate %q", node.ID, dup)
+	}
+	if dup := duplicateStrings(spec.Tools); dup != "" {
+		return fmt.Errorf("config: workflow node %q parallel_group tools contains duplicate %q", node.ID, dup)
 	}
 	for _, ref := range refs {
 		if _, ok := s.Agents[ref]; !ok {
@@ -318,4 +324,15 @@ func validateTriggers(s core.Scenario) error {
 		}
 	}
 	return nil
+}
+
+func duplicateStrings(values []string) string {
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		if seen[value] {
+			return value
+		}
+		seen[value] = true
+	}
+	return ""
 }

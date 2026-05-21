@@ -197,10 +197,11 @@ func applyRoleBudgets(messages []Message, budgets RoleBudgets) []Message {
 	}
 	usage := map[Role]int{}
 	out := make([]Message, 0, len(messages))
-	for _, msg := range messages {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
 		limit := roleBudgetLimit(budgets, msg.Role)
 		if limit <= 0 {
-			out = append(out, msg)
+			out = append([]Message{msg}, out...)
 			continue
 		}
 		cost := EstimateTokens(msg.Content)
@@ -208,7 +209,7 @@ func applyRoleBudgets(messages []Message, budgets RoleBudgets) []Message {
 			continue
 		}
 		usage[msg.Role] += cost
-		out = append(out, msg)
+		out = append([]Message{msg}, out...)
 	}
 	return out
 }

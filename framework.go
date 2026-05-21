@@ -630,10 +630,10 @@ func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunReque
 	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return req, RunResult{}, err
 	}
-	if req.Context == nil && len(loaded.StepOutputs) > 0 {
-		if raw, merr := runstate.HydrateStepContext(ctx, f.blobs, loaded.StepOutputs); merr == nil {
-			req.Context = raw
-		}
+	req, err = f.hydrateRunRequest(ctx, req, loaded)
+	if err != nil {
+		f.markWorkflowFailed(ctx, req.RunID, err)
+		return req, RunResult{}, err
 	}
 	return req, RunResult{}, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
@@ -40,6 +41,12 @@ func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, e
 	if snapshot.Version <= expectedVersion {
 		snapshot.Version = expectedVersion + 1
 	}
+	var previous *runstate.RunSnapshot
+	if ok {
+		prev := current
+		previous = &prev
+	}
+	runstate.StampSnapshot(snapshot, previous, time.Now().UTC())
 	r.snapshots[snapshot.RunID] = cloneSnapshot(*snapshot)
 	return nil
 }

@@ -19,6 +19,11 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
+var (
+	ErrRunAlreadyCompleted = errors.New("runtime: run already completed")
+	ErrRunCancelled        = errors.New("runtime: run is cancelled")
+)
+
 func (e *Engine) maxAttempts(agent core.Agent) int {
 	retries := firstPositive(agent.Policy.RetryLimit, e.scenario.Runtime.MaxRetries)
 	return retries + 1
@@ -37,6 +42,46 @@ func (e *Engine) resolveAgent(name string) (core.Agent, error) {
 		return core.Agent{}, fmt.Errorf("runtime: agent %q not found", agentName)
 	}
 	return agent, nil
+}
+
+// beginRun creates a new run snapshot or resumes an existing one for continued execution.
+func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool, err error) {
+	if req.RunID == "" {
+		req.RunID = generateRunID()
+	}
+	existing, err := e.runs.Load(ctx, req.RunID)
+	if err == nil {
+		switch existing.Status {
+		case runstate.RunStatusCompleted:
+			if _, hasFinal := existing.StepOutputs["final"]; hasFinal {
+				return false, ErrRunAlreadyCompleted
+			}
+		case runstate.RunStatusCancelled:
+			return false, ErrRunCancelled
+		}
+		existing.Status = runstate.RunStatusRunning
+		if err := e.runs.Save(ctx, &existing, existing.Version); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if !errors.Is(err, runstate.ErrNotFound) {
+		return false, err
+	}
+	snapshot := runstate.RunSnapshot{
+		RunID:        req.RunID,
+		ScenarioName: e.scenario.Name,
+		Status:       runstate.RunStatusRunning,
+		Variables: map[string]json.RawMessage{
+			"input": req.Context,
+		},
+		StepOutputs: make(map[string]runstate.StepOutputRef),
+	}
+	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
+		return false, err
+	}
+	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
+	return false, nil
 }
 
 func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core.Agent, prompt string, output string) error {

@@ -349,7 +349,7 @@ func (q *Queue) Requeue(ctx context.Context, jobID string) error {
 		if job.State != asyncpkg.JobDeadLetter {
 			return asyncpkg.ErrInvalidJob
 		}
-		return asyncpkg.ErrStaleLease
+		return fmt.Errorf("async postgres: requeue job %q: no rows updated", jobID)
 	}
 	return nil
 }
