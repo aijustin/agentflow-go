@@ -12,10 +12,10 @@ import (
 	observabilityhttp "github.com/aijustin/agentflow-go/internal/adapter/observability/http"
 	observabilityinmem "github.com/aijustin/agentflow-go/internal/adapter/observability/inmem"
 	observabilitypostgres "github.com/aijustin/agentflow-go/internal/adapter/observability/postgres"
-	promrecorder "github.com/aijustin/agentflow-go/pkg/observability/prometheus"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/observability"
+	promrecorder "github.com/aijustin/agentflow-go/pkg/observability/prometheus"
 )
 
 type PostgresEventStoreConfig struct {

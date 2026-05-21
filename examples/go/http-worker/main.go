@@ -46,7 +46,7 @@ func main() {
 		log.Fatal(err)
 	}
 	worker, err := asyncpkg.NewWorker(queue, jobHandler, asyncpkg.WorkerConfig{
-		WorkerID:   cfg.WorkerID,
+		WorkerID:    cfg.WorkerID,
 		Concurrency: cfg.Concurrency,
 	})
 	if err != nil {

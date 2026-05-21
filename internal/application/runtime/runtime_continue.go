@@ -309,9 +309,9 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		return nil, err
 	}
 	payload, err := json.Marshal(map[string]any{
-		"tool":       call.Name,
-		"tool_call":  call.ID,
-		"agent":      agent.Name,
+		"tool":        call.Name,
+		"tool_call":   call.ID,
+		"agent":       agent.Name,
 		"side_effect": tool.SideEffect,
 	})
 	if err != nil {

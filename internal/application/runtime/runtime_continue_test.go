@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
 	"github.com/aijustin/agentflow-go/internal/adapter/llm/mock"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
-	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"

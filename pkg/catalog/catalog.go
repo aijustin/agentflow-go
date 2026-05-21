@@ -20,9 +20,9 @@ type SkillEntry struct {
 }
 
 type AgentEntry struct {
-	Name  string   `json:"name"`
-	LLM   string   `json:"llm,omitempty"`
-	Tools []string `json:"tools,omitempty"`
+	Name   string   `json:"name"`
+	LLM    string   `json:"llm,omitempty"`
+	Tools  []string `json:"tools,omitempty"`
 	Skills []string `json:"skills,omitempty"`
 }
 

@@ -61,11 +61,11 @@ func WithOutputRedactor(redactor governance.OutputRedactor) RunnerOption {
 }
 
 type WorkflowRunner struct {
-	tools   ToolRegistry
-	agents  AgentRegistry
-	gate    core.HumanGate
-	runs    runstate.Repository
-	blobs   runstate.BlobStore
+	tools    ToolRegistry
+	agents   AgentRegistry
+	gate     core.HumanGate
+	runs     runstate.Repository
+	blobs    runstate.BlobStore
 	events   core.EventSink
 	toolGov  governance.ToolPolicy
 	redactor governance.OutputRedactor

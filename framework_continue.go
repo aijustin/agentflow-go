@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	resumePromptVar     = "resume_prompt"
-	resumeAgentVar      = "resume_agent"
-	executionPhaseVar   = "execution_phase"
+	resumePromptVar          = "resume_prompt"
+	resumeAgentVar           = "resume_agent"
+	executionPhaseVar        = "execution_phase"
 	executionPhaseWorkflow   = "workflow"
 	executionPhaseAutonomous = "autonomous"
 )

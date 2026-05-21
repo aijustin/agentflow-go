@@ -136,8 +136,8 @@ func indexSubstring(text, part string) int {
 func TestResolveNodeInputPromptFrom(t *testing.T) {
 	runs := runstateinmem.NewRepository()
 	if err := runs.Save(context.Background(), &runstate.RunSnapshot{
-		RunID:       "run-1",
-		Status:      runstate.RunStatusRunning,
+		RunID:  "run-1",
+		Status: runstate.RunStatusRunning,
 		StepOutputs: map[string]runstate.StepOutputRef{
 			"source": {Inline: json.RawMessage(`{"output":{"message":"hello"}}`)},
 		},
