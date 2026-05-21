@@ -15,7 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- `examples/go/validate` for scenario YAML wiring checks in CI and local dev.
+- `examples/go/validate` for scenario YAML wiring checks in CI and local dev; supports `-kind tool|skill` for catalog manifests.
+- `NewPrometheusRecorder` and `PrometheusMetricsHandler` with `/metrics` mounting on `NewProductionHTTPHandler`.
+- OpenTelemetry adapter in `pkg/observability/otel`: `NewOpenTelemetryTracer`, `NewOpenTelemetryStdoutTracerProvider`, runtime `Run`/`ToolCall` spans.
+- Tool/Skill catalog manifest loaders: `LoadToolManifestFile`, `LoadSkillManifestFile`, `ValidateToolManifest`, `ValidateSkillManifest`.
+- Reference local stack under `examples/deploy/` (PostgreSQL, Redis, MinIO Compose).
+- ADR documenting library-first integration: [docs/adr/001-library-first.md](docs/adr/001-library-first.md).
 - `NewMockLLMGateway` remains on the root package; demo tool wiring is in `pkg/testutil`.
 - Workflow dynamic edge condition routing at runtime (`edges[].condition`).
 - Workflow node input templates: `copy_from` and `prompt_from` in node `input`.
@@ -29,11 +34,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Workflow nodes `parallel_group` and `loop` for multi-agent parallelism and bounded iteration.
 - Built-in Git and ticket tool executors (`NewGitToolExecutor`, `NewTicketToolExecutor`).
 - Planning pass execution tracking during autonomous runs.
-- Event routing via `scenario.triggers`, `Framework.HandleEvent`, `NewWebhookHTTPHandler`, and `agentctl trigger`.
+- Event routing via `scenario.triggers`, `Framework.HandleEvent`, and `NewWebhookHTTPHandler`. Use `examples/go/event-trigger` or host HTTP `POST /v1/events` instead of removed `agentctl trigger`.
 - Production HTTP handler sync routes `POST /v1/events` and `POST /v1/hitl/resume` when `Framework` is configured.
 - Async job types `event` and `resume.continue` with HTTP enqueue routes `POST /v1/jobs/events` and `POST /v1/jobs/hitl/resume`.
 - `NewFrameworkJobHandler` composite worker handler.
-- `agentctl resume --continue` and HTTP HITL `continue: true` for `ResumeAndContinue`.
+- HTTP HITL `continue: true` for `ResumeAndContinue`. Use `examples/go/hitl-resume` or `POST /v1/hitl/resume` instead of removed `agentctl resume --continue`.
 - Example scenarios: `ticket_handling.yaml`, `code_review_pipeline.yaml`, `multi_expert_research.yaml`.
 
 ## [0.1.0] - 2026-05-17

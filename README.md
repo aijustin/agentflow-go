@@ -34,7 +34,7 @@ make test
 | 事件触发 | [examples/go/event-trigger/main.go](examples/go/event-trigger/main.go) |
 | 测试与示例接线 | [pkg/testutil](pkg/testutil/testutil.go) |
 
-库 API：`ValidateWiring`、`New`、`Framework.Run`、`NewProductionHTTPHandler`、`NewFrameworkJobHandler`、`ScenarioJSONSchema`、`Version`。
+库 API：`ValidateWiring`、`New`、`Framework.Run`、`NewProductionHTTPHandler`、`NewFrameworkJobHandler`、`NewPrometheusRecorder`、`NewOpenTelemetryTracer`、`ScenarioJSONSchema`、`Version`。
 
 ## 示例路径对照表
 
@@ -47,7 +47,7 @@ make test
 | [http-worker](examples/go/http-worker/main.go) | 挂载 `NewProductionHTTPHandler` + 异步 Worker | `go run ./examples/go/http-worker/main.go` |
 | [hitl-resume](examples/go/hitl-resume/main.go) | HITL 暂停与 `ResumeAndContinue` | `go run ./examples/go/hitl-resume/main.go` |
 | [event-trigger](examples/go/event-trigger/main.go) | `scenario.triggers` 事件驱动 Run | `go run ./examples/go/event-trigger/main.go` |
-| [validate](examples/go/validate/main.go) | 校验场景 YAML 与接线（CI 同款） | `go run ./examples/go/validate examples/autonomous.yaml` |
+| [validate](examples/go/validate/main.go) | 校验场景 YAML、接线或 catalog manifest | `go run ./examples/go/validate examples/autonomous.yaml` |
 
 生产环境请用 `WithLLMGateway` / `WithToolExecutor` 替代 `testutil.WiringOptions`；测试接线见 [pkg/testutil](pkg/testutil/testutil.go)。
 
@@ -73,7 +73,7 @@ make test
 | [filesystem_tool.yaml](examples/filesystem_tool.yaml) | — | 文件系统工具 |
 | [mcp_tool.yaml](examples/mcp_tool.yaml) | — | MCP 工具集成 |
 
-批量校验全部场景：`make validate-examples` 或 `go run ./examples/go/validate examples/<file>.yaml`。编排模式选型见 [docs/orchestration-flow.md](docs/orchestration-flow.md)。
+批量校验全部场景：`make validate-examples` 或 `go run ./examples/go/validate examples/<file>.yaml`。catalog manifest：`make validate-catalog`。本地参考栈：[examples/deploy/](examples/deploy/README.md)。编排模式选型见 [docs/orchestration-flow.md](docs/orchestration-flow.md)。
 
 ## 环境要求
 

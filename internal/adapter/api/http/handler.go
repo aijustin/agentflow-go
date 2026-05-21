@@ -17,6 +17,7 @@ type HandlerConfig struct {
 	Policy         security.Policy
 	Audit          audit.Sink
 	AuthMiddleware func(nethttp.Handler) nethttp.Handler
+	MetricsHandler nethttp.Handler
 	IDGenerator    func() string
 	Now            func() time.Time
 	MaxBodyBytes   int64
@@ -70,6 +71,9 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 			hitl = config.AuthMiddleware(hitl)
 		}
 		handler.mux.Handle("/v1/hitl/resume", hitl)
+	}
+	if config.MetricsHandler != nil {
+		handler.mux.Handle("/metrics", config.MetricsHandler)
 	}
 	return handler, nil
 }

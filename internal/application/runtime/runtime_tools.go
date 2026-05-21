@@ -216,13 +216,22 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 		}
 		e.emitJSON(ctx, core.EventToolCalled, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "attempt": attempt})
 		start := time.Now()
-		result, err := executor.Execute(ctx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, Input: call.Input})
+		toolCtx, toolSpan := e.startSpan(ctx, observability.SpanToolCall,
+			observability.Attribute{Key: "run_id", Value: runID},
+			observability.Attribute{Key: "agent", Value: agent.Name},
+			observability.Attribute{Key: "tool", Value: call.Name},
+			observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
+		)
+		result, err := executor.Execute(toolCtx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, Input: call.Input})
 		if err == nil {
+			toolSpan.End()
 			e.recorder.ObserveHistogram(ctx, observability.MetricToolDurationSeconds, time.Since(start).Seconds(),
 				observability.Attribute{Key: "tool", Value: call.Name},
 				observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 			return result, nil
 		}
+		toolSpan.RecordError(err)
+		toolSpan.End()
 		lastErr = err
 		if !shouldRetry(ctx, err) || attempt == attempts {
 			return core.ToolResult{}, err

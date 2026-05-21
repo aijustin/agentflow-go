@@ -15,7 +15,10 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/observability"
+	oteladapter "github.com/aijustin/agentflow-go/pkg/observability/otel"
 	promrecorder "github.com/aijustin/agentflow-go/pkg/observability/prometheus"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 type PostgresEventStoreConfig struct {
@@ -90,4 +93,25 @@ func NewPrometheusRecorder() *PrometheusRecorder {
 // PrometheusMetricsHandler returns an http.Handler that serves recorder metrics.
 func PrometheusMetricsHandler(recorder *PrometheusRecorder) http.Handler {
 	return recorder.Handler()
+}
+
+// OpenTelemetryTracer adapts go.opentelemetry.io/otel/trace.Tracer to observability.Tracer.
+type OpenTelemetryTracer = oteladapter.Tracer
+
+// OpenTelemetryTracerProviderConfig configures a stdout-exporting TracerProvider for local development.
+type OpenTelemetryTracerProviderConfig = oteladapter.TracerProviderConfig
+
+// NewOpenTelemetryTracer wraps a host-configured OpenTelemetry tracer.
+func NewOpenTelemetryTracer(tracer oteltrace.Tracer) observability.Tracer {
+	return oteladapter.NewTracer(tracer)
+}
+
+// NewOpenTelemetryStdoutTracerProvider creates a TracerProvider that exports spans to stdout.
+func NewOpenTelemetryStdoutTracerProvider(ctx context.Context, config OpenTelemetryTracerProviderConfig) (*sdktrace.TracerProvider, error) {
+	return oteladapter.NewStdoutTracerProvider(ctx, config)
+}
+
+// OpenTelemetryTracerFromProvider returns a tracer backed by a TracerProvider.
+func OpenTelemetryTracerFromProvider(provider *sdktrace.TracerProvider, instrumentationName string) observability.Tracer {
+	return oteladapter.TracerFromProvider(provider, instrumentationName)
 }

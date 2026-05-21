@@ -120,6 +120,12 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
+	ctx, runSpan := e.startSpan(ctx, observability.SpanRun,
+		observability.Attribute{Key: "run_id", Value: req.RunID},
+		observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
+	)
+	defer runSpan.End()
+
 	runStart := time.Now()
 	snapshot := runstate.RunSnapshot{
 		RunID:        req.RunID,
@@ -178,6 +184,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
+		runSpan.RecordError(err)
 		e.markRunFailed(ctx, req.RunID, err)
 		e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
 			observability.Attribute{Key: "event", Value: string(core.EventRunFailed)},

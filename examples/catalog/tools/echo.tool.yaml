@@ -1,0 +1,17 @@
+apiVersion: agentflow.dev/v1
+kind: Tool
+metadata:
+  name: echo
+  version: "1.0.0"
+spec:
+  type: builtin.echo
+  description: Echo the input payload for testing and demos.
+  side_effect: none
+  approval: never
+  input_schema:
+    type: object
+    properties:
+      message:
+        type: string
+    required:
+      - message

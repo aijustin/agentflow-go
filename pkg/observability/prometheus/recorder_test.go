@@ -13,16 +13,16 @@ import (
 
 func TestRecorderHandler(t *testing.T) {
 	recorder := NewRecorder()
-	recorder.IncCounter(context.Background(), observability.MetricRuntimeEventsTotal, observability.Attribute{Key: "type", Value: "run"})
+	recorder.IncCounter(context.Background(), observability.MetricRuntimeEventsTotal, observability.Attribute{Key: "event_type", Value: "run"})
 	recorder.ObserveHistogram(context.Background(), observability.MetricRunDurationSeconds, 0.42)
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	w := httptest.NewRecorder()
 	recorder.Handler().ServeHTTP(w, req)
 	body := w.Body.String()
-	if !strings.Contains(body, "agentflow_runtime_events_total") {
-		t.Fatalf("expected counter metric, got %q", body)
+	if !strings.Contains(body, `agentflow_runtime_events_total{event_type="run"} 1`) {
+		t.Fatalf("expected labeled counter metric, got %q", body)
 	}
-	if !strings.Contains(body, "agentflow_run_duration_seconds_bucket") {
+	if !strings.Contains(body, `agentflow_run_duration_seconds_bucket{le="+Inf"}`) {
 		t.Fatalf("expected histogram buckets, got %q", body)
 	}
 }

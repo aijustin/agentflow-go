@@ -15,6 +15,7 @@ type ProductionHTTPHandlerConfig struct {
 	Policy         security.Policy
 	Audit          audit.Sink
 	AuthMiddleware func(http.Handler) http.Handler
+	MetricsHandler http.Handler
 	IDGenerator    func() string
 	Now            func() time.Time
 	MaxBodyBytes   int64
@@ -29,6 +30,7 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 		Policy:         config.Policy,
 		Audit:          config.Audit,
 		AuthMiddleware: config.AuthMiddleware,
+		MetricsHandler: config.MetricsHandler,
 		IDGenerator:    config.IDGenerator,
 		Now:            config.Now,
 		MaxBodyBytes:   config.MaxBodyBytes,

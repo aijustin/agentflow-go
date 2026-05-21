@@ -328,6 +328,10 @@ func (e *Engine) emitJSON(ctx context.Context, typ core.EventType, runID string,
 	e.emit(ctx, typ, runID, raw)
 }
 
+func (e *Engine) startSpan(ctx context.Context, name observability.SpanName, attrs ...observability.Attribute) (context.Context, observability.Span) {
+	return e.tracer.Start(ctx, name, attrs...)
+}
+
 // generateRunID returns a cryptographically random run identifier with a
 // "run-" prefix.  Falls back to a nanosecond timestamp on the rare occasion
 // that the random reader fails.

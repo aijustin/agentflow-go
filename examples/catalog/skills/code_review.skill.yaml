@@ -1,0 +1,18 @@
+apiVersion: agentflow.dev/v1
+kind: Skill
+metadata:
+  name: code_review
+  version: "1.0.0"
+spec:
+  description: Structured code review guidance for pull requests.
+  compatible_agents:
+    - reviewer
+  prompt_fragments:
+    - name: review_policy
+      content: |
+        Review code for correctness, security, and maintainability.
+        Cite concrete file paths and suggest actionable fixes.
+  tool_policies:
+    - tool: git_diff
+      approval: risky
+      side_effect: read

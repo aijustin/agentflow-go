@@ -23,16 +23,26 @@
 
 ### 指标
 
-框架已提供轻量级指标端口 `pkg/observability.Recorder` 和事件适配器 `agentflow.NewObservabilityEventSink`。当前适配器会把 `core.EventSink` 事件转换为低基数指标，例如 `agentflow_runtime_events_total`，并可继续转发给已有事件 sink。Prometheus exporter 仍建议放在应用侧或后续可选适配器中，以免核心库强制引入运行时依赖。
+框架已提供轻量级指标端口 `pkg/observability.Recorder` 和事件适配器 `agentflow.NewObservabilityEventSink`。`agentflow.NewPrometheusRecorder` 提供零依赖的 Prometheus text exposition，`PrometheusMetricsHandler` 可挂载到 `NewProductionHTTPHandler` 的 `/metrics` 路由。
 
 ```go
+recorder := agentflow.NewPrometheusRecorder()
 eventSink := agentflow.NewObservabilityEventSink(
-	prometheusRecorder,
+	recorder,
 	otelTracer,
 	agentflow.NewSlogEventSink(logger),
 )
 
-fw, err := agentflow.NewFromFile("scenario.yaml", agentflow.WithEventSink(eventSink))
+fw, err := agentflow.NewFromFile("scenario.yaml",
+	agentflow.WithRecorder(recorder),
+	agentflow.WithEventSink(eventSink),
+)
+
+handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+	Queue:          queue,
+	Framework:      fw,
+	MetricsHandler: agentflow.PrometheusMetricsHandler(recorder),
+})
 ```
 
 初始 Prometheus 指标应覆盖：
@@ -82,7 +92,36 @@ dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityH
 
 ### 链路追踪
 
-框架已定义 `pkg/observability.Tracer` 与标准 span 名称，例如 `agentflow.runtime.event`、`agentflow.run`、`agentflow.tool.call` 和 `agentflow.queue.job`。`NewObservabilityEventSink` 可以把运行时事件映射为追踪 span；完整 OpenTelemetry SDK 接入由宿主应用注入具体 tracer/exporter。
+框架已定义 `pkg/observability.Tracer` 与标准 span 名称，例如 `agentflow.runtime.event`、`agentflow.run`、`agentflow.tool.call` 和 `agentflow.queue.job`。`NewObservabilityEventSink` 会把运行时事件映射为追踪 span；运行时 `Run` 与工具调用也会创建对应 span。
+
+OpenTelemetry 接入方式：
+
+1. **宿主已有 TracerProvider**：注入 `go.opentelemetry.io/otel/trace.Tracer`。
+2. **本地开发**：使用 `NewOpenTelemetryStdoutTracerProvider` 导出 JSON span 到 stdout。
+
+```go
+provider, err := agentflow.NewOpenTelemetryStdoutTracerProvider(ctx, agentflow.OpenTelemetryTracerProviderConfig{
+	ServiceName:    "my-service",
+	ServiceVersion: agentflow.Version,
+})
+if err != nil {
+	log.Fatal(err)
+}
+defer provider.Shutdown(ctx)
+
+tracer := agentflow.OpenTelemetryTracerFromProvider(provider, "my-service/agentflow")
+
+fw, err := agentflow.NewFromFile("scenario.yaml",
+	agentflow.WithTracer(tracer),
+	agentflow.WithEventSink(agentflow.NewObservabilityEventSink(
+		recorder,
+		tracer,
+		agentflow.NewSlogEventSink(logger),
+	)),
+)
+```
+
+生产环境通常由宿主配置 OTLP/Jaeger 等 exporter，再通过 `NewOpenTelemetryTracer(hostTracer)` 接入；框架会把 OTel span context 同步到 `core.Event` 的 `trace_id`/`span_id` 字段。
 
 OpenTelemetry span 应包裹：
 

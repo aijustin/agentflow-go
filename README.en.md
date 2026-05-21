@@ -956,14 +956,16 @@ err = auditSink.Record(ctx, audit.Event{
 The project follows DDD-oriented layering with hexagonal ports/adapters:
 
 ```text
-cmd/
-  examples/go/
+examples/
+  go/          # copyable integration mains (minimal, validate, http-worker, …)
+  deploy/      # reference Compose stack (Postgres, Redis, MinIO)
 pkg/
   core/
   llm/
   contextwindow/
   memory/
   runstate/
+  catalog/
 internal/
   application/
     runtime/
@@ -971,7 +973,6 @@ internal/
     scenario/
   adapter/
     config/yaml/
-    human/cli/
     human/http/
     llm/openai/
     llm/anthropic/
