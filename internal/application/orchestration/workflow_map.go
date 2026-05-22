@@ -38,7 +38,7 @@ func (r *WorkflowRunner) runMapNode(ctx context.Context, scenario core.Scenario,
 		return fmt.Errorf("orchestration: map node %q requires branch.kind", node.ID)
 	}
 	switch spec.Branch.Kind {
-	case core.NodeAgent, core.NodeTool, core.NodeTransform:
+	case core.NodeAgent, core.NodeTool, core.NodeTransform, core.NodeSubgraph:
 	default:
 		return fmt.Errorf("orchestration: map node %q branch kind %q is unsupported", node.ID, spec.Branch.Kind)
 	}
@@ -92,6 +92,9 @@ func (r *WorkflowRunner) runMapNode(ctx context.Context, scenario core.Scenario,
 			childID := fmt.Sprintf("%s.%s.%s.%d", node.ID, spec.Branch.Kind, spec.Branch.Ref, index)
 			if spec.Branch.Kind == core.NodeTransform {
 				childID = fmt.Sprintf("%s.transform.%d", node.ID, index)
+			}
+			if spec.Branch.Kind == core.NodeSubgraph {
+				childID = fmt.Sprintf("%s.subgraph.%s.%d", node.ID, spec.Branch.Ref, index)
 			}
 			child := core.WorkflowNode{
 				ID:    childID,

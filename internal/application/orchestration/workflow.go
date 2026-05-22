@@ -394,6 +394,7 @@ func (r *WorkflowRunner) saveStepOutput(ctx context.Context, scenario core.Scena
 	if r.runs == nil {
 		return nil
 	}
+	nodeID = storageNodeID(ctx, nodeID)
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -542,11 +543,15 @@ func (r *WorkflowRunner) stepOutputRaw(ctx context.Context, runID, nodeID string
 	if r.runs == nil {
 		return nil, false, fmt.Errorf("orchestration: run-state repository is required for workflow expressions")
 	}
+	storageID := storageNodeID(ctx, nodeID)
 	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
 	if err != nil {
 		return nil, false, err
 	}
-	ref, ok := snapshot.StepOutputs[nodeID]
+	ref, ok := snapshot.StepOutputs[storageID]
+	if !ok && storageID != nodeID {
+		ref, ok = snapshot.StepOutputs[nodeID]
+	}
 	if !ok {
 		return nil, false, nil
 	}

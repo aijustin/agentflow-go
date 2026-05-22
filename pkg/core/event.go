@@ -17,6 +17,8 @@ const (
 	EventStepStarted      EventType = "StepStarted"
 	EventStepCompleted    EventType = "StepCompleted"
 	EventStepFailed       EventType = "StepFailed"
+	EventSubgraphStarted  EventType = "SubgraphStarted"
+	EventSubgraphCompleted EventType = "SubgraphCompleted"
 	EventToolCalled       EventType = "ToolCalled"
 	EventToolReturned     EventType = "ToolReturned"
 	EventToolDenied       EventType = "ToolDenied"

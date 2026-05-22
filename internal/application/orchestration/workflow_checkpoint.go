@@ -45,7 +45,7 @@ func truncateStepOutputsForRerun(outputs map[string]runstate.StepOutputRef, work
 	remove := downstreamNodeIDs(workflow, fromNodeID)
 	for stepID := range outputs {
 		for nodeID := range remove {
-			if stepID == nodeID || strings.HasPrefix(stepID, nodeID+".") {
+			if stepID == nodeID || strings.HasPrefix(stepID, nodeID+".") || strings.HasPrefix(stepID, nodeID+subgraphStepDelimiter) {
 				delete(outputs, stepID)
 				break
 			}

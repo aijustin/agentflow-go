@@ -31,6 +31,8 @@ type ObservabilityHTTPHandlerConfig struct {
 	Store          observability.EventStore
 	Hub            *observability.EventHub
 	AuthMiddleware func(http.Handler) http.Handler
+	// Framework enables Studio graph export, step listing, and resume-from-step.
+	Framework *Framework
 }
 
 func NewSlogEventSink(logger *stdslog.Logger) core.EventSink {
@@ -75,11 +77,18 @@ func NewEventFanoutSink(sinks ...core.EventSink) core.EventSink {
 }
 
 func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Handler, error) {
-	return observabilityhttp.NewHandler(observabilityhttp.Config{
+	httpConfig := observabilityhttp.Config{
 		Store:          config.Store,
 		Hub:            config.Hub,
 		AuthMiddleware: config.AuthMiddleware,
-	})
+	}
+	if config.Framework != nil {
+		adapter := &studioFramework{framework: config.Framework}
+		httpConfig.Steps = adapter
+		httpConfig.Graph = adapter
+		httpConfig.Resume = adapter
+	}
+	return observabilityhttp.NewHandler(httpConfig)
 }
 
 // PrometheusRecorder exposes in-process Prometheus text metrics for agentflow runtime signals.

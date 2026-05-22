@@ -1,8 +1,10 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	nethttp "net/http"
 	"net/url"
 	"strconv"
@@ -15,11 +17,29 @@ type Config struct {
 	Store          obspkg.EventStore
 	Hub            *obspkg.EventHub
 	AuthMiddleware func(nethttp.Handler) nethttp.Handler
+	Steps          StepsLister
+	Graph          GraphExporter
+	Resume         StepResumer
+}
+
+type StepsLister interface {
+	ListRunSteps(ctx context.Context, runID string) (any, error)
+}
+
+type StepResumer interface {
+	ResumeFromStep(ctx context.Context, runID, nodeID string) (any, error)
+}
+
+type GraphExporter interface {
+	ExportScenarioGraph() any
 }
 
 type Handler struct {
 	store   obspkg.EventStore
 	hub     *obspkg.EventHub
+	steps   StepsLister
+	graph   GraphExporter
+	resume  StepResumer
 	mux     *nethttp.ServeMux
 	handler nethttp.Handler
 }
@@ -28,7 +48,14 @@ func NewHandler(config Config) (*Handler, error) {
 	if config.Store == nil {
 		return nil, fmt.Errorf("observability http: event store is nil")
 	}
-	handler := &Handler{store: config.Store, hub: config.Hub, mux: nethttp.NewServeMux()}
+	handler := &Handler{
+		store:  config.Store,
+		hub:    config.Hub,
+		steps:  config.Steps,
+		graph:  config.Graph,
+		resume: config.Resume,
+		mux:    nethttp.NewServeMux(),
+	}
 	handler.routes()
 	handler.handler = handler.mux
 	if config.AuthMiddleware != nil {
@@ -43,8 +70,21 @@ func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/", handler.handleDashboard)
+	handler.mux.HandleFunc("/api/graph", handler.handleGraph)
 	handler.mux.HandleFunc("/api/runs", handler.handleRuns)
 	handler.mux.HandleFunc("/api/runs/", handler.handleRunResource)
+}
+
+func (handler *Handler) handleGraph(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	if handler.graph == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("scenario graph export is not configured"))
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, handler.graph.ExportScenarioGraph())
 }
 
 func (handler *Handler) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -90,9 +130,59 @@ func (handler *Handler) handleRunResource(w nethttp.ResponseWriter, r *nethttp.R
 		handler.handleEvents(w, r, runID)
 	case "stream":
 		handler.handleStream(w, r, runID)
+	case "steps":
+		handler.handleSteps(w, r, runID)
+	case "resume-from-step":
+		handler.handleResumeFromStep(w, r, runID)
 	default:
 		nethttp.NotFound(w, r)
 	}
+}
+
+func (handler *Handler) handleSteps(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	if handler.steps == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("run steps listing is not configured"))
+		return
+	}
+	result, err := handler.steps.ListRunSteps(r.Context(), runID)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleResumeFromStep(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.resume == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("resume-from-step is not configured"))
+		return
+	}
+	var body struct {
+		NodeID string `json:"node_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("decode body: %w", err))
+		return
+	}
+	body.NodeID = strings.TrimSpace(body.NodeID)
+	if body.NodeID == "" {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("node_id is required"))
+		return
+	}
+	result, err := handler.resume.ResumeFromStep(r.Context(), runID, body.NodeID)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
 }
 
 func (handler *Handler) handleEvents(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {

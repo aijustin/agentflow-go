@@ -53,4 +53,7 @@ func TestWorkflowRunnerSubgraphExecutesNamedWorkflow(t *testing.T) {
 	if !ok || mark["ready"] != true {
 		t.Fatalf("mark step=%v", steps["mark"])
 	}
+	if _, ok := snapshot.StepOutputs["run_prep::mark"]; !ok {
+		t.Fatalf("expected namespaced step run_prep::mark in snapshot")
+	}
 }

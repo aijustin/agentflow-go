@@ -23,14 +23,14 @@
 | 并行 super-step | `max_parallel` + 就绪批次调度 | ✅ |
 | `parallel_group` / 多 agent | `parallel_group`、`supervisor` 节点 | ✅ |
 | 有界循环 | `loop` 节点 | ✅ |
-| **Subgraph（运行时嵌套）** | `orchestration.workflows` + `subgraph` 节点 | ✅ 已落地 |
-| **Send / 动态 fan-out** | `map` 节点（按 `steps.*` 数组展开） | ✅ 已落地 |
+| **Subgraph（运行时嵌套）** | `orchestration.workflows` + `subgraph`；内层 step 命名空间 `{parent}::{inner}` | ✅ v2 |
+| **Send / 动态 fan-out** | `map` 节点（含 `branch.kind: subgraph`） | ✅ 已落地 |
 | `interrupt()` 任意点暂停 | `human_gate` + tool pause + `before_final_answer` | ⚠️ 部分（缺任意节点 declarative interrupt） |
-| Checkpoint 列表 / time-travel | RunState 版本 + StepOutputs | ✅ 已落地（`ListRunSteps` / `ResumeFromStep`） |
+| Checkpoint 列表 / time-travel | RunState + `ListRunSteps` / `ResumeFromStep` | ⚠️ API ✅；Observability Graph UI ✅；无 checkpoint 历史链 |
 | Store 长期记忆 | tier memory + CognitiveMemory | ⚠️ 模型不同，语义对齐中 |
 | Autonomous 作为图节点 | `agent_loop` 节点（图内 ReAct） | ⏸ 不做（用 `hybrid` + `autonomous`） |
-| 流式图事件 | EventSink step/llm/tool 事件 | ✅ |
-| Studio 可视化 | Observability HTTP + 事件详情 | ⚠️ 无专用图编辑器 |
+| 流式图事件 | EventSink step/llm/tool/subgraph 事件 | ✅ |
+| Studio 可视化 | Observability Graph View + scenario export | ⚠️ 只读 debug（见 [studio-roadmap.md](./studio-roadmap.md)） |
 
 图例：✅ 已有 · ⚠️ 部分 · 🔲 计划
 

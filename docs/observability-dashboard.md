@@ -141,6 +141,14 @@ The handler serves both the UI and JSON/SSE APIs. When mounted under `/observabi
 - `GET /observability/api/runs/{run_id}/events?after_sequence=10&limit=200` lists timeline events.
 - `GET /observability/api/runs/{run_id}/stream?after_sequence=10` streams new events as Server-Sent Events.
 
+When `ObservabilityHTTPHandlerConfig.Framework` is set, Studio endpoints are also available:
+
+- `GET /observability/api/graph` — scenario workflow topology (nested subgraphs).
+- `GET /observability/api/runs/{run_id}/steps` — checkpointed step outputs (`ListRunSteps`).
+- `POST /observability/api/runs/{run_id}/resume-from-step` — time-travel rerun from a node (`{"node_id":"..."}`).
+
+Open the dashboard and switch to the **Graph** tab for read-only graph debug and resume-from-step. See [studio-roadmap.md](./studio-roadmap.md).
+
 Protect the handler with the same middleware used for production APIs:
 
 ```go

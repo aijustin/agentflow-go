@@ -119,6 +119,36 @@ func TestHandlerStreamsRuntimeEvents(t *testing.T) {
 	}
 }
 
+func TestHandlerStudioEndpoints(t *testing.T) {
+	store := obsinmem.NewStore()
+	handler, err := NewHandler(Config{
+		Store: store,
+		Graph: graphStub{value: map[string]any{"name": "demo"}},
+		Steps: stepsStub{value: map[string]any{"run_id": "run-1", "steps": []any{}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := httptest.NewRecorder()
+	handler.ServeHTTP(graph, httptest.NewRequest(http.MethodGet, "/api/graph", nil))
+	if graph.Code != http.StatusOK {
+		t.Fatalf("graph code=%d", graph.Code)
+	}
+	steps := httptest.NewRecorder()
+	handler.ServeHTTP(steps, httptest.NewRequest(http.MethodGet, "/api/runs/run-1/steps", nil))
+	if steps.Code != http.StatusOK {
+		t.Fatalf("steps code=%d", steps.Code)
+	}
+}
+
+type graphStub struct{ value any }
+
+func (s graphStub) ExportScenarioGraph() any { return s.value }
+
+type stepsStub struct{ value any }
+
+func (s stepsStub) ListRunSteps(context.Context, string) (any, error) { return s.value, nil }
+
 func TestNewHandlerValidatesConfig(t *testing.T) {
 	if _, err := NewHandler(Config{}); err == nil {
 		t.Fatal("expected nil store error")

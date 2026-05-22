@@ -163,6 +163,20 @@ const indexHTML = `<!doctype html>
     .detail-body { display: grid; gap: 12px; padding: 12px; align-content: start; }
     .kv { display: grid; grid-template-columns: 92px 1fr; gap: 8px; font-size: 13px; }
     .kv span:first-child { color: var(--muted); }
+    .view-tabs { display: flex; gap: 6px; }
+    .view-tabs button.active { background: #e7f6f3; border-color: #b8ded7; color: var(--accent); font-weight: 700; }
+    .graph-wrap { overflow: auto; min-height: 0; padding: 12px; background: #fbfcfd; flex: 1; }
+    .graph-svg { min-width: 100%; min-height: 420px; }
+    .graph-node { cursor: pointer; }
+    .graph-node rect { fill: #fff; stroke: #94a3b8; stroke-width: 1.5; }
+    .graph-node.active rect { stroke: var(--accent); stroke-width: 2.5; fill: #e7f6f3; }
+    .graph-node.done rect { fill: #ecfdf5; stroke: #34d399; }
+    .graph-node.current rect { fill: #fff5e5; stroke: var(--accent-2); stroke-width: 2.5; }
+    .graph-node text { font-size: 11px; fill: #1e2732; pointer-events: none; }
+    .graph-edge { stroke: #94a3b8; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    .graph-sub { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 12px; }
+    .graph-sub-title { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 8px; }
+    .time-travel { display: flex; gap: 8px; padding: 0 12px 12px; }
     @media (max-width: 1080px) {
       main { grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr) minmax(260px, 40vh); }
       .detail { grid-column: 1 / -1; }
@@ -195,13 +209,27 @@ const indexHTML = `<!doctype html>
       <div class="list" id="runs"><div class="empty">No sessions</div></div>
     </section>
     <section class="panel">
-      <div class="panel-head"><div class="panel-title">Timeline</div><span class="badge" id="selectedRun">No run</span></div>
+      <div class="panel-head">
+        <div class="panel-title">Run View</div>
+        <div class="view-tabs">
+          <button id="timelineTab" class="active">Timeline</button>
+          <button id="graphTab">Graph</button>
+        </div>
+      </div>
+      <div class="panel-head" style="border-top:0; min-height:40px;">
+        <span class="badge" id="selectedRun">No run</span>
+      </div>
       <div class="stats">
         <div class="stat"><b id="statEvents">0</b><span>events</span></div>
         <div class="stat"><b id="statTools">0</b><span>tool calls</span></div>
         <div class="stat"><b id="statLLM">0</b><span>LLM calls</span></div>
       </div>
       <div class="timeline" id="events"><div class="empty">Select a session</div></div>
+      <div class="graph-wrap" id="graphView" hidden><div class="empty">Graph export requires Framework wiring</div></div>
+      <div class="time-travel" id="timeTravelBar" hidden>
+        <button class="primary" id="resumeStepButton" disabled>Resume from selected node</button>
+        <span class="meta" id="selectedNodeLabel">No node selected</span>
+      </div>
     </section>
     <section class="panel detail">
       <div class="panel-head"><div class="panel-title">Details</div><span class="badge" id="detailType">Empty</span></div>
@@ -209,7 +237,7 @@ const indexHTML = `<!doctype html>
     </section>
   </main>
   <script>
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, steps: null, selectedNode: '', graphEnabled: false, resumeEnabled: false };
     const $ = (id) => document.getElementById(id);
     const fmtTime = (value) => value ? new Date(value).toLocaleTimeString() : '-';
     const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -220,6 +248,150 @@ const indexHTML = `<!doctype html>
       if (type.includes('Run') || type.includes('Step')) return 'run';
       return '';
     };
+    async function loadGraph() {
+      try {
+        const res = await fetch('api/graph');
+        if (!res.ok) return;
+        state.graph = await res.json();
+        state.graphEnabled = true;
+        $('timeTravelBar').hidden = false;
+      } catch (_) {}
+    }
+    async function loadSteps(runID) {
+      state.steps = null;
+      state.selectedNode = '';
+      try {
+        const res = await fetch('api/runs/' + encodeURIComponent(runID) + '/steps');
+        if (!res.ok) return;
+        state.steps = await res.json();
+        state.resumeEnabled = true;
+      } catch (_) {}
+      renderGraph();
+      updateTimeTravelBar();
+    }
+    function setView(view) {
+      state.view = view;
+      $('timelineTab').classList.toggle('active', view === 'timeline');
+      $('graphTab').classList.toggle('active', view === 'graph');
+      $('events').hidden = view !== 'timeline';
+      $('graphView').hidden = view !== 'graph';
+      if (view === 'graph') renderGraph();
+    }
+    function layoutGraph(view) {
+      const nodes = view.nodes || [];
+      const edges = view.edges || [];
+      const levels = {};
+      nodes.forEach((node) => { levels[node.id] = 0; });
+      for (let i = 0; i < nodes.length; i++) {
+        edges.forEach((edge) => {
+          if (levels[edge.to] <= levels[edge.from]) levels[edge.to] = levels[edge.from] + 1;
+        });
+      }
+      const grouped = {};
+      nodes.forEach((node) => {
+        const level = levels[node.id] || 0;
+        if (!grouped[level]) grouped[level] = [];
+        grouped[level].push(node);
+      });
+      const positions = {};
+      Object.keys(grouped).sort((a,b)=>a-b).forEach((level) => {
+        grouped[level].forEach((node, index) => {
+          positions[node.id] = { x: 40 + Number(level) * 180, y: 40 + index * 90 };
+        });
+      });
+      return { nodes, edges, positions };
+    }
+    function stepNodeIDs() {
+      if (!state.steps || !state.steps.steps) return new Set();
+      return new Set(state.steps.steps.map((step) => step.node_id));
+    }
+    function renderGraphView(container, view, title) {
+      if (!view || !view.nodes || !view.nodes.length) {
+        container.innerHTML = '<div class="empty">No workflow graph</div>';
+        return;
+      }
+      const { nodes, edges, positions } = layoutGraph(view);
+      const done = stepNodeIDs();
+      const current = state.steps && state.steps.current_node_id ? state.steps.current_node_id : '';
+      const width = Math.max(640, ...Object.values(positions).map((p) => p.x + 160));
+      const height = Math.max(320, ...Object.values(positions).map((p) => p.y + 70));
+      let html = title ? '<div class="graph-sub-title">' + escapeHTML(title) + '</div>' : '';
+      html += '<svg class="graph-svg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '">';
+      html += '<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>';
+      edges.forEach((edge) => {
+        const from = positions[edge.from];
+        const to = positions[edge.to];
+        if (!from || !to) return;
+        html += '<path class="graph-edge" d="M' + (from.x + 120) + ',' + (from.y + 24) + ' C' + (from.x + 150) + ',' + from.y + ' ' + (to.x - 20) + ',' + to.y + ' ' + to.x + ',' + (to.y + 24) + '"/>';
+      });
+      nodes.forEach((node) => {
+        const pos = positions[node.id];
+        const classes = ['graph-node'];
+        if (state.selectedNode === node.id) classes.push('active');
+        if (done.has(node.id)) classes.push('done');
+        if (current === node.id) classes.push('current');
+        html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
+        html += '<rect width="120" height="48" rx="8"></rect>';
+        html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text>';
+        html += '<text x="8" y="34" fill="#697586">' + escapeHTML(node.kind + (node.ref ? ':' + node.ref : '')) + '</text>';
+        html += '</g>';
+      });
+      html += '</svg>';
+      container.innerHTML = html;
+      container.querySelectorAll('.graph-node').forEach((node) => node.onclick = () => {
+        state.selectedNode = node.dataset.node;
+        renderGraph();
+        updateTimeTravelBar();
+      });
+    }
+    function renderGraph() {
+      const container = $('graphView');
+      if (!state.graphEnabled) {
+        container.innerHTML = '<div class="empty">Graph export requires Framework wiring on ObservabilityHTTPHandlerConfig.Framework</div>';
+        return;
+      }
+      let html = '';
+      const root = document.createElement('div');
+      renderGraphView(root, state.graph.workflow, state.graph.name + ' (' + (state.graph.mode || 'mode') + ')');
+      html += root.innerHTML;
+      if (state.graph.workflows) {
+        Object.entries(state.graph.workflows).forEach(([name, view]) => {
+          const sub = document.createElement('div');
+          sub.className = 'graph-sub';
+          renderGraphView(sub, view, 'subgraph: ' + name);
+          html += sub.outerHTML;
+        });
+      }
+      container.innerHTML = html;
+      container.querySelectorAll('.graph-node').forEach((node) => node.onclick = () => {
+        state.selectedNode = node.dataset.node;
+        renderGraph();
+        updateTimeTravelBar();
+      });
+    }
+    function updateTimeTravelBar() {
+      $('selectedNodeLabel').textContent = state.selectedNode ? ('Node: ' + state.selectedNode) : 'No node selected';
+      $('resumeStepButton').disabled = !(state.resumeEnabled && state.selectedNode && state.selectedRun);
+    }
+    async function resumeFromStep() {
+      if (!state.selectedRun || !state.selectedNode) return;
+      $('resumeStepButton').disabled = true;
+      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/resume-from-step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ node_id: state.selectedNode }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        alert(body.error || 'resume failed');
+        updateTimeTravelBar();
+        return;
+      }
+      await loadSteps(state.selectedRun);
+      await loadRuns();
+      setView('timeline');
+      await selectRun(state.selectedRun);
+    }
     async function loadRuns() {
       const status = $('statusFilter').value;
       const res = await fetch('api/runs?limit=100' + (status ? '&status=' + encodeURIComponent(status) : ''));
@@ -235,9 +407,11 @@ const indexHTML = `<!doctype html>
       const res = await fetch('api/runs/' + encodeURIComponent(runID) + '/events?limit=500');
       const body = await res.json();
       state.events = body.events || [];
+      await loadSteps(runID);
       renderRuns();
       renderEvents();
       renderDetails();
+      if (state.view === 'graph') renderGraph();
       if (state.live) openStream();
     }
     function openStream() {
@@ -249,6 +423,9 @@ const indexHTML = `<!doctype html>
         if (state.events.some((item) => item.id === record.id)) return;
         state.events.push(record);
         renderEvents();
+        if (record.event.type.includes('Step') || record.event.type.includes('Subgraph')) {
+          loadSteps(state.selectedRun);
+        }
       });
       state.stream.onerror = () => { closeStream(); setTimeout(() => state.live && openStream(), 2000); };
     }
@@ -298,12 +475,15 @@ const indexHTML = `<!doctype html>
     }
     $('refreshButton').onclick = () => loadRuns();
     $('statusFilter').onchange = () => loadRuns();
+    $('timelineTab').onclick = () => setView('timeline');
+    $('graphTab').onclick = () => setView('graph');
+    $('resumeStepButton').onclick = () => resumeFromStep();
     $('liveButton').onclick = () => {
       state.live = !state.live;
       $('liveButton').textContent = state.live ? 'Live on' : 'Live off';
       if (state.live) openStream(); else closeStream();
     };
-    loadRuns();
+    loadGraph().then(() => loadRuns());
     setInterval(() => { if (state.live) loadRuns(); }, 3000);
   </script>
 </body>

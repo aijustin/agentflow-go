@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -14,6 +15,11 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 	if !ok {
 		return fmt.Errorf("orchestration: subgraph node %q references unknown workflow %q", node.ID, node.Ref)
 	}
+	prefix := subgraphStepPrefix(node.ID)
+	r.emitJSON(ctx, core.EventSubgraphStarted, scenario.Name, runID, map[string]any{
+		"node_id":      node.ID,
+		"subgraph_ref": node.Ref,
+	})
 	var before map[string]struct{}
 	if r.runs != nil {
 		snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
@@ -32,7 +38,8 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 		Workflows:   scenario.Orchestration.Workflows,
 		MaxParallel: scenario.Orchestration.MaxParallel,
 	}
-	if err := r.run(ctx, subScenario, runID, nil); err != nil {
+	subCtx := withStepPrefix(ctx, prefix)
+	if err := r.run(subCtx, subScenario, runID, nil); err != nil {
 		return err
 	}
 	produced := make(map[string]json.RawMessage)
@@ -47,13 +54,22 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 					continue
 				}
 			}
-			if ref.Inline != nil {
-				produced[id] = ref.Inline
+			if !strings.HasPrefix(id, prefix) {
 				continue
 			}
-			produced[id] = json.RawMessage(`{"external":true}`)
+			bareID := bareNodeID(id, prefix)
+			if ref.Inline != nil {
+				produced[bareID] = ref.Inline
+				continue
+			}
+			produced[bareID] = json.RawMessage(`{"external":true}`)
 		}
 	}
+	r.emitJSON(ctx, core.EventSubgraphCompleted, scenario.Name, runID, map[string]any{
+		"node_id":      node.ID,
+		"subgraph_ref": node.Ref,
+		"step_count":   len(produced),
+	})
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]any{
 		"subgraph": node.Ref,
 		"steps":    produced,
