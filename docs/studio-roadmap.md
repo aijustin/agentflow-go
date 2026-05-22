@@ -66,11 +66,50 @@ HTTP（Observability + Production）：
 
 本地示例：`go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7070/observability/`（默认端口，可用 `AGENT_HTTP_ADDR` 覆盖）
 
-## P2（产品级，另立项）
+## P2（已交付 MVP）
 
-- LangSmith Studio 级 **拖拽图编辑器**
-- 编辑 → 生成 builder 代码 / `ValidateScenario`
-- 多 run 对比、fork state、thread 视图
+| 能力 | 状态 |
+|------|------|
+| **拖拽图编辑器**（Editor 标签） | ✅ 节点拖拽 / 增删 / 连边 |
+| 编辑 → `ValidateScenario` | ✅ `POST /api/studio/validate` |
+| 编辑 → builder Go codegen | ✅ `POST /api/studio/codegen` |
+| 多 run 对比 | ✅ `GET /api/compare?run_a=&run_b=` + Compare 标签 |
+| Fork state（新 run_id） | ✅ `POST /api/runs/{id}/fork` |
+| Thread 视图 | ✅ `GET /api/runs/{id}/thread` + Thread 标签 |
+
+### Studio 编辑与校验
+
+```go
+result, err := fw.ValidateStudioGraph(ctx, editedGraph)
+code, err := fw.GenerateStudioBuilderCode(ctx, editedGraph)
+```
+
+HTTP：
+
+- `POST /observability/api/studio/validate` — body: `ScenarioGraph` JSON
+- `POST /observability/api/studio/codegen` — 返回 builder Go 代码
+- `GET /observability/api/compare?run_a=&run_b=`
+- `GET /observability/api/runs/{id}/thread`
+- `POST /observability/api/runs/{id}/fork` — body: `{"version":0}` 可选
+- Production: `POST /v1/runs/{id}/fork`
+
+### P2+（已交付）
+
+| 能力 | 状态 |
+|------|------|
+| 节点 **input JSON** 可视化编辑 | ✅ Editor 选中节点 → Apply properties |
+| **Subgraph** 画布内嵌编辑 | ✅ Editor 目标下拉 + Add subgraph |
+| Postgres **thread / checkpoint** 索引 | ✅ migration `0003` + `NewPostgresCheckpointHistory` |
+
+Migration: [migrations/postgres/0003_agentflow_studio_thread_checkpoint.up.sql](../migrations/postgres/0003_agentflow_studio_thread_checkpoint.up.sql)
+
+```go
+history, err := agentflow.NewPostgresCheckpointHistory(db)
+fw, err := agentflow.New(scenario,
+    agentflow.WithRunStateRepository(runRepo),
+    agentflow.WithCheckpointHistory(history),
+)
+```
 
 ## 相关文档
 

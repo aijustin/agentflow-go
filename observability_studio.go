@@ -2,6 +2,10 @@ package agentflow
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/aijustin/agentflow-go/pkg/graph"
 )
 
 type studioFramework struct {
@@ -30,4 +34,44 @@ func (adapter *studioFramework) ResumeFromCheckpoint(ctx context.Context, runID 
 
 func (adapter *studioFramework) ExportScenarioGraph() any {
 	return adapter.framework.ExportScenarioGraph()
+}
+
+func (adapter *studioFramework) ValidateStudioGraph(ctx context.Context, edited any) (any, error) {
+	graph, err := decodeStudioGraph(edited)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.framework.ValidateStudioGraph(ctx, graph)
+}
+
+func (adapter *studioFramework) GenerateStudioBuilderCode(ctx context.Context, edited any) (any, error) {
+	graph, err := decodeStudioGraph(edited)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.framework.GenerateStudioBuilderCode(ctx, graph)
+}
+
+func (adapter *studioFramework) CompareRuns(ctx context.Context, runA, runB string) (any, error) {
+	return adapter.framework.CompareRuns(ctx, runA, runB)
+}
+
+func (adapter *studioFramework) ListRunThread(ctx context.Context, runID string) (any, error) {
+	return adapter.framework.ListRunThread(ctx, runID)
+}
+
+func (adapter *studioFramework) ForkRun(ctx context.Context, runID string, version int64) (any, error) {
+	return adapter.framework.ForkRun(ctx, runID, version)
+}
+
+func decodeStudioGraph(value any) (graph.ScenarioGraph, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return graph.ScenarioGraph{}, fmt.Errorf("studio graph: encode: %w", err)
+	}
+	var out graph.ScenarioGraph
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return graph.ScenarioGraph{}, fmt.Errorf("studio graph: decode: %w", err)
+	}
+	return out, nil
 }

@@ -189,6 +189,17 @@ const indexHTML = `<!doctype html>
     }
     .checkpoint-item:hover, .checkpoint-item.active { background: #f0f7f6; border-color: #b8ded7; }
     .checkpoint-item .title { font-size: 13px; font-weight: 700; }
+    .editor-toolbar, .compare-toolbar, .thread-toolbar { display: flex; gap: 8px; padding: 0 12px 12px; flex-wrap: wrap; align-items: center; }
+    .editor-toolbar select { min-width: 120px; }
+    .graph-node.editing rect { stroke: #2563eb; }
+    .graph-node.diff-a rect { stroke: #b45309; fill: #fff5e5; }
+    .graph-node.diff-b rect { stroke: #2563eb; fill: #eff6ff; }
+    .graph-node.diff-changed rect { stroke: #b42318; fill: #fff0ed; }
+    .thread-item { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-bottom: 8px; cursor: pointer; }
+    .thread-item.active { background: #f0f7f6; border-color: #b8ded7; }
+    .editor-props { padding: 0 12px 12px; display: grid; gap: 8px; }
+    .editor-props textarea { min-height: 96px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+    .editor-props input { min-height: 34px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; font: inherit; }
     @media (max-width: 1080px) {
       main { grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr) minmax(260px, 40vh); }
       .detail { grid-column: 1 / -1; }
@@ -226,6 +237,9 @@ const indexHTML = `<!doctype html>
         <div class="view-tabs">
           <button id="timelineTab" class="active">Timeline</button>
           <button id="graphTab">Graph</button>
+          <button id="editorTab">Editor</button>
+          <button id="compareTab">Compare</button>
+          <button id="threadTab">Thread</button>
         </div>
       </div>
       <div class="panel-head" style="border-top:0; min-height:40px;">
@@ -238,6 +252,49 @@ const indexHTML = `<!doctype html>
       </div>
       <div class="timeline" id="events"><div class="empty">Select a session</div></div>
       <div class="graph-wrap" id="graphView" hidden><div class="empty">Graph export requires Framework wiring</div></div>
+      <div class="graph-wrap" id="editorView" hidden>
+        <div class="editor-toolbar">
+          <select id="editorTargetSelect" aria-label="Editor canvas"></select>
+          <button id="addSubgraphButton">Add subgraph</button>
+          <select id="editorNodeKind">
+            <option value="transform">transform</option>
+            <option value="agent">agent</option>
+            <option value="tool">tool</option>
+            <option value="skill">skill</option>
+            <option value="human_gate">human_gate</option>
+            <option value="subgraph">subgraph</option>
+            <option value="map">map</option>
+            <option value="loop">loop</option>
+          </select>
+          <button id="addNodeButton">Add node</button>
+          <button id="connectModeButton">Connect</button>
+          <button id="deleteNodeButton">Delete</button>
+          <button id="validateGraphButton">Validate</button>
+          <button class="primary" id="codegenGraphButton">Export Go</button>
+        </div>
+        <div class="editor-props" id="editorProps" hidden>
+          <div class="meta">Selected node properties</div>
+          <input id="editorNodeRef" placeholder="ref (agent/tool/skill/subgraph)" />
+          <textarea id="editorNodeInput" placeholder='input JSON e.g. {"set":{"x":1}}'></textarea>
+          <button id="saveNodePropsButton">Apply node properties</button>
+        </div>
+        <div id="editorCanvas"><div class="empty">Load graph to edit</div></div>
+      </div>
+      <div class="graph-wrap" id="compareView" hidden>
+        <div class="compare-toolbar">
+          <label class="meta">Compare B</label>
+          <select id="compareRunB"></select>
+          <button id="compareRunsButton">Compare</button>
+        </div>
+        <div id="compareCanvas"><div class="empty">Select a run and choose compare target</div></div>
+      </div>
+      <div class="graph-wrap" id="threadView" hidden>
+        <div class="thread-toolbar">
+          <button id="forkRunButton">Fork current run</button>
+          <button id="refreshThreadButton">Refresh thread</button>
+        </div>
+        <div id="threadCanvas"><div class="empty">Select a run to view fork thread</div></div>
+      </div>
       <div class="time-travel" id="timeTravelBar" hidden>
         <button class="primary" id="resumeStepButton" disabled>Resume from selected node</button>
         <button id="resumeCheckpointButton" disabled>Resume from checkpoint</button>
@@ -250,7 +307,7 @@ const indexHTML = `<!doctype html>
     </section>
   </main>
   <script>
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {} };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
     const $ = (id) => document.getElementById(id);
     const fmtTime = (value) => value ? new Date(value).toLocaleTimeString() : '-';
     const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -268,6 +325,7 @@ const indexHTML = `<!doctype html>
         state.graph = await res.json();
         state.graphEnabled = true;
         state.nodeMeta = buildNodeMeta(state.graph);
+        resetEditorGraph();
         $('timeTravelBar').hidden = false;
       } catch (_) {}
     }
@@ -295,13 +353,53 @@ const indexHTML = `<!doctype html>
       renderGraph();
       updateTimeTravelBar();
     }
+    function resetEditorGraph() {
+      if (!state.graph) return;
+      state.editorGraph = JSON.parse(JSON.stringify(state.graph));
+      state.editorPositions = {};
+      state.editorConnectFrom = '';
+      state.editorTarget = 'workflow';
+      renderEditorTargetOptions();
+    }
+    function renderEditorTargetOptions() {
+      const select = $('editorTargetSelect');
+      if (!select || !state.editorGraph) return;
+      const options = [{ value: 'workflow', label: 'workflow: ' + (state.editorGraph.name || 'main') }];
+      Object.keys(state.editorGraph.workflows || {}).sort().forEach((name) => {
+        options.push({ value: name, label: 'subgraph: ' + name });
+      });
+      select.innerHTML = options.map((item) =>
+        '<option value="' + escapeHTML(item.value) + '"' + (item.value === state.editorTarget ? ' selected' : '') + '>' + escapeHTML(item.label) + '</option>'
+      ).join('');
+    }
+    function editorView() {
+      if (!state.editorGraph) return null;
+      if (state.editorTarget === 'workflow') {
+        return state.editorGraph.workflow || null;
+      }
+      if (!state.editorGraph.workflows) state.editorGraph.workflows = {};
+      if (!state.editorGraph.workflows[state.editorTarget]) {
+        state.editorGraph.workflows[state.editorTarget] = { id: state.editorTarget, nodes: [], edges: [] };
+      }
+      return state.editorGraph.workflows[state.editorTarget];
+    }
     function setView(view) {
       state.view = view;
       $('timelineTab').classList.toggle('active', view === 'timeline');
       $('graphTab').classList.toggle('active', view === 'graph');
+      $('editorTab').classList.toggle('active', view === 'editor');
+      $('compareTab').classList.toggle('active', view === 'compare');
+      $('threadTab').classList.toggle('active', view === 'thread');
       $('events').hidden = view !== 'timeline';
       $('graphView').hidden = view !== 'graph';
+      $('editorView').hidden = view !== 'editor';
+      $('compareView').hidden = view !== 'compare';
+      $('threadView').hidden = view !== 'thread';
+      $('timeTravelBar').hidden = view !== 'graph';
       if (view === 'graph') renderGraph();
+      if (view === 'editor') renderEditor();
+      if (view === 'compare') { renderCompareRunOptions(); renderCompare(); }
+      if (view === 'thread') loadThread();
     }
     function buildNodeMeta(graph) {
       const meta = {};
@@ -424,6 +522,273 @@ const indexHTML = `<!doctype html>
         renderGraph();
         updateTimeTravelBar();
       });
+    }
+    function editorWorkflow() {
+      return editorView();
+    }
+    function renderEditorNodeProps() {
+      const panel = $('editorProps');
+      const view = editorView();
+      if (!panel || !view || !state.selectedNode) {
+        if (panel) panel.hidden = true;
+        return;
+      }
+      const node = (view.nodes || []).find((item) => item.id === state.selectedNode);
+      if (!node) { panel.hidden = true; return; }
+      panel.hidden = false;
+      $('editorNodeRef').value = node.ref || '';
+      $('editorNodeInput').value = node.input ? (typeof node.input === 'string' ? node.input : JSON.stringify(node.input, null, 2)) : '';
+    }
+    function applyEditorNodeProps() {
+      const view = editorView();
+      if (!view || !state.selectedNode) return;
+      const node = (view.nodes || []).find((item) => item.id === state.selectedNode);
+      if (!node) return;
+      node.ref = $('editorNodeRef').value.trim();
+      const raw = $('editorNodeInput').value.trim();
+      if (!raw) {
+        delete node.input;
+      } else {
+        try {
+          node.input = JSON.parse(raw);
+        } catch (_) {
+          alert('input must be valid JSON');
+          return;
+        }
+      }
+      renderEditor();
+    }
+    function addEditorSubgraph() {
+      if (!state.editorGraph) return;
+      const name = prompt('Subgraph name');
+      if (!name) return;
+      if (!state.editorGraph.workflows) state.editorGraph.workflows = {};
+      if (state.editorGraph.workflows[name]) { alert('subgraph already exists'); return; }
+      state.editorGraph.workflows[name] = { id: name, nodes: [], edges: [] };
+      state.editorTarget = name;
+      renderEditorTargetOptions();
+      renderEditor();
+    }
+    function layoutEditorGraph(view) {
+      const base = layoutGraph(view);
+      Object.keys(state.editorPositions).forEach((id) => {
+        if (base.positions[id]) base.positions[id] = state.editorPositions[id];
+      });
+      return base;
+    }
+    function renderEditor() {
+      const canvas = $('editorCanvas');
+      const view = editorWorkflow();
+      if (!state.graphEnabled || !view) {
+        canvas.innerHTML = '<div class="empty">Graph export requires Framework wiring</div>';
+        return;
+      }
+      const { nodes, edges, positions } = layoutEditorGraph(view);
+      const width = Math.max(640, ...Object.values(positions).map((p) => p.x + 160));
+      const height = Math.max(320, ...Object.values(positions).map((p) => p.y + 70));
+      let html = '<svg class="graph-svg" id="editorSvg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '">';
+      html += '<defs><marker id="arrow-editor" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>';
+      edges.forEach((edge) => {
+        const from = positions[edge.from];
+        const to = positions[edge.to];
+        if (!from || !to) return;
+        html += '<path class="graph-edge" marker-end="url(#arrow-editor)" d="M' + (from.x + 120) + ',' + (from.y + 24) + ' C' + (from.x + 150) + ',' + from.y + ' ' + (to.x - 20) + ',' + to.y + ' ' + to.x + ',' + (to.y + 24) + '"/>';
+      });
+      nodes.forEach((node) => {
+        const pos = positions[node.id];
+        const classes = ['graph-node', 'editing'];
+        if (state.selectedNode === node.id) classes.push('active');
+        html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
+        html += '<rect width="120" height="48" rx="8"></rect>';
+        html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text>';
+        html += '<text x="8" y="34" fill="#697586">' + escapeHTML(node.kind + (node.ref ? ':' + node.ref : '')) + '</text>';
+        html += '</g>';
+      });
+      html += '</svg>';
+      canvas.innerHTML = html;
+      canvas.querySelectorAll('.graph-node').forEach((nodeEl) => {
+        nodeEl.onmousedown = (event) => startEditorDrag(event, nodeEl);
+        nodeEl.onclick = (event) => {
+          event.stopPropagation();
+          handleEditorNodeClick(nodeEl.dataset.node);
+        };
+      });
+      renderEditorNodeProps();
+    }
+    function handleEditorNodeClick(nodeID) {
+      if (state.editorConnectFrom) {
+        const view = editorWorkflow();
+        if (view && state.editorConnectFrom !== nodeID) {
+          view.edges = view.edges || [];
+          if (!view.edges.some((edge) => edge.from === state.editorConnectFrom && edge.to === nodeID)) {
+            view.edges.push({ from: state.editorConnectFrom, to: nodeID });
+          }
+        }
+        state.editorConnectFrom = '';
+        $('connectModeButton').textContent = 'Connect';
+      }
+      state.selectedNode = nodeID;
+      renderEditor();
+    }
+    function startEditorDrag(event, nodeEl) {
+      if (state.editorConnectFrom) return;
+      event.preventDefault();
+      const nodeID = nodeEl.dataset.node;
+      const svg = $('editorSvg');
+      const start = svgPoint(svg, event.clientX, event.clientY);
+      const pos = state.editorPositions[nodeID] || parseTranslate(nodeEl.getAttribute('transform'));
+      state.editorDrag = { nodeID, offsetX: start.x - pos.x, offsetY: start.y - pos.y };
+      const move = (ev) => {
+        if (!state.editorDrag) return;
+        const point = svgPoint(svg, ev.clientX, ev.clientY);
+        state.editorPositions[state.editorDrag.nodeID] = {
+          x: Math.max(0, point.x - state.editorDrag.offsetX),
+          y: Math.max(0, point.y - state.editorDrag.offsetY),
+        };
+        renderEditor();
+      };
+      const up = () => {
+        state.editorDrag = null;
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+    }
+    function parseTranslate(value) {
+      const match = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(value || '');
+      return { x: match ? Number(match[1]) : 0, y: match ? Number(match[2]) : 0 };
+    }
+    function svgPoint(svg, clientX, clientY) {
+      const pt = svg.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      return pt.matrixTransform(svg.getScreenCTM().inverse());
+    }
+    function addEditorNode() {
+      const view = editorWorkflow();
+      if (!view) return;
+      const id = prompt('Node id');
+      if (!id) return;
+      const kind = $('editorNodeKind').value;
+      const ref = (kind === 'agent' || kind === 'tool' || kind === 'skill' || kind === 'subgraph') ? (prompt('Ref (optional)') || '') : '';
+      view.nodes = view.nodes || [];
+      if (view.nodes.some((node) => node.id === id)) { alert('node already exists'); return; }
+      view.nodes.push({ id, kind, ref, resumable: kind !== 'human_gate' && kind !== 'loop' });
+      renderEditor();
+    }
+    function deleteEditorNode() {
+      const view = editorWorkflow();
+      if (!view || !state.selectedNode) return;
+      view.nodes = (view.nodes || []).filter((node) => node.id !== state.selectedNode);
+      view.edges = (view.edges || []).filter((edge) => edge.from !== state.selectedNode && edge.to !== state.selectedNode);
+      delete state.editorPositions[state.selectedNode];
+      state.selectedNode = '';
+      renderEditor();
+    }
+    async function validateEditorGraph() {
+      if (!state.editorGraph) return;
+      const res = await fetch('api/studio/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.editorGraph) });
+      const body = await res.json();
+      alert(body.valid ? 'Graph is valid' : (body.error || 'invalid graph'));
+    }
+    async function codegenEditorGraph() {
+      if (!state.editorGraph) return;
+      const res = await fetch('api/studio/codegen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.editorGraph) });
+      const body = await res.json();
+      if (!res.ok) { alert(body.error || 'codegen failed'); return; }
+      state.selectedEvent = null;
+      state.selectedCheckpoint = null;
+      $('detailType').textContent = 'Codegen';
+      $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
+    }
+    function renderCompareRunOptions() {
+      $('compareRunB').innerHTML = state.runs.map((run) =>
+        '<option value="' + escapeHTML(run.run_id) + '"' + (run.run_id === state.compareRunB ? ' selected' : '') + '>' + escapeHTML(run.run_id) + '</option>'
+      ).join('');
+    }
+    async function compareRuns() {
+      if (!state.selectedRun) return;
+      state.compareRunB = $('compareRunB').value;
+      const res = await fetch('api/compare?run_a=' + encodeURIComponent(state.selectedRun) + '&run_b=' + encodeURIComponent(state.compareRunB));
+      const body = await res.json();
+      if (!res.ok) { alert(body.error || 'compare failed'); return; }
+      state.compareResult = body;
+      renderCompare();
+    }
+    function renderCompare() {
+      const canvas = $('compareCanvas');
+      if (!state.compareResult) {
+        canvas.innerHTML = '<div class="empty">Choose compare target and click Compare</div>';
+        return;
+      }
+      const diff = state.compareResult;
+      let html = '<div class="meta"><span>Only A: ' + (diff.steps_only_a || []).join(', ') + '</span></div>';
+      html += '<div class="meta"><span>Only B: ' + (diff.steps_only_b || []).join(', ') + '</span></div>';
+      html += '<div class="meta"><span>Shared: ' + (diff.shared_steps || []).length + '</span></div>';
+      const changed = new Set((diff.shared_steps || []).filter((step) => !step.same).map((step) => step.node_id));
+      const onlyA = new Set(diff.steps_only_a || []);
+      const onlyB = new Set(diff.steps_only_b || []);
+      if (state.graph && state.graph.workflow) {
+        const root = document.createElement('div');
+        renderDiffGraphView(root, state.graph.workflow, changed, onlyA, onlyB);
+        html += root.innerHTML;
+      }
+      canvas.innerHTML = html;
+    }
+    function renderDiffGraphView(container, view, changed, onlyA, onlyB) {
+      const { nodes, edges, positions } = layoutGraph(view);
+      const width = Math.max(640, ...Object.values(positions).map((p) => p.x + 160));
+      const height = Math.max(320, ...Object.values(positions).map((p) => p.y + 70));
+      let html = '<svg class="graph-svg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '">';
+      edges.forEach((edge) => {
+        const from = positions[edge.from]; const to = positions[edge.to];
+        if (!from || !to) return;
+        html += '<path class="graph-edge" d="M' + (from.x + 120) + ',' + (from.y + 24) + ' C' + (from.x + 150) + ',' + from.y + ' ' + (to.x - 20) + ',' + to.y + ' ' + to.x + ',' + (to.y + 24) + '"/>';
+      });
+      nodes.forEach((node) => {
+        const pos = positions[node.id];
+        const classes = ['graph-node'];
+        if (changed.has(node.id)) classes.push('diff-changed');
+        else if (onlyA.has(node.id)) classes.push('diff-a');
+        else if (onlyB.has(node.id)) classes.push('diff-b');
+        html += '<g class="' + classes.join(' ') + '" transform="translate(' + pos.x + ',' + pos.y + ')"><rect width="120" height="48" rx="8"></rect>';
+        html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text></g>';
+      });
+      html += '</svg>';
+      container.innerHTML = html;
+    }
+    async function loadThread() {
+      if (!state.selectedRun) {
+        $('threadCanvas').innerHTML = '<div class="empty">Select a run</div>';
+        return;
+      }
+      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/thread');
+      const body = await res.json();
+      if (!res.ok) { $('threadCanvas').innerHTML = '<div class="empty">' + escapeHTML(body.error || 'thread unavailable') + '</div>'; return; }
+      state.threadRuns = body.runs || [];
+      renderThread();
+    }
+    function renderThread() {
+      const canvas = $('threadCanvas');
+      canvas.innerHTML = state.threadRuns.length ? state.threadRuns.map((run) =>
+        '<div class="thread-item ' + (run.run_id === state.selectedRun ? 'active' : '') + '" data-run="' + escapeHTML(run.run_id) + '">' +
+          '<div class="title">' + escapeHTML(run.run_id) + ' · ' + escapeHTML(run.status) + '</div>' +
+          '<div class="meta"><span>thread ' + escapeHTML(run.thread_id) + '</span>' +
+          (run.parent_run_id ? '<span>fork of ' + escapeHTML(run.parent_run_id) + '</span>' : '<span>root</span>') +
+          '</div></div>').join('') : '<div class="empty">No thread runs</div>';
+      canvas.querySelectorAll('.thread-item').forEach((node) => node.onclick = () => selectRun(node.dataset.run));
+    }
+    async function forkCurrentRun() {
+      if (!state.selectedRun) return;
+      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/fork', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const body = await res.json();
+      if (!res.ok) { alert(body.error || 'fork failed'); return; }
+      await loadRuns();
+      await selectRun(body.run_id);
+      setView('thread');
     }
     function updateTimeTravelBar() {
       const meta = state.nodeMeta[state.selectedNode] || {};
@@ -598,6 +963,23 @@ const indexHTML = `<!doctype html>
     $('statusFilter').onchange = () => loadRuns();
     $('timelineTab').onclick = () => setView('timeline');
     $('graphTab').onclick = () => setView('graph');
+    $('editorTab').onclick = () => setView('editor');
+    $('compareTab').onclick = () => setView('compare');
+    $('threadTab').onclick = () => setView('thread');
+    $('editorTargetSelect').onchange = () => { state.editorTarget = $('editorTargetSelect').value; state.selectedNode = ''; renderEditor(); };
+    $('addSubgraphButton').onclick = () => addEditorSubgraph();
+    $('saveNodePropsButton').onclick = () => applyEditorNodeProps();
+    $('addNodeButton').onclick = () => addEditorNode();
+    $('deleteNodeButton').onclick = () => deleteEditorNode();
+    $('connectModeButton').onclick = () => {
+      state.editorConnectFrom = state.selectedNode || '';
+      $('connectModeButton').textContent = state.editorConnectFrom ? ('From ' + state.editorConnectFrom) : 'Connect';
+    };
+    $('validateGraphButton').onclick = () => validateEditorGraph();
+    $('codegenGraphButton').onclick = () => codegenEditorGraph();
+    $('compareRunsButton').onclick = () => compareRuns();
+    $('forkRunButton').onclick = () => forkCurrentRun();
+    $('refreshThreadButton').onclick = () => loadThread();
     $('resumeStepButton').onclick = () => resumeFromStep();
     $('resumeCheckpointButton').onclick = () => resumeFromCheckpoint();
     $('liveButton').onclick = () => {

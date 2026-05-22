@@ -79,11 +79,12 @@ func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, e
 	if err != nil {
 		return fmt.Errorf("postgres runstate: marshal snapshot %q: %w", snapshot.RunID, err)
 	}
+	threadID := runstate.IndexedThreadID(stored)
 	if expectedVersion == 0 {
-		query := fmt.Sprintf(`INSERT INTO %s (run_id, version, scenario_name, status, current_node_id, snapshot_json, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		query := fmt.Sprintf(`INSERT INTO %s (run_id, version, scenario_name, status, current_node_id, parent_run_id, thread_id, fork_from_version, snapshot_json, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
 ON CONFLICT (run_id) DO NOTHING`, r.table)
-		result, err := r.db.ExecContext(ctx, query, stored.RunID, stored.Version, stored.ScenarioName, string(stored.Status), stored.CurrentNodeID, data)
+		result, err := r.db.ExecContext(ctx, query, stored.RunID, stored.Version, stored.ScenarioName, string(stored.Status), stored.CurrentNodeID, stored.ParentRunID, threadID, stored.ForkFromVersion, data)
 		if err != nil {
 			return fmt.Errorf("postgres runstate: insert snapshot %q: %w", stored.RunID, err)
 		}
@@ -97,9 +98,9 @@ ON CONFLICT (run_id) DO NOTHING`, r.table)
 		return nil
 	}
 	query := fmt.Sprintf(`UPDATE %s
-SET version = $1, scenario_name = $2, status = $3, current_node_id = $4, snapshot_json = $5, updated_at = NOW()
-WHERE run_id = $6 AND version = $7`, r.table)
-	result, err := r.db.ExecContext(ctx, query, stored.Version, stored.ScenarioName, string(stored.Status), stored.CurrentNodeID, data, stored.RunID, expectedVersion)
+SET version = $1, scenario_name = $2, status = $3, current_node_id = $4, parent_run_id = $5, thread_id = $6, fork_from_version = $7, snapshot_json = $8, updated_at = NOW()
+WHERE run_id = $9 AND version = $10`, r.table)
+	result, err := r.db.ExecContext(ctx, query, stored.Version, stored.ScenarioName, string(stored.Status), stored.CurrentNodeID, stored.ParentRunID, threadID, stored.ForkFromVersion, data, stored.RunID, expectedVersion)
 	if err != nil {
 		return fmt.Errorf("postgres runstate: update snapshot %q: %w", stored.RunID, err)
 	}
@@ -162,6 +163,22 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 			where = fmt.Sprintf(" WHERE scenario_name = $%d", len(args))
 		} else {
 			where += fmt.Sprintf(" AND scenario_name = $%d", len(args))
+		}
+	}
+	if filter.ParentRunID != "" {
+		args = append(args, filter.ParentRunID)
+		if where == "" {
+			where = fmt.Sprintf(" WHERE parent_run_id = $%d", len(args))
+		} else {
+			where += fmt.Sprintf(" AND parent_run_id = $%d", len(args))
+		}
+	}
+	if filter.ThreadID != "" {
+		args = append(args, filter.ThreadID)
+		if where == "" {
+			where = fmt.Sprintf(" WHERE COALESCE(NULLIF(thread_id, ''), run_id) = $%d", len(args))
+		} else {
+			where += fmt.Sprintf(" AND COALESCE(NULLIF(thread_id, ''), run_id) = $%d", len(args))
 		}
 	}
 	limit := ""

@@ -31,12 +31,17 @@ type CheckpointResumer interface {
 	ResumeFromCheckpoint(ctx context.Context, runID string, version int64) (any, error)
 }
 
+type RunForker interface {
+	ForkRun(ctx context.Context, runID string, version int64) (any, error)
+}
+
 type HandlerConfig struct {
 	Checkpoint   StepResumer
 	Steps        StepsLister
 	History      CheckpointLister
 	Checkpoints  CheckpointLoader
 	Restore      CheckpointResumer
+	Fork         RunForker
 	MaxBodyBytes int64
 }
 
@@ -46,6 +51,7 @@ type Handler struct {
 	history      CheckpointLister
 	checkpoints  CheckpointLoader
 	restore      CheckpointResumer
+	fork         RunForker
 	maxBodyBytes int64
 }
 
@@ -60,6 +66,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		history:      config.History,
 		checkpoints:  config.Checkpoints,
 		restore:      config.Restore,
+		fork:         config.Fork,
 		maxBodyBytes: maxBodyBytes,
 	}
 }
@@ -85,6 +92,8 @@ func (h *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
 		h.handleCheckpoints(w, r, runID)
 	case len(parts) == 4 && parts[3] == "resume-from-checkpoint":
 		h.handleResumeFromCheckpoint(w, r, runID)
+	case len(parts) == 4 && parts[3] == "fork":
+		h.handleFork(w, r, runID)
 	case len(parts) == 5 && parts[3] == "checkpoints":
 		h.handleCheckpointVersion(w, r, runID, parts[4])
 	default:
@@ -225,6 +234,37 @@ func (h *Handler) handleResumeFromCheckpoint(w nethttp.ResponseWriter, r *nethtt
 		return
 	}
 	result, err := h.restore.ResumeFromCheckpoint(r.Context(), runID, req.Version)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (h *Handler) handleFork(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if h.fork == nil {
+		writeError(w, nethttp.StatusNotImplemented, "run fork is not configured")
+		return
+	}
+	var req struct {
+		Version int64 `json:"version"`
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodyBytes+1))
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err.Error())
+		return
+	}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeError(w, nethttp.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	result, err := h.fork.ForkRun(r.Context(), runID, req.Version)
 	if err != nil {
 		writeError(w, nethttp.StatusBadRequest, err.Error())
 		return

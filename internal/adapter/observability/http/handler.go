@@ -23,6 +23,11 @@ type Config struct {
 	History        CheckpointLister
 	Checkpoints    CheckpointLoader
 	Restore        CheckpointResumer
+	Studio         StudioValidator
+	Codegen        StudioCodeGenerator
+	Compare        RunComparer
+	Thread         ThreadLister
+	Fork           RunForker
 }
 
 type StepsLister interface {
@@ -49,6 +54,26 @@ type GraphExporter interface {
 	ExportScenarioGraph() any
 }
 
+type StudioValidator interface {
+	ValidateStudioGraph(ctx context.Context, graph any) (any, error)
+}
+
+type StudioCodeGenerator interface {
+	GenerateStudioBuilderCode(ctx context.Context, graph any) (any, error)
+}
+
+type RunComparer interface {
+	CompareRuns(ctx context.Context, runA, runB string) (any, error)
+}
+
+type ThreadLister interface {
+	ListRunThread(ctx context.Context, runID string) (any, error)
+}
+
+type RunForker interface {
+	ForkRun(ctx context.Context, runID string, version int64) (any, error)
+}
+
 type Handler struct {
 	store      obspkg.EventStore
 	hub        *obspkg.EventHub
@@ -58,6 +83,11 @@ type Handler struct {
 	history    CheckpointLister
 	checkpoint CheckpointLoader
 	restore    CheckpointResumer
+	studio     StudioValidator
+	codegen    StudioCodeGenerator
+	compare    RunComparer
+	thread     ThreadLister
+	fork       RunForker
 	mux        *nethttp.ServeMux
 	handler    nethttp.Handler
 }
@@ -75,6 +105,11 @@ func NewHandler(config Config) (*Handler, error) {
 		history:    config.History,
 		checkpoint: config.Checkpoints,
 		restore:    config.Restore,
+		studio:     config.Studio,
+		codegen:    config.Codegen,
+		compare:    config.Compare,
+		thread:     config.Thread,
+		fork:       config.Fork,
 		mux:        nethttp.NewServeMux(),
 	}
 	handler.routes()
@@ -92,6 +127,9 @@ func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) 
 func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/", handler.handleDashboard)
 	handler.mux.HandleFunc("/api/graph", handler.handleGraph)
+	handler.mux.HandleFunc("/api/compare", handler.handleCompare)
+	handler.mux.HandleFunc("/api/studio/validate", handler.handleStudioValidate)
+	handler.mux.HandleFunc("/api/studio/codegen", handler.handleStudioCodegen)
 	handler.mux.HandleFunc("/api/runs", handler.handleRuns)
 	handler.mux.HandleFunc("/api/runs/", handler.handleRunResource)
 }
@@ -161,6 +199,10 @@ func (handler *Handler) handleRunResource(w nethttp.ResponseWriter, r *nethttp.R
 		handler.handleCheckpointVersion(w, r, runID, segments[1])
 	case len(segments) == 1 && segments[0] == "resume-from-checkpoint":
 		handler.handleResumeFromCheckpoint(w, r, runID)
+	case len(segments) == 1 && segments[0] == "thread":
+		handler.handleRunThread(w, r, runID)
+	case len(segments) == 1 && segments[0] == "fork":
+		handler.handleRunFork(w, r, runID)
 	default:
 		nethttp.NotFound(w, r)
 	}
@@ -278,6 +320,122 @@ func (handler *Handler) handleResumeFromCheckpoint(w nethttp.ResponseWriter, r *
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleCompare(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	if handler.compare == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("run compare is not configured"))
+		return
+	}
+	runA := strings.TrimSpace(r.URL.Query().Get("run_a"))
+	runB := strings.TrimSpace(r.URL.Query().Get("run_b"))
+	if runA == "" || runB == "" {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("run_a and run_b are required"))
+		return
+	}
+	result, err := handler.compare.CompareRuns(r.Context(), runA, runB)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleStudioValidate(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.studio == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio validate is not configured"))
+		return
+	}
+	graph, err := decodeScenarioGraph(r.Body)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	result, err := handler.studio.ValidateStudioGraph(r.Context(), graph)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleStudioCodegen(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.codegen == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio codegen is not configured"))
+		return
+	}
+	graph, err := decodeScenarioGraph(r.Body)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	result, err := handler.codegen.GenerateStudioBuilderCode(r.Context(), graph)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleRunThread(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	if handler.thread == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("run thread listing is not configured"))
+		return
+	}
+	result, err := handler.thread.ListRunThread(r.Context(), runID)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]any{"thread_id": runID, "runs": result})
+}
+
+func (handler *Handler) handleRunFork(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.fork == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("run fork is not configured"))
+		return
+	}
+	var body struct {
+		Version int64 `json:"version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil && err != io.EOF {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("decode body: %w", err))
+		return
+	}
+	result, err := handler.fork.ForkRun(r.Context(), runID, body.Version)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func decodeScenarioGraph(body io.Reader) (any, error) {
+	var graph any
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&graph); err != nil {
+		return nil, fmt.Errorf("decode graph: %w", err)
+	}
+	return graph, nil
 }
 
 func (handler *Handler) handleEvents(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {

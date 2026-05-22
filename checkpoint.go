@@ -29,6 +29,7 @@ func NewCheckpointHTTPHandler(config CheckpointHTTPHandlerConfig) (http.Handler,
 		History:      adapter,
 		Checkpoints:  adapter,
 		Restore:      adapter,
+		Fork:         adapter,
 		MaxBodyBytes: config.MaxBodyBytes,
 	}), nil
 }

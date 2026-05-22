@@ -75,8 +75,11 @@ type RunSnapshot struct {
 	Status        RunStatus                  `json:"status"`
 	Variables     map[string]json.RawMessage `json:"variables,omitempty"`
 	StepOutputs   map[string]StepOutputRef   `json:"step_outputs,omitempty"`
-	PendingGate   *core.CheckpointState      `json:"pending_gate,omitempty"`
-	CreatedAt     time.Time                  `json:"created_at,omitempty"`
+	PendingGate     *core.CheckpointState      `json:"pending_gate,omitempty"`
+	ParentRunID     string                     `json:"parent_run_id,omitempty"`
+	ForkFromVersion int64                      `json:"fork_from_version,omitempty"`
+	ThreadID        string                     `json:"thread_id,omitempty"`
+	CreatedAt       time.Time                  `json:"created_at,omitempty"`
 	UpdatedAt     time.Time                  `json:"updated_at,omitempty"`
 }
 
@@ -108,6 +111,10 @@ type ListFilter struct {
 	ScenarioName string
 	// TenantID, when non-empty, restricts results to a specific tenant.
 	TenantID string
+	// ParentRunID, when non-empty, restricts results to forks of a parent run.
+	ParentRunID string
+	// ThreadID, when non-empty, restricts results to a fork/thread group.
+	ThreadID string
 	// Limit is the maximum number of results to return. 0 means no limit.
 	Limit int
 }

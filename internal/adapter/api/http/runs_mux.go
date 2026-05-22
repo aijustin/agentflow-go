@@ -42,5 +42,8 @@ func isCheckpointRunPath(path string) bool {
 	if strings.HasSuffix(path, "/resume-from-checkpoint") {
 		return true
 	}
+	if strings.HasSuffix(path, "/fork") {
+		return true
+	}
 	return strings.Contains(path, "/checkpoints/")
 }

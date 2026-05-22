@@ -225,20 +225,20 @@ func (c *testConn) insert(args []driver.NamedValue) (driver.Result, error) {
 	if _, exists := c.state.rows[runID]; exists {
 		return driver.RowsAffected(0), nil
 	}
-	c.state.rows[runID] = testRow{version: args[1].Value.(int64), snapshot: valueBytes(args[5].Value)}
+	c.state.rows[runID] = testRow{version: args[1].Value.(int64), snapshot: valueBytes(args[8].Value)}
 	return driver.RowsAffected(1), nil
 }
 
 func (c *testConn) update(args []driver.NamedValue) (driver.Result, error) {
-	runID := args[5].Value.(string)
-	expected := args[6].Value.(int64)
+	runID := args[8].Value.(string)
+	expected := args[9].Value.(int64)
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	row, exists := c.state.rows[runID]
 	if !exists || row.version != expected {
 		return driver.RowsAffected(0), nil
 	}
-	c.state.rows[runID] = testRow{version: args[0].Value.(int64), snapshot: valueBytes(args[4].Value)}
+	c.state.rows[runID] = testRow{version: args[0].Value.(int64), snapshot: valueBytes(args[7].Value)}
 	return driver.RowsAffected(1), nil
 }
 

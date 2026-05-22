@@ -905,6 +905,17 @@ func NewInMemoryCheckpointHistory() runstate.CheckpointHistory {
 	return runstateinmem.NewCheckpointHistory()
 }
 
+// NewPostgresCheckpointHistory creates a PostgreSQL append-only checkpoint history store.
+func NewPostgresCheckpointHistory(db *sql.DB, tableName ...string) (runstate.CheckpointHistory, error) {
+	if len(tableName) > 1 {
+		return nil, fmt.Errorf("agentflow: at most one postgres checkpoint history table name is allowed")
+	}
+	if len(tableName) == 1 && tableName[0] != "" {
+		return runstatepostgres.NewCheckpointHistory(db, runstatepostgres.WithCheckpointHistoryTable(tableName[0]))
+	}
+	return runstatepostgres.NewCheckpointHistory(db)
+}
+
 // NewInMemoryBlobStore creates the default in-memory blob store used by New.
 func NewInMemoryBlobStore() runstate.BlobStore {
 	return blobinmem.NewStore()

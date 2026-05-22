@@ -149,8 +149,13 @@ When `ObservabilityHTTPHandlerConfig.Framework` is set, Studio endpoints are als
 - `GET /observability/api/runs/{run_id}/checkpoints?limit=50` — append-only snapshot revisions.
 - `GET /observability/api/runs/{run_id}/checkpoints/{version}` — load one historical snapshot.
 - `POST /observability/api/runs/{run_id}/resume-from-checkpoint` — restore and rerun from a revision (`{"version":3}`).
+- `POST /observability/api/studio/validate` — validate an edited graph (`ScenarioGraph` JSON).
+- `POST /observability/api/studio/codegen` — export builder Go code for an edited graph.
+- `GET /observability/api/compare?run_a=&run_b=` — diff step outputs across two runs.
+- `GET /observability/api/runs/{run_id}/thread` — list fork/thread group runs.
+- `POST /observability/api/runs/{run_id}/fork` — copy run state to a new run ID.
 
-Open the dashboard and switch to the **Graph** tab for read-only graph debug, resume-from-step, and checkpoint history in the Details pane. See [studio-roadmap.md](./studio-roadmap.md).
+Open the dashboard and switch to the **Graph** tab for read-only graph debug, **Editor** for drag-and-drop topology edits (including per-node input JSON and subgraph canvas switching), **Compare** for multi-run diffs, and **Thread** for fork lineage. See [studio-roadmap.md](./studio-roadmap.md).
 
 Protect the handler with the same middleware used for production APIs:
 

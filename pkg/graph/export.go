@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -23,12 +24,13 @@ type GraphView struct {
 
 // GraphNode is a workflow node for visualization.
 type GraphNode struct {
-	ID         string `json:"id"`
-	Kind       string `json:"kind"`
-	Ref        string `json:"ref,omitempty"`
-	Condition  string `json:"condition,omitempty"`
-	Resumable  bool   `json:"resumable"`
-	ResumeHint string `json:"resume_hint,omitempty"`
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	Ref        string          `json:"ref,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Condition  string          `json:"condition,omitempty"`
+	Resumable  bool            `json:"resumable"`
+	ResumeHint string          `json:"resume_hint,omitempty"`
 }
 
 // GraphEdge connects two workflow nodes.
@@ -69,6 +71,7 @@ func exportWorkflow(id string, workflow core.Workflow) GraphView {
 			ID:         node.ID,
 			Kind:       string(node.Kind),
 			Ref:        node.Ref,
+			Input:      cloneJSON(node.Input),
 			Condition:  strings.TrimSpace(node.Condition),
 			Resumable:  resumable,
 			ResumeHint: hint,
@@ -82,4 +85,13 @@ func exportWorkflow(id string, workflow core.Workflow) GraphView {
 		})
 	}
 	return view
+}
+
+func cloneJSON(raw json.RawMessage) json.RawMessage {
+	if raw == nil {
+		return nil
+	}
+	out := make([]byte, len(raw))
+	copy(out, raw)
+	return out
 }

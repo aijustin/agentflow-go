@@ -90,6 +90,11 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 		httpConfig.History = adapter
 		httpConfig.Checkpoints = adapter
 		httpConfig.Restore = adapter
+		httpConfig.Studio = adapter
+		httpConfig.Codegen = adapter
+		httpConfig.Compare = adapter
+		httpConfig.Thread = adapter
+		httpConfig.Fork = adapter
 	}
 	return observabilityhttp.NewHandler(httpConfig)
 }

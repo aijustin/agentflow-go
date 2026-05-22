@@ -1271,7 +1271,9 @@ mux.Handle("/observability/",
           <li>POST /api/runs/{run_id}/resume-from-step</li>
           <li>GET /api/runs/{run_id}/checkpoints</li>
           <li>POST /api/runs/{run_id}/resume-from-checkpoint</li>
-          <li>Graph 标签页 + Time Travel + Checkpoint 历史链</li>
+          <li>Graph / Editor（节点 input JSON + subgraph 画布）/ Compare / Thread 标签页</li>
+          <li>POST /api/studio/validate · /api/studio/codegen</li>
+          <li>GET /api/compare · /api/runs/{id}/thread · POST /api/runs/{id}/fork</li>
           <li>生产 API：GET/POST /v1/runs/{run_id}/…</li>
           <li>WithCheckpointHistory + http-worker 示例</li>
           <li>支持 SkipSchemaSetup</li>

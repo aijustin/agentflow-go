@@ -1,0 +1,115 @@
+package agentflow_test
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/graph"
+)
+
+func TestFrameworkValidateStudioGraph(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-validate",
+		Agents: map[string]core.Agent{
+			"reviewer": {Name: "reviewer"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := fw.ExportScenarioGraph()
+	edited.Workflow.Nodes = append(edited.Workflow.Nodes, graph.GraphNode{ID: "b", Kind: string(core.NodeAgent), Ref: "reviewer"})
+	edited.Workflow.Edges = append(edited.Workflow.Edges, graph.GraphEdge{From: "a", To: "b"})
+	result, err := fw.ValidateStudioGraph(context.Background(), edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Valid {
+		t.Fatalf("expected valid graph, got %+v", result)
+	}
+}
+
+func TestFrameworkForkAndCompareRuns(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "fork-compare",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+					{ID: "b", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"y":2}}`)},
+				},
+				Edges: []core.WorkflowEdge{{From: "a", To: "b"}},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentID := "run-parent"
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: parentID}); err != nil {
+		t.Fatal(err)
+	}
+	fork, err := fw.ForkRun(context.Background(), parentID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread, err := fw.ListRunThread(context.Background(), parentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(thread) < 2 {
+		t.Fatalf("expected parent and fork in thread, got %+v", thread)
+	}
+	compare, err := fw.CompareRuns(context.Background(), parentID, fork.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compare.SharedSteps) == 0 {
+		t.Fatalf("expected shared steps, got %+v", compare)
+	}
+}
+
+func TestFrameworkGenerateStudioBuilderCode(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "codegen",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.GenerateStudioBuilderCode(context.Background(), fw.ExportScenarioGraph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Language != "go" || result.Code == "" {
+		t.Fatalf("unexpected codegen: %+v", result)
+	}
+}
