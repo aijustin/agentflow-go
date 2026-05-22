@@ -120,10 +120,6 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 	return f.engine.RunHybrid(ctx, req)
 }
 
-func (f *Framework) hybridWorkflowPending(snapshot runstate.RunSnapshot) bool {
-	return variableJSONString(snapshot.Variables, executionPhaseVar) == executionPhaseWorkflow
-}
-
 func hybridRunRequest(snapshot runstate.RunSnapshot) RunRequest {
 	return RunRequest{
 		RunID:   snapshot.RunID,

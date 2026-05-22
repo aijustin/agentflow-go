@@ -127,7 +127,6 @@ func TestFrameworkResumeAndContinueToolApprovalPause(t *testing.T) {
 }
 
 type toolPauseGateway struct {
-	fakeGateway
 	queue []llm.ToolCallResponse
 }
 

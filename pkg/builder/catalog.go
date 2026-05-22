@@ -4,9 +4,9 @@ import "github.com/aijustin/agentflow-go/pkg/core"
 
 // CatalogEntry describes a builder stack aligned with an examples/*.yaml file.
 type CatalogEntry struct {
-	ID       string
-	YAML     string
-	Build    func() core.Scenario
+	ID    string
+	YAML  string
+	Build func() core.Scenario
 }
 
 // ExampleCatalog returns builder stacks aligned with examples/*.yaml.

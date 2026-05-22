@@ -236,13 +236,6 @@ func (e *Engine) saveCheckpointVariables(ctx context.Context, snapshot *runstate
 	return e.runs.Save(ctx, snapshot, snapshot.Version)
 }
 
-func (e *Engine) shouldPauseBeforeFinalFor(snapshot runstate.RunSnapshot) bool {
-	if variableString(snapshot.Variables, checkpointResumedVar) == "true" {
-		return false
-	}
-	return e.shouldPauseBeforeFinal()
-}
-
 func variableString(vars map[string]json.RawMessage, key string) string {
 	if vars == nil {
 		return ""

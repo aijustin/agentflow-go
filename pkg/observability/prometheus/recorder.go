@@ -126,7 +126,7 @@ func writeSampleLine(b *strings.Builder, name string, labels map[string]string, 
 		b.WriteString(formatLabelSuffix(labels))
 	}
 	b.WriteString(" ")
-	b.WriteString(fmt.Sprintf("%g", value))
+	fmt.Fprintf(b, "%g", value)
 	b.WriteByte('\n')
 }
 

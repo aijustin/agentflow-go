@@ -1,42 +1,42 @@
 package builder
 
 import (
-	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 )
 
 // Conventional scenario resource names used across examples and tests.
 const (
-	NameDefaultLLM    = "default"
-	NamePrimaryLLM    = "primary"
-	NameChatLLM       = "chat"
-	NameEmbedLLM      = "embed"
-	NameSessionMemory = "session"
-	NameEchoTool      = "echo"
-	NameRepoSearch    = "repo_search"
-	NameGitTool       = "git"
-	NameTicketTool    = "ticket"
-	NameSQLTool       = "sql"
-	NameFilesystemTool = "filesystem"
-	NameHTTPTool      = "http"
-	NameHTTPToolStatus = "http.status"
-	NameSQLQueryTool  = "sql.query"
-	NameFilesystemReadTool = "fs.read"
-	NameMCPSearchTool = "docs.search"
-	NameMCPServerDocs = "docs"
-	NameKnowledgeRetrieveTool = "knowledge.retrieve"
+	NameDefaultLLM              = "default"
+	NamePrimaryLLM              = "primary"
+	NameChatLLM                 = "chat"
+	NameEmbedLLM                = "embed"
+	NameSessionMemory           = "session"
+	NameEchoTool                = "echo"
+	NameRepoSearch              = "repo_search"
+	NameGitTool                 = "git"
+	NameTicketTool              = "ticket"
+	NameSQLTool                 = "sql"
+	NameFilesystemTool          = "filesystem"
+	NameHTTPTool                = "http"
+	NameHTTPToolStatus          = "http.status"
+	NameSQLQueryTool            = "sql.query"
+	NameFilesystemReadTool      = "fs.read"
+	NameMCPSearchTool           = "docs.search"
+	NameMCPServerDocs           = "docs"
+	NameKnowledgeRetrieveTool   = "knowledge.retrieve"
 	NameKnowledgeCollectionDocs = "docs"
-	NameExpertMacro              = "macro"
-	NameExpertIndustry           = "industry"
-	NameExpertFinance            = "finance"
-	NameLeadAuthor               = "lead_author"
-	NameReviewerLLM              = "reviewer"
-	NameReviewerSecurity         = "security"
-	NameReviewerStyle            = "style"
-	NamePlannerLLM               = "planner"
-	NameStatusTool               = "status"
-	NameWorkflowReviewer         = "reviewer"
+	NameExpertMacro             = "macro"
+	NameExpertIndustry          = "industry"
+	NameExpertFinance           = "finance"
+	NameLeadAuthor              = "lead_author"
+	NameReviewerLLM             = "reviewer"
+	NameReviewerSecurity        = "security"
+	NameReviewerStyle           = "style"
+	NamePlannerLLM              = "planner"
+	NameStatusTool              = "status"
+	NameWorkflowReviewer        = "reviewer"
 )
 
 // Memory backend types accepted by scenario YAML.
@@ -56,52 +56,52 @@ const (
 
 // LLM provider names commonly used in scenarios.
 const (
-	LLMProviderMock            = "mock"
-	LLMProviderOpenAICompat    = "openai-compatible"
-	LLMProviderAnthropic       = "anthropic"
-	LLMProviderOpenAI          = "openai"
-	LLMModelMockTest           = "test"
+	LLMProviderMock         = "mock"
+	LLMProviderOpenAICompat = "openai-compatible"
+	LLMProviderAnthropic    = "anthropic"
+	LLMProviderOpenAI       = "openai"
+	LLMModelMockTest        = "test"
 )
 
 // Builtin and declared tool types accepted by scenario YAML.
 const (
-	ToolTypeEcho                = "builtin.echo"
-	ToolTypeRepoSearch          = "builtin.repo_search"
-	ToolTypeGit                 = "builtin.git"
-	ToolTypeTicket              = "builtin.ticket"
-	ToolTypeFilesystem          = "builtin.filesystem"
-	ToolTypeHTTP                = "builtin.http"
-	ToolTypeHTTPClient          = "http.client"
-	ToolTypeSQL                 = "builtin.sql"
-	ToolTypeKnowledgeRetriever  = "knowledge.retriever"
-	ToolTypeMCPTool             = "mcp.tool"
+	ToolTypeEcho               = "builtin.echo"
+	ToolTypeRepoSearch         = "builtin.repo_search"
+	ToolTypeGit                = "builtin.git"
+	ToolTypeTicket             = "builtin.ticket"
+	ToolTypeFilesystem         = "builtin.filesystem"
+	ToolTypeHTTP               = "builtin.http"
+	ToolTypeHTTPClient         = "http.client"
+	ToolTypeSQL                = "builtin.sql"
+	ToolTypeKnowledgeRetriever = "knowledge.retriever"
+	ToolTypeMCPTool            = "mcp.tool"
 )
 
 // MCP transport and metadata keys used in examples.
 const (
-	MCPTransportHTTP       = "http"
-	MCPTransportStdio      = "stdio"
+	MCPTransportHTTP        = "http"
+	MCPTransportStdio       = "stdio"
 	MCPServerURLDocsDefault = "http://127.0.0.1:3333/mcp"
-	MCPToolPrefixDocs      = "docs"
-	MCPMetadataServer      = "mcp_server"
-	MCPMetadataTool        = "mcp_tool"
-	MCPToolSearch          = "search"
+	MCPToolPrefixDocs       = "docs"
+	MCPMetadataServer       = "mcp_server"
+	MCPMetadataTool         = "mcp_tool"
+	MCPToolSearch           = "search"
 )
 
 // Default tool rate caps from examples.
 const (
-	RateCapHTTPToolDefault        = 5
-	RateCapSQLToolDefault         = 5
-	RateCapFilesystemToolDefault  = 10
+	RateCapHTTPToolDefault       = 5
+	RateCapSQLToolDefault        = 5
+	RateCapFilesystemToolDefault = 10
 )
 
 // LLM capability strings accepted by scenario YAML.
 const (
-	LLMCapChat              = "chat"
-	LLMCapToolCall          = "tool_call"
-	LLMCapStructuredOutput  = "structured_output"
-	LLMCapStream            = "stream"
-	LLMCapEmbed             = "embed"
+	LLMCapChat             = "chat"
+	LLMCapToolCall         = "tool_call"
+	LLMCapStructuredOutput = "structured_output"
+	LLMCapStream           = "stream"
+	LLMCapEmbed            = "embed"
 )
 
 // Knowledge search modes accepted by scenario YAML.
@@ -135,10 +135,10 @@ const (
 
 // Common RAG workflow conditions.
 const (
-	ConditionRouteToRAG          = `eq(steps.route.output.route, "rag")`
-	ConditionGradeNotRelevant    = `eq(steps.grade.output.relevant, false)`
-	RAGRetrieveLimitDefault      = 5
-	RAGGradeMinScoreDefault      = 0.35
+	ConditionRouteToRAG       = `eq(steps.route.output.route, "rag")`
+	ConditionGradeNotRelevant = `eq(steps.grade.output.relevant, false)`
+	RAGRetrieveLimitDefault   = 5
+	RAGGradeMinScoreDefault   = 0.35
 )
 
 // Parallel group on_error strategies accepted by scenario YAML.

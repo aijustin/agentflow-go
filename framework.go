@@ -72,8 +72,6 @@ type Framework struct {
 	llm         llm.Gateway
 	tools       *toolRegistry
 	memory      map[string]memory.Repository
-	tierMemory  map[string]tier.Manager
-	tierStores  map[string]tier.Store
 	policy      security.Policy
 	audit       audit.Sink
 	toolGov     governance.ToolPolicy

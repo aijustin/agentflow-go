@@ -130,7 +130,6 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 			if chunk.Content != "" || chunk.Done || chunk.Usage.TotalTokens > 0 {
 				ch <- chunk
 				if chunk.Done {
-					sentDone = true
 					return
 				}
 			}

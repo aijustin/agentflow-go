@@ -229,10 +229,6 @@ func roleBudgetLimit(budgets RoleBudgets, role Role) int {
 	}
 }
 
-func summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, []Message, int) {
-	return New(Policy{}).summarizeAndKeep(messages, budget, summaryBudget)
-}
-
 func buildSummary(messages []Message, budget int) string {
 	if len(messages) == 0 || budget <= 0 {
 		return ""

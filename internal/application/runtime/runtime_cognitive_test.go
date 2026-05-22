@@ -30,7 +30,7 @@ func TestEngineTierMemoryRecallPrefersQueryMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 		record.ID = spec.id
-		record.CognitiveRecord.Metadata["searchable"] = spec.content
+		record.Metadata["searchable"] = spec.content
 		if err := manager.Remember(ctx, ns, record); err != nil {
 			t.Fatal(err)
 		}

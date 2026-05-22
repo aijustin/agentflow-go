@@ -163,11 +163,11 @@ func TestMinimalAutonomousRepoSearch(t *testing.T) {
 
 func TestBuiltinToolPresets(t *testing.T) {
 	cases := []struct {
-		name       string
-		toolName   string
-		register   func(*builder.ScenarioBuilder)
-		wire       func(*builder.AgentBuilder) *builder.AgentBuilder
-		wantType   string
+		name     string
+		toolName string
+		register func(*builder.ScenarioBuilder)
+		wire     func(*builder.AgentBuilder) *builder.AgentBuilder
+		wantType string
 	}{
 		{
 			name:     "git",
