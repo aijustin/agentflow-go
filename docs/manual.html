@@ -729,6 +729,7 @@
           <li><a href="#examples">示例路径</a></li>
           <li><a href="#concepts">核心概念</a></li>
           <li><a href="#scenario">场景 YAML</a></li>
+          <li><a href="#builder-dsl">Go DSL Builder</a></li>
           <li><a href="#embed">嵌入 Go 项目</a></li>
           <li><a href="#runtime">运行模式</a></li>
           <li><a href="#tools">工具体系</a></li>
@@ -765,6 +766,7 @@
           <pre><code>go get github.com/aijustin/agentflow-go
 
 go run ./examples/go/validate examples/autonomous.yaml
+go run ./examples/go/validate -kind builder all
 go run ./examples/go/minimal/main.go
 
 GOTOOLCHAIN=auto make release-check</code></pre>
@@ -853,7 +855,8 @@ GOTOOLCHAIN=auto make release-check</code></pre>
             <tr><td><code>examples/go/http-worker</code></td><td>HTTP Handler + 异步 Worker</td><td><code>go run ./examples/go/http-worker/main.go</code></td></tr>
             <tr><td><code>examples/go/hitl-resume</code></td><td>HITL 暂停与续跑</td><td><code>go run ./examples/go/hitl-resume/main.go</code></td></tr>
             <tr><td><code>examples/go/event-trigger</code></td><td>事件 trigger 驱动 Run</td><td><code>go run ./examples/go/event-trigger/main.go</code></td></tr>
-            <tr><td><code>examples/go/validate</code></td><td>场景 YAML + 接线校验</td><td><code>go run ./examples/go/validate examples/autonomous.yaml</code></td></tr>
+            <tr><td><code>examples/go/validate</code></td><td>场景 YAML + 接线校验；<code>-kind builder</code> 校验 Go DSL stack</td><td><code>go run ./examples/go/validate examples/autonomous.yaml</code></td></tr>
+            <tr><td><code>examples/go/builder</code></td><td>Go DSL 构造场景并进程内 Run</td><td><code>go run ./examples/go/builder/main.go</code></td></tr>
           </tbody>
         </table>
         <h4>场景 YAML（节选）</h4>
@@ -870,7 +873,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
             <tr><td><code>examples/ticket_handling.yaml</code></td><td>autonomous</td><td>工单 trigger + HITL</td></tr>
           </tbody>
         </table>
-        <div class="callout">生产环境用 <code>WithLLMGateway</code> / <code>WithToolExecutor</code>；<code>pkg/testutil.WiringOptions</code> 仅用于测试与上述 Go 示例。编排选型见 <a href="orchestration-flow.md">orchestration-flow.md</a>。</div>
+        <div class="callout">生产环境用 <code>WithLLMGateway</code> / <code>WithToolExecutor</code>；<code>pkg/testutil.WiringOptions</code> 仅用于测试与上述 Go 示例。Go DSL 构造场景见 <a href="#builder-dsl">Go DSL Builder</a> 与 <a href="builder-reference.md">builder-reference.md</a>。编排选型见 <a href="orchestration-flow.md">orchestration-flow.md</a>。</div>
       </section>
 
       <section id="concepts">
@@ -944,6 +947,36 @@ GOTOOLCHAIN=auto make release-check</code></pre>
       enabled: true
     max_steps: 6</code></pre></div>
         <div class="callout"><strong>建议:</strong> 把工具 `side_effect`、`approval`、`rate_cap` 和 `input_schema` 当作安全契约维护。这样即使底层工具很强，Agent 运行时仍然走统一治理路径。</div>
+      </section>
+
+      <section id="builder-dsl">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">04b / Go 构造</div>
+            <h3>Go DSL Builder</h3>
+          </div>
+          <a class="button-link" href="builder-reference.md">Builder 速查</a>
+        </div>
+        <p class="lead"><code>pkg/builder</code> 提供链式 Go DSL，用于构造 <code>core.Scenario</code>，避免在 Go 代码里手写大量字符串字面量。YAML 仍负责声明场景结构；Builder 适合在代码里复用 preset、workflow 图和与 <code>examples/*.yaml</code> 对齐的一行式 stack。</p>
+        <div class="code-block"><div class="code-title"><span>main.go</span><button class="copy" type="button">复制</button></div><pre><code>import (
+  agentflow "github.com/aijustin/agentflow-go"
+  "github.com/aijustin/agentflow-go/pkg/builder"
+)
+
+scenario := builder.MinimalAutonomous("assistant")
+if err := agentflow.ValidateScenario(scenario); err != nil {
+  log.Fatal(err)
+}
+fw, err := agentflow.New(scenario, opts...)</code></pre></div>
+        <h4>校验与 catalog</h4>
+        <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code># 全部 18 条 builder stack（与 examples/*.yaml 一一对应）
+make validate-builder
+
+# 或 validate CLI
+go run ./examples/go/validate -kind builder all
+go run ./examples/go/validate -kind builder autonomous-echo
+go run ./examples/go/validate -kind builder examples/autonomous.yaml</code></pre></div>
+        <p>完整 YAML ↔ Builder 对照表见 <a href="builder-reference.md">docs/builder-reference.md</a>；根包也 re-export 了常用入口（<code>agentflow.MinimalAutonomous</code> 等）。</p>
       </section>
 
       <section id="embed">

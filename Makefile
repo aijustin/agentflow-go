@@ -1,4 +1,4 @@
-.PHONY: test test-integration test-race test-realmodel vet lint security fmt validate-examples validate-catalog release-check
+.PHONY: test test-integration test-race test-realmodel vet lint security fmt validate-examples validate-builder validate-catalog release-check
 
 GO_TEST_LDFLAGS ?= -w
 
@@ -34,6 +34,11 @@ validate-examples:
 		go run ./examples/go/validate "$$file" >/dev/null; \
 	done
 
+validate-builder:
+	@echo "validating builder stacks"
+	@go test ./pkg/builder/... -count=1
+	@go run ./examples/go/validate -kind builder all
+
 validate-catalog:
 	@for file in examples/catalog/tools/*.yaml; do \
 		echo "validating $$file"; \
@@ -44,4 +49,4 @@ validate-catalog:
 		go run ./examples/go/validate -kind skill "$$file" >/dev/null; \
 	done
 
-release-check: fmt test vet security validate-examples validate-catalog
+release-check: fmt test vet security validate-examples validate-builder validate-catalog

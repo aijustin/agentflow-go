@@ -40,6 +40,24 @@ result, _ := fw.Run(ctx, agentflow.RunRequest{RunID: "run-1", Agent: "assistant"
 
 Runnable example: [examples/go/minimal/main.go](../examples/go/minimal/main.go)
 
+## Go DSL builder (optional)
+
+When you prefer constructing scenarios in Go instead of YAML (shared presets, typed constants, reusable workflow graphs):
+
+```go
+scenario := builder.MinimalAutonomous("assistant")
+if err := agentflow.ValidateScenario(scenario); err != nil { /* fail fast */ }
+fw, _ := agentflow.New(scenario, opts...)
+```
+
+Validate all 18 stacks aligned with `examples/*.yaml`:
+
+```sh
+go run ./examples/go/validate -kind builder all
+```
+
+Reference: [builder-reference.md](./builder-reference.md) · [examples/go/builder/main.go](../examples/go/builder/main.go)
+
 ## Production-style wiring in your service
 
 Wire explicitly in your `main` or DI layer:
@@ -83,6 +101,7 @@ Apply [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/00
 
 | Package | Use when |
 |---------|----------|
+| `pkg/builder` | Fluent Go DSL for `core.Scenario` (YAML-free or hybrid) |
 | `pkg/core` | Defining agents, tools, workflows programmatically |
 | `pkg/llm` | Implementing custom LLM gateways |
 | `pkg/llm/mock` | Deterministic tests |

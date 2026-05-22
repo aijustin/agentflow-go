@@ -33,6 +33,7 @@ make test
 | HITL 暂停与恢复 | [examples/go/hitl-resume/main.go](examples/go/hitl-resume/main.go) |
 | 事件触发 | [examples/go/event-trigger/main.go](examples/go/event-trigger/main.go) |
 | 测试与示例接线 | [pkg/testutil](pkg/testutil/testutil.go) |
+| Go DSL 构造场景 | [docs/builder-reference.md](docs/builder-reference.md) · [examples/go/builder/main.go](examples/go/builder/main.go) |
 
 库 API：`ValidateWiring`、`New`、`Framework.Run`、`NewProductionHTTPHandler`、`NewFrameworkJobHandler`、`NewPrometheusRecorder`、`NewOpenTelemetryTracer`、`ScenarioJSONSchema`、`Version`。
 
@@ -50,8 +51,9 @@ make test
 | [tier-memory](examples/go/tier-memory/main.go) | 进程内 tier 记忆最小示例 | `go run ./examples/go/tier-memory/main.go` |
 | [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` 异步 Worker | 见 [examples/deploy/](examples/deploy/README.md) |
 | [validate](examples/go/validate/main.go) | 校验场景 YAML、接线或 catalog manifest | `go run ./examples/go/validate examples/autonomous.yaml` |
+| [builder](examples/go/builder/main.go) | Go DSL 构造场景并进程内 Run | `go run ./examples/go/builder/main.go` |
 
-生产环境请用 `WithLLMGateway` / `WithToolExecutor` 替代 `testutil.WiringOptions`；测试接线见 [pkg/testutil](pkg/testutil/testutil.go)。
+生产环境请用 `WithLLMGateway` / `WithToolExecutor` 替代 `testutil.WiringOptions`；测试接线见 [pkg/testutil](pkg/testutil/testutil.go)。Builder 速查：[docs/builder-reference.md](docs/builder-reference.md)。
 
 ### 场景 YAML 示例（`examples/`）
 
@@ -75,7 +77,7 @@ make test
 | [filesystem_tool.yaml](examples/filesystem_tool.yaml) | — | 文件系统工具 |
 | [mcp_tool.yaml](examples/mcp_tool.yaml) | — | MCP 工具集成 |
 
-批量校验全部场景：`make validate-examples` 或 `go run ./examples/go/validate examples/<file>.yaml`。catalog manifest：`make validate-catalog`。本地参考栈：[examples/deploy/](examples/deploy/README.md)。编排模式选型见 [docs/orchestration-flow.md](docs/orchestration-flow.md)。
+批量校验全部场景：`make validate-examples` 或 `go run ./examples/go/validate examples/<file>.yaml`。Go DSL 对照校验：`make validate-builder` 或 `go run ./examples/go/validate -kind builder all`；详见 [docs/builder-reference.md](docs/builder-reference.md)。catalog manifest：`make validate-catalog`。本地参考栈：[examples/deploy/](examples/deploy/README.md)。编排模式选型见 [docs/orchestration-flow.md](docs/orchestration-flow.md)。
 
 ## 环境要求
 

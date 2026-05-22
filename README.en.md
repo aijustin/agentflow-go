@@ -33,6 +33,7 @@ For a guided HTML manual, open [docs/manual.html](docs/manual.html) in your brow
 | HITL pause and resume | [examples/go/hitl-resume/main.go](examples/go/hitl-resume/main.go) |
 | Event triggers | [examples/go/event-trigger/main.go](examples/go/event-trigger/main.go) |
 | Tests and examples wiring | [pkg/testutil](pkg/testutil/testutil.go) |
+| Go DSL scenario builder | [docs/builder-reference.md](docs/builder-reference.md) · [examples/go/builder/main.go](examples/go/builder/main.go) |
 
 Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHandler`, `NewFrameworkJobHandler`, `ScenarioJSONSchema`, `Version`.
 
@@ -50,8 +51,9 @@ Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHan
 | [tier-memory](examples/go/tier-memory/main.go) | In-process tier memory minimal example | `go run ./examples/go/tier-memory/main.go` |
 | [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` async worker | See [examples/deploy/](examples/deploy/README.md) |
 | [validate](examples/go/validate/main.go) | Validate scenario YAML and wiring (same as CI) | `go run ./examples/go/validate examples/autonomous.yaml` |
+| [builder](examples/go/builder/main.go) | Build scenario with Go DSL and run in-process | `go run ./examples/go/builder/main.go` |
 
-Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.WiringOptions`. See [pkg/testutil](pkg/testutil/testutil.go) for test wiring.
+Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.WiringOptions`. Builder reference: [docs/builder-reference.md](docs/builder-reference.md).
 
 ### Scenario YAML examples (`examples/`)
 
@@ -75,7 +77,7 @@ Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.Wir
 | [filesystem_tool.yaml](examples/filesystem_tool.yaml) | — | Filesystem tool |
 | [mcp_tool.yaml](examples/mcp_tool.yaml) | — | MCP tool integration |
 
-Validate all scenarios: `make validate-examples` or `go run ./examples/go/validate examples/<file>.yaml`. Mode selection: [docs/orchestration-flow.md](docs/orchestration-flow.md).
+Validate all scenarios: `make validate-examples` or `go run ./examples/go/validate examples/<file>.yaml`. Builder stacks: `make validate-builder` or `go run ./examples/go/validate -kind builder all`; see [docs/builder-reference.md](docs/builder-reference.md). Mode selection: [docs/orchestration-flow.md](docs/orchestration-flow.md).
 
 ## Getting started
 
