@@ -92,6 +92,8 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 		httpConfig.Restore = adapter
 		httpConfig.Studio = adapter
 		httpConfig.Codegen = adapter
+		httpConfig.YAML = adapter
+		httpConfig.RunStudio = adapter
 		httpConfig.Compare = adapter
 		httpConfig.Thread = adapter
 		httpConfig.Fork = adapter

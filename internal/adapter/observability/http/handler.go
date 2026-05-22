@@ -25,6 +25,8 @@ type Config struct {
 	Restore        CheckpointResumer
 	Studio         StudioValidator
 	Codegen        StudioCodeGenerator
+	YAML           StudioYAMLExporter
+	RunStudio      StudioRunner
 	Compare        RunComparer
 	Thread         ThreadLister
 	Fork           RunForker
@@ -62,6 +64,14 @@ type StudioCodeGenerator interface {
 	GenerateStudioBuilderCode(ctx context.Context, graph any) (any, error)
 }
 
+type StudioYAMLExporter interface {
+	GenerateStudioScenarioYAML(ctx context.Context, graph any) (any, error)
+}
+
+type StudioRunner interface {
+	RunStudioGraph(ctx context.Context, graph any, req any) (any, error)
+}
+
 type RunComparer interface {
 	CompareRuns(ctx context.Context, runA, runB string) (any, error)
 }
@@ -85,6 +95,8 @@ type Handler struct {
 	restore    CheckpointResumer
 	studio     StudioValidator
 	codegen    StudioCodeGenerator
+	yaml       StudioYAMLExporter
+	runStudio  StudioRunner
 	compare    RunComparer
 	thread     ThreadLister
 	fork       RunForker
@@ -107,6 +119,8 @@ func NewHandler(config Config) (*Handler, error) {
 		restore:    config.Restore,
 		studio:     config.Studio,
 		codegen:    config.Codegen,
+		yaml:       config.YAML,
+		runStudio:  config.RunStudio,
 		compare:    config.Compare,
 		thread:     config.Thread,
 		fork:       config.Fork,
@@ -130,6 +144,8 @@ func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/api/compare", handler.handleCompare)
 	handler.mux.HandleFunc("/api/studio/validate", handler.handleStudioValidate)
 	handler.mux.HandleFunc("/api/studio/codegen", handler.handleStudioCodegen)
+	handler.mux.HandleFunc("/api/studio/yaml", handler.handleStudioYAML)
+	handler.mux.HandleFunc("/api/studio/run", handler.handleStudioRun)
 	handler.mux.HandleFunc("/api/runs", handler.handleRuns)
 	handler.mux.HandleFunc("/api/runs/", handler.handleRunResource)
 }
@@ -382,6 +398,64 @@ func (handler *Handler) handleStudioCodegen(w nethttp.ResponseWriter, r *nethttp
 		return
 	}
 	result, err := handler.codegen.GenerateStudioBuilderCode(r.Context(), graph)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleStudioYAML(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.yaml == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio yaml export is not configured"))
+		return
+	}
+	graph, err := decodeScenarioGraph(r.Body)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	result, err := handler.yaml.GenerateStudioScenarioYAML(r.Context(), graph)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleStudioRun(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.runStudio == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio run is not configured"))
+		return
+	}
+	var body struct {
+		Graph  any    `json:"graph"`
+		Prompt string `json:"prompt"`
+		Agent  string `json:"agent"`
+		RunID  string `json:"run_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("decode body: %w", err))
+		return
+	}
+	if body.Graph == nil {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("graph is required"))
+		return
+	}
+	req := map[string]any{
+		"prompt": strings.TrimSpace(body.Prompt),
+		"agent":  strings.TrimSpace(body.Agent),
+		"run_id": strings.TrimSpace(body.RunID),
+	}
+	result, err := handler.runStudio.RunStudioGraph(r.Context(), body.Graph, req)
 	if err != nil {
 		writeError(w, nethttp.StatusBadRequest, err)
 		return

@@ -687,14 +687,18 @@ func (f *Framework) Run(ctx context.Context, req RunRequest) (RunResult, error) 
 }
 
 func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult, error) {
-	ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
+	return f.runWorkflowScenario(ctx, f.scenario, req)
+}
+
+func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scenario, req RunRequest) (RunResult, error) {
+	ctx, cancel := withScenarioTimeout(ctx, scenario.Runtime.Timeout)
 	defer cancel()
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
 	snapshot := runstate.RunSnapshot{
 		RunID:        req.RunID,
-		ScenarioName: f.scenario.Name,
+		ScenarioName: scenario.Name,
 		Status:       runstate.RunStatusRunning,
 		Variables: map[string]json.RawMessage{
 			"input": req.Context,
@@ -708,7 +712,7 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	runner := f.newWorkflowRunner()
-	if err := runner.Run(ctx, f.scenario, req.RunID); err != nil {
+	if err := runner.Run(ctx, scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
@@ -736,7 +740,7 @@ func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, e
 	if f.scenario.Orchestration.Workflow == nil {
 		return f.engine.Run(ctx, req)
 	}
-	req, paused, err := f.prepareHybridAutonomousRun(ctx, req)
+	req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
 	if err != nil || paused.Status != "" {
 		return paused, err
 	}
@@ -744,14 +748,18 @@ func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, e
 }
 
 func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunRequest) (RunRequest, RunResult, error) {
-	ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
+	return f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
+}
+
+func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scenario core.Scenario, req RunRequest) (RunRequest, RunResult, error) {
+	ctx, cancel := withScenarioTimeout(ctx, scenario.Runtime.Timeout)
 	defer cancel()
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
 	snapshot := runstate.RunSnapshot{
 		RunID:        req.RunID,
-		ScenarioName: f.scenario.Name,
+		ScenarioName: scenario.Name,
 		Status:       runstate.RunStatusRunning,
 		Variables: map[string]json.RawMessage{
 			"input":           req.Context,
@@ -766,7 +774,7 @@ func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunReque
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	runner := f.newWorkflowRunner()
-	if err := runner.Run(ctx, f.scenario, req.RunID); err != nil {
+	if err := runner.Run(ctx, scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
 			return req, RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil

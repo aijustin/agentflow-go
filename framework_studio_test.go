@@ -3,11 +3,13 @@ package agentflow_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/graph"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func TestFrameworkValidateStudioGraph(t *testing.T) {
@@ -111,5 +113,61 @@ func TestFrameworkGenerateStudioBuilderCode(t *testing.T) {
 	}
 	if result.Language != "go" || result.Code == "" {
 		t.Fatalf("unexpected codegen: %+v", result)
+	}
+}
+
+func TestFrameworkGenerateStudioScenarioYAML(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-yaml",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.GenerateStudioScenarioYAML(context.Background(), fw.ExportScenarioGraph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Language != "yaml" || result.Code == "" || !strings.Contains(result.Code, "studio-yaml") {
+		t.Fatalf("unexpected yaml export: %+v", result)
+	}
+}
+
+func TestFrameworkRunStudioGraph(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-run",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(agentflow.NewInMemoryRunStateRepository()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.RunStudioGraph(context.Background(), fw.ExportScenarioGraph(), agentflow.RunRequest{RunID: "studio-run-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RunID != "studio-run-1" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected studio run result: %+v", result)
 	}
 }

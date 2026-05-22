@@ -52,6 +52,38 @@ func (adapter *studioFramework) GenerateStudioBuilderCode(ctx context.Context, e
 	return adapter.framework.GenerateStudioBuilderCode(ctx, graph)
 }
 
+func (adapter *studioFramework) GenerateStudioScenarioYAML(ctx context.Context, edited any) (any, error) {
+	graph, err := decodeStudioGraph(edited)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.framework.GenerateStudioScenarioYAML(ctx, graph)
+}
+
+func (adapter *studioFramework) RunStudioGraph(ctx context.Context, edited any, req any) (any, error) {
+	graph, err := decodeStudioGraph(edited)
+	if err != nil {
+		return nil, err
+	}
+	runReq, err := decodeStudioRunRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.framework.RunStudioGraph(ctx, graph, runReq)
+}
+
+func decodeStudioRunRequest(value any) (RunRequest, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return RunRequest{}, fmt.Errorf("studio run request: encode: %w", err)
+	}
+	var req RunRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return RunRequest{}, fmt.Errorf("studio run request: decode: %w", err)
+	}
+	return req, nil
+}
+
 func (adapter *studioFramework) CompareRuns(ctx context.Context, runA, runB string) (any, error) {
 	return adapter.framework.CompareRuns(ctx, runA, runB)
 }

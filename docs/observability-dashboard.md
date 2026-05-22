@@ -151,6 +151,8 @@ When `ObservabilityHTTPHandlerConfig.Framework` is set, Studio endpoints are als
 - `POST /observability/api/runs/{run_id}/resume-from-checkpoint` — restore and rerun from a revision (`{"version":3}`).
 - `POST /observability/api/studio/validate` — validate an edited graph (`ScenarioGraph` JSON).
 - `POST /observability/api/studio/codegen` — export builder Go code for an edited graph.
+- `POST /observability/api/studio/yaml` — export scenario YAML for an edited graph.
+- `POST /observability/api/studio/run` — validate and execute an edited graph (`{"graph":{...},"prompt":"..."}`).
 - `GET /observability/api/compare?run_a=&run_b=` — diff step outputs across two runs.
 - `GET /observability/api/runs/{run_id}/thread` — list fork/thread group runs.
 - `POST /observability/api/runs/{run_id}/fork` — copy run state to a new run ID.

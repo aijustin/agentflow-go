@@ -147,6 +147,8 @@ func (server *fakeRedis) reply(writer io.Writer, args []string) {
 		server.replyHGet(writer, args)
 	case "DEL":
 		server.replyDel(writer, args)
+	case "SCAN":
+		server.replyScan(writer, args)
 	default:
 		_, _ = io.WriteString(writer, "-ERR unsupported command\r\n")
 	}
@@ -206,6 +208,38 @@ func (server *fakeRedis) replyDel(writer io.Writer, args []string) {
 	_, _ = io.WriteString(writer, ":0\r\n")
 }
 
+func (server *fakeRedis) replyScan(writer io.Writer, args []string) {
+	pattern := "*"
+	for i := 1; i < len(args); i++ {
+		if strings.EqualFold(args[i], "MATCH") && i+1 < len(args) {
+			pattern = args[i+1]
+			i++
+		}
+	}
+	server.mu.Lock()
+	keys := make([]string, 0, len(server.values))
+	for key := range server.values {
+		if matchRedisPattern(pattern, key) {
+			keys = append(keys, key)
+		}
+	}
+	server.mu.Unlock()
+	_, _ = fmt.Fprintf(writer, "*2\r\n$1\r\n0\r\n*%d\r\n", len(keys))
+	for _, key := range keys {
+		_, _ = fmt.Fprintf(writer, "$%d\r\n%s\r\n", len(key), key)
+	}
+}
+
+func matchRedisPattern(pattern, key string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		return strings.HasPrefix(key, strings.TrimSuffix(pattern, "*"))
+	}
+	return pattern == key
+}
+
 func readCommand(reader *bufio.Reader) ([]string, error) {
 	prefix, err := reader.ReadByte()
 	if err != nil {
@@ -242,4 +276,42 @@ func readCommand(reader *bufio.Reader) ([]string, error) {
 		args = append(args, string(data[:length]))
 	}
 	return args, nil
+}
+
+func TestRepositoryListFiltersThreadAndParent(t *testing.T) {
+	ctx := context.Background()
+	server := newFakeRedis(t)
+	repo, err := NewRepository(Config{Addr: server.addr, KeyPrefix: "agentflow:test:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := runstate.RunSnapshot{RunID: "run-parent", ScenarioName: "scenario", Status: runstate.RunStatusCompleted}
+	child := runstate.RunSnapshot{
+		RunID:        "run-child",
+		ScenarioName: "scenario",
+		Status:       runstate.RunStatusRunning,
+		ParentRunID:  "run-parent",
+		ThreadID:     "thread-1",
+	}
+	other := runstate.RunSnapshot{RunID: "run-other", ScenarioName: "scenario", Status: runstate.RunStatusRunning}
+	for _, snap := range []runstate.RunSnapshot{parent, child, other} {
+		copy := snap
+		if err := repo.Save(ctx, &copy, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	threadRuns, err := repo.List(ctx, runstate.ListFilter{ThreadID: "thread-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threadRuns) != 1 || threadRuns[0].RunID != "run-child" {
+		t.Fatalf("unexpected thread filter result: %+v", threadRuns)
+	}
+	forks, err := repo.List(ctx, runstate.ListFilter{ParentRunID: "run-parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(forks) != 1 || forks[0].RunID != "run-child" {
+		t.Fatalf("unexpected parent filter result: %+v", forks)
+	}
 }

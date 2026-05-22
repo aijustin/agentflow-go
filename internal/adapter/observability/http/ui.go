@@ -200,6 +200,12 @@ const indexHTML = `<!doctype html>
     .editor-props { padding: 0 12px 12px; display: grid; gap: 8px; }
     .editor-props textarea { min-height: 96px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
     .editor-props input { min-height: 34px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; font: inherit; }
+    .editor-palette { display: flex; gap: 6px; padding: 0 12px 8px; flex-wrap: wrap; align-items: center; }
+    .editor-palette .meta { margin-right: 4px; }
+    .node-chip { border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 12px; background: #fff; cursor: pointer; }
+    .node-chip:hover { background: #f0f7f6; border-color: #b8ded7; }
+    .editor-run-bar { display: flex; gap: 8px; padding: 0 12px 12px; flex-wrap: wrap; align-items: center; }
+    .editor-run-bar input { flex: 1; min-width: 180px; min-height: 34px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; font: inherit; }
     @media (max-width: 1080px) {
       main { grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr) minmax(260px, 40vh); }
       .detail { grid-column: 1 / -1; }
@@ -267,10 +273,28 @@ const indexHTML = `<!doctype html>
             <option value="loop">loop</option>
           </select>
           <button id="addNodeButton">Add node</button>
+          <button id="undoEditorButton" disabled>Undo</button>
+          <button id="redoEditorButton" disabled>Redo</button>
           <button id="connectModeButton">Connect</button>
           <button id="deleteNodeButton">Delete</button>
           <button id="validateGraphButton">Validate</button>
+          <button id="yamlGraphButton">Export YAML</button>
           <button class="primary" id="codegenGraphButton">Export Go</button>
+        </div>
+        <div class="editor-palette" id="editorPalette">
+          <span class="meta">Quick add:</span>
+          <button type="button" class="node-chip" data-kind="transform">transform</button>
+          <button type="button" class="node-chip" data-kind="agent">agent</button>
+          <button type="button" class="node-chip" data-kind="tool">tool</button>
+          <button type="button" class="node-chip" data-kind="skill">skill</button>
+          <button type="button" class="node-chip" data-kind="human_gate">human_gate</button>
+          <button type="button" class="node-chip" data-kind="subgraph">subgraph</button>
+          <button type="button" class="node-chip" data-kind="map">map</button>
+          <button type="button" class="node-chip" data-kind="loop">loop</button>
+        </div>
+        <div class="editor-run-bar">
+          <input id="editorRunPrompt" placeholder="Prompt for studio run (optional)" />
+          <button class="primary" id="runEditorGraphButton">Run graph</button>
         </div>
         <div class="editor-props" id="editorProps" hidden>
           <div class="meta">Selected node properties</div>
@@ -307,7 +331,7 @@ const indexHTML = `<!doctype html>
     </section>
   </main>
   <script>
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorHistory: [], editorHistoryIndex: -1, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
     const $ = (id) => document.getElementById(id);
     const fmtTime = (value) => value ? new Date(value).toLocaleTimeString() : '-';
     const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -359,7 +383,56 @@ const indexHTML = `<!doctype html>
       state.editorPositions = {};
       state.editorConnectFrom = '';
       state.editorTarget = 'workflow';
+      state.editorHistory = [];
+      state.editorHistoryIndex = -1;
       renderEditorTargetOptions();
+      updateEditorHistoryButtons();
+      pushEditorHistory();
+    }
+    function snapshotEditorState() {
+      return JSON.stringify({
+        graph: state.editorGraph,
+        positions: state.editorPositions,
+        target: state.editorTarget,
+        selectedNode: state.selectedNode,
+      });
+    }
+    function restoreEditorState(raw) {
+      const saved = JSON.parse(raw);
+      state.editorGraph = saved.graph;
+      state.editorPositions = saved.positions || {};
+      state.editorTarget = saved.target || 'workflow';
+      state.selectedNode = saved.selectedNode || '';
+      renderEditorTargetOptions();
+      renderEditor();
+    }
+    function pushEditorHistory() {
+      if (!state.editorGraph) return;
+      const snap = snapshotEditorState();
+      if (state.editorHistoryIndex >= 0 && state.editorHistory[state.editorHistoryIndex] === snap) return;
+      if (state.editorHistoryIndex < state.editorHistory.length - 1) {
+        state.editorHistory = state.editorHistory.slice(0, state.editorHistoryIndex + 1);
+      }
+      state.editorHistory.push(snap);
+      if (state.editorHistory.length > 50) state.editorHistory.shift();
+      state.editorHistoryIndex = state.editorHistory.length - 1;
+      updateEditorHistoryButtons();
+    }
+    function updateEditorHistoryButtons() {
+      $('undoEditorButton').disabled = state.editorHistoryIndex <= 0;
+      $('redoEditorButton').disabled = state.editorHistoryIndex < 0 || state.editorHistoryIndex >= state.editorHistory.length - 1;
+    }
+    function undoEditor() {
+      if (state.editorHistoryIndex <= 0) return;
+      state.editorHistoryIndex -= 1;
+      restoreEditorState(state.editorHistory[state.editorHistoryIndex]);
+      updateEditorHistoryButtons();
+    }
+    function redoEditor() {
+      if (state.editorHistoryIndex >= state.editorHistory.length - 1) return;
+      state.editorHistoryIndex += 1;
+      restoreEditorState(state.editorHistory[state.editorHistoryIndex]);
+      updateEditorHistoryButtons();
     }
     function renderEditorTargetOptions() {
       const select = $('editorTargetSelect');
@@ -544,6 +617,7 @@ const indexHTML = `<!doctype html>
       if (!view || !state.selectedNode) return;
       const node = (view.nodes || []).find((item) => item.id === state.selectedNode);
       if (!node) return;
+      pushEditorHistory();
       node.ref = $('editorNodeRef').value.trim();
       const raw = $('editorNodeInput').value.trim();
       if (!raw) {
@@ -562,6 +636,7 @@ const indexHTML = `<!doctype html>
       if (!state.editorGraph) return;
       const name = prompt('Subgraph name');
       if (!name) return;
+      pushEditorHistory();
       if (!state.editorGraph.workflows) state.editorGraph.workflows = {};
       if (state.editorGraph.workflows[name]) { alert('subgraph already exists'); return; }
       state.editorGraph.workflows[name] = { id: name, nodes: [], edges: [] };
@@ -621,6 +696,7 @@ const indexHTML = `<!doctype html>
         if (view && state.editorConnectFrom !== nodeID) {
           view.edges = view.edges || [];
           if (!view.edges.some((edge) => edge.from === state.editorConnectFrom && edge.to === nodeID)) {
+            pushEditorHistory();
             view.edges.push({ from: state.editorConnectFrom, to: nodeID });
           }
         }
@@ -637,9 +713,10 @@ const indexHTML = `<!doctype html>
       const svg = $('editorSvg');
       const start = svgPoint(svg, event.clientX, event.clientY);
       const pos = state.editorPositions[nodeID] || parseTranslate(nodeEl.getAttribute('transform'));
-      state.editorDrag = { nodeID, offsetX: start.x - pos.x, offsetY: start.y - pos.y };
+      state.editorDrag = { nodeID, offsetX: start.x - pos.x, offsetY: start.y - pos.y, moved: false };
       const move = (ev) => {
         if (!state.editorDrag) return;
+        state.editorDrag.moved = true;
         const point = svgPoint(svg, ev.clientX, ev.clientY);
         state.editorPositions[state.editorDrag.nodeID] = {
           x: Math.max(0, point.x - state.editorDrag.offsetX),
@@ -648,6 +725,7 @@ const indexHTML = `<!doctype html>
         renderEditor();
       };
       const up = () => {
+        if (state.editorDrag && state.editorDrag.moved) pushEditorHistory();
         state.editorDrag = null;
         window.removeEventListener('mousemove', move);
         window.removeEventListener('mouseup', up);
@@ -665,21 +743,23 @@ const indexHTML = `<!doctype html>
       pt.y = clientY;
       return pt.matrixTransform(svg.getScreenCTM().inverse());
     }
-    function addEditorNode() {
+    function addEditorNode(kindOverride) {
       const view = editorWorkflow();
       if (!view) return;
       const id = prompt('Node id');
       if (!id) return;
-      const kind = $('editorNodeKind').value;
+      const kind = kindOverride || $('editorNodeKind').value;
       const ref = (kind === 'agent' || kind === 'tool' || kind === 'skill' || kind === 'subgraph') ? (prompt('Ref (optional)') || '') : '';
       view.nodes = view.nodes || [];
       if (view.nodes.some((node) => node.id === id)) { alert('node already exists'); return; }
+      pushEditorHistory();
       view.nodes.push({ id, kind, ref, resumable: kind !== 'human_gate' && kind !== 'loop' });
       renderEditor();
     }
     function deleteEditorNode() {
       const view = editorWorkflow();
       if (!view || !state.selectedNode) return;
+      pushEditorHistory();
       view.nodes = (view.nodes || []).filter((node) => node.id !== state.selectedNode);
       view.edges = (view.edges || []).filter((edge) => edge.from !== state.selectedNode && edge.to !== state.selectedNode);
       delete state.editorPositions[state.selectedNode];
@@ -701,6 +781,33 @@ const indexHTML = `<!doctype html>
       state.selectedCheckpoint = null;
       $('detailType').textContent = 'Codegen';
       $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
+    }
+    async function yamlEditorGraph() {
+      if (!state.editorGraph) return;
+      const res = await fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.editorGraph) });
+      const body = await res.json();
+      if (!res.ok) { alert(body.error || 'yaml export failed'); return; }
+      state.selectedEvent = null;
+      state.selectedCheckpoint = null;
+      $('detailType').textContent = 'Scenario YAML';
+      $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
+    }
+    async function runEditorGraph() {
+      if (!state.editorGraph) return;
+      $('runEditorGraphButton').disabled = true;
+      const res = await fetch('api/studio/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ graph: state.editorGraph, prompt: $('editorRunPrompt').value.trim() }),
+      });
+      const body = await res.json();
+      $('runEditorGraphButton').disabled = false;
+      if (!res.ok) { alert(body.error || 'studio run failed'); return; }
+      await loadRuns();
+      if (body.run_id) {
+        await selectRun(body.run_id);
+        setView('timeline');
+      }
     }
     function renderCompareRunOptions() {
       $('compareRunB').innerHTML = state.runs.map((run) =>
@@ -976,7 +1083,17 @@ const indexHTML = `<!doctype html>
       $('connectModeButton').textContent = state.editorConnectFrom ? ('From ' + state.editorConnectFrom) : 'Connect';
     };
     $('validateGraphButton').onclick = () => validateEditorGraph();
+    $('yamlGraphButton').onclick = () => yamlEditorGraph();
     $('codegenGraphButton').onclick = () => codegenEditorGraph();
+    $('runEditorGraphButton').onclick = () => runEditorGraph();
+    $('undoEditorButton').onclick = () => undoEditor();
+    $('redoEditorButton').onclick = () => redoEditor();
+    document.querySelectorAll('#editorPalette .node-chip').forEach((chip) => {
+      chip.onclick = () => {
+        $('editorNodeKind').value = chip.dataset.kind;
+        addEditorNode(chip.dataset.kind);
+      };
+    });
     $('compareRunsButton').onclick = () => compareRuns();
     $('forkRunButton').onclick = () => forkCurrentRun();
     $('refreshThreadButton').onclick = () => loadThread();

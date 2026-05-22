@@ -1,6 +1,6 @@
 # AgentFlow Studio 路线图（P0）
 
-面向 Go 后端工程师的 **只读 Graph Debug + Time Travel UI**，嵌入现有 Observability 面板；全功能可视化编辑器另立项。
+面向 Go 后端工程师的 **Graph Debug + Time Travel + 可视化 Editor UI**，嵌入现有 Observability 面板。
 
 ## P0 已交付（本迭代）
 
@@ -110,6 +110,28 @@ fw, err := agentflow.New(scenario,
     agentflow.WithCheckpointHistory(history),
 )
 ```
+
+## P3（已交付 — Editor 体验增强）
+
+| 能力 | 状态 |
+|------|------|
+| **Undo / Redo** | ✅ Editor 历史栈（50 步） |
+| **节点类型面板** | ✅ Quick add chips |
+| **Export YAML** | ✅ `POST /api/studio/yaml` |
+| **Run graph** | ✅ `POST /api/studio/run` |
+| file / redis **thread 过滤** | ✅ `ListFilter.ParentRunID` / `ThreadID` |
+
+### Studio YAML 与试运行
+
+```go
+yamlDoc, err := fw.GenerateStudioScenarioYAML(ctx, editedGraph)
+result, err := fw.RunStudioGraph(ctx, editedGraph, agentflow.RunRequest{Prompt: "hello"})
+```
+
+HTTP：
+
+- `POST /observability/api/studio/yaml` — 返回 scenario YAML
+- `POST /observability/api/studio/run` — body: `{"graph":{...},"prompt":"...","agent":"...","run_id":"..."}`
 
 ## 相关文档
 

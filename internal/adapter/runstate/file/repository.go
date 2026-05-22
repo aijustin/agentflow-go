@@ -119,6 +119,12 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 		if filter.TenantID != "" && snap.TenantID != filter.TenantID {
 			continue
 		}
+		if filter.ParentRunID != "" && snap.ParentRunID != filter.ParentRunID {
+			continue
+		}
+		if filter.ThreadID != "" && runstate.ResolveThreadID(snap) != filter.ThreadID {
+			continue
+		}
 		out = append(out, snap)
 		if filter.Limit > 0 && len(out) >= filter.Limit {
 			break

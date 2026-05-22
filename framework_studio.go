@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/graph"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/studio"
@@ -64,6 +65,45 @@ func (f *Framework) GenerateStudioBuilderCode(_ context.Context, edited graph.Sc
 		return CodegenResult{}, err
 	}
 	return CodegenResult{Language: "go", Code: code}, nil
+}
+
+// GenerateStudioScenarioYAML renders scenario YAML for an edited Studio graph.
+func (f *Framework) GenerateStudioScenarioYAML(_ context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
+	scenario, err := graph.ApplyGraph(f.scenario, edited)
+	if err != nil {
+		return CodegenResult{}, err
+	}
+	yamlDoc, err := graph.GenerateScenarioYAML(scenario)
+	if err != nil {
+		return CodegenResult{}, err
+	}
+	return CodegenResult{Language: "yaml", Code: yamlDoc}, nil
+}
+
+// RunStudioGraph validates an edited graph and executes it as a new run.
+func (f *Framework) RunStudioGraph(ctx context.Context, edited graph.ScenarioGraph, req RunRequest) (RunResult, error) {
+	scenario, err := graph.ApplyGraph(f.scenario, edited)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if err := ValidateScenario(scenario); err != nil {
+		return RunResult{}, err
+	}
+	switch scenario.Orchestration.Mode {
+	case core.OrchestrationFixedWorkflow:
+		return f.runWorkflowScenario(ctx, scenario, req)
+	case core.OrchestrationHybrid:
+		if scenario.Orchestration.Workflow == nil {
+			return f.engine.Run(ctx, req)
+		}
+		req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, scenario, req)
+		if err != nil || paused.Status != "" {
+			return paused, err
+		}
+		return f.engine.RunHybrid(ctx, req)
+	default:
+		return RunResult{}, fmt.Errorf("agentflow: studio run supports fixed_workflow and hybrid scenarios")
+	}
 }
 
 // CompareRuns diffs step outputs between two persisted runs.

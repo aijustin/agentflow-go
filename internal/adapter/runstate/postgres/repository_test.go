@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
@@ -113,6 +116,49 @@ func TestRepositoryDeletesSnapshots(t *testing.T) {
 	}
 }
 
+func TestCheckpointHistoryAppendListLoad(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	history, err := NewCheckpointHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := runstate.RunSnapshot{
+		RunID:         "run-1",
+		Version:       1,
+		Status:        runstate.RunStatusRunning,
+		CurrentNodeID: "review",
+		StepOutputs: map[string]runstate.StepOutputRef{
+			"prep": {Inline: json.RawMessage(`{"ok":true}`)},
+		},
+	}
+	if err := history.Append(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Version = 2
+	snapshot.Status = runstate.RunStatusCompleted
+	if err := history.Append(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	list, err := history.List(ctx, "run-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 checkpoints, got %d", len(list))
+	}
+	if list[0].Version != 1 || list[1].Version != 2 {
+		t.Fatalf("unexpected versions: %+v", list)
+	}
+	loaded, err := history.Load(ctx, "run-1", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusCompleted || loaded.CurrentNodeID != "review" {
+		t.Fatalf("unexpected loaded snapshot: %+v", loaded)
+	}
+}
+
 func TestNewRepositoryValidatesInputs(t *testing.T) {
 	if _, err := NewRepository(nil); err == nil {
 		t.Fatal("expected nil db error")
@@ -133,7 +179,10 @@ func openTestDB(t *testing.T) *sql.DB {
 	})
 	key := fmt.Sprintf("state-%d", testDBSeq.Add(1))
 	testStatesMu.Lock()
-	testStates[key] = &testState{rows: make(map[string]testRow)}
+	testStates[key] = &testState{
+		rows:        make(map[string]testRow),
+		checkpoints: make(map[string]testCheckpointRow),
+	}
 	testStatesMu.Unlock()
 	db, err := sql.Open(testDriverName, key)
 	if err != nil {
@@ -161,8 +210,19 @@ func (d testDriver) Open(name string) (driver.Conn, error) {
 }
 
 type testState struct {
-	mu   sync.Mutex
-	rows map[string]testRow
+	mu           sync.Mutex
+	rows         map[string]testRow
+	checkpoints  map[string]testCheckpointRow
+}
+
+type testCheckpointRow struct {
+	runID         string
+	version       int64
+	status        string
+	currentNodeID string
+	stepCount     int
+	snapshot      []byte
+	recordedAt    time.Time
 }
 
 type testRow struct {
@@ -190,6 +250,8 @@ func (c *testConn) ExecContext(ctx context.Context, query string, args []driver.
 	}
 	normalized := strings.ToUpper(strings.TrimSpace(query))
 	switch {
+	case strings.HasPrefix(normalized, "INSERT INTO") && strings.Contains(normalized, "CHECKPOINT"):
+		return c.insertCheckpoint(args)
 	case strings.HasPrefix(normalized, "INSERT INTO"):
 		return c.insert(args)
 	case strings.HasPrefix(normalized, "UPDATE"):
@@ -205,9 +267,21 @@ func (c *testConn) QueryContext(ctx context.Context, query string, args []driver
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT SNAPSHOT_JSON") {
+	normalized := strings.ToUpper(strings.TrimSpace(query))
+	switch {
+	case strings.HasPrefix(normalized, "SELECT SNAPSHOT_JSON FROM"):
+		if strings.Contains(normalized, "CHECKPOINT") {
+			return c.queryCheckpointSnapshot(args)
+		}
+		return c.queryRunSnapshot(args)
+	case strings.HasPrefix(normalized, "SELECT RUN_ID"):
+		return c.queryCheckpointList(args)
+	default:
 		return nil, fmt.Errorf("unsupported query: %s", query)
 	}
+}
+
+func (c *testConn) queryRunSnapshot(args []driver.NamedValue) (driver.Rows, error) {
 	runID := args[0].Value.(string)
 	c.state.mu.Lock()
 	row, ok := c.state.rows[runID]
@@ -216,6 +290,77 @@ func (c *testConn) QueryContext(ctx context.Context, query string, args []driver
 		return &testRows{columns: []string{"snapshot_json"}}, nil
 	}
 	return &testRows{columns: []string{"snapshot_json"}, values: [][]driver.Value{{cloneBytes(row.snapshot)}}}, nil
+}
+
+func (c *testConn) queryCheckpointList(args []driver.NamedValue) (driver.Rows, error) {
+	runID := args[0].Value.(string)
+	c.state.mu.Lock()
+	rows := make([]testCheckpointRow, 0, len(c.state.checkpoints))
+	for _, row := range c.state.checkpoints {
+		if row.runID == runID {
+			rows = append(rows, row)
+		}
+	}
+	c.state.mu.Unlock()
+	sort.Slice(rows, func(i, j int) bool { return rows[i].version < rows[j].version })
+	values := make([][]driver.Value, 0, len(rows))
+	for _, row := range rows {
+		values = append(values, []driver.Value{row.runID, row.version, row.status, row.currentNodeID, row.stepCount, row.recordedAt})
+	}
+	return &testRows{
+		columns: []string{"run_id", "version", "status", "current_node_id", "step_count", "recorded_at"},
+		values:  values,
+	}, nil
+}
+
+func (c *testConn) queryCheckpointSnapshot(args []driver.NamedValue) (driver.Rows, error) {
+	runID := args[0].Value.(string)
+	version := args[1].Value.(int64)
+	c.state.mu.Lock()
+	row, ok := c.state.checkpoints[checkpointKey(runID, version)]
+	c.state.mu.Unlock()
+	if !ok {
+		return &testRows{columns: []string{"snapshot_json"}}, nil
+	}
+	return &testRows{columns: []string{"snapshot_json"}, values: [][]driver.Value{{cloneBytes(row.snapshot)}}}, nil
+}
+
+func (c *testConn) insertCheckpoint(args []driver.NamedValue) (driver.Result, error) {
+	runID := args[0].Value.(string)
+	version := args[1].Value.(int64)
+	key := checkpointKey(runID, version)
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	if _, exists := c.state.checkpoints[key]; exists {
+		return driver.RowsAffected(0), nil
+	}
+	c.state.checkpoints[key] = testCheckpointRow{
+		runID:         runID,
+		version:       version,
+		status:        args[2].Value.(string),
+		currentNodeID: args[3].Value.(string),
+		stepCount:     driverInt(args[4].Value),
+		snapshot:      valueBytes(args[5].Value),
+		recordedAt:    args[6].Value.(time.Time),
+	}
+	return driver.RowsAffected(1), nil
+}
+
+func checkpointKey(runID string, version int64) string {
+	return runID + "#" + fmt.Sprint(version)
+}
+
+func driverInt(value driver.Value) int {
+	switch typed := value.(type) {
+	case int64:
+		return int(typed)
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	default:
+		return 0
+	}
 }
 
 func (c *testConn) insert(args []driver.NamedValue) (driver.Result, error) {
