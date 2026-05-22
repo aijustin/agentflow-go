@@ -35,7 +35,7 @@ For a guided HTML manual, open [docs/manual.html](docs/manual.html) in your brow
 | Tests and examples wiring | [pkg/testutil](pkg/testutil/testutil.go) |
 | Go DSL scenario builder | [docs/builder-reference.md](docs/builder-reference.md) · [examples/go/builder/main.go](examples/go/builder/main.go) |
 
-Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHandler`, `NewFrameworkJobHandler`, `ScenarioJSONSchema`, `Version`.
+Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHandler`, `NewFrameworkJobHandler`, `NewPrometheusRecorder`, `NewOpenTelemetryTracer`, `ScenarioJSONSchema`, `Version`; builder stack helpers in [builder.go](builder.go) (e.g. `MinimalAutonomous`).
 
 ## Example paths
 
@@ -50,7 +50,7 @@ Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHan
 | [event-trigger](examples/go/event-trigger/main.go) | Event-driven runs via `scenario.triggers` | `go run ./examples/go/event-trigger/main.go` |
 | [tier-memory](examples/go/tier-memory/main.go) | In-process tier memory minimal example | `go run ./examples/go/tier-memory/main.go` |
 | [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` async worker | See [examples/deploy/](examples/deploy/README.md) |
-| [validate](examples/go/validate/main.go) | Validate scenario YAML and wiring (same as CI) | `go run ./examples/go/validate examples/autonomous.yaml` |
+| [validate](examples/go/validate/main.go) | Validate scenario YAML, wiring, builder stacks, or catalog manifests | `go run ./examples/go/validate examples/autonomous.yaml` |
 | [builder](examples/go/builder/main.go) | Build scenario with Go DSL and run in-process | `go run ./examples/go/builder/main.go` |
 
 Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.WiringOptions`. Builder reference: [docs/builder-reference.md](docs/builder-reference.md).
@@ -72,12 +72,13 @@ Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.Wir
 | [self_rag.yaml](examples/self_rag.yaml) | `fixed_workflow` | Self-RAG quality gate |
 | [rag_knowledge.yaml](examples/rag_knowledge.yaml) | — | RAG knowledge base and citations |
 | [ticket_handling.yaml](examples/ticket_handling.yaml) | `autonomous` | Ticket triggers + HITL |
+| [tier_memory.yaml](examples/tier_memory.yaml) | `autonomous` | hot/warm/cold tier memory |
 | [http_tool.yaml](examples/http_tool.yaml) | — | HTTP tool declaration |
 | [sql_tool.yaml](examples/sql_tool.yaml) | — | SQL tool |
 | [filesystem_tool.yaml](examples/filesystem_tool.yaml) | — | Filesystem tool |
 | [mcp_tool.yaml](examples/mcp_tool.yaml) | — | MCP tool integration |
 
-Validate all scenarios: `make validate-examples` or `go run ./examples/go/validate examples/<file>.yaml`. Builder stacks: `make validate-builder` or `go run ./examples/go/validate -kind builder all`; see [docs/builder-reference.md](docs/builder-reference.md). Mode selection: [docs/orchestration-flow.md](docs/orchestration-flow.md).
+Validate all scenarios: `make validate-examples` or `go run ./examples/go/validate examples/<file>.yaml`. Builder stacks: `make validate-builder` or `go run ./examples/go/validate -kind builder all`; see [docs/builder-reference.md](docs/builder-reference.md). Catalog manifests: `make validate-catalog`. Reference deploy stack: [examples/deploy/](examples/deploy/README.md). Mode selection: [docs/orchestration-flow.md](docs/orchestration-flow.md).
 
 ## Getting started
 
@@ -961,15 +962,16 @@ The project follows DDD-oriented layering with hexagonal ports/adapters:
 
 ```text
 examples/
-  go/          # copyable integration mains (minimal, validate, http-worker, …)
+  go/          # copyable integration mains (minimal, validate, builder, http-worker, …)
   deploy/      # reference Compose stack (Postgres, Redis, MinIO)
 pkg/
   core/
+  builder/     # Go DSL for core.Scenario
+  catalog/     # Tool/Skill manifest load and validate
   llm/
   contextwindow/
   memory/
   runstate/
-  catalog/
 internal/
   application/
     runtime/
@@ -977,6 +979,7 @@ internal/
     scenario/
   adapter/
     config/yaml/
+    human/cli/
     human/http/
     llm/openai/
     llm/anthropic/

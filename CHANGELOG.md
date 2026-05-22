@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-05-22
+
+### Added
+
+- `pkg/builder` fluent Go DSL for constructing `core.Scenario` without YAML; 18 stack functions aligned with `examples/*.yaml`.
+- Root package re-exports for common builder stacks and workflows (`builder.go`).
+- `examples/go/validate -kind builder` and `make validate-builder` for catalog validation in CI (`release-check`).
+- [docs/builder-reference.md](docs/builder-reference.md) and Go DSL section in [docs/manual.html](docs/manual.html).
+
+### Fixed
+
+- golangci-lint: gofmt on `pkg/builder`, remove unused dead code, fix ineffectual stream assignments in LLM gateways.
+
+## [0.1.9] - 2026-05-22
+
+### Added
+
+- Memory tier runtime, cognitive recall, tier-worker reference deploy, and related documentation.
+
+### Changed
+
+- `release-check` runs govulncheck via `go run`; OpenTelemetry bumped to v1.40.0.
+
+## Earlier v0.1.x (aggregated)
+
 ### Changed
 
 - **Library-only positioning:** removed `cmd/agentctl`, `cmd/agent-http`, `cmd/agent-server`, `cmd/agent-worker`, debug UI, and `deploy/` templates. Integrate via `go get` and `examples/go/*`.

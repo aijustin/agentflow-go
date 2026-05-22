@@ -8,11 +8,16 @@ Scenario-configured Go library for Agents, Tools, Skills, LLM gateways, context 
 - `README.en.md`: English documentation.
 - `docs/manual.html`: standalone HTML integration manual (open in browser).
 - `docs/library-integration.md`: how to embed the library in Go services.
+- `docs/builder-reference.md`: Go DSL builder API aligned with examples/*.yaml.
 - `schemas/agentflow.scenario.schema.json`: JSON Schema for scenario YAML.
-- `examples/*.yaml`: scenario examples.
-- `examples/go/*`: runnable integration examples (minimal, postgres, http-worker, hitl-resume, event-trigger, validate).
+- `examples/*.yaml`: scenario examples (18 files).
+- `examples/go/*`: runnable integration examples (minimal, postgres, http-worker, hitl-resume, event-trigger, tier-memory, tier-worker, validate, builder).
+- `examples/catalog/`: tool/skill manifest examples.
 - `framework.go`: root importable facade.
+- `builder.go`: re-exported builder stack helpers (MinimalAutonomous, etc.).
 - `migrations/postgres/*.sql`: PostgreSQL schema for default adapters.
+- `pkg/builder`: fluent Go DSL for core.Scenario.
+- `pkg/catalog`: Tool/Skill manifest loaders.
 - `pkg/testutil`: test and example wiring helpers (`WiringOptions`).
 - `docs/api-stability.md`: v0 public API stability policy.
 
@@ -21,12 +26,16 @@ Scenario-configured Go library for Agents, Tools, Skills, LLM gateways, context 
 ```sh
 make test
 make validate-examples
+make validate-builder
+make validate-catalog
 make release-check
 go run ./examples/go/minimal/main.go
+go run ./examples/go/validate -kind builder all
 ```
 
 ## Library capabilities
 
 - YAML scenarios with autonomous, fixed_workflow, and hybrid orchestration modes.
+- Go DSL builder (`pkg/builder`) for programmatic scenarios aligned with YAML examples.
 - Root facade constructors for LLM gateways, run state, blob store, tools, MCP, RAG, async queue, and HTTP handlers.
 - Host applications own process topology, migrations, secrets, and HTTP servers.

@@ -91,6 +91,15 @@ Runnable examples:
 agentflow.ValidateWiring(scenario, opts...)
 ```
 
+Scenario YAML (default), builder stacks, and catalog manifests:
+
+```sh
+go run ./examples/go/validate examples/autonomous.yaml
+go run ./examples/go/validate -kind builder all
+go run ./examples/go/validate -kind tool examples/catalog/tools/echo.tool.yaml
+make validate-catalog
+```
+
 Use `WithRequireLLM()` when mock echo fallback is unacceptable.
 
 ## PostgreSQL schema
@@ -101,6 +110,7 @@ Apply [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/00
 
 | Package | Use when |
 |---------|----------|
+| `pkg/catalog` | Tool/Skill manifest load and validate (`LoadToolManifestFile`, etc.) |
 | `pkg/builder` | Fluent Go DSL for `core.Scenario` (YAML-free or hybrid) |
 | `pkg/core` | Defining agents, tools, workflows programmatically |
 | `pkg/llm` | Implementing custom LLM gateways |

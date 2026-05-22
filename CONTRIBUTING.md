@@ -47,12 +47,6 @@ make lint
 make security
 ```
 
-Build binaries:
-
-```sh
-make build
-```
-
 Run the release-oriented check before tagging or opening release PRs:
 
 ```sh

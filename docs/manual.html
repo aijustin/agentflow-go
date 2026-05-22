@@ -855,7 +855,9 @@ GOTOOLCHAIN=auto make release-check</code></pre>
             <tr><td><code>examples/go/http-worker</code></td><td>HTTP Handler + 异步 Worker</td><td><code>go run ./examples/go/http-worker/main.go</code></td></tr>
             <tr><td><code>examples/go/hitl-resume</code></td><td>HITL 暂停与续跑</td><td><code>go run ./examples/go/hitl-resume/main.go</code></td></tr>
             <tr><td><code>examples/go/event-trigger</code></td><td>事件 trigger 驱动 Run</td><td><code>go run ./examples/go/event-trigger/main.go</code></td></tr>
-            <tr><td><code>examples/go/validate</code></td><td>场景 YAML + 接线校验；<code>-kind builder</code> 校验 Go DSL stack</td><td><code>go run ./examples/go/validate examples/autonomous.yaml</code></td></tr>
+            <tr><td><code>examples/go/tier-memory</code></td><td>进程内 tier 记忆最小示例</td><td><code>go run ./examples/go/tier-memory/main.go</code></td></tr>
+            <tr><td><code>examples/go/tier-worker</code></td><td>Postgres warm/cold tier + memory.reconcile Worker</td><td>见 <a href="../examples/deploy/README.md">examples/deploy</a></td></tr>
+            <tr><td><code>examples/go/validate</code></td><td>场景 YAML 接线（默认）；<code>-kind builder|tool|skill</code> 校验 DSL stack 或 catalog manifest</td><td><code>go run ./examples/go/validate examples/autonomous.yaml</code></td></tr>
             <tr><td><code>examples/go/builder</code></td><td>Go DSL 构造场景并进程内 Run</td><td><code>go run ./examples/go/builder/main.go</code></td></tr>
           </tbody>
         </table>
@@ -871,6 +873,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
             <tr><td><code>examples/multi_expert_research.yaml</code></td><td>hybrid</td><td>多专家 + planning</td></tr>
             <tr><td><code>examples/adaptive_rag.yaml</code></td><td>fixed_workflow</td><td>query_router RAG</td></tr>
             <tr><td><code>examples/ticket_handling.yaml</code></td><td>autonomous</td><td>工单 trigger + HITL</td></tr>
+            <tr><td><code>examples/tier_memory.yaml</code></td><td>autonomous</td><td>hot/warm/cold tier 记忆</td></tr>
           </tbody>
         </table>
         <div class="callout">生产环境用 <code>WithLLMGateway</code> / <code>WithToolExecutor</code>；<code>pkg/testutil.WiringOptions</code> 仅用于测试与上述 Go 示例。Go DSL 构造场景见 <a href="#builder-dsl">Go DSL Builder</a> 与 <a href="builder-reference.md">builder-reference.md</a>。编排选型见 <a href="orchestration-flow.md">orchestration-flow.md</a>。</div>
@@ -1306,7 +1309,7 @@ mux.Handle("/observability/",
           </div>
           <div class="panel">
             <h4>发布检查</h4>
-            <p><code>make release-check</code> 会运行格式化、单元测试、<code>go vet</code>、<code>govulncheck</code> 和所有示例 YAML 校验。</p>
+            <p><code>make release-check</code> 会运行 <code>fmt</code>、<code>test</code>、<code>vet</code>、<code>security</code>（govulncheck）、<code>validate-examples</code>、<code>validate-builder</code>、<code>validate-catalog</code>。</p>
             <div class="code-block"><div class="code-title"><span>发布检查</span><button class="copy" type="button">复制</button></div><pre><code>GOTOOLCHAIN=auto make release-check</code></pre></div>
           </div>
           <div class="panel">

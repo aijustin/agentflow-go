@@ -35,7 +35,7 @@ make test
 | 测试与示例接线 | [pkg/testutil](pkg/testutil/testutil.go) |
 | Go DSL 构造场景 | [docs/builder-reference.md](docs/builder-reference.md) · [examples/go/builder/main.go](examples/go/builder/main.go) |
 
-库 API：`ValidateWiring`、`New`、`Framework.Run`、`NewProductionHTTPHandler`、`NewFrameworkJobHandler`、`NewPrometheusRecorder`、`NewOpenTelemetryTracer`、`ScenarioJSONSchema`、`Version`。
+库 API：`ValidateWiring`、`New`、`Framework.Run`、`NewProductionHTTPHandler`、`NewFrameworkJobHandler`、`NewPrometheusRecorder`、`NewOpenTelemetryTracer`、`ScenarioJSONSchema`、`Version`；Builder 栈入口见 [builder.go](builder.go)（如 `MinimalAutonomous`）。
 
 ## 示例路径对照表
 
@@ -72,6 +72,7 @@ make test
 | [self_rag.yaml](examples/self_rag.yaml) | `fixed_workflow` | Self-RAG 质量门 |
 | [rag_knowledge.yaml](examples/rag_knowledge.yaml) | — | RAG 知识库与 citation |
 | [ticket_handling.yaml](examples/ticket_handling.yaml) | `autonomous` | 工单 trigger + HITL |
+| [tier_memory.yaml](examples/tier_memory.yaml) | `autonomous` | hot/warm/cold tier 记忆 |
 | [http_tool.yaml](examples/http_tool.yaml) | — | HTTP 工具声明 |
 | [sql_tool.yaml](examples/sql_tool.yaml) | — | SQL 工具声明 |
 | [filesystem_tool.yaml](examples/filesystem_tool.yaml) | — | 文件系统工具 |
@@ -946,9 +947,13 @@ err = auditSink.Record(ctx, audit.Event{
 项目采用 DDD 风格分层和 Hexagonal Ports/Adapters：
 
 ```text
-examples/go/
+examples/
+  go/          # 可复制的集成 main（minimal、validate、builder、http-worker 等）
+  deploy/      # 参考 Compose 栈（Postgres、Redis、MinIO）
 pkg/
   core/
+  builder/     # Go DSL 构造 core.Scenario
+  catalog/     # Tool/Skill manifest 加载与校验
   llm/
   contextwindow/
   memory/

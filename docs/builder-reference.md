@@ -30,6 +30,10 @@ go run ./examples/go/validate -kind builder all
 go run ./examples/go/validate -kind builder autonomous-echo
 go run ./examples/go/validate -kind builder examples/autonomous.yaml
 
+# catalog manifest（tool/skill）
+go run ./examples/go/validate -kind tool examples/catalog/tools/echo.tool.yaml
+make validate-catalog
+
 # 单元测试（含 YAML 对照）
 go test ./pkg/builder/... -run ExampleCatalog
 ```
