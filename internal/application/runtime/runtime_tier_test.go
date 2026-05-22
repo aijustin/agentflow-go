@@ -8,12 +8,12 @@ import (
 	"time"
 
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
+	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
-	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 )
 
 func TestEngineTierMemoryRecallBudget(t *testing.T) {

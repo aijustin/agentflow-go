@@ -18,4 +18,4 @@ type NoopMigrationObserver struct{}
 
 func (NoopMigrationObserver) Promoted(context.Context, memory.Namespace, string, Level, Level) {}
 func (NoopMigrationObserver) Demoted(context.Context, memory.Namespace, string, Level, Level)  {}
-func (NoopMigrationObserver) Evicted(context.Context, memory.Namespace, string, Level)             {}
+func (NoopMigrationObserver) Evicted(context.Context, memory.Namespace, string, Level)         {}

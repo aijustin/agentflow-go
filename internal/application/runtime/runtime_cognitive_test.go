@@ -43,8 +43,8 @@ func TestEngineTierMemoryRecallPrefersQueryMatch(t *testing.T) {
 			Scope:     string(memory.ScopeSession),
 			Namespace: "semantic",
 			Tiers: &core.MemoryTierSettings{
-				Enabled:     true,
-				HotCapacity: 10,
+				Enabled:      true,
+				HotCapacity:  10,
 				RecallBudget: core.MemoryTierRecallBudget{Total: 1, Hot: 1},
 			},
 		},

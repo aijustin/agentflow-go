@@ -140,11 +140,11 @@ func isDevelopmentBuiltinTool(toolType string) bool {
 
 func defaultOptions() options {
 	return options{
-		tools:      make(map[string]core.ToolExecutor),
-		memory:     make(map[string]memory.Repository),
-		tierMemory: make(map[string]tier.Manager),
-		tierStores: make(map[string]tier.Store),
-		cognitive:  make(map[string]memory.CognitiveMemory),
+		tools:       make(map[string]core.ToolExecutor),
+		memory:      make(map[string]memory.Repository),
+		tierMemory:  make(map[string]tier.Manager),
+		tierStores:  make(map[string]tier.Store),
+		cognitive:   make(map[string]memory.CognitiveMemory),
 		tokenWriter: discardWriter{},
 	}
 }

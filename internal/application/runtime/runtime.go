@@ -22,23 +22,23 @@ import (
 )
 
 type Engine struct {
-	scenario core.Scenario
-	llm      llm.Gateway
-	tools    ToolRegistry
-	memory     map[string]memory.Repository
-	tierMemory map[string]tier.Manager
-	cognitive  map[string]memory.CognitiveMemory
-	runs     runstate.Repository
-	blobs    runstate.BlobStore
-	events   core.EventSink
-	gate     core.HumanGate
-	policy   security.Policy
-	audit    audit.Sink
-	toolGov  governance.ToolPolicy
-	redactor governance.OutputRedactor
-	recorder observability.Recorder
-	tracer   observability.Tracer
-	logger   log.Logger
+	scenario               core.Scenario
+	llm                    llm.Gateway
+	tools                  ToolRegistry
+	memory                 map[string]memory.Repository
+	tierMemory             map[string]tier.Manager
+	cognitive              map[string]memory.CognitiveMemory
+	runs                   runstate.Repository
+	blobs                  runstate.BlobStore
+	events                 core.EventSink
+	gate                   core.HumanGate
+	policy                 security.Policy
+	audit                  audit.Sink
+	toolGov                governance.ToolPolicy
+	redactor               governance.OutputRedactor
+	recorder               observability.Recorder
+	tracer                 observability.Tracer
+	logger                 log.Logger
 	enqueueMemoryReconcile func(context.Context, async.Job) error
 }
 
@@ -90,21 +90,21 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		tracer = observability.NoopTracer{}
 	}
 	return &Engine{
-		scenario: scenario,
-		llm:      deps.LLM,
-		tools:    deps.Tools,
-		memory:     deps.Memory,
-		tierMemory: deps.TierMemory,
-		cognitive:  deps.Cognitive,
-		runs:     deps.Runs,
-		blobs:    deps.Blobs,
-		events:   deps.Events,
-		gate:     deps.HumanGate,
-		policy:   deps.Policy,
-		audit:    deps.Audit,
-		toolGov:  deps.ToolPolicy,
-		redactor: deps.OutputRedactor,
-		recorder: recorder,
+		scenario:               scenario,
+		llm:                    deps.LLM,
+		tools:                  deps.Tools,
+		memory:                 deps.Memory,
+		tierMemory:             deps.TierMemory,
+		cognitive:              deps.Cognitive,
+		runs:                   deps.Runs,
+		blobs:                  deps.Blobs,
+		events:                 deps.Events,
+		gate:                   deps.HumanGate,
+		policy:                 deps.Policy,
+		audit:                  deps.Audit,
+		toolGov:                deps.ToolPolicy,
+		redactor:               deps.OutputRedactor,
+		recorder:               recorder,
 		tracer:                 tracer,
 		logger:                 deps.Logger,
 		enqueueMemoryReconcile: deps.EnqueueMemoryReconcile,

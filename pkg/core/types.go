@@ -137,24 +137,24 @@ type LLMProfileRef struct {
 }
 
 type MemoryRef struct {
-	Type      string            `json:"type"`
-	Scope     string            `json:"scope"`
-	Namespace string            `json:"namespace,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	Type      string              `json:"type"`
+	Scope     string              `json:"scope"`
+	Namespace string              `json:"namespace,omitempty"`
+	Metadata  map[string]string   `json:"metadata,omitempty"`
 	Tiers     *MemoryTierSettings `json:"tiers,omitempty"`
 }
 
 // MemoryTierSettings configures hot/warm/cold tiered recall for a memory reference.
 type MemoryTierSettings struct {
-	Enabled       bool   `json:"enabled,omitempty"`
-	HotCapacity   int    `json:"hot_capacity,omitempty"`
-	WarmCapacity  int    `json:"warm_capacity,omitempty"`
-	ColdCapacity  int    `json:"cold_capacity,omitempty"`
-	HotTTL        string `json:"hot_ttl,omitempty"`
-	WarmTTL       string `json:"warm_ttl,omitempty"`
-	PromoteAccess int    `json:"promote_access,omitempty"`
-	DemoteIdle    string `json:"demote_idle,omitempty"`
-	RecallBudget  MemoryTierRecallBudget `json:"recall_budget,omitempty"`
+	Enabled       bool                    `json:"enabled,omitempty"`
+	HotCapacity   int                     `json:"hot_capacity,omitempty"`
+	WarmCapacity  int                     `json:"warm_capacity,omitempty"`
+	ColdCapacity  int                     `json:"cold_capacity,omitempty"`
+	HotTTL        string                  `json:"hot_ttl,omitempty"`
+	WarmTTL       string                  `json:"warm_ttl,omitempty"`
+	PromoteAccess int                     `json:"promote_access,omitempty"`
+	DemoteIdle    string                  `json:"demote_idle,omitempty"`
+	RecallBudget  MemoryTierRecallBudget  `json:"recall_budget,omitempty"`
 	RecallWeights MemoryTierRecallWeights `json:"recall_weights,omitempty"`
 }
 

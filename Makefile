@@ -23,8 +23,10 @@ vet:
 lint:
 	golangci-lint run ./...
 
+GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@latest
+
 security:
-	govulncheck ./...
+	$(GOVULNCHECK) ./...
 
 validate-examples:
 	@for file in examples/*.yaml; do \

@@ -59,15 +59,15 @@ type Memory struct {
 }
 
 type MemoryTiers struct {
-	Enabled       bool          `yaml:"enabled"`
-	HotCapacity   int           `yaml:"hot_capacity"`
-	WarmCapacity  int           `yaml:"warm_capacity"`
-	ColdCapacity  int           `yaml:"cold_capacity"`
-	HotTTL        time.Duration `yaml:"hot_ttl"`
-	WarmTTL       time.Duration `yaml:"warm_ttl"`
-	PromoteAccess int           `yaml:"promote_access"`
-	DemoteIdle    time.Duration `yaml:"demote_idle"`
-	RecallBudget  MemoryRecallBudget `yaml:"recall_budget"`
+	Enabled       bool                `yaml:"enabled"`
+	HotCapacity   int                 `yaml:"hot_capacity"`
+	WarmCapacity  int                 `yaml:"warm_capacity"`
+	ColdCapacity  int                 `yaml:"cold_capacity"`
+	HotTTL        time.Duration       `yaml:"hot_ttl"`
+	WarmTTL       time.Duration       `yaml:"warm_ttl"`
+	PromoteAccess int                 `yaml:"promote_access"`
+	DemoteIdle    time.Duration       `yaml:"demote_idle"`
+	RecallBudget  MemoryRecallBudget  `yaml:"recall_budget"`
 	RecallWeights MemoryRecallWeights `yaml:"recall_weights"`
 }
 
