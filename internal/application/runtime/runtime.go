@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
@@ -23,7 +25,9 @@ type Engine struct {
 	scenario core.Scenario
 	llm      llm.Gateway
 	tools    ToolRegistry
-	memory   map[string]memory.Repository
+	memory     map[string]memory.Repository
+	tierMemory map[string]tier.Manager
+	cognitive  map[string]memory.CognitiveMemory
 	runs     runstate.Repository
 	blobs    runstate.BlobStore
 	events   core.EventSink
@@ -35,6 +39,7 @@ type Engine struct {
 	recorder observability.Recorder
 	tracer   observability.Tracer
 	logger   log.Logger
+	enqueueMemoryReconcile func(context.Context, async.Job) error
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -48,6 +53,8 @@ type Dependencies struct {
 	LLM            llm.Gateway
 	Tools          ToolRegistry
 	Memory         map[string]memory.Repository
+	TierMemory     map[string]tier.Manager
+	Cognitive      map[string]memory.CognitiveMemory
 	Runs           runstate.Repository
 	Blobs          runstate.BlobStore
 	Events         core.EventSink
@@ -63,6 +70,8 @@ type Dependencies struct {
 	// Logger receives structured log messages for warning and error paths.
 	// If nil, messages are silently discarded.
 	Logger log.Logger
+	// EnqueueMemoryReconcile enqueues async tier reconcile jobs after tier writes.
+	EnqueueMemoryReconcile func(context.Context, async.Job) error
 }
 
 func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
@@ -84,7 +93,9 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		scenario: scenario,
 		llm:      deps.LLM,
 		tools:    deps.Tools,
-		memory:   deps.Memory,
+		memory:     deps.Memory,
+		tierMemory: deps.TierMemory,
+		cognitive:  deps.Cognitive,
 		runs:     deps.Runs,
 		blobs:    deps.Blobs,
 		events:   deps.Events,
@@ -94,8 +105,9 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		toolGov:  deps.ToolPolicy,
 		redactor: deps.OutputRedactor,
 		recorder: recorder,
-		tracer:   tracer,
-		logger:   deps.Logger,
+		tracer:                 tracer,
+		logger:                 deps.Logger,
+		enqueueMemoryReconcile: deps.EnqueueMemoryReconcile,
 	}, nil
 }
 

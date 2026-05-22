@@ -141,6 +141,34 @@ type MemoryRef struct {
 	Scope     string            `json:"scope"`
 	Namespace string            `json:"namespace,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
+	Tiers     *MemoryTierSettings `json:"tiers,omitempty"`
+}
+
+// MemoryTierSettings configures hot/warm/cold tiered recall for a memory reference.
+type MemoryTierSettings struct {
+	Enabled       bool   `json:"enabled,omitempty"`
+	HotCapacity   int    `json:"hot_capacity,omitempty"`
+	WarmCapacity  int    `json:"warm_capacity,omitempty"`
+	ColdCapacity  int    `json:"cold_capacity,omitempty"`
+	HotTTL        string `json:"hot_ttl,omitempty"`
+	WarmTTL       string `json:"warm_ttl,omitempty"`
+	PromoteAccess int    `json:"promote_access,omitempty"`
+	DemoteIdle    string `json:"demote_idle,omitempty"`
+	RecallBudget  MemoryTierRecallBudget `json:"recall_budget,omitempty"`
+	RecallWeights MemoryTierRecallWeights `json:"recall_weights,omitempty"`
+}
+
+type MemoryTierRecallWeights struct {
+	Semantic   float64 `json:"semantic,omitempty"`
+	Recency    float64 `json:"recency,omitempty"`
+	Importance float64 `json:"importance,omitempty"`
+}
+
+type MemoryTierRecallBudget struct {
+	Total int `json:"total,omitempty"`
+	Hot   int `json:"hot,omitempty"`
+	Warm  int `json:"warm,omitempty"`
+	Cold  int `json:"cold,omitempty"`
 }
 
 type OrchestrationMode string

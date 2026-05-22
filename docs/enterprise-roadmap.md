@@ -83,7 +83,7 @@
 
 - 运行、租户、Agent、工具、步骤和追踪标识的结构化 `slog` 字段。
 - OpenTelemetry 追踪端口。基础 `Tracer` 端口和事件 span 适配已实现；具体 SDK/exporter 由宿主应用或后续可选适配器注入。
-- 运行时、LLM、工具、工作流和队列行为的 Prometheus 指标。基础 `Recorder` 端口和运行时事件计数已实现；完整 exporter/HTTP 暴露待实现。
+- 运行时、LLM、工具、工作流和队列行为的 Prometheus 指标。`NewPrometheusRecorder` 与 `/metrics` 挂载已实现；队列深度 gauge 通过 `RecordQueueMetrics` 更新。
 - 审计 sink 接口和持久审计事件适配器。
 - 密钥和敏感数据的脱敏钩子。
 - 预算限制、工具副作用、审批门禁和输出检查的策略基线。
@@ -126,7 +126,8 @@
 - 内部 skill/tool catalog 的注册表接口；根门面已提供 `WithToolResolver`，用于在工具调用通过 allowlist、审批、RBAC 和治理策略后按需绑定重型或租户隔离 executor。
 - HTTP、SQL、Git、文件系统、工单、ChatOps 的内置企业工具。初始受约束 HTTP、文件系统读取和 SQL 查询工具执行器已实现。
 - PostgreSQL 迁移 SQL 位于 `migrations/postgres/`，由宿主应用自行部署数据库与进程拓扑。
-- 可运行集成示例位于 `examples/go/`（minimal、postgres、http-worker、hitl-resume、event-trigger）。
+- 可运行集成示例位于 `examples/go/`（minimal、postgres、http-worker、hitl-resume、event-trigger、tier-memory、tier-worker）。
+- Reference Compose / Kubernetes / Helm 骨架位于 `examples/deploy/`；`tier-worker` 演示 Postgres warm/cold tier 与 `memory.reconcile` 异步任务。
 - 审批、代码评审、工单处理、RAG 问答和多 Agent 工作流示例场景。
 - v0 API 稳定性策略和迁移指南。已在 `docs/api-stability.md` 中实现，发布验证指南位于 `docs/release-checklist.md`。
 
@@ -148,4 +149,4 @@
 
 ## 当前重点
 
-M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、PostgreSQL/Redis RunState、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、API key/JWT Bearer/OIDC JWKS 认证、结构化 `slog` sink、观测指标/追踪端口、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、provider router、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP HTTP/stdio 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用、元数据过滤、混合检索扩展端口和 reranker 扩展端口。M6 已从本地企业 Compose 栈、生产 SQL 迁移、Kustomize base、受约束 HTTP/文件系统读取/SQL 查询工具执行器、Skill policy expansion、懒 ToolResolver，以及 v0 API 稳定性和发布检查指南开始。下一步重点是 Tool/Skill catalog manifest 校验、Prometheus/OpenTelemetry 具体适配器和 Helm chart 打包。
+M1-M4 基础已经以库级切片实现：持久运行状态/Blob/记忆适配器、PostgreSQL/Redis RunState、异步队列/Worker 执行与租约续租、企业身份/RBAC/审计、API key/JWT Bearer/OIDC JWKS 认证、结构化 `slog` sink、Prometheus/OpenTelemetry 适配器、工具治理、输出脱敏和生产异步 HTTP 路由。M5 现在包括 Provider 能力辅助函数、provider router、OpenAI-compatible embeddings、Anthropic tool/structured/stream、MCP HTTP/stdio 工具适配器、`pkg/knowledge`、文件/HTTP 文档加载、分块/索引、pgvector 存储、显式检索引用、元数据过滤、混合检索扩展端口、reranker 扩展端口，以及 **`pkg/memory/tier` Phase 1–4**（hot/warm/cold 契约、runtime 接线、生产适配器、认知记忆统一 recall，见 [memory-tier 设计](superpowers/specs/2026-05-21-memory-tier-design.md)）。M6 已从 reference Compose 栈（`examples/deploy/`）、`memory.reconcile` 纳入 tier-worker 参考部署、Kubernetes/Helm 骨架、生产 SQL 迁移、Tool/Skill catalog manifest 校验、受约束 HTTP/文件系统读取/SQL 查询工具执行器、Skill policy expansion、懒 ToolResolver，以及 v0 API 稳定性开始。下一步重点是 Helm chart 生产化、托管服务集成测试矩阵，以及 Skill/Tool 生态扩展。

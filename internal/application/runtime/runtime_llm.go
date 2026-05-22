@@ -22,7 +22,7 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	defer cancel()
 	profile := e.scenario.LLMs[agent.LLM]
-	history, err := e.readMemory(ctx, req.RunID, agent)
+	history, err := e.readMemory(ctx, req.RunID, agent, req.Prompt)
 	if err != nil {
 		return "", err
 	}
@@ -211,7 +211,7 @@ func (e *Engine) structuredAnswer(ctx context.Context, req RunRequest) (json.Raw
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	defer cancel()
 	profile := e.scenario.LLMs[agent.LLM]
-	history, err := e.readMemory(ctx, req.RunID, agent)
+	history, err := e.readMemory(ctx, req.RunID, agent, req.Prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +252,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 	}
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	profile := e.scenario.LLMs[agent.LLM]
-	history, err := e.readMemory(ctx, req.RunID, agent)
+	history, err := e.readMemory(ctx, req.RunID, agent, req.Prompt)
 	if err != nil {
 		cancel()
 		return nil, core.Agent{}, nil, err

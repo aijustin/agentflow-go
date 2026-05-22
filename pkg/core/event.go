@@ -28,6 +28,9 @@ const (
 	EventHumanGateExpired EventType = "HumanGateExpired"
 	EventMemoryRead       EventType = "MemoryRead"
 	EventMemoryWrite      EventType = "MemoryWrite"
+	EventMemoryPromoted   EventType = "MemoryPromoted"
+	EventMemoryDemoted    EventType = "MemoryDemoted"
+	EventMemoryEvicted    EventType = "MemoryEvicted"
 	EventContextPrepared  EventType = "ContextPrepared"
 )
 

@@ -60,7 +60,7 @@ func NewAsyncRunHTTPHandler(config AsyncRunHTTPHandlerConfig) (http.Handler, err
 	})
 }
 
-// NewFrameworkJobHandler executes framework run, event, and resume.continue jobs.
+// NewFrameworkJobHandler executes framework run, event, resume.continue, and memory.reconcile jobs.
 func NewFrameworkJobHandler(config FrameworkRunJobHandlerConfig) (asyncpkg.Handler, error) {
 	if config.Framework == nil {
 		return nil, fmt.Errorf("agentflow: framework is nil")
@@ -76,6 +76,8 @@ func (handler *frameworkJobHandler) HandleJob(ctx context.Context, job asyncpkg.
 		return handler.handleEvent(ctx, job)
 	case asyncpkg.ResumeContinueJobType:
 		return handler.handleResumeContinue(ctx, job)
+	case asyncpkg.MemoryReconcileJobType:
+		return handler.handleMemoryReconcile(ctx, job)
 	default:
 		return fmt.Errorf("agentflow: unsupported async job type %q", job.Type)
 	}
@@ -135,6 +137,24 @@ func (handler *frameworkJobHandler) handleResumeContinue(ctx context.Context, jo
 	ctx = withJobPrincipal(ctx, payload.Principal)
 	_, err := handler.framework.ResumeAndContinue(ctx, payload.Token, payload.Decision, payload.Amendment)
 	return err
+}
+
+func (handler *frameworkJobHandler) handleMemoryReconcile(ctx context.Context, job asyncpkg.Job) error {
+	var payload asyncpkg.MemoryReconcilePayload
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("agentflow: decode memory.reconcile job payload: %w", err)
+		}
+	}
+	if payload.MemoryName == "" || payload.Agent == "" {
+		return fmt.Errorf("agentflow: memory.reconcile job requires memory_name and agent")
+	}
+	ctx = withJobPrincipal(ctx, payload.Principal)
+	runID := payload.RunID
+	if runID == "" {
+		runID = job.RunID
+	}
+	return handler.framework.engine.ReconcileTierMemory(ctx, runID, payload.MemoryName, payload.Agent)
 }
 
 func withJobPrincipal(ctx context.Context, principal identity.Principal) context.Context {

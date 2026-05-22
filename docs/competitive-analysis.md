@@ -23,10 +23,10 @@
 | Corrective RAG 模板 | ✅ | `examples/corrective_rag.yaml` |
 | Adaptive RAG / Query Router | ✅ | `query_router` workflow 节点 |
 | Planning 闭环 | ✅ | `planning.execute` + replan + tool 引导 |
-| 分层记忆 | 🟡 | `memory.Scope`（`conversation`/`session`/`long_term`）+ LLM profile `memory_recall_limit`；无独立 `pkg/memory/tier` 包 |
+| 分层记忆 | ✅ | `pkg/memory/tier` + runtime/Framework 接线；见 [memory-tier 计划](superpowers/plans/2026-05-21-memory-tier.md) |
 | Tool schema 裁剪 | ✅ | `context.tool_schema_pruning` |
 | Stale tool 结果淘汰 | ✅ | `context.stale_tool_turns` |
-| 认知记忆端口 | 🟡 | `memory.CognitiveMemory` + `inmem.CognitiveRepository`（端口与适配器；Framework 自动 Remember/Recall 待接线） |
+| 认知记忆端口 | ✅ | `CognitiveMemory` + tier `DualWriteManager` / `CognitiveAdapter`；Framework `WithCognitiveMemory` + tier 自动索引 |
 | MCP scenario 配置 | ✅ | `scenario.mcp.servers` + `WireMCPTools` |
 | Supervisor 多 agent | ✅ | `supervisor` workflow 节点 |
 | Self-RAG 模板 | ✅ | `examples/self_rag.yaml` |
@@ -34,8 +34,8 @@
 
 ## 实现说明
 
-- **分层记忆**：当前通过 `pkg/memory` 的 `Scope` 枚举与上下文策略 `memory_recall_limit` 实现会话/长期记忆边界，**不是**独立子包 `pkg/memory/tier`；若需显式 tier 策略模块，属于后续计划项。
-- **认知记忆**：`CognitiveMemory` 接口与 in-memory 适配器已存在，但尚未通过 `Framework` 选项自动注入运行时；竞品矩阵中标记为 🟡（部分完成）。
+- **分层记忆**：`pkg/memory/tier` 提供 hot/warm/cold 契约、Manager、CompositeStore 与 runtime/Framework 接线；详见 [memory-tier 计划](superpowers/plans/2026-05-21-memory-tier.md)。
+- **认知记忆**：tier 路径通过 `DualWriteManager` 双写 cognitive 索引，`CognitiveAdapter` 暴露 `CognitiveMemory` 端口；Framework 在 `tiers.enabled` 时自动挂载 in-memory cognitive 索引，亦可通过 `WithCognitiveMemory` 注入。
 
 ## 参考
 

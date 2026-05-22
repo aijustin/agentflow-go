@@ -1,0 +1,18 @@
+replicaCount: 1
+
+image:
+  repository: your-registry/agentflow-tier-worker
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8080
+
+postgres:
+  secretName: agentflow-postgres
+  secretKey: dsn
+
+tier:
+  coldDir: /data/tier-cold
+
+resources: {}

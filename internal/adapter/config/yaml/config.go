@@ -55,6 +55,33 @@ type Memory struct {
 	Scope     string            `yaml:"scope"`
 	Namespace string            `yaml:"namespace"`
 	Metadata  map[string]string `yaml:"metadata"`
+	Tiers     *MemoryTiers      `yaml:"tiers"`
+}
+
+type MemoryTiers struct {
+	Enabled       bool          `yaml:"enabled"`
+	HotCapacity   int           `yaml:"hot_capacity"`
+	WarmCapacity  int           `yaml:"warm_capacity"`
+	ColdCapacity  int           `yaml:"cold_capacity"`
+	HotTTL        time.Duration `yaml:"hot_ttl"`
+	WarmTTL       time.Duration `yaml:"warm_ttl"`
+	PromoteAccess int           `yaml:"promote_access"`
+	DemoteIdle    time.Duration `yaml:"demote_idle"`
+	RecallBudget  MemoryRecallBudget `yaml:"recall_budget"`
+	RecallWeights MemoryRecallWeights `yaml:"recall_weights"`
+}
+
+type MemoryRecallWeights struct {
+	Semantic   float64 `yaml:"semantic"`
+	Recency    float64 `yaml:"recency"`
+	Importance float64 `yaml:"importance"`
+}
+
+type MemoryRecallBudget struct {
+	Total int `yaml:"total"`
+	Hot   int `yaml:"hot"`
+	Warm  int `yaml:"warm"`
+	Cold  int `yaml:"cold"`
 }
 
 type Tool struct {
@@ -286,12 +313,42 @@ func (d Document) ToCore() (core.Scenario, error) {
 		}
 	}
 	for name, mem := range d.Scenario.Memories {
-		s.Memories[name] = core.MemoryRef{
+		ref := core.MemoryRef{
 			Type:      mem.Type,
 			Scope:     mem.Scope,
 			Namespace: mem.Namespace,
 			Metadata:  mem.Metadata,
 		}
+		if mem.Tiers != nil {
+			ref.Tiers = &core.MemoryTierSettings{
+				Enabled:       mem.Tiers.Enabled,
+				HotCapacity:   mem.Tiers.HotCapacity,
+				WarmCapacity:  mem.Tiers.WarmCapacity,
+				ColdCapacity:  mem.Tiers.ColdCapacity,
+				PromoteAccess: mem.Tiers.PromoteAccess,
+				RecallBudget: core.MemoryTierRecallBudget{
+					Total: mem.Tiers.RecallBudget.Total,
+					Hot:   mem.Tiers.RecallBudget.Hot,
+					Warm:  mem.Tiers.RecallBudget.Warm,
+					Cold:  mem.Tiers.RecallBudget.Cold,
+				},
+				RecallWeights: core.MemoryTierRecallWeights{
+					Semantic:   mem.Tiers.RecallWeights.Semantic,
+					Recency:    mem.Tiers.RecallWeights.Recency,
+					Importance: mem.Tiers.RecallWeights.Importance,
+				},
+			}
+			if mem.Tiers.HotTTL > 0 {
+				ref.Tiers.HotTTL = mem.Tiers.HotTTL.String()
+			}
+			if mem.Tiers.WarmTTL > 0 {
+				ref.Tiers.WarmTTL = mem.Tiers.WarmTTL.String()
+			}
+			if mem.Tiers.DemoteIdle > 0 {
+				ref.Tiers.DemoteIdle = mem.Tiers.DemoteIdle.String()
+			}
+		}
+		s.Memories[name] = ref
 	}
 	for _, collection := range d.Scenario.Knowledge.Collections {
 		s.Knowledge.Collections = append(s.Knowledge.Collections, core.KnowledgeCollection{

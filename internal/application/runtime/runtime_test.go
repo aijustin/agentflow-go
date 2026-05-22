@@ -1234,7 +1234,7 @@ func TestEngineMemoryRBAC(t *testing.T) {
 	}
 	viewer := identity.Principal{ID: "viewer", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-1"}, Roles: []identity.Role{identity.RoleViewer}}
 	ctx := identity.WithPrincipal(context.Background(), viewer)
-	if _, err := engine.readMemory(ctx, "run-rbac", agent); err != nil {
+	if _, err := engine.readMemory(ctx, "run-rbac", agent, ""); err != nil {
 		t.Fatalf("viewer should read memory: %v", err)
 	}
 	operator := identity.Principal{ID: "operator", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-1"}, Roles: []identity.Role{identity.RoleOperator}}

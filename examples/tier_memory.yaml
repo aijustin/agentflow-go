@@ -1,0 +1,37 @@
+scenario:
+  name: tier-memory-demo
+  llms:
+    default:
+      provider: mock
+      model: test
+      context:
+        memory_recall_limit: 10
+  memories:
+    session:
+      type: custom
+      scope: session
+      namespace: tier-demo
+      tiers:
+        enabled: true
+        hot_capacity: 20
+        warm_capacity: 100
+        cold_capacity: 1000
+        promote_access: 3
+        recall_budget:
+          total: 10
+          hot: 8
+          warm: 2
+  tools:
+    echo:
+      type: builtin.echo
+      approval: never
+  agents:
+    assistant:
+      llm: default
+      memory: session
+      tools: [echo]
+      instructions: "Answer the user clearly."
+  orchestration:
+    mode: autonomous
+    human_in_loop:
+      enabled: false

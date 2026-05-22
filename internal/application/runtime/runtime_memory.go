@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/audit"
@@ -12,6 +15,8 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/memory/tier"
+	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
@@ -23,9 +28,12 @@ type memoryMessage struct {
 	Time       time.Time `json:"time"`
 }
 
-func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent) ([]llm.Message, error) {
+func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent, query string) ([]llm.Message, error) {
 	if err := e.authorizeMemory(ctx, runID, agent, security.ActionMemoryRead); err != nil {
 		return nil, err
+	}
+	if manager, settings, ok := e.tierManager(agent); ok {
+		return e.readTierMemory(ctx, runID, agent, manager, settings, query)
 	}
 	repo, ns, ok := e.memoryRepository(runID, agent)
 	if !ok {
@@ -72,6 +80,9 @@ func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent
 	if err := e.authorizeMemory(ctx, runID, agent, security.ActionMemoryWrite); err != nil {
 		return err
 	}
+	if manager, _, ok := e.tierManager(agent); ok {
+		return e.writeTierMemory(ctx, runID, agent, manager, messages)
+	}
 	repo, ns, ok := e.memoryRepository(runID, agent)
 	if !ok || len(messages) == 0 {
 		return nil
@@ -90,22 +101,160 @@ func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent
 		if err := repo.Append(ctx, ns, "messages", raw); err != nil {
 			return err
 		}
+		if err := e.rememberCognitive(ctx, runID, agent, msg); err != nil {
+			return err
+		}
 	}
 	e.emitJSON(ctx, core.EventMemoryWrite, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": len(messages)})
 	return nil
 }
 
-func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Repository, memory.Namespace, bool) {
-	if agent.Memory == "" || e.memory == nil {
-		return nil, memory.Namespace{}, false
+func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Agent, manager tier.Manager, settings tier.Settings, query string) ([]llm.Message, error) {
+	ctx, span := e.startSpan(ctx, observability.SpanMemoryTierRecall,
+		observability.Attribute{Key: "memory", Value: agent.Memory},
+		observability.Attribute{Key: "agent", Value: agent.Name},
+	)
+	defer span.End()
+	start := time.Now()
+
+	ns, ok := e.scopedMemoryNamespace(ctx, runID, agent)
+	if !ok {
+		return nil, nil
 	}
-	repo, ok := e.memory[agent.Memory]
-	if !ok || repo == nil {
-		return nil, memory.Namespace{}, false
+	records, err := manager.Recall(ctx, ns, query, e.tierRecallBudget(agent, settings))
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]llm.Message, 0, len(records))
+	for _, record := range records {
+		msg, err := tierRecordToMessage(record)
+		if err != nil {
+			return nil, err
+		}
+		switch llm.Role(msg.Role) {
+		case llm.RoleUser, llm.RoleAssistant, llm.RoleTool:
+			messages = append(messages, llm.Message{
+				Role:       llm.Role(msg.Role),
+				Content:    msg.Content,
+				Name:       msg.Tool,
+				ToolCallID: msg.ToolCallID,
+				Metadata: map[string]string{
+					"memory": agent.Memory,
+					"tier":   string(record.Tier),
+				},
+			})
+		}
+	}
+	e.emitJSON(ctx, core.EventMemoryRead, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": len(messages), "tiered": true})
+	e.recorder.ObserveHistogram(ctx, observability.MetricMemoryRecallLatencySeconds, time.Since(start).Seconds(),
+		observability.Attribute{Key: "memory", Value: agent.Memory},
+	)
+	return messages, nil
+}
+
+func (e *Engine) writeTierMemory(ctx context.Context, runID string, agent core.Agent, manager tier.Manager, messages []memoryMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	ns, ok := e.scopedMemoryNamespace(ctx, runID, agent)
+	if !ok {
+		return nil
+	}
+	for _, msg := range messages {
+		msg.Time = time.Now().UTC()
+		content, err := e.redactMemoryMessage(ctx, runID, msg)
+		if err != nil {
+			return err
+		}
+		msg.Content = content
+		record, err := messageToTierRecord(msg, ns)
+		if err != nil {
+			return err
+		}
+		if err := manager.Remember(ctx, ns, record); err != nil {
+			return err
+		}
+	}
+	e.emitJSON(ctx, core.EventMemoryWrite, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": len(messages), "tiered": true})
+	e.enqueueTierReconcile(ctx, runID, agent)
+	return nil
+}
+
+func messageToTierRecord(msg memoryMessage, ns memory.Namespace) (tier.Record, error) {
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		return tier.Record{}, err
+	}
+	id, err := newTierRecordID()
+	if err != nil {
+		return tier.Record{}, err
+	}
+	return tier.Record{
+		CognitiveRecord: memory.CognitiveRecord{
+			ID:         id,
+			Content:    string(raw),
+			Scope:      string(ns.Scope),
+			Categories: []string{msg.Role},
+			Importance: memory.ImportanceForRole(msg.Role),
+			CreatedAt:  msg.Time,
+			Metadata: map[string]string{
+				"role":       msg.Role,
+				"kind":       "message",
+				"searchable": msg.Content,
+			},
+		},
+		Tier:         tier.LevelHot,
+		LastAccessAt: msg.Time,
+	}, nil
+}
+
+func (e *Engine) rememberCognitive(ctx context.Context, runID string, agent core.Agent, msg memoryMessage) error {
+	repo, ok := e.cognitive[agent.Memory]
+	if !ok || repo == nil || strings.TrimSpace(msg.Content) == "" {
+		return nil
+	}
+	ns, ok := e.scopedMemoryNamespace(ctx, runID, agent)
+	if !ok {
+		return nil
+	}
+	id, err := newTierRecordID()
+	if err != nil {
+		return err
+	}
+	return repo.Remember(ctx, ns, memory.CognitiveRecord{
+		ID:         id,
+		Content:    msg.Content,
+		Scope:      string(ns.Scope),
+		Categories: []string{msg.Role},
+		Importance: memory.ImportanceForRole(msg.Role),
+		CreatedAt:  msg.Time,
+		Metadata:   map[string]string{"role": msg.Role, "kind": "message"},
+	})
+}
+
+func tierRecordToMessage(record tier.Record) (memoryMessage, error) {
+	var msg memoryMessage
+	if err := json.Unmarshal([]byte(record.Content), &msg); err != nil {
+		return memoryMessage{}, fmt.Errorf("runtime: tier record %q is invalid: %w", record.ID, err)
+	}
+	return msg, nil
+}
+
+func newTierRecordID() (string, error) {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("runtime: generate tier record id: %w", err)
+	}
+	return hex.EncodeToString(buf[:]), nil
+}
+
+func (e *Engine) memoryNamespace(runID string, agent core.Agent) (memory.Namespace, bool) {
+	if agent.Memory == "" {
+		return memory.Namespace{}, false
 	}
 	ref, ok := e.scenario.Memories[agent.Memory]
 	if !ok {
-		return nil, memory.Namespace{}, false
+		return memory.Namespace{}, false
 	}
 	scope := memory.Scope(ref.Scope)
 	ns := memory.Namespace{Agent: agent.Name, Scope: scope}
@@ -117,6 +266,21 @@ func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Reposi
 		ns.SessionID = sessionID + ":" + agent.Name
 	default:
 		ns.SessionID = firstNonEmpty(ref.Namespace, e.scenario.Name)
+	}
+	return ns, true
+}
+
+func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Repository, memory.Namespace, bool) {
+	if agent.Memory == "" || e.memory == nil {
+		return nil, memory.Namespace{}, false
+	}
+	repo, ok := e.memory[agent.Memory]
+	if !ok || repo == nil {
+		return nil, memory.Namespace{}, false
+	}
+	ns, ok := e.memoryNamespace(runID, agent)
+	if !ok {
+		return nil, memory.Namespace{}, false
 	}
 	return repo, ns, true
 }

@@ -7,7 +7,7 @@
 适配器期望一张表，默认名为 `agentflow_jobs`，列与以下含义等价：
 
 - `id`：唯一任务标识。
-- `type`：任务类型。框架 Worker 当前支持 `run`、`event`、`resume.continue`。
+- `type`：任务类型。框架 Worker 当前支持 `run`、`event`、`resume.continue`、`memory.reconcile`。
 - `run_id`：可选运行时运行标识。
 - `payload_json`：序列化任务载荷。
 - `state`：`queued`、`running`、`completed`、`failed`、`cancelled` 或 `dead_letter` 之一。

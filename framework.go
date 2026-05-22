@@ -24,6 +24,7 @@ import (
 	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
 	memoryfile "github.com/aijustin/agentflow-go/internal/adapter/memory/file"
 	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
+	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	runstatefile "github.com/aijustin/agentflow-go/internal/adapter/runstate/file"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	runstatepostgres "github.com/aijustin/agentflow-go/internal/adapter/runstate/postgres"
@@ -31,6 +32,7 @@ import (
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	appscenario "github.com/aijustin/agentflow-go/internal/application/scenario"
+	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/catalog"
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -38,6 +40,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
@@ -69,6 +72,8 @@ type Framework struct {
 	llm         llm.Gateway
 	tools       *toolRegistry
 	memory      map[string]memory.Repository
+	tierMemory  map[string]tier.Manager
+	tierStores  map[string]tier.Store
 	policy      security.Policy
 	audit       audit.Sink
 	toolGov     governance.ToolPolicy
@@ -88,6 +93,10 @@ type options struct {
 	tools       map[string]core.ToolExecutor
 	resolver    core.ToolResolver
 	memory      map[string]memory.Repository
+	tierMemory  map[string]tier.Manager
+	tierStores  map[string]tier.Store
+	cognitive   map[string]memory.CognitiveMemory
+	jobQueue    async.Queue
 	tokenSecret []byte
 	tokenTTL    time.Duration
 	tokenWriter io.Writer
@@ -274,8 +283,42 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		if _, exists := cfg.memory[name]; exists {
 			continue
 		}
+		if ref.Tiers != nil && ref.Tiers.Enabled {
+			continue
+		}
 		if ref.Type == "in_memory" {
 			cfg.memory[name] = memoryinmem.NewRepository()
+		}
+	}
+	for name, ref := range scenario.Memories {
+		if ref.Tiers == nil || !ref.Tiers.Enabled {
+			continue
+		}
+		if _, exists := cfg.tierMemory[name]; exists {
+			continue
+		}
+		store := cfg.tierStores[name]
+		if store == nil {
+			store = tierinmem.NewStore()
+		}
+		settings, _ := tier.SettingsFromCore(ref.Tiers)
+		manager := tier.NewManagerWithWeights(store, settings.Policy(), tierMigrationObserver(scenario, cfg.recorder), settings.Weights())
+		cognitive := cfg.cognitive[name]
+		if cognitive == nil {
+			if cfg.cognitive == nil {
+				cfg.cognitive = make(map[string]memory.CognitiveMemory)
+			}
+			cognitive = memoryinmem.NewCognitiveRepository()
+			cfg.cognitive[name] = cognitive
+		}
+		cfg.tierMemory[name] = tier.NewDualWriteManager(manager, cognitive)
+	}
+	var enqueueMemoryReconcile func(context.Context, async.Job) error
+	if cfg.jobQueue != nil {
+		queue := cfg.jobQueue
+		enqueueMemoryReconcile = func(ctx context.Context, job async.Job) error {
+			_, err := queue.Enqueue(ctx, job)
+			return err
 		}
 	}
 	engine, err := appexec.NewEngine(scenario, appexec.Dependencies{
@@ -286,13 +329,16 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		HumanGate:      cfg.gate,
 		Tools:          tools,
 		Memory:         cfg.memory,
+		TierMemory:             cfg.tierMemory,
+		Cognitive:              cfg.cognitive,
 		Policy:         cfg.policy,
 		Audit:          cfg.audit,
 		ToolPolicy:     cfg.toolGov,
 		OutputRedactor: cfg.redactor,
 		Recorder:       cfg.recorder,
-		Tracer:         cfg.tracer,
-		Logger:         cfg.logger,
+		Tracer:                 cfg.tracer,
+		Logger:                 cfg.logger,
+		EnqueueMemoryReconcile: enqueueMemoryReconcile,
 	})
 	if err != nil {
 		return nil, err
@@ -503,6 +549,79 @@ func WithMemoryRepository(name string, repo memory.Repository) Option {
 		o.memory[name] = repo
 		return nil
 	}
+}
+
+// WithTierMemory wires a tier manager by scenario memory name.
+func WithTierMemory(name string, manager tier.Manager) Option {
+	return func(o *options) error {
+		if name == "" {
+			return fmt.Errorf("agentflow: tier memory name is required")
+		}
+		if manager == nil {
+			return fmt.Errorf("agentflow: tier memory %q manager is nil", name)
+		}
+		if o.tierMemory == nil {
+			o.tierMemory = make(map[string]tier.Manager)
+		}
+		o.tierMemory[name] = manager
+		return nil
+	}
+}
+
+// WithTierStore wires a tier store and builds a default manager from policy.
+func WithTierStore(name string, store tier.Store, policy tier.Policy) Option {
+	return func(o *options) error {
+		if name == "" {
+			return fmt.Errorf("agentflow: tier store name is required")
+		}
+		if store == nil {
+			return fmt.Errorf("agentflow: tier store %q is nil", name)
+		}
+		if o.tierStores == nil {
+			o.tierStores = make(map[string]tier.Store)
+		}
+		o.tierStores[name] = store
+		if o.tierMemory == nil {
+			o.tierMemory = make(map[string]tier.Manager)
+		}
+		o.tierMemory[name] = tier.NewManager(store, policy, tier.NoopMigrationObserver{})
+		return nil
+	}
+}
+
+// WithCognitiveMemory wires a cognitive memory backend by scenario memory name.
+func WithCognitiveMemory(name string, repo memory.CognitiveMemory) Option {
+	return func(o *options) error {
+		if name == "" {
+			return fmt.Errorf("agentflow: cognitive memory name is required")
+		}
+		if repo == nil {
+			return fmt.Errorf("agentflow: cognitive memory %q repository is nil", name)
+		}
+		if o.cognitive == nil {
+			o.cognitive = make(map[string]memory.CognitiveMemory)
+		}
+		o.cognitive[name] = repo
+		return nil
+	}
+}
+
+// WithJobQueue wires an async queue used to enqueue memory.reconcile jobs after tier writes.
+func WithJobQueue(queue async.Queue) Option {
+	return func(o *options) error {
+		if queue == nil {
+			return fmt.Errorf("agentflow: job queue is nil")
+		}
+		o.jobQueue = queue
+		return nil
+	}
+}
+
+func tierMigrationObserver(scenario core.Scenario, recorder observability.Recorder) tier.MigrationObserver {
+	if recorder == nil {
+		return tier.NoopMigrationObserver{}
+	}
+	return tier.MetricsObserver{Recorder: recorder, Scenario: scenario.Name}
 }
 
 // WithHITLTokenSecret wires the built-in HMAC-token human gate using the same

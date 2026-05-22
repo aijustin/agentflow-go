@@ -1,0 +1,57 @@
+package agentflow
+
+import (
+	"database/sql"
+
+	tiercold "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/cold"
+	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
+	tierpostgres "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/postgres"
+	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/memory/tier"
+)
+
+// PostgresTierWarmStoreConfig configures a Postgres-backed warm tier store.
+type PostgresTierWarmStoreConfig struct {
+	DB        *sql.DB
+	TableName string
+}
+
+// NewPostgresTierWarmStore creates a warm-tier store backed by Postgres JSONB rows.
+func NewPostgresTierWarmStore(config PostgresTierWarmStoreConfig) (tier.Store, error) {
+	var opts []tierpostgres.Option
+	if config.TableName != "" {
+		opts = append(opts, tierpostgres.WithTableName(config.TableName))
+	}
+	return tierpostgres.NewStore(config.DB, opts...)
+}
+
+// NewFileTierColdStore creates a gzip JSON cold-tier store on the local filesystem.
+func NewFileTierColdStore(dir string) (tier.Store, error) {
+	return tiercold.NewStore(dir)
+}
+
+// CompositeTierStoreConfig wires hot, warm, and cold tier backends.
+type CompositeTierStoreConfig struct {
+	Hot  tier.Store
+	Warm tier.Store
+	Cold tier.Store
+}
+
+// NewCompositeTierStore routes records across tier backends.
+func NewCompositeTierStore(config CompositeTierStoreConfig) tier.Store {
+	return &tier.CompositeStore{
+		Hot:  config.Hot,
+		Warm: config.Warm,
+		Cold: config.Cold,
+	}
+}
+
+// NewInMemoryTierHotStore creates an in-process hot-tier store.
+func NewInMemoryTierHotStore() tier.Store {
+	return tierinmem.NewStore()
+}
+
+// NewCognitiveTierMemory exposes a tier Manager through the CognitiveMemory port.
+func NewCognitiveTierMemory(manager tier.Manager, weights tier.RecallWeights) memory.CognitiveMemory {
+	return tier.NewCognitiveAdapter(manager, weights)
+}

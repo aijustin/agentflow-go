@@ -47,6 +47,8 @@ make test
 | [http-worker](examples/go/http-worker/main.go) | 挂载 `NewProductionHTTPHandler` + 异步 Worker | `go run ./examples/go/http-worker/main.go` |
 | [hitl-resume](examples/go/hitl-resume/main.go) | HITL 暂停与 `ResumeAndContinue` | `go run ./examples/go/hitl-resume/main.go` |
 | [event-trigger](examples/go/event-trigger/main.go) | `scenario.triggers` 事件驱动 Run | `go run ./examples/go/event-trigger/main.go` |
+| [tier-memory](examples/go/tier-memory/main.go) | 进程内 tier 记忆最小示例 | `go run ./examples/go/tier-memory/main.go` |
+| [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` 异步 Worker | 见 [examples/deploy/](examples/deploy/README.md) |
 | [validate](examples/go/validate/main.go) | 校验场景 YAML、接线或 catalog manifest | `go run ./examples/go/validate examples/autonomous.yaml` |
 
 生产环境请用 `WithLLMGateway` / `WithToolExecutor` 替代 `testutil.WiringOptions`；测试接线见 [pkg/testutil](pkg/testutil/testutil.go)。

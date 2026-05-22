@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentflow-reference.fullname" . }}
+  labels:
+    {{- include "agentflow-reference.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "agentflow-reference.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentflow-reference.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: tier-worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              name: http
+          env:
+            - name: AGENT_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName }}
+                  key: {{ .Values.postgres.secretKey }}
+            - name: AGENT_TIER_COLD_DIR
+              value: {{ .Values.tier.coldDir | quote }}
+            - name: AGENT_HTTP_ADDR
+              value: ":{{ .Values.service.port }}"
+          volumeMounts:
+            - name: tier-cold
+              mountPath: {{ .Values.tier.coldDir }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tier-cold
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentflow-reference.fullname" . }}
+  labels:
+    {{- include "agentflow-reference.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "agentflow-reference.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http

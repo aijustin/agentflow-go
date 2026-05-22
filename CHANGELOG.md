@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Memory tier design spec and Phase 1 `pkg/memory/tier` contract (hot/warm/cold policy, recall budget). See `docs/superpowers/specs/2026-05-21-memory-tier-design.md`.
+- Memory tier Phase 2: YAML `memories.*.tiers`, `TierManager` Remember/Recall/Reconcile, in-memory tier store, `WithTierMemory` / `WithTierStore`, runtime tier read/write path, migration event types, and `examples/tier_memory.yaml`.
+- Memory tier Phase 3: Postgres warm store, gzip file cold store, `CompositeStore`, `WithJobQueue` + `memory.reconcile` async job, tier Prometheus metrics and OTel spans, tenant-scoped memory namespaces.
+- Memory tier Phase 4: cognitive/tier unified recall (`RankMemories` + tier budget), `DualWriteManager`, `CognitiveAdapter`, `WithCognitiveMemory`, runtime query-aware tier recall.
+- M6 reference deploy: `examples/go/tier-worker`, migration init script, Kubernetes and Helm skeletons, `memory.reconcile` via shared Postgres/in-memory job queue.
 - `examples/go/validate` for scenario YAML wiring checks in CI and local dev; supports `-kind tool|skill` for catalog manifests.
 - `NewPrometheusRecorder` and `PrometheusMetricsHandler` with `/metrics` mounting on `NewProductionHTTPHandler`.
 - OpenTelemetry adapter in `pkg/observability/otel`: `NewOpenTelemetryTracer`, `NewOpenTelemetryStdoutTracerProvider`, runtime `Run`/`ToolCall` spans.

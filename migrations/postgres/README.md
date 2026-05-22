@@ -6,6 +6,7 @@ Versioned SQL for adapters that store data in PostgreSQL:
 - async job queue (`agentflow_jobs`)
 - runtime events (`agentflow_runtime_events`)
 - knowledge embeddings (`agentflow_knowledge_embeddings`)
+- memory tier warm records (`agentflow_memory_tier_records`, migration `0002`)
 
 Apply these files with your own migration runner. The vector table uses `vector(1536)`; change the dimension if your embedding model differs.
 

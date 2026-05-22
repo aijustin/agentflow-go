@@ -6,6 +6,7 @@ import (
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 )
 
 // WiringOptions controls ValidateWiring and optional New-time checks.
@@ -86,6 +87,9 @@ func validateWiring(scenario core.Scenario, cfg options, autoMemory map[string]b
 		return fmt.Errorf("agentflow: wiring: tool %q (%s) has no executor or resolver", name, tool.Type)
 	}
 	for name, ref := range scenario.Memories {
+		if ref.Tiers != nil && ref.Tiers.Enabled {
+			continue
+		}
 		if ref.Type == "in_memory" || autoMemory[name] {
 			continue
 		}
@@ -136,8 +140,11 @@ func isDevelopmentBuiltinTool(toolType string) bool {
 
 func defaultOptions() options {
 	return options{
-		tools:       make(map[string]core.ToolExecutor),
-		memory:      make(map[string]memory.Repository),
+		tools:      make(map[string]core.ToolExecutor),
+		memory:     make(map[string]memory.Repository),
+		tierMemory: make(map[string]tier.Manager),
+		tierStores: make(map[string]tier.Store),
+		cognitive:  make(map[string]memory.CognitiveMemory),
 		tokenWriter: discardWriter{},
 	}
 }

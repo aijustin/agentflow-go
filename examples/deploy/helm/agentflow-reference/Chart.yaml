@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agentflow-reference
+description: Reference Helm chart for agentflow tier-worker and async job queue
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

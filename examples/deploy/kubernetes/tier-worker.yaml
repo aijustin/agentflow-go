@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentflow-tier-worker
+  labels:
+    app: agentflow-tier-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentflow-tier-worker
+  template:
+    metadata:
+      labels:
+        app: agentflow-tier-worker
+    spec:
+      containers:
+        - name: tier-worker
+          image: your-registry/agentflow-tier-worker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: AGENT_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: agentflow-postgres
+                  key: dsn
+            - name: AGENT_TIER_COLD_DIR
+              value: /data/tier-cold
+            - name: AGENT_HTTP_ADDR
+              value: ":8080"
+          volumeMounts:
+            - name: tier-cold
+              mountPath: /data/tier-cold
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: tier-cold
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentflow-tier-worker
+spec:
+  selector:
+    app: agentflow-tier-worker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -47,6 +47,8 @@ Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHan
 | [http-worker](examples/go/http-worker/main.go) | `NewProductionHTTPHandler` + async worker | `go run ./examples/go/http-worker/main.go` |
 | [hitl-resume](examples/go/hitl-resume/main.go) | HITL pause and `ResumeAndContinue` | `go run ./examples/go/hitl-resume/main.go` |
 | [event-trigger](examples/go/event-trigger/main.go) | Event-driven runs via `scenario.triggers` | `go run ./examples/go/event-trigger/main.go` |
+| [tier-memory](examples/go/tier-memory/main.go) | In-process tier memory minimal example | `go run ./examples/go/tier-memory/main.go` |
+| [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` async worker | See [examples/deploy/](examples/deploy/README.md) |
 | [validate](examples/go/validate/main.go) | Validate scenario YAML and wiring (same as CI) | `go run ./examples/go/validate examples/autonomous.yaml` |
 
 Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.WiringOptions`. See [pkg/testutil](pkg/testutil/testutil.go) for test wiring.

@@ -36,6 +36,20 @@ func Validate(s core.Scenario) error {
 		if !containsString(supportedMemoryScopes, mem.Scope) {
 			return fmt.Errorf("config: memories.%s.scope %q is unsupported", name, mem.Scope)
 		}
+		if mem.Tiers != nil && mem.Tiers.Enabled {
+			if mem.Type != "custom" && mem.Type != "in_memory" {
+				return fmt.Errorf("config: memories.%s.tiers.enabled requires type custom or in_memory", name)
+			}
+			if mem.Tiers.HotCapacity < 0 || mem.Tiers.WarmCapacity < 0 || mem.Tiers.ColdCapacity < 0 {
+				return fmt.Errorf("config: memories.%s.tiers capacities must be >= 0", name)
+			}
+			if mem.Tiers.PromoteAccess < 0 {
+				return fmt.Errorf("config: memories.%s.tiers.promote_access must be >= 0", name)
+			}
+			if mem.Tiers.RecallBudget.Total < 0 || mem.Tiers.RecallBudget.Hot < 0 || mem.Tiers.RecallBudget.Warm < 0 || mem.Tiers.RecallBudget.Cold < 0 {
+				return fmt.Errorf("config: memories.%s.tiers.recall_budget values must be >= 0", name)
+			}
+		}
 	}
 	for name, tool := range s.Tools {
 		if tool.Type == "" {

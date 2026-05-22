@@ -12,6 +12,9 @@ const (
 	MetricQueueJobsQueued     MetricName = "agentflow_queue_jobs_queued"
 	MetricQueueJobsRunning    MetricName = "agentflow_queue_jobs_running"
 	MetricQueueJobsDeadLetter MetricName = "agentflow_queue_jobs_dead_letter"
+	MetricMemoryTierRecords   MetricName = "agentflow_memory_tier_records"
+	MetricMemoryTierMigrationsTotal MetricName = "agentflow_memory_tier_migrations_total"
+	MetricMemoryRecallLatencySeconds MetricName = "agentflow_memory_recall_latency_seconds"
 )
 
 type SpanName string
@@ -21,6 +24,8 @@ const (
 	SpanRun          SpanName = "agentflow.run"
 	SpanToolCall     SpanName = "agentflow.tool.call"
 	SpanQueueJob     SpanName = "agentflow.queue.job"
+	SpanMemoryTierRecall SpanName = "agentflow.memory.tier.recall"
+	SpanMemoryTierMigrate SpanName = "agentflow.memory.tier.migrate"
 )
 
 type Attribute struct {

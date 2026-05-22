@@ -63,7 +63,9 @@ func main() {
 		agentflow.NewSlogEventSink(logger),
 	)
 
+	queue := agentflow.NewInMemoryJobQueue()
 	opts = append(opts,
+		agentflow.WithJobQueue(queue),
 		agentflow.WithHITLTokenSecret([]byte("dev-secret"), os.Stderr),
 		agentflow.WithRecorder(recorder),
 		agentflow.WithEventSink(eventSink),
@@ -71,13 +73,15 @@ func main() {
 	if tracer != nil {
 		opts = append(opts, agentflow.WithTracer(tracer))
 	}
+	if err := agentflow.ValidateWiring(scenario, opts...); err != nil {
+		log.Fatal(err)
+	}
 	fw, err := agentflow.New(scenario, opts...)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer fw.Close(context.Background())
 
-	queue := agentflow.NewInMemoryJobQueue()
 	handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
 		Queue:          queue,
 		Policy:         security.NewDefaultRolePolicy(),
