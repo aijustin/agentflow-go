@@ -32,12 +32,39 @@ steps, err := fw.ListRunSteps(ctx, runID)
 result, err := fw.ResumeFromStep(ctx, runID, "review")
 ```
 
-## P1（下一步）
+## P1（已交付）
 
-- Checkpoint **历史链**（append-only snapshots，真正逐步回放）
-- Graph 运行时 overlay：SubgraphStarted/Completed 事件驱动嵌套高亮
-- `loop` / `human_gate` 的 time-travel 边界与 UI 提示
-- Production HTTP：`POST /v1/runs/{id}/resume-from-step`（与 Observability 并列）
+| 能力 | 状态 |
+|------|------|
+| Production HTTP `GET/POST /v1/runs/{id}/steps` / `resume-from-step` | ✅ |
+| Graph 节点 `resumable` / `resume_hint` 元数据 | ✅ |
+| Subgraph 事件 Graph overlay | ✅ |
+| `http-worker` 示例挂载 `/observability/` + Framework | ✅ |
+| Checkpoint **历史链**（append-only snapshots） | ✅ |
+
+### Checkpoint 历史链接线
+
+```go
+fw, err := agentflow.New(scenario,
+    agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+)
+```
+
+Go API：
+
+```go
+checkpoints, err := fw.ListRunCheckpoints(ctx, runID, 50)
+snapshot, err := fw.GetRunCheckpoint(ctx, runID, version)
+result, err := fw.ResumeFromCheckpoint(ctx, runID, version)
+```
+
+HTTP（Observability + Production）：
+
+- `GET .../checkpoints?limit=50`
+- `GET .../checkpoints/{version}`
+- `POST .../resume-from-checkpoint` body: `{"version": 3}`
+
+本地示例：`go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7070/observability/`（默认端口，可用 `AGENT_HTTP_ADDR` 覆盖）
 
 ## P2（产品级，另立项）
 

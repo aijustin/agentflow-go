@@ -87,6 +87,9 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 		httpConfig.Steps = adapter
 		httpConfig.Graph = adapter
 		httpConfig.Resume = adapter
+		httpConfig.History = adapter
+		httpConfig.Checkpoints = adapter
+		httpConfig.Restore = adapter
 	}
 	return observabilityhttp.NewHandler(httpConfig)
 }

@@ -26,11 +26,11 @@
 | **Subgraph（运行时嵌套）** | `orchestration.workflows` + `subgraph`；内层 step 命名空间 `{parent}::{inner}` | ✅ v2 |
 | **Send / 动态 fan-out** | `map` 节点（含 `branch.kind: subgraph`） | ✅ 已落地 |
 | `interrupt()` 任意点暂停 | `human_gate` + tool pause + `before_final_answer` | ⚠️ 部分（缺任意节点 declarative interrupt） |
-| Checkpoint 列表 / time-travel | RunState + `ListRunSteps` / `ResumeFromStep` | ⚠️ API ✅；Observability Graph UI ✅；无 checkpoint 历史链 |
+| Checkpoint 列表 / time-travel | RunState + `ListRunSteps` / `ResumeFromStep` / `ListRunCheckpoints` / `ResumeFromCheckpoint` | ✅ API + Observability Graph UI + append-only 历史链 |
 | Store 长期记忆 | tier memory + CognitiveMemory | ⚠️ 模型不同，语义对齐中 |
 | Autonomous 作为图节点 | `agent_loop` 节点（图内 ReAct） | ⏸ 不做（用 `hybrid` + `autonomous`） |
 | 流式图事件 | EventSink step/llm/tool/subgraph 事件 | ✅ |
-| Studio 可视化 | Observability Graph View + scenario export | ⚠️ 只读 debug（见 [studio-roadmap.md](./studio-roadmap.md)） |
+| Studio 可视化 | Observability Graph View + scenario export + checkpoint 时间轴 | ⚠️ 只读 debug（见 [studio-roadmap.md](./studio-roadmap.md)） |
 
 图例：✅ 已有 · ⚠️ 部分 · 🔲 计划
 
@@ -106,6 +106,9 @@ orchestration:
 
 - `Framework.ListRunSteps(runID)` — 返回 step 输出与 snapshot 版本
 - `Framework.ResumeFromStep(runID, nodeID)` — 从指定节点重跑
+- `Framework.ListRunCheckpoints(runID, limit)` — 返回 append-only 历史 revision 列表
+- `Framework.GetRunCheckpoint(runID, version)` — 加载某一历史 snapshot
+- `Framework.ResumeFromCheckpoint(runID, version)` — 从历史 revision 恢复并重跑
 
 **截断规则**
 
@@ -116,7 +119,8 @@ orchestration:
 
 **代码**
 
-- `framework_checkpoint.go`：`ListRunSteps`、`ResumeFromStep`
+- `framework_checkpoint.go`：`ListRunSteps`、`ResumeFromStep`、`ListRunCheckpoints`、`GetRunCheckpoint`、`ResumeFromCheckpoint`
+- `pkg/runstate/checkpoint_history.go` + `internal/adapter/runstate/recording`：append-only 历史链
 - `internal/application/orchestration/workflow_checkpoint.go`：下游截断与 runner 入口
 
 ---

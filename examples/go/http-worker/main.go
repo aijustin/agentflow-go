@@ -50,15 +50,21 @@ func main() {
 		fmt.Println("OpenTelemetry stdout tracing enabled (AGENTFLOW_OTEL_STDOUT=1)")
 	}
 
+	eventStore := agentflow.NewInMemoryEventStore()
+	eventHub := agentflow.NewEventHub()
 	eventSink := agentflow.NewObservabilityEventSink(
 		recorder,
 		tracer,
-		agentflow.NewSlogEventSink(logger),
+		agentflow.NewEventFanoutSink(
+			agentflow.NewEventStoreSink(eventStore, eventHub),
+			agentflow.NewSlogEventSink(logger),
+		),
 	)
 
 	queue := agentflow.NewInMemoryJobQueue()
 	opts = append(opts,
 		agentflow.WithJobQueue(queue),
+		agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
 		agentflow.WithHITLTokenSecret([]byte("dev-secret"), os.Stderr),
 		agentflow.WithRecorder(recorder),
 		agentflow.WithEventSink(eventSink),
@@ -86,6 +92,19 @@ func main() {
 		log.Fatal(err)
 	}
 
+	dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+		Store:     eventStore,
+		Hub:       eventHub,
+		Framework: fw,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/", handler)
+	mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
+
 	jobHandler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
 	if err != nil {
 		log.Fatal(err)
@@ -98,7 +117,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	addr := "127.0.0.1:8080"
+	addr := envOr("AGENT_HTTP_ADDR", "127.0.0.1:7070")
 
 	go func() {
 		if err := worker.Run(ctx); err != nil && ctx.Err() == nil {
@@ -121,9 +140,9 @@ func main() {
 		}
 	}()
 
-	server := &http.Server{Addr: addr, Handler: handler}
+	server := &http.Server{Addr: addr, Handler: mux}
 	go func() {
-		fmt.Printf("HTTP server listening on %s (metrics at /metrics)\n", addr)
+		fmt.Printf("HTTP server listening on %s (metrics at /metrics, studio at /observability/)\n", addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("server stopped: %v", err)
 			cancel()
@@ -134,4 +153,11 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = server.Shutdown(shutdownCtx)
+}
+
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }

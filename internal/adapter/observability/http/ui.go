@@ -172,11 +172,23 @@ const indexHTML = `<!doctype html>
     .graph-node.active rect { stroke: var(--accent); stroke-width: 2.5; fill: #e7f6f3; }
     .graph-node.done rect { fill: #ecfdf5; stroke: #34d399; }
     .graph-node.current rect { fill: #fff5e5; stroke: var(--accent-2); stroke-width: 2.5; }
+    .graph-node.subgraph-active rect { stroke: #2563eb; stroke-width: 2.5; fill: #eff6ff; }
+    .graph-node.not-resumable rect { stroke-dasharray: 4 3; }
     .graph-node text { font-size: 11px; fill: #1e2732; pointer-events: none; }
     .graph-edge { stroke: #94a3b8; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
     .graph-sub { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 12px; }
     .graph-sub-title { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 8px; }
-    .time-travel { display: flex; gap: 8px; padding: 0 12px 12px; }
+    .time-travel { display: flex; gap: 8px; padding: 0 12px 12px; flex-wrap: wrap; align-items: center; }
+    .checkpoint-list { display: grid; gap: 8px; }
+    .checkpoint-item {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      cursor: pointer;
+      background: #fff;
+    }
+    .checkpoint-item:hover, .checkpoint-item.active { background: #f0f7f6; border-color: #b8ded7; }
+    .checkpoint-item .title { font-size: 13px; font-weight: 700; }
     @media (max-width: 1080px) {
       main { grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr) minmax(260px, 40vh); }
       .detail { grid-column: 1 / -1; }
@@ -228,6 +240,7 @@ const indexHTML = `<!doctype html>
       <div class="graph-wrap" id="graphView" hidden><div class="empty">Graph export requires Framework wiring</div></div>
       <div class="time-travel" id="timeTravelBar" hidden>
         <button class="primary" id="resumeStepButton" disabled>Resume from selected node</button>
+        <button id="resumeCheckpointButton" disabled>Resume from checkpoint</button>
         <span class="meta" id="selectedNodeLabel">No node selected</span>
       </div>
     </section>
@@ -237,7 +250,7 @@ const indexHTML = `<!doctype html>
     </section>
   </main>
   <script>
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, steps: null, selectedNode: '', graphEnabled: false, resumeEnabled: false };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {} };
     const $ = (id) => document.getElementById(id);
     const fmtTime = (value) => value ? new Date(value).toLocaleTimeString() : '-';
     const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -254,8 +267,21 @@ const indexHTML = `<!doctype html>
         if (!res.ok) return;
         state.graph = await res.json();
         state.graphEnabled = true;
+        state.nodeMeta = buildNodeMeta(state.graph);
         $('timeTravelBar').hidden = false;
       } catch (_) {}
+    }
+    async function loadCheckpoints(runID) {
+      state.checkpoints = null;
+      state.selectedCheckpoint = null;
+      try {
+        const res = await fetch('api/runs/' + encodeURIComponent(runID) + '/checkpoints');
+        if (!res.ok) return;
+        state.checkpoints = await res.json();
+        state.checkpointEnabled = true;
+      } catch (_) {}
+      updateTimeTravelBar();
+      renderDetails();
     }
     async function loadSteps(runID) {
       state.steps = null;
@@ -276,6 +302,33 @@ const indexHTML = `<!doctype html>
       $('events').hidden = view !== 'timeline';
       $('graphView').hidden = view !== 'graph';
       if (view === 'graph') renderGraph();
+    }
+    function buildNodeMeta(graph) {
+      const meta = {};
+      const ingest = (view) => {
+        (view && view.nodes || []).forEach((node) => { meta[node.id] = node; });
+      };
+      if (graph) {
+        ingest(graph.workflow);
+        Object.values(graph.workflows || {}).forEach(ingest);
+      }
+      return meta;
+    }
+    function syncSubgraphOverlay() {
+      state.activeSubgraphs = {};
+      state.events.forEach((record) => {
+        const payload = record.event.payload || {};
+        let body = payload;
+        if (typeof payload === 'string') {
+          try { body = JSON.parse(payload); } catch (_) { body = {}; }
+        }
+        if (record.event.type === 'SubgraphStarted' && body.node_id) {
+          state.activeSubgraphs[body.node_id] = body.subgraph_ref || true;
+        }
+        if (record.event.type === 'SubgraphCompleted' && body.node_id) {
+          delete state.activeSubgraphs[body.node_id];
+        }
+      });
     }
     function layoutGraph(view) {
       const nodes = view.nodes || [];
@@ -310,6 +363,7 @@ const indexHTML = `<!doctype html>
         container.innerHTML = '<div class="empty">No workflow graph</div>';
         return;
       }
+      syncSubgraphOverlay();
       const { nodes, edges, positions } = layoutGraph(view);
       const done = stepNodeIDs();
       const current = state.steps && state.steps.current_node_id ? state.steps.current_node_id : '';
@@ -330,6 +384,8 @@ const indexHTML = `<!doctype html>
         if (state.selectedNode === node.id) classes.push('active');
         if (done.has(node.id)) classes.push('done');
         if (current === node.id) classes.push('current');
+        if (state.activeSubgraphs[node.id]) classes.push('subgraph-active');
+        if (node.resumable === false) classes.push('not-resumable');
         html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
         html += '<rect width="120" height="48" rx="8"></rect>';
         html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text>';
@@ -370,8 +426,33 @@ const indexHTML = `<!doctype html>
       });
     }
     function updateTimeTravelBar() {
-      $('selectedNodeLabel').textContent = state.selectedNode ? ('Node: ' + state.selectedNode) : 'No node selected';
-      $('resumeStepButton').disabled = !(state.resumeEnabled && state.selectedNode && state.selectedRun);
+      const meta = state.nodeMeta[state.selectedNode] || {};
+      const hint = meta.resume_hint || (meta.resumable === false ? 'This node cannot be resumed from step' : '');
+      $('selectedNodeLabel').textContent = state.selectedNode
+        ? ('Node: ' + state.selectedNode + (hint ? ' — ' + hint : ''))
+        : 'No node selected';
+      $('resumeStepButton').disabled = !(state.resumeEnabled && state.selectedNode && state.selectedRun && meta.resumable !== false);
+      $('resumeCheckpointButton').disabled = !(state.checkpointEnabled && state.selectedCheckpoint && state.selectedRun);
+    }
+    async function resumeFromCheckpoint() {
+      if (!state.selectedRun || !state.selectedCheckpoint) return;
+      $('resumeCheckpointButton').disabled = true;
+      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/resume-from-checkpoint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: state.selectedCheckpoint.version }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        alert(body.error || 'resume failed');
+        updateTimeTravelBar();
+        return;
+      }
+      await loadSteps(state.selectedRun);
+      await loadCheckpoints(state.selectedRun);
+      await loadRuns();
+      setView('timeline');
+      await selectRun(state.selectedRun);
     }
     async function resumeFromStep() {
       if (!state.selectedRun || !state.selectedNode) return;
@@ -408,6 +489,7 @@ const indexHTML = `<!doctype html>
       const body = await res.json();
       state.events = body.events || [];
       await loadSteps(runID);
+      await loadCheckpoints(runID);
       renderRuns();
       renderEvents();
       renderDetails();
@@ -426,6 +508,7 @@ const indexHTML = `<!doctype html>
         if (record.event.type.includes('Step') || record.event.type.includes('Subgraph')) {
           loadSteps(state.selectedRun);
         }
+        if (record.event.type.includes('Subgraph')) renderGraph();
       });
       state.stream.onerror = () => { closeStream(); setTimeout(() => state.live && openStream(), 2000); };
     }
@@ -454,30 +537,69 @@ const indexHTML = `<!doctype html>
         '</div>').join('') : '<div class="empty">No events</div>';
       document.querySelectorAll('.event').forEach((node) => node.onclick = () => {
         state.selectedEvent = state.events.find((record) => String(record.id) === node.dataset.id);
+        state.selectedCheckpoint = null;
         renderEvents();
         renderDetails();
+        updateTimeTravelBar();
       });
     }
     function renderDetails() {
       const record = state.selectedEvent;
-      $('detailType').textContent = record ? record.event.type : 'Empty';
-      if (!record) {
-        $('details').innerHTML = '<div class="empty">Select an event</div>';
+      $('detailType').textContent = record ? record.event.type : (state.selectedCheckpoint ? 'Checkpoint' : 'Run');
+      if (record) {
+        $('details').innerHTML =
+          '<div class="kv"><span>Run</span><span>' + escapeHTML(record.event.run_id) + '</span></div>' +
+          '<div class="kv"><span>Scenario</span><span>' + escapeHTML(record.event.scenario_name || '-') + '</span></div>' +
+          '<div class="kv"><span>Sequence</span><span>' + record.sequence + '</span></div>' +
+          '<div class="kv"><span>Occurred</span><span>' + escapeHTML(record.event.timestamp) + '</span></div>' +
+          '<div class="kv"><span>Stored</span><span>' + escapeHTML(record.created_at) + '</span></div>' +
+          '<pre>' + escapeHTML(JSON.stringify(record.event.payload || {}, null, 2)) + '</pre>';
         return;
       }
-      $('details').innerHTML =
-        '<div class="kv"><span>Run</span><span>' + escapeHTML(record.event.run_id) + '</span></div>' +
-        '<div class="kv"><span>Scenario</span><span>' + escapeHTML(record.event.scenario_name || '-') + '</span></div>' +
-        '<div class="kv"><span>Sequence</span><span>' + record.sequence + '</span></div>' +
-        '<div class="kv"><span>Occurred</span><span>' + escapeHTML(record.event.timestamp) + '</span></div>' +
-        '<div class="kv"><span>Stored</span><span>' + escapeHTML(record.created_at) + '</span></div>' +
-        '<pre>' + escapeHTML(JSON.stringify(record.event.payload || {}, null, 2)) + '</pre>';
+      let html = '';
+      if (state.selectedRun) {
+        html += '<div class="kv"><span>Run</span><span>' + escapeHTML(state.selectedRun) + '</span></div>';
+      }
+      if (state.selectedCheckpoint) {
+        const cp = state.selectedCheckpoint;
+        html += '<div class="kv"><span>Version</span><span>v' + cp.version + '</span></div>';
+        html += '<div class="kv"><span>Status</span><span>' + escapeHTML(cp.status) + '</span></div>';
+        html += '<div class="kv"><span>Steps</span><span>' + cp.step_count + '</span></div>';
+        html += '<div class="kv"><span>Recorded</span><span>' + fmtTime(cp.recorded_at) + '</span></div>';
+        if (cp.current_node_id) {
+          html += '<div class="kv"><span>Current</span><span>' + escapeHTML(cp.current_node_id) + '</span></div>';
+        }
+      }
+      if (state.checkpointEnabled && state.checkpoints && state.checkpoints.checkpoints) {
+        const items = state.checkpoints.checkpoints;
+        html += '<div class="panel-title" style="margin-top:8px;">Checkpoint history</div>';
+        html += items.length ? '<div class="checkpoint-list">' + items.map((cp) =>
+          '<div class="checkpoint-item ' + (state.selectedCheckpoint && state.selectedCheckpoint.version === cp.version ? 'active' : '') + '" data-version="' + cp.version + '">' +
+            '<div class="title">v' + cp.version + ' · ' + escapeHTML(cp.status) + '</div>' +
+            '<div class="meta"><span>' + cp.step_count + ' steps</span><span>' + fmtTime(cp.recorded_at) + '</span></div>' +
+          '</div>').join('') + '</div>' : '<div class="empty">No checkpoints recorded</div>';
+      } else if (state.selectedRun) {
+        html += '<div class="empty">Checkpoint history requires WithCheckpointHistory wiring</div>';
+      }
+      if (!html) {
+        html = '<div class="empty">Select an event or checkpoint</div>';
+      }
+      $('details').innerHTML = html;
+      document.querySelectorAll('.checkpoint-item').forEach((node) => node.onclick = async () => {
+        const version = Number(node.dataset.version);
+        state.selectedEvent = null;
+        state.selectedCheckpoint = (state.checkpoints.checkpoints || []).find((cp) => cp.version === version) || null;
+        renderEvents();
+        renderDetails();
+        updateTimeTravelBar();
+      });
     }
     $('refreshButton').onclick = () => loadRuns();
     $('statusFilter').onchange = () => loadRuns();
     $('timelineTab').onclick = () => setView('timeline');
     $('graphTab').onclick = () => setView('graph');
     $('resumeStepButton').onclick = () => resumeFromStep();
+    $('resumeCheckpointButton').onclick = () => resumeFromCheckpoint();
     $('liveButton').onclick = () => {
       state.live = !state.live;
       $('liveButton').textContent = state.live ? 'Live on' : 'Live off';

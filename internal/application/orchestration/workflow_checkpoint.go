@@ -66,6 +66,45 @@ func alreadyDoneFromSnapshot(scenario core.Scenario, snapshot runstate.RunSnapsh
 	return done
 }
 
+// RestoreSnapshotAndRun replaces the current run snapshot with a historical
+// revision and reruns the workflow from that restored state forward.
+func (r *WorkflowRunner) RestoreSnapshotAndRun(ctx context.Context, scenario core.Scenario, runID string, restored runstate.RunSnapshot) error {
+	if scenario.Orchestration.Workflow == nil {
+		return fmt.Errorf("orchestration: workflow is required")
+	}
+	if r.runs == nil {
+		return fmt.Errorf("orchestration: run-state repository is required for workflow restore")
+	}
+
+	current, err := runstate.LoadAuthorized(ctx, r.runs, runID)
+	if err != nil {
+		return err
+	}
+	switch current.Status {
+	case runstate.RunStatusRunning, runstate.RunStatusPaused, runstate.RunStatusCompleted, runstate.RunStatusFailed:
+	default:
+		return fmt.Errorf("orchestration: workflow restore requires running, paused, completed, or failed snapshot, got %s", current.Status)
+	}
+
+	snapshot := restored
+	snapshot.RunID = runID
+	snapshot.Version = current.Version
+	snapshot.Status = runstate.RunStatusRunning
+	snapshot.CurrentNodeID = restored.CurrentNodeID
+	snapshot.PendingGate = nil
+	if snapshot.StepOutputs == nil {
+		snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
+	}
+	delete(snapshot.StepOutputs, "final")
+	if err := r.runs.Save(ctx, &snapshot, current.Version); err != nil {
+		return err
+	}
+
+	ctx, cancel := workflowTimeout(ctx, scenario.Runtime.Timeout)
+	defer cancel()
+	return r.run(ctx, scenario, runID, alreadyDoneFromSnapshot(scenario, snapshot))
+}
+
 // ResumeFromStep truncates outputs for the node and its downstream steps, then
 // reruns the workflow from that node forward.
 func (r *WorkflowRunner) ResumeFromStep(ctx context.Context, scenario core.Scenario, runID, nodeID string) error {

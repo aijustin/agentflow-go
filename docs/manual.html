@@ -736,6 +736,7 @@
           <li><a href="#rag">RAG 与知识库</a></li>
           <li><a href="#enterprise">企业能力</a></li>
           <li><a href="#events-async">事件与异步 API</a></li>
+          <li><a href="studio-roadmap.md">Studio 路线图</a></li>
           <li><a href="#observability">可观测面板</a></li>
           <li><a href="#deployment">宿主部署与发布</a></li>
           <li><a href="library-integration.md">库集成文档 (Markdown)</a></li>
@@ -854,7 +855,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           <tbody>
             <tr><td><code>examples/go/minimal</code></td><td>进程内最小嵌入</td><td><code>go run ./examples/go/minimal/main.go</code></td></tr>
             <tr><td><code>examples/go/postgres</code></td><td>Postgres 持久化接线</td><td><code>go run ./examples/go/postgres/main.go</code></td></tr>
-            <tr><td><code>examples/go/http-worker</code></td><td>HTTP Handler + 异步 Worker</td><td><code>go run ./examples/go/http-worker/main.go</code></td></tr>
+            <tr><td><code>examples/go/http-worker</code></td><td>HTTP Handler + 异步 Worker + Studio（默认 <code>127.0.0.1:7070</code>）</td><td><code>go run ./examples/go/http-worker/main.go</code></td></tr>
             <tr><td><code>examples/go/hitl-resume</code></td><td>HITL 暂停与续跑</td><td><code>go run ./examples/go/hitl-resume/main.go</code></td></tr>
             <tr><td><code>examples/go/event-trigger</code></td><td>事件 trigger 驱动 Run</td><td><code>go run ./examples/go/event-trigger/main.go</code></td></tr>
             <tr><td><code>examples/go/tier-memory</code></td><td>进程内 tier 记忆最小示例</td><td><code>go run ./examples/go/tier-memory/main.go</code></td></tr>
@@ -1250,6 +1251,7 @@ fw, err := agentflow.New(
   agentflow.ObservabilityHTTPHandlerConfig{
     Store:          eventStore,
     Hub:            eventHub,
+    Framework:      fw,
     AuthMiddleware: authMiddleware,
   })
 if err != nil {
@@ -1264,6 +1266,14 @@ mux.Handle("/observability/",
           <li>GET /api/runs</li>
           <li>GET /api/runs/{run_id}/events</li>
           <li>GET /api/runs/{run_id}/stream</li>
+          <li>GET /api/graph（需 Framework）</li>
+          <li>GET /api/runs/{run_id}/steps</li>
+          <li>POST /api/runs/{run_id}/resume-from-step</li>
+          <li>GET /api/runs/{run_id}/checkpoints</li>
+          <li>POST /api/runs/{run_id}/resume-from-checkpoint</li>
+          <li>Graph 标签页 + Time Travel + Checkpoint 历史链</li>
+          <li>生产 API：GET/POST /v1/runs/{run_id}/…</li>
+          <li>WithCheckpointHistory + http-worker 示例</li>
           <li>支持 SkipSchemaSetup</li>
           <li>事件 payload 需先脱敏</li>
         </ul>
@@ -1281,7 +1291,9 @@ mux.Handle("/observability/",
           <div class="panel">
             <h4>可运行示例</h4>
             <p>完整路径与命令见 <a href="#examples">示例路径对照表</a>；复制 <code>examples/go/</code> 到你的服务即可。</p>
-            <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/http-worker/main.go</code></pre></div>
+            <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/http-worker/main.go
+# Studio: http://127.0.0.1:7070/observability/
+# 端口可通过 AGENT_HTTP_ADDR 覆盖</code></pre></div>
           </div>
           <div class="panel">
             <h4>发布检查</h4>

@@ -43,10 +43,10 @@ go run ../go/tier-worker/main.go
 Enqueue a run (async worker processes `run` and subsequent `memory.reconcile` jobs):
 
 ```sh
-curl -s -X POST http://127.0.0.1:8080/v1/jobs/runs \
+curl -s -X POST http://127.0.0.1:7070/v1/jobs/runs \
   -H 'Content-Type: application/json' \
   -d '{"agent":"assistant","prompt":"remember tiered facts about billing"}'
-curl -s http://127.0.0.1:8080/metrics | grep 'agentflow_memory_tier\|agentflow_queue'
+curl -s http://127.0.0.1:7070/metrics | grep 'agentflow_memory_tier\|agentflow_queue'
 ```
 
 Without `AGENT_POSTGRES_DSN`, tier-worker falls back to in-memory queue and the default in-memory tier store from the builder stack.
@@ -61,8 +61,8 @@ Apply migrations to your cluster Postgres before rolling out the worker.
 ## Health and metrics
 
 ```sh
-curl -s http://127.0.0.1:8080/healthz
-curl -s http://127.0.0.1:8080/metrics | head
+curl -s http://127.0.0.1:7070/healthz
+curl -s http://127.0.0.1:7070/metrics | head
 ```
 
 ## Environment variables
@@ -71,7 +71,7 @@ curl -s http://127.0.0.1:8080/metrics | head
 |----------|---------|---------|
 | `AGENT_POSTGRES_DSN` | `postgres://agentflow:agentflow@127.0.0.1:5432/agentflow?sslmode=disable` | Postgres adapters, tier warm store, job queue |
 | `AGENT_TIER_COLD_DIR` | `/var/lib/agentflow/tier-cold` | tier-worker cold tier (gzip JSON) |
-| `AGENT_HTTP_ADDR` | `127.0.0.1:8080` | tier-worker / http-worker bind address |
+| `AGENT_HTTP_ADDR` | `127.0.0.1:7070` | tier-worker / http-worker bind address |
 | `AGENT_REDIS_ADDR` | `127.0.0.1:6379` | Redis run-state / locker |
 | `AGENT_S3_ENDPOINT` | `http://127.0.0.1:9000` | Blob store |
 | `AGENT_S3_ACCESS_KEY` | `minioadmin` | Blob store |

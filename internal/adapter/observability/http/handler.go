@@ -20,6 +20,9 @@ type Config struct {
 	Steps          StepsLister
 	Graph          GraphExporter
 	Resume         StepResumer
+	History        CheckpointLister
+	Checkpoints    CheckpointLoader
+	Restore        CheckpointResumer
 }
 
 type StepsLister interface {
@@ -30,18 +33,33 @@ type StepResumer interface {
 	ResumeFromStep(ctx context.Context, runID, nodeID string) (any, error)
 }
 
+type CheckpointLister interface {
+	ListRunCheckpoints(ctx context.Context, runID string, limit int) (any, error)
+}
+
+type CheckpointLoader interface {
+	GetRunCheckpoint(ctx context.Context, runID string, version int64) (any, error)
+}
+
+type CheckpointResumer interface {
+	ResumeFromCheckpoint(ctx context.Context, runID string, version int64) (any, error)
+}
+
 type GraphExporter interface {
 	ExportScenarioGraph() any
 }
 
 type Handler struct {
-	store   obspkg.EventStore
-	hub     *obspkg.EventHub
-	steps   StepsLister
-	graph   GraphExporter
-	resume  StepResumer
-	mux     *nethttp.ServeMux
-	handler nethttp.Handler
+	store      obspkg.EventStore
+	hub        *obspkg.EventHub
+	steps      StepsLister
+	graph      GraphExporter
+	resume     StepResumer
+	history    CheckpointLister
+	checkpoint CheckpointLoader
+	restore    CheckpointResumer
+	mux        *nethttp.ServeMux
+	handler    nethttp.Handler
 }
 
 func NewHandler(config Config) (*Handler, error) {
@@ -49,12 +67,15 @@ func NewHandler(config Config) (*Handler, error) {
 		return nil, fmt.Errorf("observability http: event store is nil")
 	}
 	handler := &Handler{
-		store:  config.Store,
-		hub:    config.Hub,
-		steps:  config.Steps,
-		graph:  config.Graph,
-		resume: config.Resume,
-		mux:    nethttp.NewServeMux(),
+		store:      config.Store,
+		hub:        config.Hub,
+		steps:      config.Steps,
+		graph:      config.Graph,
+		resume:     config.Resume,
+		history:    config.History,
+		checkpoint: config.Checkpoints,
+		restore:    config.Restore,
+		mux:        nethttp.NewServeMux(),
 	}
 	handler.routes()
 	handler.handler = handler.mux
@@ -120,20 +141,26 @@ func (handler *Handler) handleRuns(w nethttp.ResponseWriter, r *nethttp.Request)
 }
 
 func (handler *Handler) handleRunResource(w nethttp.ResponseWriter, r *nethttp.Request) {
-	runID, action, ok := splitRunResource(r.URL.Path)
+	runID, segments, ok := parseRunResource(r.URL.Path)
 	if !ok {
 		nethttp.NotFound(w, r)
 		return
 	}
-	switch action {
-	case "events":
+	switch {
+	case len(segments) == 1 && segments[0] == "events":
 		handler.handleEvents(w, r, runID)
-	case "stream":
+	case len(segments) == 1 && segments[0] == "stream":
 		handler.handleStream(w, r, runID)
-	case "steps":
+	case len(segments) == 1 && segments[0] == "steps":
 		handler.handleSteps(w, r, runID)
-	case "resume-from-step":
+	case len(segments) == 1 && segments[0] == "resume-from-step":
 		handler.handleResumeFromStep(w, r, runID)
+	case len(segments) == 1 && segments[0] == "checkpoints":
+		handler.handleCheckpoints(w, r, runID)
+	case len(segments) == 2 && segments[0] == "checkpoints":
+		handler.handleCheckpointVersion(w, r, runID, segments[1])
+	case len(segments) == 1 && segments[0] == "resume-from-checkpoint":
+		handler.handleResumeFromCheckpoint(w, r, runID)
 	default:
 		nethttp.NotFound(w, r)
 	}
@@ -178,6 +205,74 @@ func (handler *Handler) handleResumeFromStep(w nethttp.ResponseWriter, r *nethtt
 		return
 	}
 	result, err := handler.resume.ResumeFromStep(r.Context(), runID, body.NodeID)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleCheckpoints(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	if handler.history == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("checkpoint history is not configured"))
+		return
+	}
+	limit := parseInt(r.URL.Query().Get("limit"), 0)
+	result, err := handler.history.ListRunCheckpoints(r.Context(), runID, limit)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleCheckpointVersion(w nethttp.ResponseWriter, r *nethttp.Request, runID, versionRaw string) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	if handler.checkpoint == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("checkpoint loading is not configured"))
+		return
+	}
+	version, err := strconv.ParseInt(strings.TrimSpace(versionRaw), 10, 64)
+	if err != nil || version <= 0 {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("version must be a positive integer"))
+		return
+	}
+	result, err := handler.checkpoint.GetRunCheckpoint(r.Context(), runID, version)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleResumeFromCheckpoint(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.restore == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("resume-from-checkpoint is not configured"))
+		return
+	}
+	var body struct {
+		Version int64 `json:"version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("decode body: %w", err))
+		return
+	}
+	if body.Version <= 0 {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("version must be a positive integer"))
+		return
+	}
+	result, err := handler.restore.ResumeFromCheckpoint(r.Context(), runID, body.Version)
 	if err != nil {
 		writeError(w, nethttp.StatusBadRequest, err)
 		return
@@ -269,17 +364,17 @@ func (handler *Handler) writeBacklog(w nethttp.ResponseWriter, flusher nethttp.F
 	return true
 }
 
-func splitRunResource(path string) (string, string, bool) {
+func parseRunResource(path string) (string, []string, bool) {
 	suffix := strings.TrimPrefix(path, "/api/runs/")
 	parts := strings.Split(strings.Trim(suffix, "/"), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", false
+	if len(parts) == 0 || parts[0] == "" {
+		return "", nil, false
 	}
 	runID, err := url.PathUnescape(parts[0])
 	if err != nil || runID == "" {
-		return "", "", false
+		return "", nil, false
 	}
-	return runID, parts[1], true
+	return runID, parts[1:], true
 }
 
 func eventQueryFromURL(values url.Values) obspkg.EventQuery {

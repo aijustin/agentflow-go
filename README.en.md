@@ -556,16 +556,18 @@ See [docs/troubleshooting.md](docs/troubleshooting.md) for common errors and fix
 
 ## HTTP surfaces
 
-Mount library handlers in your own HTTP server. The example listens on `127.0.0.1:8080`:
+Mount library handlers in your own HTTP server. The example listens on `127.0.0.1:7070`:
 
 ```sh
 go run ./examples/go/http-worker/main.go
 ```
 
+Default bind address is `127.0.0.1:7070` (override with `AGENT_HTTP_ADDR`); Studio dashboard: `http://127.0.0.1:7070/observability/`.
+
 Production HITL continuation uses `NewProductionHTTPHandler` or `NewHumanHTTPHandler` at `POST /v1/hitl/resume`. Set `"continue": true` to call `ResumeAndContinue`:
 
 ```sh
-curl -X POST http://localhost:8080/v1/hitl/resume \
+curl -X POST http://localhost:7070/v1/hitl/resume \
   -H 'Content-Type: application/json' \
   -d '{
     "token": "'"$TOKEN"'",

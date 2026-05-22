@@ -122,9 +122,11 @@ func TestHandlerStreamsRuntimeEvents(t *testing.T) {
 func TestHandlerStudioEndpoints(t *testing.T) {
 	store := obsinmem.NewStore()
 	handler, err := NewHandler(Config{
-		Store: store,
-		Graph: graphStub{value: map[string]any{"name": "demo"}},
-		Steps: stepsStub{value: map[string]any{"run_id": "run-1", "steps": []any{}}},
+		Store:       store,
+		Graph:       graphStub{value: map[string]any{"name": "demo"}},
+		Steps:       stepsStub{value: map[string]any{"run_id": "run-1", "steps": []any{}}},
+		History:     checkpointStub{value: map[string]any{"run_id": "run-1", "checkpoints": []any{}}},
+		Checkpoints: checkpointStub{value: map[string]any{"run_id": "run-1", "version": 2}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +141,16 @@ func TestHandlerStudioEndpoints(t *testing.T) {
 	if steps.Code != http.StatusOK {
 		t.Fatalf("steps code=%d", steps.Code)
 	}
+	checkpoints := httptest.NewRecorder()
+	handler.ServeHTTP(checkpoints, httptest.NewRequest(http.MethodGet, "/api/runs/run-1/checkpoints", nil))
+	if checkpoints.Code != http.StatusOK {
+		t.Fatalf("checkpoints code=%d", checkpoints.Code)
+	}
+	version := httptest.NewRecorder()
+	handler.ServeHTTP(version, httptest.NewRequest(http.MethodGet, "/api/runs/run-1/checkpoints/2", nil))
+	if version.Code != http.StatusOK {
+		t.Fatalf("checkpoint version code=%d", version.Code)
+	}
 }
 
 type graphStub struct{ value any }
@@ -148,6 +160,20 @@ func (s graphStub) ExportScenarioGraph() any { return s.value }
 type stepsStub struct{ value any }
 
 func (s stepsStub) ListRunSteps(context.Context, string) (any, error) { return s.value, nil }
+
+type checkpointStub struct{ value any }
+
+func (s checkpointStub) ListRunCheckpoints(context.Context, string, int) (any, error) {
+	return s.value, nil
+}
+
+func (s checkpointStub) GetRunCheckpoint(context.Context, string, int64) (any, error) {
+	return s.value, nil
+}
+
+func (s checkpointStub) ResumeFromCheckpoint(context.Context, string, int64) (any, error) {
+	return s.value, nil
+}
 
 func TestNewHandlerValidatesConfig(t *testing.T) {
 	if _, err := NewHandler(Config{}); err == nil {

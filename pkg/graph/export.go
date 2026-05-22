@@ -23,10 +23,12 @@ type GraphView struct {
 
 // GraphNode is a workflow node for visualization.
 type GraphNode struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Ref       string `json:"ref,omitempty"`
-	Condition string `json:"condition,omitempty"`
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Ref        string `json:"ref,omitempty"`
+	Condition  string `json:"condition,omitempty"`
+	Resumable  bool   `json:"resumable"`
+	ResumeHint string `json:"resume_hint,omitempty"`
 }
 
 // GraphEdge connects two workflow nodes.
@@ -62,11 +64,14 @@ func exportWorkflow(id string, workflow core.Workflow) GraphView {
 		Edges: make([]GraphEdge, 0, len(workflow.Edges)),
 	}
 	for _, node := range workflow.Nodes {
+		resumable, hint := nodeResumeMeta(workflow, node)
 		view.Nodes = append(view.Nodes, GraphNode{
-			ID:        node.ID,
-			Kind:      string(node.Kind),
-			Ref:       node.Ref,
-			Condition: strings.TrimSpace(node.Condition),
+			ID:         node.ID,
+			Kind:       string(node.Kind),
+			Ref:        node.Ref,
+			Condition:  strings.TrimSpace(node.Condition),
+			Resumable:  resumable,
+			ResumeHint: hint,
 		})
 	}
 	for _, edge := range workflow.Edges {

@@ -6,7 +6,7 @@ image:
   pullPolicy: IfNotPresent
 
 service:
-  port: 8080
+  port: 7070
 
 postgres:
   secretName: agentflow-postgres

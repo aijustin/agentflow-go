@@ -28,6 +28,7 @@ import (
 	runstatefile "github.com/aijustin/agentflow-go/internal/adapter/runstate/file"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	runstatepostgres "github.com/aijustin/agentflow-go/internal/adapter/runstate/postgres"
+	runstaterecording "github.com/aijustin/agentflow-go/internal/adapter/runstate/recording"
 	runstateredis "github.com/aijustin/agentflow-go/internal/adapter/runstate/redis"
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
@@ -62,10 +63,11 @@ type Plan struct {
 
 // Framework is an embeddable runtime wrapper for one scenario.
 type Framework struct {
-	scenario    core.Scenario
-	engine      *appexec.Engine
-	runs        runstate.Repository
-	blobs       runstate.BlobStore
+	scenario          core.Scenario
+	engine            *appexec.Engine
+	runs              runstate.Repository
+	checkpointHistory runstate.CheckpointHistory
+	blobs             runstate.BlobStore
 	events      core.EventSink
 	gate        core.HumanGate
 	tokenSigner *runstate.TokenSigner
@@ -83,9 +85,10 @@ type Framework struct {
 }
 
 type options struct {
-	llm         llm.Gateway
-	runs        runstate.Repository
-	blobs       runstate.BlobStore
+	llm               llm.Gateway
+	runs              runstate.Repository
+	checkpointHistory runstate.CheckpointHistory
+	blobs             runstate.BlobStore
 	events      core.EventSink
 	gate        core.HumanGate
 	tools       map[string]core.ToolExecutor
@@ -261,6 +264,9 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 			return nil, err
 		}
 	}
+	if cfg.checkpointHistory != nil {
+		cfg.runs = &runstaterecording.Repository{Inner: cfg.runs, History: cfg.checkpointHistory}
+	}
 	if cfg.requireLLM {
 		autoMemory := make(map[string]bool)
 		for name, ref := range scenario.Memories {
@@ -350,10 +356,11 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		return nil, err
 	}
 	return &Framework{
-		scenario:    scenario,
-		engine:      engine,
-		runs:        cfg.runs,
-		blobs:       cfg.blobs,
+		scenario:          scenario,
+		engine:            engine,
+		runs:              cfg.runs,
+		checkpointHistory: cfg.checkpointHistory,
+		blobs:             cfg.blobs,
 		events:      cfg.events,
 		gate:        cfg.gate,
 		tokenSigner: tokenSigner,
@@ -386,6 +393,17 @@ func WithRunStateRepository(repo runstate.Repository) Option {
 			return fmt.Errorf("agentflow: run-state repository is nil")
 		}
 		o.runs = repo
+		return nil
+	}
+}
+
+// WithCheckpointHistory wires append-only run snapshot history for time-travel.
+func WithCheckpointHistory(history runstate.CheckpointHistory) Option {
+	return func(o *options) error {
+		if history == nil {
+			return fmt.Errorf("agentflow: checkpoint history is nil")
+		}
+		o.checkpointHistory = history
 		return nil
 	}
 }
@@ -880,6 +898,11 @@ func withScenarioTimeout(ctx context.Context, timeout time.Duration) (context.Co
 // repository used by New.
 func NewInMemoryRunStateRepository() runstate.Repository {
 	return runstateinmem.NewRepository()
+}
+
+// NewInMemoryCheckpointHistory creates an append-only in-memory checkpoint history store.
+func NewInMemoryCheckpointHistory() runstate.CheckpointHistory {
+	return runstateinmem.NewCheckpointHistory()
 }
 
 // NewInMemoryBlobStore creates the default in-memory blob store used by New.

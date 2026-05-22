@@ -49,6 +49,14 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 			Framework:    config.Framework,
 			MaxBodyBytes: config.MaxBodyBytes,
 		})
+		checkpointHandler, err := NewCheckpointHTTPHandler(CheckpointHTTPHandlerConfig{
+			Framework:    config.Framework,
+			MaxBodyBytes: config.MaxBodyBytes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		apiConfig.CheckpointHandler = checkpointHandler
 	}
 	return apihttp.NewHandler(apiConfig)
 }

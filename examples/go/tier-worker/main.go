@@ -116,7 +116,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	addr := envOr("AGENT_HTTP_ADDR", "127.0.0.1:8080")
+	addr := envOr("AGENT_HTTP_ADDR", "127.0.0.1:7070")
 	go func() {
 		if err := worker.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("worker stopped: %v", err)

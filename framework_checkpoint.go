@@ -14,8 +14,8 @@ import (
 
 // RunStep describes one persisted workflow step output.
 type RunStep struct {
-	NodeID string                  `json:"node_id"`
-	Output runstate.StepOutputRef  `json:"output"`
+	NodeID string                 `json:"node_id"`
+	Output runstate.StepOutputRef `json:"output"`
 }
 
 // ListRunStepsResult summarizes checkpointed workflow steps for a run.
@@ -25,6 +25,12 @@ type ListRunStepsResult struct {
 	Status        runstate.RunStatus `json:"status"`
 	CurrentNodeID string             `json:"current_node_id,omitempty"`
 	Steps         []RunStep          `json:"steps"`
+}
+
+// ListRunCheckpointsResult summarizes append-only snapshot revisions for a run.
+type ListRunCheckpointsResult struct {
+	RunID       string                      `json:"run_id"`
+	Checkpoints []runstate.CheckpointSummary `json:"checkpoints"`
 }
 
 // ListRunSteps returns persisted step outputs and the current snapshot version.
@@ -72,6 +78,86 @@ func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (R
 
 	runner := f.newWorkflowRunner()
 	if err := runner.ResumeFromStep(ctx, f.scenario, runID, nodeID); err != nil {
+		var paused orchestration.WorkflowPausedError
+		if errors.As(err, &paused) {
+			return RunResult{RunID: runID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
+		}
+		f.markWorkflowFailed(ctx, runID, err)
+		return RunResult{}, err
+	}
+
+	loaded, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if f.scenario.Orchestration.Mode == core.OrchestrationHybrid {
+		if loaded.Variables == nil {
+			loaded.Variables = make(map[string]json.RawMessage)
+		}
+		loaded.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow))
+	}
+	loaded.Status = runstate.RunStatusCompleted
+	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
+		return RunResult{}, err
+	}
+	f.emit(ctx, core.EventRunCompleted, runID, nil)
+	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: "fixed workflow completed"}, nil
+}
+
+// ListRunCheckpoints returns append-only snapshot revisions recorded for a run.
+func (f *Framework) ListRunCheckpoints(ctx context.Context, runID string, limit int) (ListRunCheckpointsResult, error) {
+	if f.checkpointHistory == nil {
+		return ListRunCheckpointsResult{}, fmt.Errorf("agentflow: checkpoint history is not configured")
+	}
+	if f.runs == nil {
+		return ListRunCheckpointsResult{}, fmt.Errorf("agentflow: run-state repository is not configured")
+	}
+	if _, err := runstate.LoadAuthorized(ctx, f.runs, runID); err != nil {
+		return ListRunCheckpointsResult{}, err
+	}
+	checkpoints, err := f.checkpointHistory.List(ctx, runID, limit)
+	if err != nil {
+		return ListRunCheckpointsResult{}, err
+	}
+	return ListRunCheckpointsResult{RunID: runID, Checkpoints: checkpoints}, nil
+}
+
+// GetRunCheckpoint loads one historical snapshot revision for a run.
+func (f *Framework) GetRunCheckpoint(ctx context.Context, runID string, version int64) (runstate.RunSnapshot, error) {
+	if f.checkpointHistory == nil {
+		return runstate.RunSnapshot{}, fmt.Errorf("agentflow: checkpoint history is not configured")
+	}
+	if f.runs == nil {
+		return runstate.RunSnapshot{}, fmt.Errorf("agentflow: run-state repository is not configured")
+	}
+	if _, err := runstate.LoadAuthorized(ctx, f.runs, runID); err != nil {
+		return runstate.RunSnapshot{}, err
+	}
+	return f.checkpointHistory.Load(ctx, runID, version)
+}
+
+// ResumeFromCheckpoint restores a historical snapshot revision and reruns the
+// workflow forward from that restored state.
+func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, version int64) (RunResult, error) {
+	switch f.scenario.Orchestration.Mode {
+	case core.OrchestrationFixedWorkflow, core.OrchestrationHybrid:
+	default:
+		return RunResult{}, fmt.Errorf("agentflow: ResumeFromCheckpoint requires fixed_workflow or hybrid orchestration mode")
+	}
+	if f.scenario.Orchestration.Workflow == nil {
+		return RunResult{}, fmt.Errorf("agentflow: ResumeFromCheckpoint requires a configured workflow")
+	}
+	if f.checkpointHistory == nil {
+		return RunResult{}, fmt.Errorf("agentflow: checkpoint history is not configured")
+	}
+
+	snapshot, err := f.checkpointHistory.Load(ctx, runID, version)
+	if err != nil {
+		return RunResult{}, err
+	}
+
+	runner := f.newWorkflowRunner()
+	if err := runner.RestoreSnapshotAndRun(ctx, f.scenario, runID, snapshot); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
 			return RunResult{RunID: runID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil

@@ -67,11 +67,11 @@ fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFan
 
     mux := http.NewServeMux()
     mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
-    log.Fatal(http.ListenAndServe(":8080", mux))
+    log.Fatal(http.ListenAndServe(":7070", mux))
 }
 ```
 
-Open `http://localhost:8080/observability/` to view live runs.
+Open `http://localhost:7070/observability/` to view live runs.
 
 ## Local Development Without PostgreSQL
 
@@ -146,8 +146,11 @@ When `ObservabilityHTTPHandlerConfig.Framework` is set, Studio endpoints are als
 - `GET /observability/api/graph` — scenario workflow topology (nested subgraphs).
 - `GET /observability/api/runs/{run_id}/steps` — checkpointed step outputs (`ListRunSteps`).
 - `POST /observability/api/runs/{run_id}/resume-from-step` — time-travel rerun from a node (`{"node_id":"..."}`).
+- `GET /observability/api/runs/{run_id}/checkpoints?limit=50` — append-only snapshot revisions.
+- `GET /observability/api/runs/{run_id}/checkpoints/{version}` — load one historical snapshot.
+- `POST /observability/api/runs/{run_id}/resume-from-checkpoint` — restore and rerun from a revision (`{"version":3}`).
 
-Open the dashboard and switch to the **Graph** tab for read-only graph debug and resume-from-step. See [studio-roadmap.md](./studio-roadmap.md).
+Open the dashboard and switch to the **Graph** tab for read-only graph debug, resume-from-step, and checkpoint history in the Details pane. See [studio-roadmap.md](./studio-roadmap.md).
 
 Protect the handler with the same middleware used for production APIs:
 
@@ -159,9 +162,22 @@ if err != nil {
 dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
     Store:          eventStore,
     Hub:            eventHub,
+    Framework:      fw,
     AuthMiddleware: authMiddleware,
 })
 ```
+
+Production API (when `ProductionHTTPHandlerConfig.Framework` is set):
+
+- `GET /v1/runs/{run_id}/steps`
+- `POST /v1/runs/{run_id}/resume-from-step` with `{"node_id":"..."}`
+- `GET /v1/runs/{run_id}/checkpoints?limit=50`
+- `GET /v1/runs/{run_id}/checkpoints/{version}`
+- `POST /v1/runs/{run_id}/resume-from-checkpoint` with `{"version":3}`
+
+Checkpoint history requires `WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory())` (or a custom `runstate.CheckpointHistory` adapter).
+
+See [studio-roadmap.md](./studio-roadmap.md). Example: `go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7070/observability/`.
 
 ## Data Safety
 

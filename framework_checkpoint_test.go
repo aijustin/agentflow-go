@@ -136,3 +136,55 @@ func TestFrameworkResumeFromStep(t *testing.T) {
 		t.Fatalf("expected seed, fanout, tail after resume, got %+v", after.Steps)
 	}
 }
+
+func TestFrameworkCheckpointHistory(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "checkpoint-history",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+					{ID: "b", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"y":2}}`)},
+				},
+				Edges: []core.WorkflowEdge{{From: "a", To: "b"}},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run-checkpoints"
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := fw.ListRunCheckpoints(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Checkpoints) < 2 {
+		t.Fatalf("expected at least two checkpoints, got %+v", list.Checkpoints)
+	}
+
+	first := list.Checkpoints[0]
+	snapshot, err := fw.GetRunCheckpoint(context.Background(), runID, first.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.RunID != runID {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+
+	result, err := fw.ResumeFromCheckpoint(context.Background(), runID, first.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}

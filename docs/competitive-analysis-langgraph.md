@@ -267,9 +267,9 @@ graph = builder.compile(checkpointer=checkpointer)
 |------|------|
 | 运行时 subgraph | ✅ |
 | 动态 fan-out (`map` / Send) | 🔲 Phase 2 |
-| Checkpoint 列表 / 定点恢复 | 🔲 Phase 3 |
+| Checkpoint 列表 / 定点恢复 | ✅ Phase 3（含历史链 + Studio UI） |
 | 图内 `agent_loop` | 🔲 Phase 4 |
-| Studio 可视化 | LangGraph 领先 |
+| Studio 可视化 | ⚠️ 只读 Graph + Time Travel（P2 拖拽编辑器另立项） |
 
 ### agentflow-go 优势（非治理向）
 

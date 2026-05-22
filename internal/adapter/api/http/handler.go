@@ -22,8 +22,9 @@ type HandlerConfig struct {
 	Now            func() time.Time
 	MaxBodyBytes   int64
 	Version        string
-	EventsHandler  nethttp.Handler
-	HITLHandler    nethttp.Handler
+	EventsHandler      nethttp.Handler
+	HITLHandler        nethttp.Handler
+	CheckpointHandler  nethttp.Handler
 }
 
 type Handler struct {
@@ -47,7 +48,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, err
 	}
 	jobHandler := nethttp.Handler(runHandler)
-	runs := jobHandler
+	runs := nethttp.Handler(&RunsMux{Checkpoint: config.CheckpointHandler, Async: jobHandler})
 	if config.AuthMiddleware != nil {
 		runs = config.AuthMiddleware(runs)
 	}
