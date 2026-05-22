@@ -8,7 +8,7 @@
 
 ```bash
 # 1. YAML 结构与引用 + testutil 接线
-go run ./examples/go/validate examples/autonomous.yaml
+go run ./examples/go/validate -kind builder all
 
 # 2. 最小 in-process 运行
 go run ./examples/go/minimal/main.go
@@ -35,7 +35,7 @@ go run ./examples/go/http-worker/main.go
 | `orchestration.mode "x" is unsupported` | mode 拼写错误 | 使用 `autonomous` / `fixed_workflow` / `hybrid` |
 | `workflow node "x" kind "y" is unsupported` | 节点 kind 无效 | 见 [configuration-reference — 编排](./configuration-reference.md#编排) |
 
-**处理**：先 `go run ./examples/go/validate your.yaml`，按前缀 `config:` 定位字段。
+**处理**：先 `go run ./examples/go/validate -kind builder <catalog-id>`，按前缀 `config:` 定位字段。
 
 ---
 
@@ -53,7 +53,7 @@ go run ./examples/go/http-worker/main.go
 
 ```bash
 # 提前发现
-go run ./examples/go/validate scenario.yaml
+go run ./examples/go/validate -kind builder autonomous-echo
 ```
 
 ```go
@@ -217,7 +217,7 @@ YAML 中 `knowledge.collections[].tenant_scoped: true` 会在运行时注入 `te
 
 ## 仍无法定位时
 
-1. **最小复现**：从 `examples/autonomous.yaml` 开始，逐步换成你的场景字段。
+1. **最小复现**：从 `builder.MinimalAutonomous` 开始，逐步换成你的场景字段。
 2. **对比 wiring**：`validate --wiring` 与 `examples/` 里最接近的示例 diff。
 3. **看事件时序**：`run --verbose` 或 Debug UI Event 列表。
 4. **查 RunState**：`--state-dir` 下 `{state-dir}/runs/` JSON 文件，或 Dashboard API。

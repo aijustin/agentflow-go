@@ -21,8 +21,9 @@ func TestFrameworkRunWithOpenTelemetryTracer(t *testing.T) {
 	}()
 
 	tracer := agentflow.OpenTelemetryTracerFromProvider(provider, "test")
-	fw, err := agentflow.NewFromFile("examples/autonomous.yaml",
+	fw, err := agentflow.New(testAutonomousScenario(),
 		agentflow.WithLLMGateway(fakeGateway{content: "ok"}),
+		agentflow.WithToolExecutor("echo", noopTool{}),
 		agentflow.WithTracer(tracer),
 	)
 	if err != nil {

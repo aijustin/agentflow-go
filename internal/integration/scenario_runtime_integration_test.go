@@ -5,11 +5,8 @@ package integration
 import (
 	"bytes"
 	"context"
-	"path/filepath"
-	stdruntime "runtime"
 	"testing"
 
-	configyaml "github.com/aijustin/agentflow-go/internal/adapter/config/yaml"
 	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
 	llmmock "github.com/aijustin/agentflow-go/internal/adapter/llm/mock"
 	"github.com/aijustin/agentflow-go/internal/adapter/registry"
@@ -17,13 +14,14 @@ import (
 	"github.com/aijustin/agentflow-go/internal/adapter/tool/builtin"
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
+	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func TestAutonomousScenarioRuntimeIntegration(t *testing.T) {
-	scenario := loadExample(t, "autonomous.yaml")
+	scenario := builder.MinimalAutonomous("assistant", builder.MinimalScenarioName("autonomous-echo"))
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
 	gateway.QueueChat("default", llm.ChatResponse{Message: llm.Message{Content: "hello from llm"}})
@@ -42,7 +40,7 @@ func TestAutonomousScenarioRuntimeIntegration(t *testing.T) {
 }
 
 func TestHumanInLoopPauseResumeIntegration(t *testing.T) {
-	scenario := loadExample(t, "human_in_loop.yaml")
+	scenario := builder.MinimalHumanInLoop("assistant")
 	repo := runstateinmem.NewRepository()
 	signer, err := runstate.NewTokenSigner([]byte("integration-secret"))
 	if err != nil {
@@ -75,7 +73,7 @@ func TestHumanInLoopPauseResumeIntegration(t *testing.T) {
 }
 
 func TestFixedWorkflowIntegration(t *testing.T) {
-	scenario := loadExample(t, "fixed_workflow.yaml")
+	scenario := builder.MinimalFixedWorkflowReview("reviewer")
 	repo := runstateinmem.NewRepository()
 	snapshot := runstate.RunSnapshot{RunID: "run-workflow", ScenarioName: scenario.Name, Status: runstate.RunStatusRunning}
 	if err := repo.Save(context.Background(), &snapshot, 0); err != nil {
@@ -96,18 +94,4 @@ func TestFixedWorkflowIntegration(t *testing.T) {
 	if _, ok := loaded.StepOutputs["inspect"]; !ok {
 		t.Fatalf("expected inspect output: %+v", loaded.StepOutputs)
 	}
-}
-
-func loadExample(t *testing.T, name string) core.Scenario {
-	t.Helper()
-	_, file, _, ok := stdruntime.Caller(0)
-	if !ok {
-		t.Fatal("cannot resolve test path")
-	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	scenario, err := configyaml.LoadFile(filepath.Join(root, "examples", name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return scenario
 }

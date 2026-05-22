@@ -140,18 +140,30 @@ func Validate(s core.Scenario) error {
 	case "", core.OrchestrationAutonomous:
 		return nil
 	case core.OrchestrationHybrid:
-		if s.Orchestration.Workflow != nil {
-			return validateWorkflow(*s.Orchestration.Workflow, s)
+		if s.Orchestration.Workflow != nil || len(s.Orchestration.Workflows) > 0 {
+			return validateOrchestrationWorkflows(s)
 		}
 		return nil
 	case core.OrchestrationFixedWorkflow:
 		if s.Orchestration.Workflow == nil {
 			return fmt.Errorf("config: fixed_workflow requires orchestration.workflow")
 		}
-		return validateWorkflow(*s.Orchestration.Workflow, s)
+		return validateOrchestrationWorkflows(s)
 	default:
 		return fmt.Errorf("config: unsupported orchestration.mode %q", s.Orchestration.Mode)
 	}
+}
+
+func validateOrchestrationWorkflows(s core.Scenario) error {
+	for name, wf := range s.Orchestration.Workflows {
+		if err := validateWorkflow(wf, s); err != nil {
+			return fmt.Errorf("config: orchestration.workflows.%s: %w", name, err)
+		}
+	}
+	if s.Orchestration.Workflow == nil {
+		return nil
+	}
+	return validateWorkflow(*s.Orchestration.Workflow, s)
 }
 
 func validateWorkflow(w core.Workflow, s core.Scenario) error {
@@ -259,6 +271,62 @@ func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
 			return fmt.Errorf("config: workflow node %q supervisor requires ref or input.refs", node.ID)
 		}
 		return nil
+	case core.NodeSubgraph:
+		if node.Ref == "" {
+			return fmt.Errorf("config: workflow node %q subgraph ref is required", node.ID)
+		}
+		sub, ok := s.Orchestration.Workflows[node.Ref]
+		if !ok {
+			return fmt.Errorf("config: workflow node %q references unknown subgraph %q", node.ID, node.Ref)
+		}
+		return validateWorkflow(sub, s)
+	case core.NodeMap:
+		return validateMapNode(node, s)
+	}
+	return nil
+}
+
+func validateMapNode(node core.WorkflowNode, s core.Scenario) error {
+	if len(node.Input) == 0 {
+		return fmt.Errorf("config: workflow node %q map input is required", node.ID)
+	}
+	var spec struct {
+		ItemsPath string `json:"items_path"`
+		Branch    struct {
+			Kind core.WorkflowNodeKind `json:"kind"`
+			Ref  string                `json:"ref"`
+		} `json:"branch"`
+		OnError string `json:"on_error"`
+	}
+	if err := json.Unmarshal(node.Input, &spec); err != nil {
+		return fmt.Errorf("config: workflow node %q map input is invalid JSON", node.ID)
+	}
+	if strings.TrimSpace(spec.ItemsPath) == "" {
+		return fmt.Errorf("config: workflow node %q map requires items_path", node.ID)
+	}
+	if spec.Branch.Kind == "" {
+		return fmt.Errorf("config: workflow node %q map requires branch.kind", node.ID)
+	}
+	switch spec.Branch.Kind {
+	case core.NodeAgent, core.NodeTool, core.NodeTransform:
+	default:
+		return fmt.Errorf("config: workflow node %q map branch kind %q is unsupported", node.ID, spec.Branch.Kind)
+	}
+	if spec.Branch.Kind != core.NodeTransform && spec.Branch.Ref == "" {
+		return fmt.Errorf("config: workflow node %q map branch ref is required", node.ID)
+	}
+	if spec.OnError != "" && !strings.EqualFold(spec.OnError, "fail_fast") && !strings.EqualFold(spec.OnError, "collect_errors") {
+		return fmt.Errorf("config: workflow node %q map on_error %q is unsupported", node.ID, spec.OnError)
+	}
+	if spec.Branch.Kind == core.NodeAgent {
+		if _, ok := s.Agents[spec.Branch.Ref]; !ok {
+			return fmt.Errorf("config: workflow node %q references unknown agent %q", node.ID, spec.Branch.Ref)
+		}
+	}
+	if spec.Branch.Kind == core.NodeTool {
+		if _, ok := s.Tools[spec.Branch.Ref]; !ok {
+			return fmt.Errorf("config: workflow node %q references unknown tool %q", node.ID, spec.Branch.Ref)
+		}
 	}
 	return nil
 }

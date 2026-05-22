@@ -158,7 +158,7 @@ const (
 	RuntimeSecretAPIKeyDevValue = "dev-secret-value"
 )
 
-// Context governance LLM defaults from examples/context_governance.yaml.
+// Context governance LLM defaults for catalog ID context-governance.
 const (
 	LLMEnvRealModelAPIKey        = "AGENT_REALMODEL_API_KEY"
 	LLMModelQwen35B              = "qwen/qwen3.6-35b-a3b"
@@ -193,4 +193,6 @@ const (
 	NodeQueryRouter   = core.NodeQueryRouter
 	NodeRAGGrade      = core.NodeRAGGrade
 	NodeSupervisor    = core.NodeSupervisor
+	NodeSubgraph      = core.NodeSubgraph
+	NodeMap           = core.NodeMap
 )

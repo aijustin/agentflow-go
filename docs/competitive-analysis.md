@@ -2,6 +2,9 @@
 
 本文档对比 agentflow-go 与 LangGraph、LlamaIndex Workflows、CrewAI Flows、Haystack 2 在 **流程编排、RAG、上下文治理** 三个维度的差异，并跟踪本仓库的关闭进度。
 
+**LangGraph 深度对比**（架构、编排对齐、Side-by-side）：见 [competitive-analysis-langgraph.md](./competitive-analysis-langgraph.md)。  
+**编排对齐路线图**（subgraph / map / checkpoint）：见 [orchestration-parity.md](./orchestration-parity.md)。
+
 ## 能力矩阵
 
 | 维度 | agentflow-go | LangGraph | LlamaIndex | CrewAI | Haystack 2 |
@@ -20,7 +23,7 @@
 | YAML 知识集合绑定 | ✅ | `scenario.knowledge.collections` + `WithKnowledgeRegistry` |
 | Hybrid 检索 (FTS+向量 RRF) | ✅ | `postgres.Store.HybridQuery` |
 | 内置 Reranker | ✅ | `NewScoreReranker` / `NewLLMReranker` |
-| Corrective RAG 模板 | ✅ | `examples/corrective_rag.yaml` |
+| Corrective RAG 模板 | ✅ | `builder.CorrectiveRAG("assistant")` |
 | Adaptive RAG / Query Router | ✅ | `query_router` workflow 节点 |
 | Planning 闭环 | ✅ | `planning.execute` + replan + tool 引导 |
 | 分层记忆 | ✅ | `pkg/memory/tier` + runtime/Framework 接线；见 [memory-tier 计划](superpowers/plans/2026-05-21-memory-tier.md) |
@@ -29,7 +32,7 @@
 | 认知记忆端口 | ✅ | `CognitiveMemory` + tier `DualWriteManager` / `CognitiveAdapter`；Framework `WithCognitiveMemory` + tier 自动索引 |
 | MCP scenario 配置 | ✅ | `scenario.mcp.servers` + `WireMCPTools` |
 | Supervisor 多 agent | ✅ | `supervisor` workflow 节点 |
-| Self-RAG 模板 | ✅ | `examples/self_rag.yaml` |
+| Self-RAG 模板 | ✅ | `builder.SelfRAG("assistant")` |
 | 租户检索隔离 | ✅ | retriever namespace 前缀 tenant |
 
 ## 实现说明
@@ -39,6 +42,7 @@
 
 ## 参考
 
+- [competitive-analysis-langgraph.md](./competitive-analysis-langgraph.md)
 - [orchestration-flow.md](./orchestration-flow.md)
 - [knowledge-rag.md](./knowledge-rag.md)
 - [enterprise-roadmap.md](./enterprise-roadmap.md) M5

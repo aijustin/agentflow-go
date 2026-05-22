@@ -27,8 +27,14 @@ Need multi-tenant isolation?
 ## Minimal embed
 
 ```go
-scenario, _ := agentflow.LoadScenarioFile("scenario.yaml")
-workDir, _ := testutil.ScenarioWorkDir("scenario.yaml")
+import (
+    agentflow "github.com/aijustin/agentflow-go"
+    "github.com/aijustin/agentflow-go/pkg/builder"
+)
+
+scenario := builder.MinimalAutonomous("assistant")
+if err := agentflow.ValidateScenario(scenario); err != nil { /* fail fast */ }
+workDir, _ := testutil.ScenarioWorkDir("autonomous-echo")
 opts, _ := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
 if err := agentflow.ValidateWiring(scenario, opts...); err != nil { /* fail fast */ }
 fw, _ := agentflow.New(scenario, opts...)
@@ -40,9 +46,9 @@ result, _ := fw.Run(ctx, agentflow.RunRequest{RunID: "run-1", Agent: "assistant"
 
 Runnable example: [examples/go/minimal/main.go](../examples/go/minimal/main.go)
 
-## Go DSL builder (optional)
+## Go DSL builder (default)
 
-When you prefer constructing scenarios in Go instead of YAML (shared presets, typed constants, reusable workflow graphs):
+Construct scenarios in Go with shared presets, typed constants, and reusable workflow graphs:
 
 ```go
 scenario := builder.MinimalAutonomous("assistant")
@@ -50,10 +56,11 @@ if err := agentflow.ValidateScenario(scenario); err != nil { /* fail fast */ }
 fw, _ := agentflow.New(scenario, opts...)
 ```
 
-Validate all 18 stacks aligned with `examples/*.yaml`:
+Validate all catalog stacks:
 
 ```sh
 go run ./examples/go/validate -kind builder all
+make validate-builder
 ```
 
 Reference: [builder-reference.md](./builder-reference.md) · [examples/go/builder/main.go](../examples/go/builder/main.go)
@@ -63,11 +70,11 @@ Reference: [builder-reference.md](./builder-reference.md) · [examples/go/builde
 Wire explicitly in your `main` or DI layer:
 
 ```go
-scenario, _ := agentflow.LoadScenarioFile(path)
+scenario := builder.MinimalTicketHandling("support")
 fw, _ := agentflow.New(scenario,
   agentflow.WithLLMGateway(yourGateway),
   agentflow.WithRunStateRepository(repo),
-  agentflow.WithToolExecutor("my.tool", executor),
+  agentflow.WithToolExecutor("ticket", executor),
   agentflow.WithHITLTokenSecret(secret, os.Stderr),
 )
 queue, _ := agentflow.NewPostgresJobQueue(db) // or NewInMemoryJobQueue()
@@ -91,10 +98,9 @@ Runnable examples:
 agentflow.ValidateWiring(scenario, opts...)
 ```
 
-Scenario YAML (default), builder stacks, and catalog manifests:
+Builder stacks and catalog manifests:
 
 ```sh
-go run ./examples/go/validate examples/autonomous.yaml
 go run ./examples/go/validate -kind builder all
 go run ./examples/go/validate -kind tool examples/catalog/tools/echo.tool.yaml
 make validate-catalog
@@ -108,23 +114,8 @@ Apply [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/00
 
 ## Extension ports (`pkg/`)
 
-| Package | Use when |
-|---------|----------|
-| `pkg/catalog` | Tool/Skill manifest load and validate (`LoadToolManifestFile`, etc.) |
-| `pkg/builder` | Fluent Go DSL for `core.Scenario` (YAML-free or hybrid) |
-| `pkg/core` | Defining agents, tools, workflows programmatically |
-| `pkg/llm` | Implementing custom LLM gateways |
-| `pkg/llm/mock` | Deterministic tests |
-| `pkg/runstate` | Custom persistence or tenant enforcement |
-| `pkg/testutil` | Test wiring and `NewTestFramework` |
-| `pkg/observability/prometheus` | Prometheus metrics recorder |
+See [README.md](../README.md) for the full list of extension packages (memory, runstate, knowledge, async, governance, identity, security, etc.).
 
-## Shutdown order
+## Deprecated YAML loading
 
-1. Stop HTTP server (`server.Shutdown`)
-2. Cancel worker context and wait for worker exit
-3. Call `fw.Close(ctx)` to release DB and custom closers
-
-## What not to import
-
-Avoid `internal/` packages in application modules. They are not covered by v0 stability guarantees.
+`LoadScenarioFile` / `NewFromFile` remain available but are **deprecated**. New scenarios should use `pkg/builder`. See [product-direction.md](./product-direction.md).

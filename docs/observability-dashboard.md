@@ -46,9 +46,8 @@ func main() {
     }
     eventHub := agentflow.NewEventHub()
 
-    fw, err := agentflow.NewFromFile(
-        "scenario.yaml",
-        agentflow.WithEventSink(agentflow.NewEventFanoutSink(
+    scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFanoutSink(
             agentflow.NewEventStoreSink(eventStore, eventHub),
             agentflow.NewSlogEventSink(nil),
         )),
@@ -82,9 +81,8 @@ Use the in-memory store when persistence is not required:
 eventStore := agentflow.NewInMemoryEventStore()
 eventHub := agentflow.NewEventHub()
 
-fw, err := agentflow.NewFromFile(
-    "scenario.yaml",
-    agentflow.WithEventSink(agentflow.NewEventStoreSink(eventStore, eventHub)),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventStoreSink(eventStore, eventHub)),
 )
 ```
 

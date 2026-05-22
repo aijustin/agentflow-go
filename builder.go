@@ -97,3 +97,15 @@ var WorkflowEnhancementsWorkflow = scenariobuilder.WorkflowEnhancementsWorkflow
 
 // FixedWorkflowReviewWorkflow builds the inspect → review workflow graph.
 var FixedWorkflowReviewWorkflow = scenariobuilder.FixedWorkflowReviewWorkflow
+
+// MapBranch configures a map node fan-out branch.
+type MapBranch = scenariobuilder.MapBranch
+
+// MapNodeInput builds map node input JSON from a list field and branches.
+var MapNodeInput = scenariobuilder.MapNodeInput
+
+// MapOnError sets the map node error policy branch.
+var MapOnError = scenariobuilder.MapOnError
+
+// MapItemField sets the per-item field name for map branches.
+var MapItemField = scenariobuilder.MapItemField

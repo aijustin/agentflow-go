@@ -5,27 +5,29 @@
 
 [简体中文](./README.md) | English
 
-Scenario-configured Go library for composing Agents, Tools, Skills, LLM gateways, Memory, Run State, and Human-in-the-loop orchestration.
-
-Import `github.com/aijustin/agentflow-go` in your service, declare scenarios in YAML, wire gateways and executors explicitly, then call `Framework.Run` in-process or mount the provided HTTP handlers in your own server.
+Scenario-configured Go **runtime library for Go backend engineers**. Define scenarios in Go (`pkg/builder` or `core.Scenario`), wire gateways and executors explicitly, then call `Framework.Run` in-process or mount the provided HTTP handlers in your own server.
 
 ## Quick start
 
 ```sh
 go get github.com/aijustin/agentflow-go
 go run ./examples/go/minimal/main.go
-go run ./examples/go/validate examples/autonomous.yaml
+go run ./examples/go/builder/main.go
+make validate-builder
 make test
 ```
 
+Product direction: [docs/product-direction.md](docs/product-direction.md) · Builder reference: [docs/builder-reference.md](docs/builder-reference.md)
+
 Before tagging a release, run `GOTOOLCHAIN=auto make release-check`. See [docs/release-checklist.md](docs/release-checklist.md) and [docs/api-stability.md](docs/api-stability.md).
 
-For a guided HTML manual, open [docs/manual.html](docs/manual.html) in your browser.
+For a guided HTML manual, open [docs/manual.html](docs/manual.html) in your browser. LangGraph comparison: [docs/competitive-analysis-langgraph.md](docs/competitive-analysis-langgraph.md).
 
 ## Integration paths
 
 | Goal | Start here |
 |------|------------|
+| **Preferred: Go DSL** | [docs/builder-reference.md](docs/builder-reference.md) · [examples/go/builder/main.go](examples/go/builder/main.go) |
 | Embed in an existing Go service | [docs/library-integration.md](docs/library-integration.md) |
 | Minimal in-process run | [examples/go/minimal/main.go](examples/go/minimal/main.go) |
 | Postgres / file persistence | [examples/go/postgres/main.go](examples/go/postgres/main.go) |
@@ -50,35 +52,19 @@ Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHan
 | [event-trigger](examples/go/event-trigger/main.go) | Event-driven runs via `scenario.triggers` | `go run ./examples/go/event-trigger/main.go` |
 | [tier-memory](examples/go/tier-memory/main.go) | In-process tier memory minimal example | `go run ./examples/go/tier-memory/main.go` |
 | [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` async worker | See [examples/deploy/](examples/deploy/README.md) |
-| [validate](examples/go/validate/main.go) | Validate scenario YAML, wiring, builder stacks, or catalog manifests | `go run ./examples/go/validate examples/autonomous.yaml` |
+| [validate](examples/go/validate/main.go) | Validate scenario YAML, wiring, builder stacks, or catalog manifests | `go run ./examples/go/validate -kind builder all` |
 | [builder](examples/go/builder/main.go) | Build scenario with Go DSL and run in-process | `go run ./examples/go/builder/main.go` |
 
 Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.WiringOptions`. Builder reference: [docs/builder-reference.md](docs/builder-reference.md).
 
-### Scenario YAML examples (`examples/`)
+### Builder catalog
 
-| File | Mode | Focus |
-|------|------|-------|
-| [autonomous.yaml](examples/autonomous.yaml) | `autonomous` | Minimal agent + echo tool |
-| [human_in_loop.yaml](examples/human_in_loop.yaml) | `autonomous` | `before_final_answer` approval |
-| [context_governance.yaml](examples/context_governance.yaml) | `autonomous` | Context window / summarization / stale tools |
-| [fixed_workflow.yaml](examples/fixed_workflow.yaml) | `fixed_workflow` | Fixed DAG workflow |
-| [workflow_enhancements.yaml](examples/workflow_enhancements.yaml) | `fixed_workflow` | `parallel_group`, `loop`, `human_gate`, etc. |
-| [code_review_pipeline.yaml](examples/code_review_pipeline.yaml) | `fixed_workflow` | Git diff + parallel review + gate |
-| [hybrid.yaml](examples/hybrid.yaml) | `hybrid` | Workflow phase then autonomous synthesis |
-| [multi_expert_research.yaml](examples/multi_expert_research.yaml) | `hybrid` | Parallel experts + `planning.execute` |
-| [adaptive_rag.yaml](examples/adaptive_rag.yaml) | `fixed_workflow` | `query_router` adaptive RAG |
-| [corrective_rag.yaml](examples/corrective_rag.yaml) | `fixed_workflow` | `rag_grade` + conditional re-retrieval |
-| [self_rag.yaml](examples/self_rag.yaml) | `fixed_workflow` | Self-RAG quality gate |
-| [rag_knowledge.yaml](examples/rag_knowledge.yaml) | — | RAG knowledge base and citations |
-| [ticket_handling.yaml](examples/ticket_handling.yaml) | `autonomous` | Ticket triggers + HITL |
-| [tier_memory.yaml](examples/tier_memory.yaml) | `autonomous` | hot/warm/cold tier memory |
-| [http_tool.yaml](examples/http_tool.yaml) | — | HTTP tool declaration |
-| [sql_tool.yaml](examples/sql_tool.yaml) | — | SQL tool |
-| [filesystem_tool.yaml](examples/filesystem_tool.yaml) | — | Filesystem tool |
-| [mcp_tool.yaml](examples/mcp_tool.yaml) | — | MCP tool integration |
+See [docs/builder-reference.md](docs/builder-reference.md) for catalog ID ↔ `builder.*` mapping. Shared stacks: [examples/go/scenario/scenario.go](examples/go/scenario/scenario.go).
 
-Validate all scenarios: `make validate-examples` or `go run ./examples/go/validate examples/<file>.yaml`. Builder stacks: `make validate-builder` or `go run ./examples/go/validate -kind builder all`; see [docs/builder-reference.md](docs/builder-reference.md). Catalog manifests: `make validate-catalog`. Reference deploy stack: [examples/deploy/](examples/deploy/README.md). Mode selection: [docs/orchestration-flow.md](docs/orchestration-flow.md).
+```sh
+go run ./examples/go/validate -kind builder all
+make validate-builder
+```
 
 ## Getting started
 
@@ -106,10 +92,12 @@ import (
     "log"
 
     agentflow "github.com/aijustin/agentflow-go"
+    "github.com/aijustin/agentflow-go/pkg/builder"
 )
 
 func main() {
-    fw, err := agentflow.NewFromFile("scenario.yaml")
+    scenario := builder.MinimalAutonomous("assistant")
+    fw, err := agentflow.New(scenario)
     if err != nil {
         log.Fatal(err)
     }
@@ -130,9 +118,8 @@ func main() {
 For custom LLM, Memory, RunState, EventSink, or HumanGate implementations, use the option-based API:
 
 ```go
-fw, err := agentflow.NewFromFile(
-    "scenario.yaml",
-    agentflow.WithLLMGateway(myLLMGateway),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(myLLMGateway),
     agentflow.WithToolExecutor("repo_search", myToolExecutor),
     agentflow.WithMemoryRepository("session", myMemoryRepo),
     agentflow.WithRunStateRepository(myRunStateRepo),
@@ -151,7 +138,8 @@ gateway := agentflow.NewOpenAICompatibleGateway([]llm.Profile{{
   APIKeyEnv: "AGENT_REALMODEL_API_KEY",
 }}, nil)
 
-fw, err := agentflow.NewFromFile("scenario.yaml", agentflow.WithLLMGateway(gateway))
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(gateway))
 ```
 
 For OpenAI-compatible chat plus embeddings, use `NewOpenAICompatibleProvider` and declare profile capabilities explicitly:
@@ -207,7 +195,7 @@ for chunk := range chunks {
 
 When an agent has tools and the configured LLM gateway supports `CapToolCall`, the runtime runs an autonomous tool loop: send tool specs to the LLM, validate returned tool calls against the agent whitelist, enforce approval and per-run `rate_cap`, retry classified transient LLM/tool errors from `retry_limit`/`max_retries` with exponential backoff, execute registered tool executors, append bounded tool results, and continue until the LLM returns a final answer or `max_steps` is reached. `Stream` also accepts tool-enabled agents; it runs the same governed tool loop and emits the final answer as a stream chunk.
 
-Set `orchestration.planning.enabled: true` to add a planning pass before the autonomous tool loop. The runtime asks the executing agent, or `orchestration.planning.agent` when set, for a concise JSON plan and injects that plan into the subsequent execution context. Set `orchestration.planning.execute: true` to track plan step completion in run state during the tool loop (see `examples/multi_expert_research.yaml`).
+Set `orchestration.planning.enabled: true` to add a planning pass before the autonomous tool loop. The runtime asks the executing agent, or `orchestration.planning.agent` when set, for a concise JSON plan and injects that plan into the subsequent execution context. Set `orchestration.planning.execute: true` to track plan step completion in run state during the tool loop (see `builder.MultiExpertResearch()`).
 
 Fixed workflows support `tool`, `agent`, `skill`, `human_gate`, `transform`, `parallel_group`, and `loop` nodes. Node `condition` expressions can read `steps.<node_id>` paths with `exists(...)`, `missing(...)`, `eq(...)`, and `ne(...)`; transform nodes can build structured outputs with `set` and `copy` mappings.
 
@@ -216,8 +204,8 @@ When an agent binds `memory`, the runtime reads stored conversation/session mess
 Enable the built-in HMAC-token HITL gate:
 
 ```go
-fw, err := agentflow.NewFromFile(
-    "human_in_loop.yaml",
+scenario := builder.MinimalHumanInLoop("assistant")
+fw, err := agentflow.New(scenario,
     agentflow.WithHITLTokenSecret([]byte("strong-secret"), nil),
 )
 if err != nil {
@@ -241,9 +229,8 @@ runs, _ := agentflow.NewFileRunStateRepository("./data/runs")
 blobs, _ := agentflow.NewFileBlobStore("./data/blobs")
 memoryRepo, _ := agentflow.NewFileMemoryRepository("./data/memory")
 
-fw, err := agentflow.NewFromFile(
-    "scenario.yaml",
-    agentflow.WithRunStateRepository(runs),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(runs),
     agentflow.WithBlobStore(blobs),
     agentflow.WithMemoryRepository("session", memoryRepo),
 )
@@ -261,9 +248,8 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithRunStateRepository(runs),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(runs),
 )
 ```
 
@@ -319,8 +305,7 @@ searchTool, err := agentflow.NewMCPToolExecutor(mcpClient, "search")
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/mcp_tool.yaml",
+fw, err := agentflow.New(builder.MinimalMCPTool("assistant"),
   agentflow.WithToolExecutor("docs.search", searchTool),
 )
 ```
@@ -341,9 +326,8 @@ resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool)
   }
 })
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithToolResolver(resolver),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithToolResolver(resolver),
 )
 ```
 
@@ -358,8 +342,7 @@ httpTool, err := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/http_tool.yaml",
+fw, err := agentflow.New(builder.MinimalHTTPTool("assistant"),
   agentflow.WithToolExecutor("http.status", httpTool),
 )
 ```
@@ -375,8 +358,7 @@ filesystemTool, err := agentflow.NewFilesystemToolExecutor(agentflow.FilesystemT
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/filesystem_tool.yaml",
+fw, err := agentflow.New(builder.MinimalFilesystemTool("assistant"),
   agentflow.WithToolExecutor("fs.read", filesystemTool),
 )
 ```
@@ -396,8 +378,7 @@ sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/sql_tool.yaml",
+fw, err := agentflow.New(builder.MinimalSQLTool("assistant"),
   agentflow.WithToolExecutor("sql.query", sqlTool),
 )
 ```
@@ -415,8 +396,7 @@ gitTool, err := agentflow.NewGitToolExecutor(agentflow.GitToolConfig{
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/code_review_pipeline.yaml",
+fw, err := agentflow.New(builder.CodeReviewPipeline(),
   agentflow.WithToolExecutor("git", gitTool),
 )
 ```
@@ -433,8 +413,7 @@ ticketTool, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{St
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/ticket_handling.yaml",
+fw, err := agentflow.New(builder.MinimalTicketHandling("support"),
   agentflow.WithToolExecutor("ticket", ticketTool),
 )
 ```
@@ -458,8 +437,7 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/rag_knowledge.yaml",
+fw, err := agentflow.New(builder.MinimalRAG("assistant"),
   agentflow.WithLLMGateway(provider),
   agentflow.WithToolExecutor("knowledge.retrieve", retriever),
 )
@@ -484,9 +462,8 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithBlobStore(blobs),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithBlobStore(blobs),
 )
 ```
 
@@ -495,9 +472,8 @@ See [docs/persistence/s3-blobstore.md](docs/persistence/s3-blobstore.md) for obj
 Enterprise observability and governance hooks are optional and dependency-light:
 
 ```go
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithEventSink(agentflow.NewSlogEventSink(logger)),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewSlogEventSink(logger)),
   agentflow.WithAuditSink(agentflow.NewSlogAuditSink(logger)),
   agentflow.WithToolGovernancePolicy(governance.ChainToolPolicies(
     governance.NewToolBudgetPolicy(8),
@@ -518,9 +494,8 @@ if err != nil {
 }
 eventHub := agentflow.NewEventHub()
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithEventSink(agentflow.NewEventFanoutSink(
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFanoutSink(
     agentflow.NewEventStoreSink(eventStore, eventHub),
     agentflow.NewSlogEventSink(logger),
   )),
@@ -561,8 +536,8 @@ go mod download
 ### Validate example scenarios
 
 ```sh
-go run ./examples/go/validate examples/autonomous.yaml
-make validate-examples
+go run ./examples/go/validate -kind builder all
+make validate-builder
 ```
 
 ### Runnable examples
@@ -619,12 +594,12 @@ Example scenarios:
 
 | File | Highlights |
 | --- | --- |
-| `examples/autonomous.yaml` | Autonomous tool loop baseline |
-| `examples/fixed_workflow.yaml` | Graph workflow with conditions and HITL |
-| `examples/human_in_loop.yaml` | HITL pause and resume |
-| `examples/ticket_handling.yaml` | Ticket tool + triggers + event routing |
-| `examples/code_review_pipeline.yaml` | Git tool + `parallel_group` workflow |
-| `examples/multi_expert_research.yaml` | Hybrid mode + planning.execute |
+| `builder.MinimalAutonomous("assistant")` | Autonomous tool loop baseline |
+| `builder.MinimalFixedWorkflowReview("reviewer")` | Graph workflow with conditions and HITL |
+| `builder.MinimalHumanInLoop("assistant")` | HITL pause and resume |
+| `builder.MinimalTicketHandling("support")` | Ticket tool + triggers + event routing |
+| `builder.CodeReviewPipeline()` | Git tool + `parallel_group` workflow |
+| `builder.MultiExpertResearch()` | Hybrid mode + planning.execute |
 
 ```yaml
 # yaml-language-server: $schema=schemas/agentflow.scenario.schema.json

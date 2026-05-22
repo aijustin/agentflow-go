@@ -51,7 +51,7 @@ func mergeReviewFindingsInput() json.RawMessage {
 }
 
 // MultiExpertResearchWorkflow builds the parallel expert phase from
-// examples/multi_expert_research.yaml.
+// catalog ID multi-expert-research.
 func MultiExpertResearchWorkflow(expertAgents ...string) core.Workflow {
 	return NewWorkflow().
 		NodeParallelGroup("experts", parallelGroupRefsInput(expertAgents...)).
@@ -59,7 +59,7 @@ func MultiExpertResearchWorkflow(expertAgents ...string) core.Workflow {
 }
 
 // CodeReviewPipelineWorkflow builds the diff → reviews → merge → approve graph
-// from examples/code_review_pipeline.yaml.
+// for catalog ID code-review-pipeline.
 func CodeReviewPipelineWorkflow(gitTool string, reviewerAgents ...string) core.Workflow {
 	return NewWorkflow().
 		NodeWithDepends(core.WorkflowNode{
@@ -86,7 +86,7 @@ func CodeReviewPipelineWorkflow(gitTool string, reviewerAgents ...string) core.W
 }
 
 // WorkflowEnhancementsWorkflow builds the status → ready_branch → experts graph
-// from examples/workflow_enhancements.yaml.
+// for catalog ID workflow-enhancements.
 func WorkflowEnhancementsWorkflow() core.Workflow {
 	return NewWorkflow().
 		NodeWithDepends(core.WorkflowNode{
@@ -107,7 +107,7 @@ func WorkflowEnhancementsWorkflow() core.Workflow {
 }
 
 // FixedWorkflowReviewWorkflow builds the inspect → review graph from
-// examples/fixed_workflow.yaml.
+// catalog ID fixed-workflow-review.
 func FixedWorkflowReviewWorkflow(toolRef, agentRef string) core.Workflow {
 	return NewWorkflow().
 		NodeTool("inspect", toolRef).

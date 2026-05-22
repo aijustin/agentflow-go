@@ -1,12 +1,15 @@
-// Package builder provides a fluent Go API for constructing core.Scenario
-// values without YAML files. Built scenarios should be validated with
+// Package builder is the **primary** way to construct core.Scenario values for
+// agentflow-go. Built scenarios should be validated with
 // agentflow.ValidateScenario before creating a Framework.
+//
+// YAML loading (LoadScenarioFile / NewFromFile) is deprecated; see
+// docs/product-direction.md.
 //
 // For the common mock/session/echo autonomous stack:
 //
 //	scenario := builder.MinimalAutonomous("assistant")
 //
-// Example stacks aligned with examples/*.yaml:
+// Example stacks aligned with ExampleCatalog() IDs:
 //
 //	scenario := builder.MinimalTicketHandling("support")
 //	scenario := builder.MinimalRAG("assistant")

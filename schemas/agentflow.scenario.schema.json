@@ -470,6 +470,13 @@
         "workflow": {
           "$ref": "#/$defs/workflow"
         },
+        "workflows": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/workflow"
+          },
+          "description": "Named reusable workflow graphs invoked by subgraph nodes."
+        },
         "max_parallel": {
           "type": "integer",
           "minimum": 1
@@ -679,7 +686,7 @@
         },
         "kind": {
           "type": "string",
-          "enum": ["agent", "tool", "skill", "human_gate", "transform", "parallel_group", "loop", "query_router", "rag_grade", "supervisor"]
+          "enum": ["agent", "tool", "skill", "human_gate", "transform", "parallel_group", "loop", "query_router", "rag_grade", "supervisor", "subgraph", "map"]
         },
         "ref": {
           "type": "string",

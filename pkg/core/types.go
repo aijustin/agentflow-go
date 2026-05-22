@@ -182,6 +182,7 @@ const (
 type Orchestration struct {
 	Mode        OrchestrationMode `json:"mode"`
 	Workflow    *Workflow         `json:"workflow,omitempty"`
+	Workflows   map[string]Workflow `json:"workflows,omitempty"`
 	MaxParallel int               `json:"max_parallel,omitempty"`
 	HumanInLoop HumanInLoopPolicy `json:"human_in_loop"`
 	Planning    PlanningPolicy    `json:"planning,omitempty"`

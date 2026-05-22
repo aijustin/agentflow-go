@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
@@ -27,11 +28,8 @@ func TestValidateWiringRequiresToolExecutor(t *testing.T) {
 }
 
 func TestValidateWiringTestOptions(t *testing.T) {
-	scenario, err := agentflow.LoadScenarioFile("examples/autonomous.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: "examples"})
+	scenario := builder.MinimalAutonomous("assistant")
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: "."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,11 +39,8 @@ func TestValidateWiringTestOptions(t *testing.T) {
 }
 
 func TestWithRequireLLM(t *testing.T) {
-	scenario, err := agentflow.LoadScenarioFile("examples/autonomous.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = agentflow.New(scenario, agentflow.WithRequireLLM())
+	scenario := builder.MinimalAutonomous("assistant")
+	_, err := agentflow.New(scenario, agentflow.WithRequireLLM())
 	if err == nil {
 		t.Fatal("expected require LLM error")
 	}

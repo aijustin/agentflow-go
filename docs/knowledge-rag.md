@@ -48,9 +48,8 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithLLMGateway(provider),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(provider),
   agentflow.WithToolExecutor("knowledge.retrieve", retriever),
 )
 ```
@@ -192,14 +191,13 @@ knowledge:
 ```
 
 ```go
-scenario, _ := agentflow.LoadScenarioFile("examples/rag_knowledge.yaml")
+scenario := builder.MinimalRAG("assistant")
 knowledgeOpts, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
   Embedder: provider,
   Store:    store,
   Reranker: agentflow.NewScoreReranker(),
 })
-fw, err := agentflow.NewFromFile(
-  "examples/rag_knowledge.yaml",
+fw, err := agentflow.New(builder.MinimalRAG("assistant"),
   append(knowledgeOpts,
     agentflow.WithLLMGateway(provider),
   )...,
@@ -229,9 +227,9 @@ PostgreSQL pgvector 适配器已实现 `HybridQuery`（向量 + FTS + RRF 融合
 
 示例场景：
 
-- `examples/corrective_rag.yaml` — 检索 → 评分 → 改写重检
-- `examples/self_rag.yaml` — 检索 → 评分 → agent 合成
-- `examples/adaptive_rag.yaml` — 路由 → 按需检索
+- `builder.CorrectiveRAG("assistant")` — 检索 → 评分 → 改写重检
+- `builder.SelfRAG("assistant")` — 检索 → 评分 → agent 合成
+- `builder.AdaptiveRAG("assistant")` — 路由 → 按需检索
 
 详见 [competitive-analysis.md](./competitive-analysis.md) 与 [orchestration-flow.md](./orchestration-flow.md)。
 

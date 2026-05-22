@@ -214,6 +214,9 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
+	if loaded.StepOutputs == nil {
+		loaded.StepOutputs = make(map[string]runstate.StepOutputRef)
+	}
 	loaded.StepOutputs["final"] = finalRef
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return RunResult{}, err

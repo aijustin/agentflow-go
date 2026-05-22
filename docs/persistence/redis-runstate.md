@@ -13,9 +13,8 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithRunStateRepository(runs),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(runs),
 )
 ```
 

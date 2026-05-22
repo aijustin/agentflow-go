@@ -20,6 +20,8 @@ const (
 	NodeQueryRouter   WorkflowNodeKind = "query_router"
 	NodeRAGGrade      WorkflowNodeKind = "rag_grade"
 	NodeSupervisor    WorkflowNodeKind = "supervisor"
+	NodeSubgraph      WorkflowNodeKind = "subgraph"
+	NodeMap           WorkflowNodeKind = "map"
 )
 
 type WorkflowNode struct {

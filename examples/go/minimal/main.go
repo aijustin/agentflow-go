@@ -5,21 +5,14 @@ import (
 	"fmt"
 	"log"
 
+	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 
 func main() {
-	scenarioFile := "../../autonomous.yaml"
-	scenario, err := agentflow.LoadScenarioFile(scenarioFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	workDir, err := testutil.ScenarioWorkDir(scenarioFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
+	scenario := examplescenario.AutonomousEcho()
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: examplescenario.WorkDir})
 	if err != nil {
 		log.Fatal(err)
 	}

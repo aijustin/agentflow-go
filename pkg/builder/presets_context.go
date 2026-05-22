@@ -7,7 +7,7 @@ import (
 )
 
 // ContextGovernanceLLM configures the openai-compatible profile from
-// examples/context_governance.yaml.
+// catalog ID context-governance.
 func ContextGovernanceLLM() LLMOption {
 	return func(p *core.LLMProfileRef) {
 		p.Provider = LLMProviderOpenAICompat

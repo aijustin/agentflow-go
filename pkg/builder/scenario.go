@@ -165,6 +165,24 @@ func (b *ScenarioBuilder) Hybrid(wf core.Workflow) *ScenarioBuilder {
 	return b
 }
 
+// NamedWorkflow registers a reusable workflow graph under orchestration.workflows.
+func (b *ScenarioBuilder) NamedWorkflow(name string, wf core.Workflow) *ScenarioBuilder {
+	b.commitAgent()
+	if b.s.Orchestration.Workflows == nil {
+		b.s.Orchestration.Workflows = make(map[string]core.Workflow)
+	}
+	b.s.Orchestration.Workflows[name] = wf
+	return b
+}
+
+// NamedWorkflowBuilder registers a workflow built from WorkflowBuilder.
+func (b *ScenarioBuilder) NamedWorkflowBuilder(name string, wf *WorkflowBuilder) *ScenarioBuilder {
+	if wf == nil {
+		return b.NamedWorkflow(name, core.Workflow{})
+	}
+	return b.NamedWorkflow(name, wf.Build())
+}
+
 // Scenario returns the constructed scenario after committing any pending agent.
 func (b *ScenarioBuilder) Scenario() core.Scenario {
 	b.commitAgent()

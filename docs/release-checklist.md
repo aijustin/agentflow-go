@@ -10,7 +10,7 @@
 GOTOOLCHAIN=auto make release-check
 ```
 
-该目标会执行 `fmt`、`test`、`vet`、`security`（govulncheck）、`validate-examples`（全部 `examples/*.yaml`）、`validate-builder`（18 条 Go DSL stack 与 YAML 对照）、`validate-catalog`（`examples/catalog/` 下 tool/skill manifest）。
+该目标会执行 `fmt`、`test`、`vet`、`security`（govulncheck）、`validate-builder`（18 条 Go DSL catalog stack）、`validate-catalog`（`examples/catalog/` 下 tool/skill manifest）。
 
 ## 推荐的人工检查
 
@@ -30,7 +30,7 @@ GOTOOLCHAIN=auto make test-realmodel
 ## 文档检查
 
 - `README.md`（中文，默认）与 `README.en.md`（英文）已描述新的用户可见行为；示例路径见 README「示例路径对照表」。
-- 新增示例可以通过 `go run ./examples/go/validate <file>` 校验；Go DSL stack 用 `-kind builder`；catalog manifest 用 `-kind tool|skill` 或 `make validate-catalog`。
+- 新增 builder stack 可以通过 `go run ./examples/go/validate -kind builder <id>` 校验；catalog manifest 用 `-kind tool|skill` 或 `make validate-catalog`。
 - `CHANGELOG.md` 包含公共 API 与场景相关变更。
 - 破坏性变更包含迁移说明。
 - 安全敏感能力记录了安全默认值和运维责任。

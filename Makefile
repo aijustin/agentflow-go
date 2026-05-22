@@ -1,4 +1,4 @@
-.PHONY: test test-integration test-race test-realmodel vet lint security fmt validate-examples validate-builder validate-catalog release-check
+.PHONY: test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check
 
 GO_TEST_LDFLAGS ?= -w
 
@@ -28,12 +28,6 @@ GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@latest
 security:
 	$(GOVULNCHECK) ./...
 
-validate-examples:
-	@for file in examples/*.yaml; do \
-		echo "validating $$file"; \
-		go run ./examples/go/validate "$$file" >/dev/null; \
-	done
-
 validate-builder:
 	@echo "validating builder stacks"
 	@go test ./pkg/builder/... -count=1
@@ -49,4 +43,4 @@ validate-catalog:
 		go run ./examples/go/validate -kind skill "$$file" >/dev/null; \
 	done
 
-release-check: fmt test vet security validate-examples validate-builder validate-catalog
+release-check: fmt test vet security validate-builder validate-catalog

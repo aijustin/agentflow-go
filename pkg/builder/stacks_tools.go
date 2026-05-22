@@ -13,7 +13,7 @@ func minimalToolAgentScenario(
 	return ab.Autonomous().Scenario()
 }
 
-// MinimalHTTPTool builds the http tool example from examples/http_tool.yaml.
+// MinimalHTTPTool builds the http tool example for catalog ID http-tool.
 func MinimalHTTPTool(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "http-tool-example"
@@ -30,7 +30,7 @@ func MinimalHTTPTool(agentName string, opts ...MinimalOption) core.Scenario {
 	)
 }
 
-// MinimalSQLTool builds the sql tool example from examples/sql_tool.yaml.
+// MinimalSQLTool builds the sql tool example for catalog ID sql-tool.
 func MinimalSQLTool(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "sql-tool-example"
@@ -47,7 +47,7 @@ func MinimalSQLTool(agentName string, opts ...MinimalOption) core.Scenario {
 	)
 }
 
-// MinimalFilesystemTool builds the filesystem tool example from examples/filesystem_tool.yaml.
+// MinimalFilesystemTool builds the filesystem tool example for catalog ID filesystem-tool.
 func MinimalFilesystemTool(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "filesystem-tool-example"
@@ -64,7 +64,7 @@ func MinimalFilesystemTool(agentName string, opts ...MinimalOption) core.Scenari
 	)
 }
 
-// MinimalMCPTool builds the MCP tool example from examples/mcp_tool.yaml.
+// MinimalMCPTool builds the MCP tool example for catalog ID mcp-tool.
 func MinimalMCPTool(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "mcp-tool-example"

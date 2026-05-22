@@ -6,10 +6,10 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/builder"
 )
 
-func TestExampleCatalogMatchesYAML(t *testing.T) {
+func TestExampleCatalogValidates(t *testing.T) {
 	for _, entry := range builder.ExampleCatalog() {
 		t.Run(entry.ID, func(t *testing.T) {
-			if err := builder.ValidateCatalogEntry(entry, "../../examples"); err != nil {
+			if err := builder.ValidateCatalogEntry(entry); err != nil {
 				t.Fatal(err)
 			}
 		})

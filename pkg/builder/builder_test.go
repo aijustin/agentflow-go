@@ -1,6 +1,7 @@
 package builder_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
@@ -139,15 +140,8 @@ func TestMinimalAutonomous(t *testing.T) {
 	if err := agentflow.ValidateScenario(got); err != nil {
 		t.Fatal(err)
 	}
-	yamlScenario, err := agentflow.LoadScenarioFile("../../examples/autonomous.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Orchestration.Mode != yamlScenario.Orchestration.Mode {
-		t.Fatalf("mode mismatch")
-	}
-	if got.Tools[builder.NameEchoTool].Type != yamlScenario.Tools["echo"].Type {
-		t.Fatalf("tool type mismatch")
+	if got.Tools[builder.NameEchoTool].Type != builder.ToolTypeEcho {
+		t.Fatalf("tool type=%q", got.Tools[builder.NameEchoTool].Type)
 	}
 }
 
@@ -367,5 +361,40 @@ func TestSelfRAGChatContext(t *testing.T) {
 	}
 	if profile.Context.StaleToolTurns != 2 || !profile.Context.ToolSchemaPruning {
 		t.Fatalf("context=%+v", profile.Context)
+	}
+}
+
+func TestSubgraphAndMapWorkflowBuilder(t *testing.T) {
+	prep := builder.NewWorkflow().
+		NodeTransform("mark", json.RawMessage(`{"set":{"ready":true}}`)).
+		Build()
+	mainWF := builder.NewWorkflow().
+		NodeSubgraph("run_prep", "prep").
+		Build()
+	subgraphScenario := builder.New("subgraph-demo").
+		DefaultMockLLM().
+		Agent("noop").DefaultLLM().Done().
+		NamedWorkflow("prep", prep).
+		FixedWorkflow(mainWF).
+		Scenario()
+	if err := agentflow.ValidateScenario(subgraphScenario); err != nil {
+		t.Fatal(err)
+	}
+
+	mapWF := builder.NewWorkflow().
+		NodeTransform("items", json.RawMessage(`{"set":{"list":["a","b"]}}`)).
+		NodeMap("fanout", builder.MapNodeInput("steps.items.list", builder.MapBranch{
+			Kind:  builder.NodeTransform,
+			Input: json.RawMessage(`{"set":{"tag":"mapped"}}`),
+		}, builder.MapOnError("collect_errors"))).
+		Edge("items", "fanout").
+		Build()
+	mapScenario := builder.New("map-demo").
+		DefaultMockLLM().
+		Agent("noop").DefaultLLM().Done().
+		FixedWorkflow(mapWF).
+		Scenario()
+	if err := agentflow.ValidateScenario(mapScenario); err != nil {
+		t.Fatal(err)
 	}
 }

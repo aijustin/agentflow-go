@@ -3,17 +3,19 @@ package agentflow_test
 import (
 	"testing"
 
-	"github.com/aijustin/agentflow-go"
+	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/builder"
+	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
-func TestLoadAgenticRAGExamples(t *testing.T) {
-	for _, path := range []string{
-		"examples/corrective_rag.yaml",
-		"examples/self_rag.yaml",
-		"examples/adaptive_rag.yaml",
+func TestAgenticRAGBuilderStacksValidate(t *testing.T) {
+	for _, scenario := range []core.Scenario{
+		builder.CorrectiveRAG("assistant"),
+		builder.SelfRAG("assistant"),
+		builder.AdaptiveRAG("assistant"),
 	} {
-		if _, err := agentflow.LoadScenarioFile(path); err != nil {
-			t.Fatalf("load %s: %v", path, err)
+		if err := agentflow.ValidateScenario(scenario); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

@@ -11,10 +11,8 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 
-const examplesRoot = "examples"
-
 func main() {
-	kind := flag.String("kind", "scenario", "manifest kind: scenario, tool, skill, or builder")
+	kind := flag.String("kind", "builder", "manifest kind: builder, scenario (deprecated), tool, or skill")
 	flag.Parse()
 	switch strings.ToLower(strings.TrimSpace(*kind)) {
 	case "tool":
@@ -29,15 +27,17 @@ func main() {
 		validateSkill(flag.Arg(0))
 	case "builder":
 		validateBuilder(flag.Args())
-	default:
+	case "scenario":
 		if flag.NArg() < 1 {
-			log.Fatal("usage: validate [-kind scenario|tool|skill|builder] <manifest.yaml|builder-id|all>")
+			log.Fatal("usage: validate -kind scenario <legacy.yaml>")
 		}
-		validateScenario(flag.Arg(0))
+		validateScenarioLegacy(flag.Arg(0))
+	default:
+		log.Fatal("usage: validate [-kind builder|scenario|tool|skill] [builder-id|all|legacy.yaml]")
 	}
 }
 
-func validateScenario(path string) {
+func validateScenarioLegacy(path string) {
 	scenario, err := agentflow.LoadScenarioFile(path)
 	if err != nil {
 		log.Fatal(err)
@@ -53,7 +53,7 @@ func validateScenario(path string) {
 	if err := agentflow.ValidateWiring(scenario, opts...); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("ok: scenario %s\n", path)
+	fmt.Printf("ok: legacy scenario %s\n", path)
 }
 
 func validateTool(path string) {
@@ -81,17 +81,17 @@ func validateBuilder(args []string) {
 	if target != "all" {
 		entry, ok := builder.FindCatalogEntry(entries, target)
 		if !ok {
-			log.Fatalf("unknown builder target %q (use catalog id, examples/*.yaml path, or all)", target)
+			log.Fatalf("unknown builder target %q (use catalog id or all)", target)
 		}
-		if err := builder.ValidateCatalogEntry(entry, examplesRoot); err != nil {
+		if err := builder.ValidateCatalogEntry(entry); err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("ok: builder %s (%s)\n", entry.ID, entry.YAML)
+		fmt.Printf("ok: builder %s\n", entry.ID)
 		return
 	}
 	for _, entry := range entries {
-		if err := builder.ValidateCatalogEntry(entry, examplesRoot); err != nil {
-			log.Fatalf("%s (%s): %v", entry.ID, entry.YAML, err)
+		if err := builder.ValidateCatalogEntry(entry); err != nil {
+			log.Fatalf("%s: %v", entry.ID, err)
 		}
 	}
 	fmt.Printf("ok: builder catalog (%d entries)\n", len(entries))

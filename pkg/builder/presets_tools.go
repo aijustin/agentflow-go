@@ -22,7 +22,7 @@ func MockToolLLM() LLMOption {
 	}
 }
 
-// HTTPToolStatusPreset configures the http.status tool from examples/http_tool.yaml.
+// HTTPToolStatusPreset configures the http.status tool for catalog ID http-tool.
 func HTTPToolStatusPreset() ToolOption {
 	return func(t *core.Tool) {
 		t.Type = ToolTypeHTTP
@@ -34,7 +34,7 @@ func HTTPToolStatusPreset() ToolOption {
 	}
 }
 
-// SQLQueryToolPreset configures the sql.query tool from examples/sql_tool.yaml.
+// SQLQueryToolPreset configures the sql.query tool for catalog ID sql-tool.
 func SQLQueryToolPreset() ToolOption {
 	return func(t *core.Tool) {
 		t.Type = ToolTypeSQL
@@ -46,7 +46,7 @@ func SQLQueryToolPreset() ToolOption {
 	}
 }
 
-// FilesystemReadToolPreset configures the fs.read tool from examples/filesystem_tool.yaml.
+// FilesystemReadToolPreset configures the fs.read tool for catalog ID filesystem-tool.
 func FilesystemReadToolPreset() ToolOption {
 	return func(t *core.Tool) {
 		t.Type = ToolTypeFilesystem
@@ -58,7 +58,7 @@ func FilesystemReadToolPreset() ToolOption {
 	}
 }
 
-// MCPSearchToolPreset configures the docs.search MCP tool from examples/mcp_tool.yaml.
+// MCPSearchToolPreset configures the docs.search MCP tool for catalog ID mcp-tool.
 func MCPSearchToolPreset(serverName string) ToolOption {
 	return func(t *core.Tool) {
 		t.Type = ToolTypeMCPTool
@@ -105,7 +105,7 @@ func MCPServerToolPrefix(prefix string) MCPServerOption {
 	}
 }
 
-// DocsMCPServerPreset configures the docs MCP server from examples/mcp_tool.yaml.
+// DocsMCPServerPreset configures the docs MCP server for catalog ID mcp-tool.
 func DocsMCPServerPreset() []MCPServerOption {
 	return []MCPServerOption{
 		MCPServerName(NameMCPServerDocs),

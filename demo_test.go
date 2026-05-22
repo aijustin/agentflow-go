@@ -5,19 +5,13 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 
 func TestWiringOptionsRunsFixedWorkflowExample(t *testing.T) {
-	scenario, err := agentflow.LoadScenarioFile("examples/fixed_workflow.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	workDir, err := testutil.ScenarioWorkDir("examples/fixed_workflow.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
+	scenario := builder.MinimalFixedWorkflowReview("reviewer")
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: "."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,16 +32,9 @@ func TestWiringOptionsRunsFixedWorkflowExample(t *testing.T) {
 }
 
 func TestWiringOptionsRegistersGitTool(t *testing.T) {
-	scenario, err := agentflow.LoadScenarioFile("examples/code_review_pipeline.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scenario := builder.CodeReviewPipeline()
 	scenario.Orchestration.HumanInLoop.Enabled = false
-	workDir, err := testutil.ScenarioWorkDir("examples/code_review_pipeline.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: "."})
 	if err != nil {
 		t.Fatal(err)
 	}

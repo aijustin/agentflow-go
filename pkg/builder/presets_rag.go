@@ -6,7 +6,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
-// knowledgeRetrieveInputSchema matches examples/rag_knowledge.yaml.
+// knowledgeRetrieveInputSchema matches catalog ID rag-knowledge.
 var knowledgeRetrieveInputSchema = json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string"},"namespace":{"type":"string"},"limit":{"type":"integer"}}}`)
 
 // MockChatLLM configures a mock chat LLM profile.

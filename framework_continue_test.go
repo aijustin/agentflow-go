@@ -7,14 +7,15 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func TestFrameworkResumeAndContinueAutonomousHITL(t *testing.T) {
-	fw, err := agentflow.NewFromFile(
-		"examples/human_in_loop.yaml",
+	fw, err := agentflow.New(
+		builder.MinimalHumanInLoop("assistant"),
 		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "approved answer"}),
 	)
@@ -151,8 +152,8 @@ func (g *toolPauseGateway) Supports(_ string, _ llm.Capability) bool { return tr
 
 func TestFrameworkResumeAndContinueReject(t *testing.T) {
 	var tokenOut bytes.Buffer
-	fw, err := agentflow.NewFromFile(
-		"examples/human_in_loop.yaml",
+	fw, err := agentflow.New(
+		builder.MinimalHumanInLoop("assistant"),
 		agentflow.WithHITLTokenSecret([]byte("secret"), &tokenOut),
 	)
 	if err != nil {

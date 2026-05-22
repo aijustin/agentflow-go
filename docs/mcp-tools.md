@@ -50,9 +50,8 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithToolExecutor("docs.search", searchTool),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithToolExecutor("docs.search", searchTool),
 )
 ```
 

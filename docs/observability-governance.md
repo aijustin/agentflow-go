@@ -33,8 +33,8 @@ eventSink := agentflow.NewObservabilityEventSink(
 	agentflow.NewSlogEventSink(logger),
 )
 
-fw, err := agentflow.NewFromFile("scenario.yaml",
-	agentflow.WithRecorder(recorder),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithRecorder(recorder),
 	agentflow.WithEventSink(eventSink),
 )
 
@@ -74,9 +74,8 @@ if err != nil {
 }
 eventHub := agentflow.NewEventHub()
 
-fw, err := agentflow.NewFromFile(
-	"scenario.yaml",
-	agentflow.WithEventSink(agentflow.NewEventFanoutSink(
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFanoutSink(
 		agentflow.NewEventStoreSink(eventStore, eventHub),
 		agentflow.NewObservabilityEventSink(recorder, tracer, agentflow.NewSlogEventSink(logger)),
 	)),
@@ -111,8 +110,8 @@ defer provider.Shutdown(ctx)
 
 tracer := agentflow.OpenTelemetryTracerFromProvider(provider, "my-service/agentflow")
 
-fw, err := agentflow.NewFromFile("scenario.yaml",
-	agentflow.WithTracer(tracer),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithTracer(tracer),
 	agentflow.WithEventSink(agentflow.NewObservabilityEventSink(
 		recorder,
 		tracer,

@@ -728,7 +728,7 @@
           <li><a href="#quickstart">快速开始</a></li>
           <li><a href="#examples">示例路径</a></li>
           <li><a href="#concepts">核心概念</a></li>
-          <li><a href="#scenario">场景 YAML</a></li>
+          <li><a href="#builder-dsl">Go Builder</a></li>
           <li><a href="#builder-dsl">Go DSL Builder</a></li>
           <li><a href="#embed">嵌入 Go 项目</a></li>
           <li><a href="#runtime">运行模式</a></li>
@@ -739,6 +739,8 @@
           <li><a href="#observability">可观测面板</a></li>
           <li><a href="#deployment">宿主部署与发布</a></li>
           <li><a href="library-integration.md">库集成文档 (Markdown)</a></li>
+          <li><a href="competitive-analysis-langgraph.md">与 LangGraph 对比</a></li>
+          <li><a href="orchestration-parity.md">编排对齐路线图</a></li>
           <li><a href="#checklist">落地检查表</a></li>
         </ul>
       </nav>
@@ -749,7 +751,7 @@
         <div class="hero-copy">
           <span class="eyebrow">agentflow-go 使用手册</span>
           <h2>把 Agent 能力嵌入你的 Go 服务</h2>
-          <p>AgentFlow Go 是可被 <code>import</code> 的场景驱动库：YAML 声明 Agent、工具与工作流，Go 代码注入模型、持久化、治理与 HTTP Handler。不提供官方 CLI 或独立 Server 二进制，由宿主应用负责进程拓扑与运维。</p>
+          <p>AgentFlow Go 是面向 Go 后端工程师的可嵌入 Agent 运行时库：用 <code>pkg/builder</code> 或 <code>core.Scenario</code> 定义场景，Go 代码注入模型、持久化、治理与 HTTP Handler。不提供官方 CLI 或独立 Server 二进制。</p>
           <div class="hero-actions">
             <a class="button-link primary-action" href="#quickstart">开始接入</a>
             <a class="button-link" href="#observability">开启可观测</a>
@@ -765,9 +767,9 @@
           </div>
           <pre><code>go get github.com/aijustin/agentflow-go
 
-go run ./examples/go/validate examples/autonomous.yaml
+go run ./examples/go/builder/main.go
 go run ./examples/go/validate -kind builder all
-go run ./examples/go/minimal/main.go
+make validate-builder
 
 GOTOOLCHAIN=auto make release-check</code></pre>
         </div>
@@ -781,7 +783,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           </div>
           <span class="tag">Go 1.25.10+</span>
         </div>
-        <p class="lead">AgentFlow Go 是一个以场景为中心的 Go 库。业务把 Agent、LLM profile、工具、Skill、记忆、工作流、人工审批和策略写进 YAML，在自有 <code>main</code> 中通过 <code>agentflow.New</code> 与 <code>With*</code> 选项注入模型、数据库、HTTP Handler、身份治理和可观测能力。</p>
+        <p class="lead">AgentFlow Go 是面向 Go 后端工程师的场景运行时库。在代码中用 <code>pkg/builder</code> 构造 Agent、LLM profile、工具、Skill、记忆、工作流与审批策略，再通过 <code>agentflow.New</code> 与 <code>With*</code> 选项注入模型、数据库、HTTP Handler 与可观测能力。</p>
         <div class="metric-strip" aria-label="能力摘要">
           <div class="metric"><strong>场景</strong><span>声明 Agent、Tool、Skill、workflow、policy</span></div>
           <div class="metric"><strong>模型</strong><span>Provider Router、结构化输出、流式输出、规划 pass</span></div>
@@ -790,8 +792,8 @@ GOTOOLCHAIN=auto make release-check</code></pre>
         </div>
         <div class="diagram" aria-label="AgentFlow 架构图">
           <div class="flow-row">
-            <div class="flow-node"><b>场景 YAML</b><span>Agent、LLM profile、工具、Skill、workflow、策略</span></div>
-            <div class="flow-node"><b>根门面</b><span>NewFromFile、options、provider router、constructors</span></div>
+            <div class="flow-node"><b>Go Builder</b><span>ScenarioBuilder、WorkflowBuilder、preset stack</span></div>
+            <div class="flow-node"><b>根门面</b><span>New、options、provider router、constructors</span></div>
             <div class="flow-node"><b>运行时</b><span>规划、工具循环、workflow runner、HITL resume、事件流</span></div>
             <div class="flow-node"><b>生产适配器</b><span>PostgreSQL、Redis、S3、MCP、RAG、HTTP、SQL、Observability</span></div>
           </div>
@@ -816,8 +818,8 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           <div class="step">
             <div class="step-index">2</div>
             <div>
-              <h4>校验场景</h4>
-              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/validate examples/autonomous.yaml</code></pre></div>
+              <h4>校验 builder catalog</h4>
+              <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/validate -kind builder all</code></pre></div>
             </div>
           </div>
           <div class="step">
@@ -845,7 +847,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           </div>
           <a class="button-link" href="../README.md#示例路径对照表">README 完整表</a>
         </div>
-        <p class="lead">仓库内示例分两类：<code>examples/go/</code> 为可复制的 Go 接入代码；<code>examples/*.yaml</code> 为场景声明，可用 <code>examples/go/validate</code> 或 <code>make validate-examples</code> 批量校验。</p>
+        <p class="lead">可运行示例在 <code>examples/go/</code>；场景定义在 <code>pkg/builder</code> 与 <code>examples/go/scenario</code>。用 <code>make validate-builder</code> 校验全部 18 条 catalog stack。</p>
         <h4>可运行 Go 示例</h4>
         <table>
           <thead><tr><th>路径</th><th>说明</th><th>命令</th></tr></thead>
@@ -857,23 +859,20 @@ GOTOOLCHAIN=auto make release-check</code></pre>
             <tr><td><code>examples/go/event-trigger</code></td><td>事件 trigger 驱动 Run</td><td><code>go run ./examples/go/event-trigger/main.go</code></td></tr>
             <tr><td><code>examples/go/tier-memory</code></td><td>进程内 tier 记忆最小示例</td><td><code>go run ./examples/go/tier-memory/main.go</code></td></tr>
             <tr><td><code>examples/go/tier-worker</code></td><td>Postgres warm/cold tier + memory.reconcile Worker</td><td>见 <a href="../examples/deploy/README.md">examples/deploy</a></td></tr>
-            <tr><td><code>examples/go/validate</code></td><td>场景 YAML 接线（默认）；<code>-kind builder|tool|skill</code> 校验 DSL stack 或 catalog manifest</td><td><code>go run ./examples/go/validate examples/autonomous.yaml</code></td></tr>
-            <tr><td><code>examples/go/builder</code></td><td>Go DSL 构造场景并进程内 Run</td><td><code>go run ./examples/go/builder/main.go</code></td></tr>
+            <tr><td><code>examples/go/builder</code></td><td>Go DSL 构造场景（推荐起点）</td><td><code>go run ./examples/go/builder/main.go</code></td></tr>
+            <tr><td><code>examples/go/validate</code></td><td>校验 builder catalog 或 catalog manifest</td><td><code>go run ./examples/go/validate -kind builder all</code></td></tr>
           </tbody>
         </table>
-        <h4>场景 YAML（节选）</h4>
+        <h4>Builder catalog（节选）</h4>
         <table>
-          <thead><tr><th>文件</th><th>模式</th><th>侧重</th></tr></thead>
+          <thead><tr><th>ID</th><th>函数</th><th>侧重</th></tr></thead>
           <tbody>
-            <tr><td><code>examples/autonomous.yaml</code></td><td>autonomous</td><td>最小自主 Agent</td></tr>
-            <tr><td><code>examples/human_in_loop.yaml</code></td><td>autonomous</td><td>最终答案审批</td></tr>
-            <tr><td><code>examples/fixed_workflow.yaml</code></td><td>fixed_workflow</td><td>固定 DAG</td></tr>
-            <tr><td><code>examples/hybrid.yaml</code></td><td>hybrid</td><td>工作流 + 自主综合</td></tr>
-            <tr><td><code>examples/code_review_pipeline.yaml</code></td><td>fixed_workflow</td><td>代码审查流水线</td></tr>
-            <tr><td><code>examples/multi_expert_research.yaml</code></td><td>hybrid</td><td>多专家 + planning</td></tr>
-            <tr><td><code>examples/adaptive_rag.yaml</code></td><td>fixed_workflow</td><td>query_router RAG</td></tr>
-            <tr><td><code>examples/ticket_handling.yaml</code></td><td>autonomous</td><td>工单 trigger + HITL</td></tr>
-            <tr><td><code>examples/tier_memory.yaml</code></td><td>autonomous</td><td>hot/warm/cold tier 记忆</td></tr>
+            <tr><td><code>autonomous-echo</code></td><td><code>MinimalAutonomous</code></td><td>最小自主 Agent</td></tr>
+            <tr><td><code>human-in-loop</code></td><td><code>MinimalHumanInLoop</code></td><td>最终答案审批</td></tr>
+            <tr><td><code>fixed-workflow-review</code></td><td><code>MinimalFixedWorkflowReview</code></td><td>固定 DAG</td></tr>
+            <tr><td><code>code-review-pipeline</code></td><td><code>CodeReviewPipeline</code></td><td>Git diff + parallel_group</td></tr>
+            <tr><td><code>multi-expert-research</code></td><td><code>MultiExpertResearch</code></td><td>Hybrid + planning</td></tr>
+            <tr><td><code>ticket-handling</code></td><td><code>MinimalTicketHandling</code></td><td>工单 trigger + HITL</td></tr>
           </tbody>
         </table>
         <div class="callout">生产环境用 <code>WithLLMGateway</code> / <code>WithToolExecutor</code>；<code>pkg/testutil.WiringOptions</code> 仅用于测试与上述 Go 示例。Go DSL 构造场景见 <a href="#builder-dsl">Go DSL Builder</a> 与 <a href="builder-reference.md">builder-reference.md</a>。编排选型见 <a href="orchestration-flow.md">orchestration-flow.md</a>。</div>
@@ -902,54 +901,32 @@ GOTOOLCHAIN=auto make release-check</code></pre>
       <section id="scenario">
         <div class="section-head">
           <div>
-            <div class="section-kicker">04 / YAML 契约</div>
-            <h3>场景 YAML</h3>
+            <div class="section-kicker">04 / 场景构造</div>
+            <h3>Go Builder 场景</h3>
           </div>
         </div>
-        <p class="lead">YAML 是 AgentFlow 的产品界面。它让业务团队能审阅 Agent 能力、工具风险、审批策略和运行模式，而不是把这些策略散落在 Go 代码里。</p>
-        <div class="callout"><strong>配置发现:</strong> 使用 <a href="../schemas/agentflow.scenario.schema.json">JSON Schema</a> 获得编辑器补全；Go 中通过 <code>agentflow.ScenarioJSONSchema()</code> 加载同一份契约；校验可用 <code>examples/go/validate</code> 或 <code>ValidateWiring</code>。完整字段见 <a href="configuration-reference.md">配置参考</a>。</div>
-        <div class="code-block"><div class="code-title"><span>scenario.yaml</span><button class="copy" type="button">复制</button></div><pre><code># yaml-language-server: $schema=../schemas/agentflow.scenario.schema.json
-      scenario:
-  name: support-assistant
-  llms:
-    default:
-      provider: openai-compatible
-      model: qwen/qwen3.6-35b-a3b
-      capabilities: [chat, tool_call]
-      context_window_tokens: 128000
-  tools:
-    sql.query:
-      type: builtin.sql
-      approval: never
-      side_effect: read
-      rate_cap: 5
-      input_schema:
-        type: object
-        required: [query_id]
-  skills:
-    sql-review:
-      version: "1.0.0"
-      description: 为数据查询场景增加答复复核约束。
-      prompt_fragments:
-        - name: 数据边界
-          content: "回答时说明数据来源，不确定时要求人工复核。"
-      tool_policies:
-        - tool: sql.query
-          approval: risky
-          rate_cap: 3
-  agents:
-    assistant:
-      llm: default
-      tools: [sql.query]
-      skills: [sql-review]
-      memory: session
-      instructions: "只执行 allowlisted read-only 查询。"
-  orchestration:
-    mode: autonomous
-    planning:
-      enabled: true
-    max_steps: 6</code></pre></div>
-        <div class="callout"><strong>建议:</strong> 把工具 `side_effect`、`approval`、`rate_cap` 和 `input_schema` 当作安全契约维护。这样即使底层工具很强，Agent 运行时仍然走统一治理路径。</div>
+        <p class="lead">场景在 Go 代码中构造，类型安全、可重构、可测试。推荐从 preset stack 或 <code>ScenarioBuilder</code> 开始；复杂 workflow 用 <code>WorkflowBuilder</code>，命名子图用 <code>NamedWorkflow</code>，动态 fan-out 用 <code>NodeMap</code>。</p>
+        <div class="callout"><strong>校验:</strong> <code>agentflow.ValidateScenario</code>、<code>make validate-builder</code>、<code>go run ./examples/go/validate -kind builder all</code>。完整 API 见 <a href="builder-reference.md">Builder 速查</a> 与 <a href="configuration-reference.md">配置参考</a>（描述 <code>core.Scenario</code> 字段）。</div>
+        <div class="code-block"><div class="code-title"><span>main.go</span><button class="copy" type="button">复制</button></div><pre><code>import (
+  agentflow "github.com/aijustin/agentflow-go"
+  "github.com/aijustin/agentflow-go/pkg/builder"
+)
+
+scenario := builder.MinimalAutonomous("assistant")
+prep := builder.NewWorkflow().
+  NodeTransform("mark", json.RawMessage(`{"set":{"ready":true}}`)).
+  Build()
+mainWF := builder.NewWorkflow().
+  NodeSubgraph("run_prep", "prep").
+  Build()
+advanced := builder.New("advanced").
+  DefaultMockLLM().
+  Agent("assistant").DefaultLLM().Done().
+  NamedWorkflow("prep", prep).
+  FixedWorkflow(mainWF).
+  Scenario()
+
+fw, err := agentflow.New(advanced, opts...)</code></pre></div>
       </section>
 
       <section id="builder-dsl">
@@ -960,7 +937,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           </div>
           <a class="button-link" href="builder-reference.md">Builder 速查</a>
         </div>
-        <p class="lead"><code>pkg/builder</code> 提供链式 Go DSL，用于构造 <code>core.Scenario</code>，避免在 Go 代码里手写大量字符串字面量。YAML 仍负责声明场景结构；Builder 适合在代码里复用 preset、workflow 图和与 <code>examples/*.yaml</code> 对齐的一行式 stack。</p>
+        <p class="lead"><code>pkg/builder</code> 是默认场景构造方式。Preset stack 覆盖常见模式；底层 API 支持 <code>NamedWorkflow</code>、<code>NodeSubgraph</code>、<code>NodeMap</code> 等 workflow 节点。</p>
         <div class="code-block"><div class="code-title"><span>main.go</span><button class="copy" type="button">复制</button></div><pre><code>import (
   agentflow "github.com/aijustin/agentflow-go"
   "github.com/aijustin/agentflow-go/pkg/builder"
@@ -972,14 +949,10 @@ if err := agentflow.ValidateScenario(scenario); err != nil {
 }
 fw, err := agentflow.New(scenario, opts...)</code></pre></div>
         <h4>校验与 catalog</h4>
-        <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code># 全部 18 条 builder stack（与 examples/*.yaml 一一对应）
-make validate-builder
-
-# 或 validate CLI
+        <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>make validate-builder
 go run ./examples/go/validate -kind builder all
-go run ./examples/go/validate -kind builder autonomous-echo
-go run ./examples/go/validate -kind builder examples/autonomous.yaml</code></pre></div>
-        <p>完整 YAML ↔ Builder 对照表见 <a href="builder-reference.md">docs/builder-reference.md</a>；根包也 re-export 了常用入口（<code>agentflow.MinimalAutonomous</code> 等）。</p>
+go run ./examples/go/validate -kind builder autonomous-echo</code></pre></div>
+        <p>完整 catalog 见 <a href="builder-reference.md">docs/builder-reference.md</a>；根包 re-export 了 <code>agentflow.MinimalAutonomous</code> 等入口。</p>
       </section>
 
       <section id="embed">
@@ -992,7 +965,8 @@ go run ./examples/go/validate -kind builder examples/autonomous.yaml</code></pre
         <div class="grid two">
           <div class="panel">
             <h4>最小嵌入</h4>
-            <div class="code-block"><div class="code-title"><span>main.go</span><button class="copy" type="button">复制</button></div><pre><code>fw, err := agentflow.NewFromFile("scenario.yaml")
+            <div class="code-block"><div class="code-title"><span>main.go</span><button class="copy" type="button">复制</button></div><pre><code>scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithToolExecutor("echo", myEcho))
 if err != nil {
   log.Fatal(err)
 }
@@ -1002,11 +976,11 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
   Agent:  "assistant",
   Prompt: "hello",
 })</code></pre></div>
-          </div>
           <div class="panel">
             <h4>生产注入</h4>
-            <div class="code-block"><div class="code-title"><span>options.go</span><button class="copy" type="button">复制</button></div><pre><code>fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
+            <div class="code-block"><div class="code-title"><span>options.go</span><button class="copy" type="button">复制</button></div><pre><code>scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(
+  scenario,
   agentflow.WithLLMGateway(gateway),
   agentflow.WithToolExecutor("sql.query", sqlTool),
   agentflow.WithRunStateRepository(runs),
@@ -1065,8 +1039,8 @@ result, err := fw.Run(ctx, agentflow.RunRequest{
   MaxRows: 20,
 })
 
-fw, err := agentflow.NewFromFile(
-  "examples/sql_tool.yaml",
+fw, err := agentflow.New(
+  builder.MinimalSQLTool("assistant"),
   agentflow.WithToolExecutor("sql.query", sqlTool),
 )</code></pre></div>
         <div class="code-block"><div class="code-title"><span>惰性工具解析</span><button class="copy" type="button">复制</button></div><pre><code>resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
@@ -1080,8 +1054,9 @@ fw, err := agentflow.NewFromFile(
   }
 })
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(
+  scenario,
   agentflow.WithToolResolver(resolver),
 )</code></pre></div>
         <div class="callout"><strong>Skill 边界:</strong> Skill 解决 prompt、policy 和 workflow 片段的复用，会在场景构建阶段展开；它不初始化工具。真实工具客户端、租户凭证和重型连接器应由 <code>WithToolResolver</code> 在调用时绑定。</div>
@@ -1211,9 +1186,9 @@ worker, err := async.NewWorker(queue, jobHandler, async.WorkerConfig{
 })</code></pre></div>
         <div class="callout"><strong>续跑语义:</strong> <code>Resume</code> 只更新 RunState；<code>ResumeAndContinue</code> 会在审批后继续执行直到完成或下一次暂停。HTTP 请求设置 <code>"continue": true</code>，示例见 <code>examples/go/hitl-resume</code>，异步队列使用 <code>resume.continue</code> job。完整路由矩阵见 <a href="async-runtime.md">async-runtime.md</a>。</div>
         <div class="grid three">
-          <div class="panel"><h4>ticket_handling</h4><p>工单分派 + triggers + HITL。</p><span class="tag">examples/ticket_handling.yaml</span></div>
-          <div class="panel"><h4>code_review_pipeline</h4><p>Git diff + parallel_group 审查。</p><span class="tag">examples/code_review_pipeline.yaml</span></div>
-          <div class="panel"><h4>multi_expert_research</h4><p>Hybrid + planning.execute 研报。</p><span class="tag">examples/multi_expert_research.yaml</span></div>
+          <div class="panel"><h4>ticket_handling</h4><p>工单分派 + triggers + HITL。</p><span class="tag">builder.MinimalTicketHandling</span></div>
+          <div class="panel"><h4>code_review_pipeline</h4><p>Git diff + parallel_group 审查。</p><span class="tag">builder.CodeReviewPipeline</span></div>
+          <div class="panel"><h4>multi_expert_research</h4><p>Hybrid + planning.execute 研报。</p><span class="tag">builder.MultiExpertResearch</span></div>
         </div>
       </section>
 
@@ -1260,8 +1235,9 @@ if err != nil {
 }
 eventHub := agentflow.NewEventHub()
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(
+  scenario,
   agentflow.WithEventSink(agentflow.NewEventFanoutSink(
     agentflow.NewEventStoreSink(eventStore, eventHub),
     agentflow.NewSlogEventSink(logger),
@@ -1309,7 +1285,7 @@ mux.Handle("/observability/",
           </div>
           <div class="panel">
             <h4>发布检查</h4>
-            <p><code>make release-check</code> 会运行 <code>fmt</code>、<code>test</code>、<code>vet</code>、<code>security</code>（govulncheck）、<code>validate-examples</code>、<code>validate-builder</code>、<code>validate-catalog</code>。</p>
+            <p><code>make release-check</code> 会运行 <code>fmt</code>、<code>test</code>、<code>vet</code>、<code>security</code>（govulncheck）、<code>validate-builder</code>、<code>validate-catalog</code>。</p>
             <div class="code-block"><div class="code-title"><span>发布检查</span><button class="copy" type="button">复制</button></div><pre><code>GOTOOLCHAIN=auto make release-check</code></pre></div>
           </div>
           <div class="panel">

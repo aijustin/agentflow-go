@@ -42,7 +42,7 @@ func ragGradeInput(includeMinScore bool) json.RawMessage {
 }
 
 // AdaptiveRAGWorkflow builds the query_router → retrieve → answer graph from
-// examples/adaptive_rag.yaml.
+// catalog ID adaptive-rag.
 func AdaptiveRAGWorkflow(namespace, agentName string) core.Workflow {
 	return NewWorkflow().
 		NodeWithDepends(core.WorkflowNode{
@@ -69,7 +69,7 @@ func AdaptiveRAGWorkflow(namespace, agentName string) core.Workflow {
 }
 
 // CorrectiveRAGWorkflow builds the route → retrieve → grade → rewrite → answer
-// graph from examples/corrective_rag.yaml.
+// graph for catalog ID corrective-rag.
 func CorrectiveRAGWorkflow(namespace, agentName string) core.Workflow {
 	return NewWorkflow().
 		NodeWithDepends(core.WorkflowNode{
@@ -109,7 +109,7 @@ func CorrectiveRAGWorkflow(namespace, agentName string) core.Workflow {
 		Build()
 }
 
-// SelfRAGWorkflow builds the retrieve → grade → answer graph from examples/self_rag.yaml.
+// SelfRAGWorkflow builds the retrieve → grade → answer graph for catalog ID self-rag.
 func SelfRAGWorkflow(namespace, agentName string) core.Workflow {
 	return NewWorkflow().
 		NodeWithDepends(core.WorkflowNode{
@@ -133,7 +133,7 @@ func SelfRAGWorkflow(namespace, agentName string) core.Workflow {
 		Build()
 }
 
-// HybridResearchWorkflow builds the initial_search tool phase from examples/hybrid.yaml.
+// HybridResearchWorkflow builds the initial_search tool phase for catalog ID hybrid-research.
 func HybridResearchWorkflow(toolRef string) core.Workflow {
 	return NewWorkflow().
 		NodeTool("initial_search", toolRef).

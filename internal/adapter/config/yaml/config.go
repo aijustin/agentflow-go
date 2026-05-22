@@ -148,6 +148,7 @@ type Agent struct {
 type Orchestration struct {
 	Mode        string            `yaml:"mode"`
 	Workflow    *Workflow         `yaml:"workflow"`
+	Workflows   map[string]Workflow `yaml:"workflows"`
 	MaxParallel int               `yaml:"max_parallel"`
 	HumanInLoop HumanInLoopPolicy `yaml:"human_in_loop"`
 	Planning    PlanningPolicy    `yaml:"planning"`
@@ -450,6 +451,16 @@ func (d Document) ToCore() (core.Scenario, error) {
 			return core.Scenario{}, err
 		}
 		s.Orchestration.Workflow = &workflow
+	}
+	if len(d.Scenario.Orchestration.Workflows) > 0 {
+		s.Orchestration.Workflows = make(map[string]core.Workflow, len(d.Scenario.Orchestration.Workflows))
+		for name, wf := range d.Scenario.Orchestration.Workflows {
+			workflow, err := wf.toCore()
+			if err != nil {
+				return core.Scenario{}, fmt.Errorf("orchestration.workflows.%s: %w", name, err)
+			}
+			s.Orchestration.Workflows[name] = workflow
+		}
 	}
 	return s, nil
 }

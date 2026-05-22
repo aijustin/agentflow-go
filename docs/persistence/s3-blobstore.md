@@ -33,9 +33,8 @@ if err != nil {
     log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-    "scenario.yaml",
-    agentflow.WithBlobStore(blobs),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithBlobStore(blobs),
 )
 ```
 

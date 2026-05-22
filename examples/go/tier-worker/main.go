@@ -1,4 +1,4 @@
-// tier-worker runs tier_memory.yaml with Postgres warm tier, file cold tier, and
+// tier-worker runs the tier-memory builder stack with Postgres warm tier, file cold tier, and
 // async memory.reconcile jobs via a shared job queue.
 //
 // Prerequisites (reference stack):
@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -33,16 +34,8 @@ import (
 )
 
 func main() {
-	scenarioFile := "../../tier_memory.yaml"
-	scenario, err := agentflow.LoadScenarioFile(scenarioFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	workDir, err := testutil.ScenarioWorkDir(scenarioFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
+	scenario := examplescenario.TierMemory()
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: examplescenario.WorkDir})
 	if err != nil {
 		log.Fatal(err)
 	}

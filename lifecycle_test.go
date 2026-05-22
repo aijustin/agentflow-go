@@ -10,7 +10,7 @@ import (
 
 func TestFrameworkClose(t *testing.T) {
 	closed := false
-	fw, err := agentflow.NewFromFile("examples/autonomous.yaml", agentflow.WithCloser(func(context.Context) error {
+	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}), agentflow.WithCloser(func(context.Context) error {
 		closed = true
 		return nil
 	}))
@@ -26,7 +26,7 @@ func TestFrameworkClose(t *testing.T) {
 }
 
 func TestFrameworkCloseJoinsErrors(t *testing.T) {
-	fw, err := agentflow.NewFromFile("examples/autonomous.yaml",
+	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}),
 		agentflow.WithCloser(func(context.Context) error { return errors.New("one") }),
 		agentflow.WithCloser(func(context.Context) error { return errors.New("two") }),
 	)

@@ -5,27 +5,29 @@
 
 [English](./README.en.md) | 简体中文
 
-`agentflow-go` 是一个以场景 YAML 为配置中心的 **Go 库**，用于组合 Agent、Tool、Skill、LLM Gateway、上下文治理、Memory、Run State 和 Human-in-the-loop 编排能力。
-
-在自有服务中 `import` 本库，用 YAML 声明场景，显式接线 Gateway 与 ToolExecutor，然后调用 `Framework.Run`；也可将库提供的 HTTP Handler 挂到自有 `http.Server`。
+`agentflow-go` 是面向 **Go 后端工程师** 的可嵌入 Agent **运行时库**：用 Go 代码（`pkg/builder` 或 `core.Scenario`）组合 Agent、Tool、Skill、LLM Gateway、Memory、Run State 与 Human-in-the-loop，在自有服务中显式接线后调用 `Framework.Run`。
 
 ## 快速开始
 
 ```sh
 go get github.com/aijustin/agentflow-go
 go run ./examples/go/minimal/main.go
-go run ./examples/go/validate examples/autonomous.yaml
+go run ./examples/go/builder/main.go
+make validate-builder
 make test
 ```
 
+产品方向：[docs/product-direction.md](docs/product-direction.md) · Builder 参考：[docs/builder-reference.md](docs/builder-reference.md)
+
 发布前建议运行 `GOTOOLCHAIN=auto make release-check`。见 [docs/release-checklist.md](docs/release-checklist.md) 与 [docs/api-stability.md](docs/api-stability.md)。
 
-集成指南：[docs/library-integration.md](docs/library-integration.md) · HTML 手册：[docs/manual.html](docs/manual.html)
+集成指南：[docs/library-integration.md](docs/library-integration.md) · HTML 手册：[docs/manual.html](docs/manual.html) · 与 LangGraph 对比：[docs/competitive-analysis-langgraph.md](docs/competitive-analysis-langgraph.md)
 
 ## 集成路径
 
 | 目标 | 入口 |
 |------|------|
+| **首选：Go DSL 构造场景** | [docs/builder-reference.md](docs/builder-reference.md) · [examples/go/builder/main.go](examples/go/builder/main.go) |
 | 嵌入现有 Go 服务 | [docs/library-integration.md](docs/library-integration.md) |
 | 进程内最小运行 | [examples/go/minimal/main.go](examples/go/minimal/main.go) |
 | Postgres / 文件持久化 | [examples/go/postgres/main.go](examples/go/postgres/main.go) |
@@ -33,7 +35,6 @@ make test
 | HITL 暂停与恢复 | [examples/go/hitl-resume/main.go](examples/go/hitl-resume/main.go) |
 | 事件触发 | [examples/go/event-trigger/main.go](examples/go/event-trigger/main.go) |
 | 测试与示例接线 | [pkg/testutil](pkg/testutil/testutil.go) |
-| Go DSL 构造场景 | [docs/builder-reference.md](docs/builder-reference.md) · [examples/go/builder/main.go](examples/go/builder/main.go) |
 
 库 API：`ValidateWiring`、`New`、`Framework.Run`、`NewProductionHTTPHandler`、`NewFrameworkJobHandler`、`NewPrometheusRecorder`、`NewOpenTelemetryTracer`、`ScenarioJSONSchema`、`Version`；Builder 栈入口见 [builder.go](builder.go)（如 `MinimalAutonomous`）。
 
@@ -43,42 +44,28 @@ make test
 
 | 目录 | 说明 | 运行命令 |
 |------|------|----------|
-| [minimal](examples/go/minimal/main.go) | 进程内最小嵌入：`LoadScenario` → `testutil.WiringOptions` → `New` → `Run` | `go run ./examples/go/minimal/main.go` |
-| [postgres](examples/go/postgres/main.go) | Postgres RunState / JobQueue 持久化接线 | `go run ./examples/go/postgres/main.go` |
+| [builder](examples/go/builder/main.go) | Go DSL 构造场景并进程内 Run（**推荐起点**） | `go run ./examples/go/builder/main.go` |
+| [minimal](examples/go/minimal/main.go) | 最小嵌入：`builder` → `testutil.WiringOptions` → `New` → `Run` | `go run ./examples/go/minimal/main.go` |
+| [postgres](examples/go/postgres/main.go) | Postgres / 文件 RunState 持久化 | `go run ./examples/go/postgres/main.go` |
 | [http-worker](examples/go/http-worker/main.go) | 挂载 `NewProductionHTTPHandler` + 异步 Worker | `go run ./examples/go/http-worker/main.go` |
 | [hitl-resume](examples/go/hitl-resume/main.go) | HITL 暂停与 `ResumeAndContinue` | `go run ./examples/go/hitl-resume/main.go` |
 | [event-trigger](examples/go/event-trigger/main.go) | `scenario.triggers` 事件驱动 Run | `go run ./examples/go/event-trigger/main.go` |
 | [tier-memory](examples/go/tier-memory/main.go) | 进程内 tier 记忆最小示例 | `go run ./examples/go/tier-memory/main.go` |
 | [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` 异步 Worker | 见 [examples/deploy/](examples/deploy/README.md) |
-| [validate](examples/go/validate/main.go) | 校验场景 YAML、接线或 catalog manifest | `go run ./examples/go/validate examples/autonomous.yaml` |
-| [builder](examples/go/builder/main.go) | Go DSL 构造场景并进程内 Run | `go run ./examples/go/builder/main.go` |
+| [validate](examples/go/validate/main.go) | 校验 builder catalog 或 legacy YAML | `go run ./examples/go/validate -kind builder all` |
 
-生产环境请用 `WithLLMGateway` / `WithToolExecutor` 替代 `testutil.WiringOptions`；测试接线见 [pkg/testutil](pkg/testutil/testutil.go)。Builder 速查：[docs/builder-reference.md](docs/builder-reference.md)。
+生产环境请用 `WithLLMGateway` / `WithToolExecutor` 替代 `testutil.WiringOptions`；测试接线见 [pkg/testutil](pkg/testutil/testutil.go)。
 
-### 场景 YAML 示例（`examples/`）
+### Builder catalog 对照
 
-| 文件 | 编排模式 | 侧重能力 |
-|------|----------|----------|
-| [autonomous.yaml](examples/autonomous.yaml) | `autonomous` | 最小自主 Agent + echo 工具 |
-| [human_in_loop.yaml](examples/human_in_loop.yaml) | `autonomous` | `before_final_answer` 人工审批 |
-| [context_governance.yaml](examples/context_governance.yaml) | `autonomous` | 上下文窗口 / 摘要 / stale tool 治理 |
-| [fixed_workflow.yaml](examples/fixed_workflow.yaml) | `fixed_workflow` | 固定 DAG 工作流 |
-| [workflow_enhancements.yaml](examples/workflow_enhancements.yaml) | `fixed_workflow` | `parallel_group`、`loop`、`human_gate` 等节点 |
-| [code_review_pipeline.yaml](examples/code_review_pipeline.yaml) | `fixed_workflow` | Git diff + 并行审查 + 审批门 |
-| [hybrid.yaml](examples/hybrid.yaml) | `hybrid` | 工作流阶段 + 自主综合阶段 |
-| [multi_expert_research.yaml](examples/multi_expert_research.yaml) | `hybrid` | 多专家并行 + planning.execute |
-| [adaptive_rag.yaml](examples/adaptive_rag.yaml) | `fixed_workflow` | `query_router` 自适应 RAG |
-| [corrective_rag.yaml](examples/corrective_rag.yaml) | `fixed_workflow` | `rag_grade` + 条件重检 |
-| [self_rag.yaml](examples/self_rag.yaml) | `fixed_workflow` | Self-RAG 质量门 |
-| [rag_knowledge.yaml](examples/rag_knowledge.yaml) | — | RAG 知识库与 citation |
-| [ticket_handling.yaml](examples/ticket_handling.yaml) | `autonomous` | 工单 trigger + HITL |
-| [tier_memory.yaml](examples/tier_memory.yaml) | `autonomous` | hot/warm/cold tier 记忆 |
-| [http_tool.yaml](examples/http_tool.yaml) | — | HTTP 工具声明 |
-| [sql_tool.yaml](examples/sql_tool.yaml) | — | SQL 工具声明 |
-| [filesystem_tool.yaml](examples/filesystem_tool.yaml) | — | 文件系统工具 |
-| [mcp_tool.yaml](examples/mcp_tool.yaml) | — | MCP 工具集成 |
+完整 Catalog ID 与 `builder.*` 函数对照见 [docs/builder-reference.md](docs/builder-reference.md)。共享 stack 实现在 [examples/go/scenario/scenario.go](examples/go/scenario/scenario.go)。
 
-批量校验全部场景：`make validate-examples` 或 `go run ./examples/go/validate examples/<file>.yaml`。Go DSL 对照校验：`make validate-builder` 或 `go run ./examples/go/validate -kind builder all`；详见 [docs/builder-reference.md](docs/builder-reference.md)。catalog manifest：`make validate-catalog`。本地参考栈：[examples/deploy/](examples/deploy/README.md)。编排模式选型见 [docs/orchestration-flow.md](docs/orchestration-flow.md)。
+校验全部 catalog stack：
+
+```sh
+go run ./examples/go/validate -kind builder all
+make validate-builder
+```
 
 ## 环境要求
 
@@ -104,10 +91,12 @@ import (
     "log"
 
     agentflow "github.com/aijustin/agentflow-go"
+    "github.com/aijustin/agentflow-go/pkg/builder"
 )
 
 func main() {
-    fw, err := agentflow.NewFromFile("scenario.yaml")
+    scenario := builder.MinimalAutonomous("assistant")
+    fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(myLLMGateway))
     if err != nil {
         log.Fatal(err)
     }
@@ -128,8 +117,9 @@ func main() {
 如需接入自定义 LLM、Memory、RunState、EventSink 或 HumanGate，可使用 Option API：
 
 ```go
-fw, err := agentflow.NewFromFile(
-    "scenario.yaml",
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(
+    scenario,
     agentflow.WithLLMGateway(myLLMGateway),
     agentflow.WithToolExecutor("repo_search", myToolExecutor),
     agentflow.WithMemoryRepository("session", myMemoryRepo),
@@ -149,7 +139,8 @@ gateway := agentflow.NewOpenAICompatibleGateway([]llm.Profile{{
   APIKeyEnv: "AGENT_REALMODEL_API_KEY",
 }}, nil)
 
-fw, err := agentflow.NewFromFile("scenario.yaml", agentflow.WithLLMGateway(gateway))
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(gateway))
 ```
 
 如果需要同时接 OpenAI-compatible 聊天与 Embedding，可使用 `NewOpenAICompatibleProvider`，并显式声明 profile 能力：
@@ -205,7 +196,7 @@ for chunk := range chunks {
 
 当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 对分类后的临时 LLM/工具错误做指数退避重试，执行注册的 ToolExecutor，将受限后的工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。`Stream` 也支持带工具的 Agent：它会运行同一套受治理工具循环，并把最终答案作为流式 chunk 输出。
 
-配置 `orchestration.planning.enabled: true` 后，Runtime 会在自主工具循环前先执行规划 pass。规划默认使用当前执行 Agent，也可以通过 `orchestration.planning.agent` 指定专门规划 Agent；生成的简短 JSON 计划会注入后续执行上下文。设置 `orchestration.planning.execute: true` 可在 tool loop 中跟踪 plan step 完成状态（见 `examples/multi_expert_research.yaml`）。
+配置 `orchestration.planning.enabled: true` 后，Runtime 会在自主工具循环前先执行规划 pass。规划默认使用当前执行 Agent，也可以通过 `orchestration.planning.agent` 指定专门规划 Agent；生成的简短 JSON 计划会注入后续执行上下文。设置 `orchestration.planning.execute: true` 可在 tool loop 中跟踪 plan step 完成状态（见 `builder.MultiExpertResearch()`）。
 
 固定工作流支持 `tool`、`agent`、`skill`、`human_gate`、`transform`、`parallel_group` 和 `loop` 节点。`condition` 可使用 `exists(...)`、`missing(...)`、`eq(...)`、`ne(...)` 读取 `steps.<node_id>` 路径，`transform` 节点可用 `set`/`copy` 从前序步骤构造结构化输出。
 
@@ -214,8 +205,8 @@ for chunk := range chunks {
 启用内置 HMAC Token 的 HITL Gate：
 
 ```go
-fw, err := agentflow.NewFromFile(
-    "human_in_loop.yaml",
+scenario := builder.MinimalHumanInLoop("assistant")
+fw, err := agentflow.New(scenario,
     agentflow.WithHITLTokenSecret([]byte("strong-secret"), nil),
 )
 if err != nil {
@@ -239,9 +230,8 @@ runs, _ := agentflow.NewFileRunStateRepository("./data/runs")
 blobs, _ := agentflow.NewFileBlobStore("./data/blobs")
 memoryRepo, _ := agentflow.NewFileMemoryRepository("./data/memory")
 
-fw, err := agentflow.NewFromFile(
-    "scenario.yaml",
-    agentflow.WithRunStateRepository(runs),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(runs),
     agentflow.WithBlobStore(blobs),
     agentflow.WithMemoryRepository("session", memoryRepo),
 )
@@ -259,9 +249,8 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithRunStateRepository(runs),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(runs),
 )
 ```
 
@@ -317,8 +306,7 @@ searchTool, err := agentflow.NewMCPToolExecutor(mcpClient, "search")
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/mcp_tool.yaml",
+fw, err := agentflow.New(builder.MinimalMCPTool("assistant"),
   agentflow.WithToolExecutor("docs.search", searchTool),
 )
 ```
@@ -339,9 +327,8 @@ resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool)
   }
 })
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithToolResolver(resolver),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithToolResolver(resolver),
 )
 ```
 
@@ -356,8 +343,7 @@ httpTool, err := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/http_tool.yaml",
+fw, err := agentflow.New(builder.MinimalHTTPTool("assistant"),
   agentflow.WithToolExecutor("http.status", httpTool),
 )
 ```
@@ -373,8 +359,7 @@ filesystemTool, err := agentflow.NewFilesystemToolExecutor(agentflow.FilesystemT
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/filesystem_tool.yaml",
+fw, err := agentflow.New(builder.MinimalFilesystemTool("assistant"),
   agentflow.WithToolExecutor("fs.read", filesystemTool),
 )
 ```
@@ -394,8 +379,7 @@ sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/sql_tool.yaml",
+fw, err := agentflow.New(builder.MinimalSQLTool("assistant"),
   agentflow.WithToolExecutor("sql.query", sqlTool),
 )
 ```
@@ -410,8 +394,7 @@ SQL 工具可接入任意 `database/sql` 驱动，包括 PostgreSQL、MySQL 和 
 gitTool, err := agentflow.NewGitToolExecutor(agentflow.GitToolConfig{
   AllowedRoots: []string{"/workspace/repos"},
 })
-fw, err := agentflow.NewFromFile(
-  "examples/code_review_pipeline.yaml",
+fw, err := agentflow.New(builder.CodeReviewPipeline(),
   agentflow.WithToolExecutor("git", gitTool),
 )
 ```
@@ -425,8 +408,7 @@ store := agentflow.NewMemoryTicketStore(map[string]agentflow.Ticket{
   "T-9": {ID: "T-9", Title: "Login issue", Status: "open"},
 })
 ticketTool, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{Store: store})
-fw, err := agentflow.NewFromFile(
-  "examples/ticket_handling.yaml",
+fw, err := agentflow.New(builder.MinimalTicketHandling("support"),
   agentflow.WithToolExecutor("ticket", ticketTool),
 )
 ```
@@ -450,8 +432,7 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
 if err != nil {
   log.Fatal(err)
 }
-fw, err := agentflow.NewFromFile(
-  "examples/rag_knowledge.yaml",
+fw, err := agentflow.New(builder.MinimalRAG("assistant"),
   agentflow.WithLLMGateway(provider),
   agentflow.WithToolExecutor("knowledge.retrieve", retriever),
 )
@@ -476,9 +457,8 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithBlobStore(blobs),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithBlobStore(blobs),
 )
 ```
 
@@ -487,9 +467,8 @@ fw, err := agentflow.NewFromFile(
 企业级可观测和治理能力保持可选且低依赖：
 
 ```go
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithEventSink(agentflow.NewSlogEventSink(logger)),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewSlogEventSink(logger)),
   agentflow.WithAuditSink(agentflow.NewSlogAuditSink(logger)),
   agentflow.WithToolGovernancePolicy(governance.ChainToolPolicies(
     governance.NewToolBudgetPolicy(8),
@@ -510,9 +489,8 @@ if err != nil {
 }
 eventHub := agentflow.NewEventHub()
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithEventSink(agentflow.NewEventFanoutSink(
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFanoutSink(
     agentflow.NewEventStoreSink(eventStore, eventHub),
     agentflow.NewSlogEventSink(logger),
   )),
@@ -553,8 +531,8 @@ go mod download
 ### 校验示例场景
 
 ```sh
-go run ./examples/go/validate examples/autonomous.yaml
-make validate-examples
+go run ./examples/go/validate -kind builder all
+make validate-builder
 ```
 
 ### 可运行示例
@@ -605,12 +583,12 @@ Webhook 事件在配置 `Framework` 时使用 `POST /v1/events`。详见 [docs/a
 
 | 文件 | 说明 |
 | --- | --- |
-| `examples/autonomous.yaml` | 自主工具循环基线 |
-| `examples/fixed_workflow.yaml` | 图工作流 + 条件 + HITL |
-| `examples/human_in_loop.yaml` | HITL 暂停与恢复 |
-| `examples/ticket_handling.yaml` | Ticket 工具 + triggers + 事件路由 |
-| `examples/code_review_pipeline.yaml` | Git 工具 + `parallel_group` 工作流 |
-| `examples/multi_expert_research.yaml` | Hybrid 模式 + planning.execute |
+| `builder.MinimalAutonomous("assistant")` | 自主工具循环基线 |
+| `builder.MinimalFixedWorkflowReview("reviewer")` | 图工作流 + 条件 + HITL |
+| `builder.MinimalHumanInLoop("assistant")` | HITL 暂停与恢复 |
+| `builder.MinimalTicketHandling("support")` | Ticket 工具 + triggers + 事件路由 |
+| `builder.CodeReviewPipeline()` | Git 工具 + `parallel_group` 工作流 |
+| `builder.MultiExpertResearch()` | Hybrid 模式 + planning.execute |
 
 ```yaml
 # yaml-language-server: $schema=schemas/agentflow.scenario.schema.json

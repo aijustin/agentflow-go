@@ -15,7 +15,10 @@ import (
 )
 
 func TestFrameworkRunEnforcesTenantIsolation(t *testing.T) {
-	fw, err := agentflow.NewFromFile("examples/autonomous.yaml", agentflow.WithLLMGateway(fakeGateway{content: "ok"}))
+	fw, err := agentflow.New(testAutonomousScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "ok"}),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

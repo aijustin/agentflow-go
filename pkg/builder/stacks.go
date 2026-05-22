@@ -2,7 +2,7 @@ package builder
 
 import "github.com/aijustin/agentflow-go/pkg/core"
 
-// MinimalTicketHandling builds the ticket-handling stack from examples/ticket_handling.yaml.
+// MinimalTicketHandling builds the ticket-handling stack for catalog ID ticket-handling.
 func MinimalTicketHandling(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "ticket-handling"
@@ -25,7 +25,7 @@ func MinimalTicketHandling(agentName string, opts ...MinimalOption) core.Scenari
 		Scenario()
 }
 
-// MinimalRAG builds the rag-knowledge stack from examples/rag_knowledge.yaml.
+// MinimalRAG builds the rag-knowledge stack for catalog ID rag-knowledge.
 func MinimalRAG(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "rag-knowledge-example"
@@ -42,7 +42,7 @@ func MinimalRAG(agentName string, opts ...MinimalOption) core.Scenario {
 	return ab.Autonomous().Scenario()
 }
 
-// TierMemoryAutonomous builds the tier-memory demo from examples/tier_memory.yaml.
+// TierMemoryAutonomous builds the tier-memory demo for catalog ID tier-memory.
 func TierMemoryAutonomous(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "tier-memory-demo"
@@ -63,7 +63,7 @@ func TierMemoryAutonomous(agentName string, opts ...MinimalOption) core.Scenario
 	return ab.Autonomous().Scenario()
 }
 
-// AdaptiveRAG builds the adaptive RAG workflow from examples/adaptive_rag.yaml.
+// AdaptiveRAG builds the adaptive RAG workflow for catalog ID adaptive-rag.
 func AdaptiveRAG(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "adaptive-rag"
@@ -84,7 +84,7 @@ func AdaptiveRAG(agentName string, opts ...MinimalOption) core.Scenario {
 	return ab.FixedWorkflow(wf).Scenario()
 }
 
-// CorrectiveRAG builds the corrective-rag workflow from examples/corrective_rag.yaml.
+// CorrectiveRAG builds the corrective-rag workflow for catalog ID corrective-rag.
 func CorrectiveRAG(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "corrective-rag"
@@ -104,7 +104,7 @@ func CorrectiveRAG(agentName string, opts ...MinimalOption) core.Scenario {
 	return ab.FixedWorkflow(wf).Scenario()
 }
 
-// SelfRAG builds the self-rag workflow from examples/self_rag.yaml.
+// SelfRAG builds the self-rag workflow for catalog ID self-rag.
 func SelfRAG(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "self-rag"
@@ -128,7 +128,7 @@ func SelfRAG(agentName string, opts ...MinimalOption) core.Scenario {
 	return ab.FixedWorkflow(wf).Scenario()
 }
 
-// HybridResearch builds the hybrid research stack from examples/hybrid.yaml.
+// HybridResearch builds the hybrid research stack for catalog ID hybrid-research.
 func HybridResearch(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "hybrid-research-answer"
@@ -149,7 +149,7 @@ func HybridResearch(agentName string, opts ...MinimalOption) core.Scenario {
 	return ab.Hybrid(wf).Scenario()
 }
 
-// MinimalHumanInLoop builds the human-in-loop demo from examples/human_in_loop.yaml.
+// MinimalHumanInLoop builds the human-in-loop demo for catalog ID human-in-loop.
 func MinimalHumanInLoop(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "human-in-loop-demo"
@@ -162,7 +162,7 @@ func MinimalHumanInLoop(agentName string, opts ...MinimalOption) core.Scenario {
 	return ab.Autonomous().BeforeFinalAnswerHITL().Scenario()
 }
 
-// MultiExpertResearch builds the multi-expert hybrid stack from examples/multi_expert_research.yaml.
+// MultiExpertResearch builds the multi-expert hybrid stack for catalog ID multi-expert-research.
 func MultiExpertResearch(opts ...MinimalOption) core.Scenario {
 	cfg := minimalConfig{
 		scenarioName: "multi-expert-research",
@@ -187,7 +187,7 @@ func MultiExpertResearch(opts ...MinimalOption) core.Scenario {
 		Scenario()
 }
 
-// CodeReviewPipeline builds the code review workflow from examples/code_review_pipeline.yaml.
+// CodeReviewPipeline builds the code review workflow for catalog ID code-review-pipeline.
 func CodeReviewPipeline(opts ...MinimalOption) core.Scenario {
 	cfg := minimalConfig{scenarioName: "code-review-pipeline"}
 	for _, opt := range opts {
@@ -212,7 +212,7 @@ func CodeReviewPipeline(opts ...MinimalOption) core.Scenario {
 		Scenario()
 }
 
-// WorkflowEnhancements builds the workflow enhancements demo from examples/workflow_enhancements.yaml.
+// WorkflowEnhancements builds the workflow enhancements demo for catalog ID workflow-enhancements.
 func WorkflowEnhancements(opts ...MinimalOption) core.Scenario {
 	cfg := minimalConfig{scenarioName: "workflow-enhancements"}
 	for _, opt := range opts {
@@ -234,7 +234,7 @@ func WorkflowEnhancements(opts ...MinimalOption) core.Scenario {
 		Scenario()
 }
 
-// ContextGovernance builds the context governance demo from examples/context_governance.yaml.
+// ContextGovernance builds the context governance demo for catalog ID context-governance.
 func ContextGovernance(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "context-governance-demo"
@@ -252,7 +252,7 @@ func ContextGovernance(agentName string, opts ...MinimalOption) core.Scenario {
 	return ab.Autonomous().Scenario()
 }
 
-// MinimalFixedWorkflowReview builds the fixed workflow review stack from examples/fixed_workflow.yaml.
+// MinimalFixedWorkflowReview builds the fixed workflow review stack for catalog ID fixed-workflow-review.
 func MinimalFixedWorkflowReview(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)
 	cfg.scenarioName = "fixed-workflow-review"

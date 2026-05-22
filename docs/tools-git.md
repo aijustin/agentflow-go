@@ -24,8 +24,7 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "examples/code_review_pipeline.yaml",
+fw, err := agentflow.New(builder.CodeReviewPipeline(),
   agentflow.WithToolExecutor("git", gitTool),
 )
 ```
@@ -45,4 +44,4 @@ fw, err := agentflow.NewFromFile(
 
 ## 示例场景
 
-- [examples/code_review_pipeline.yaml](../examples/code_review_pipeline.yaml)：固定工作流 + `parallel_group` + Git diff 审查。
+- `builder.CodeReviewPipeline()`：固定工作流 + `parallel_group` + Git diff 审查。

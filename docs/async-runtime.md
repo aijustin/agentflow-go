@@ -53,7 +53,7 @@ if err != nil {
     log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile("scenario.yaml")
+fw, err := agentflow.New(builder.MinimalAutonomous("assistant"))
 if err != nil {
     log.Fatal(err)
 }
@@ -170,7 +170,7 @@ Resume continue 请求体示例：
 生产服务如果希望将健康检查、就绪探针、异步 API，以及可选的同步事件/HITL 路由一起挂载，可以优先使用封装 Handler：
 
 ```go
-fw, err := agentflow.NewFromFile("examples/ticket_handling.yaml")
+fw, err := agentflow.New(builder.MinimalTicketHandling("support"))
 if err != nil {
     log.Fatal(err)
 }

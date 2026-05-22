@@ -27,9 +27,8 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "scenario.yaml",
-  agentflow.WithToolExecutor("fs.read", filesystemTool),
+scenario := builder.MinimalAutonomous("assistant")
+fw, err := agentflow.New(scenario, agentflow.WithToolExecutor("fs.read", filesystemTool),
 )
 ```
 

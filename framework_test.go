@@ -10,13 +10,18 @@ import (
 	agentflow "github.com/aijustin/agentflow-go"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
-func TestNewFromFileRunWithDefaults(t *testing.T) {
-	fw, err := agentflow.NewFromFile("examples/autonomous.yaml")
+func testAutonomousScenario() core.Scenario {
+	return builder.MinimalAutonomous("assistant", builder.MinimalScenarioName("autonomous-echo"))
+}
+
+func TestNewRunWithDefaults(t *testing.T) {
+	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,10 +35,7 @@ func TestNewFromFileRunWithDefaults(t *testing.T) {
 }
 
 func TestFrameworkWithLLMGateway(t *testing.T) {
-	scenario, err := agentflow.LoadScenarioFile("examples/autonomous.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scenario := testAutonomousScenario()
 	fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(fakeGateway{content: "from llm"}))
 	if err != nil {
 		t.Fatal(err)
@@ -48,8 +50,8 @@ func TestFrameworkWithLLMGateway(t *testing.T) {
 }
 
 func TestFrameworkRunExecutesFixedWorkflow(t *testing.T) {
-	fw, err := agentflow.NewFromFile(
-		"examples/fixed_workflow.yaml",
+	fw, err := agentflow.New(
+		builder.MinimalFixedWorkflowReview("reviewer"),
 		agentflow.WithToolExecutor("repo_search", noopTool{}),
 	)
 	if err != nil {
@@ -75,8 +77,8 @@ func TestFrameworkRunExecutesFixedWorkflow(t *testing.T) {
 }
 
 func TestFrameworkFixedWorkflowAgentNodeCallsLLM(t *testing.T) {
-	fw, err := agentflow.NewFromFile(
-		"examples/fixed_workflow.yaml",
+	fw, err := agentflow.New(
+		builder.MinimalFixedWorkflowReview("reviewer"),
 		agentflow.WithLLMGateway(fakeGateway{content: "llm review"}),
 		agentflow.WithToolExecutor("repo_search", noopTool{}),
 	)
@@ -228,10 +230,7 @@ func TestAuthorizationMiddlewareConstructorRejectsInvalidInputs(t *testing.T) {
 }
 
 func TestFrameworkSecurityOptionsRejectInvalidInputs(t *testing.T) {
-	scenario, err := agentflow.LoadScenarioFile("examples/autonomous.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scenario := testAutonomousScenario()
 	if _, err := agentflow.New(scenario, agentflow.WithSecurityPolicy(nil)); err == nil {
 		t.Fatal("expected nil security policy error")
 	}
@@ -262,7 +261,7 @@ func TestAsyncRunHTTPHandlerConstructorRejectsInvalidInputs(t *testing.T) {
 }
 
 func TestFrameworkRunJobHandlerExecutesRunPayload(t *testing.T) {
-	fw, err := agentflow.NewFromFile("examples/autonomous.yaml")
+	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +286,7 @@ func TestFrameworkRunJobHandlerExecutesRunPayload(t *testing.T) {
 }
 
 func TestFrameworkRunJobHandlerRejectsInvalidJobs(t *testing.T) {
-	fw, err := agentflow.NewFromFile("examples/autonomous.yaml")
+	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,8 +338,8 @@ func TestFrameworkJobHandlerExecutesEventJob(t *testing.T) {
 
 func TestFrameworkJobHandlerExecutesResumeContinueJob(t *testing.T) {
 	var tokenOut bytes.Buffer
-	fw, err := agentflow.NewFromFile(
-		"examples/human_in_loop.yaml",
+	fw, err := agentflow.New(
+		builder.MinimalHumanInLoop("assistant"),
 		agentflow.WithHITLTokenSecret([]byte("secret"), &tokenOut),
 		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
 	)
@@ -376,8 +375,8 @@ func TestFrameworkJobHandlerExecutesResumeContinueJob(t *testing.T) {
 
 func TestFrameworkHITLPauseResume(t *testing.T) {
 	var tokenOut bytes.Buffer
-	fw, err := agentflow.NewFromFile(
-		"examples/human_in_loop.yaml",
+	fw, err := agentflow.New(
+		builder.MinimalHumanInLoop("assistant"),
 		agentflow.WithHITLTokenSecret([]byte("secret"), &tokenOut),
 	)
 	if err != nil {
@@ -406,10 +405,7 @@ func TestFrameworkHITLPauseResume(t *testing.T) {
 }
 
 func TestFrameworkWithToolExecutorValidation(t *testing.T) {
-	scenario, err := agentflow.LoadScenarioFile("examples/autonomous.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scenario := testAutonomousScenario()
 	if _, err := agentflow.New(scenario, agentflow.WithToolExecutor("", noopTool{})); err == nil {
 		t.Fatal("expected empty tool name error")
 	}
@@ -587,8 +583,8 @@ func (f fakeGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatRes
 	return llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: f.content}}, nil
 }
 
-func ExampleNewFromFile() {
-	fw, err := agentflow.NewFromFile("examples/autonomous.yaml")
+func ExampleNew() {
+	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}))
 	if err != nil {
 		panic(err)
 	}

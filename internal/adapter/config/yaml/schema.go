@@ -45,6 +45,8 @@ var (
 		string(core.NodeQueryRouter),
 		string(core.NodeRAGGrade),
 		string(core.NodeSupervisor),
+		string(core.NodeSubgraph),
+		string(core.NodeMap),
 	}
 	supportedLLMCapabilities = []string{
 		llm.CapChat.String(),

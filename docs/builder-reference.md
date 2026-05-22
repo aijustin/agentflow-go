@@ -1,6 +1,6 @@
 # Builder API 速查
 
-`pkg/builder` 提供链式 Go DSL，用于构造 `core.Scenario`，避免手写大量字符串字面量。构建结果与 `examples/*.yaml` 对齐，统一走 `agentflow.ValidateScenario` 校验。
+`pkg/builder` 是 **默认** 的场景构造方式：链式 Go DSL 生成 `core.Scenario`，统一走 `agentflow.ValidateScenario` 校验。
 
 ## 快速开始
 
@@ -22,46 +22,67 @@ fw, err := agentflow.New(scenario, opts...)
 ## 校验
 
 ```sh
-# 全部 builder stack（18 个，与 examples/*.yaml 一一对应）
 make validate-builder
-
-# 或直接用 validate CLI
 go run ./examples/go/validate -kind builder all
 go run ./examples/go/validate -kind builder autonomous-echo
-go run ./examples/go/validate -kind builder examples/autonomous.yaml
 
 # catalog manifest（tool/skill）
 go run ./examples/go/validate -kind tool examples/catalog/tools/echo.tool.yaml
 make validate-catalog
-
-# 单元测试（含 YAML 对照）
-go test ./pkg/builder/... -run ExampleCatalog
 ```
 
 `make release-check` 已包含 `validate-builder`。
 
-## 一行式 Stack 对照表
+## Workflow 节点（subgraph / map）
 
-| YAML 示例 | Builder 函数 |
+```go
+prep := builder.NewWorkflow().
+    NodeTransform("mark", json.RawMessage(`{"set":{"ready":true}}`)).
+    Build()
+
+mainWF := builder.NewWorkflow().
+    NodeSubgraph("run_prep", "prep").
+    Build()
+
+scenario := builder.New("demo").
+    DefaultMockLLM().
+    Agent("assistant").DefaultLLM().Done().
+    NamedWorkflow("prep", prep).
+    FixedWorkflow(mainWF).
+    Scenario()
+
+fanout := builder.NewWorkflow().
+    NodeTransform("items", json.RawMessage(`{"set":{"list":["a","b"]}}`)).
+    NodeMap("fanout", builder.MapNodeInput("steps.items.list", builder.MapBranch{
+        Kind: builder.NodeTransform,
+        Input: json.RawMessage(`{"set":{"tag":"mapped"}}`),
+    })).
+    Edge("items", "fanout").
+    Build()
+```
+
+## Catalog 对照表
+
+| Catalog ID | Builder 函数 |
 |-----------|----------------|
-| `autonomous.yaml` | `MinimalAutonomous("assistant")` |
-| `human_in_loop.yaml` | `MinimalHumanInLoop("assistant")` |
-| `context_governance.yaml` | `ContextGovernance("assistant")` |
-| `fixed_workflow.yaml` | `MinimalFixedWorkflowReview("reviewer")` |
-| `workflow_enhancements.yaml` | `WorkflowEnhancements()` |
-| `code_review_pipeline.yaml` | `CodeReviewPipeline()` |
-| `hybrid.yaml` | `HybridResearch("analyst")` |
-| `multi_expert_research.yaml` | `MultiExpertResearch()` |
-| `adaptive_rag.yaml` | `AdaptiveRAG("assistant")` |
-| `corrective_rag.yaml` | `CorrectiveRAG("assistant")` |
-| `self_rag.yaml` | `SelfRAG("assistant")` |
-| `rag_knowledge.yaml` | `MinimalRAG("assistant")` |
-| `ticket_handling.yaml` | `MinimalTicketHandling("support")` |
-| `tier_memory.yaml` | `TierMemoryAutonomous("assistant")` |
-| `http_tool.yaml` | `MinimalHTTPTool("assistant")` |
-| `sql_tool.yaml` | `MinimalSQLTool("assistant")` |
-| `filesystem_tool.yaml` | `MinimalFilesystemTool("assistant")` |
-| `mcp_tool.yaml` | `MinimalMCPTool("assistant")` |
+| `autonomous-echo` | `MinimalAutonomous("assistant")` |
+| `human-in-loop` | `MinimalHumanInLoop("assistant")` |
+| `context-governance` | `ContextGovernance("assistant")` |
+| `fixed-workflow-review` | `MinimalFixedWorkflowReview("reviewer")` |
+| `workflow-enhancements` | `WorkflowEnhancements()` |
+| `code-review-pipeline` | `CodeReviewPipeline()` |
+| `hybrid-research` | `HybridResearch("analyst")` |
+| `multi-expert-research` | `MultiExpertResearch()` |
+| `adaptive-rag` | `AdaptiveRAG("assistant")` |
+| `corrective-rag` | `CorrectiveRAG("assistant")` |
+| `self-rag` | `SelfRAG("assistant")` |
+| `rag-knowledge` | `MinimalRAG("assistant")` |
+| `ticket-handling` | `MinimalTicketHandling("support")` |
+| `tier-memory` | `TierMemoryAutonomous("assistant")` |
+| `http-tool` | `MinimalHTTPTool("assistant")` |
+| `sql-tool` | `MinimalSQLTool("assistant")` |
+| `filesystem-tool` | `MinimalFilesystemTool("assistant")` |
+| `mcp-tool` | `MinimalMCPTool("assistant")` |
 
 完整列表见 `builder.ExampleCatalog()`（[catalog.go](../pkg/builder/catalog.go)）。
 
@@ -69,50 +90,25 @@ go test ./pkg/builder/... -run ExampleCatalog
 
 | 层 | 包路径 | 职责 |
 |----|--------|------|
-| **Stack** | `Minimal*` / `*RAG` / `CodeReviewPipeline` 等 | 一行还原 YAML 示例 |
+| **Stack** | `Minimal*` / `*RAG` / `CodeReviewPipeline` 等 | 一行还原常见场景 |
 | **Preset** | `DefaultMockLLM`、`EchoTool`、`RAGStack` 等 | 声明 + 引用成对注册 |
-| **常量** | [consts.go](../pkg/builder/consts.go) | 资源名、tool type、HITL checkpoint、MCP 元数据 |
-| **Workflow** | `AdaptiveRAGWorkflow`、`CodeReviewPipelineWorkflow` 等 | 可复用 DAG 图 |
+| **Workflow** | `NewWorkflow`、`NodeSubgraph`、`NodeMap` 等 | 可复用 DAG 图 |
 | **底层** | `New(...).Agent(...).Autonomous().Scenario()` | 完全显式组合 |
 
 ## 常用常量（节选）
 
 ```go
-builder.NameDefaultLLM      // "default"
-builder.NameSessionMemory   // "session"
-builder.NameEchoTool        // "echo"
-builder.ToolTypeEcho        // "builtin.echo"
-builder.ApprovalNever
-builder.ModeAutonomous
+builder.NameDefaultLLM
+builder.NameEchoTool
+builder.NodeSubgraph
+builder.NodeMap
 builder.CheckpointBeforeFinalAnswer
-builder.NameKnowledgeRetrieveTool
 ```
 
-## 手动组合示例
+完整列表见 [consts.go](../pkg/builder/consts.go)。
 
-```go
-scenario := builder.New("my-app").
-    DefaultMockLLM().
-    SessionMemory().
-    EchoTool().
-    Agent("assistant").
-        DefaultLLM().
-        SessionMemory().
-        EchoTool().
-        Instructions("Answer clearly.").
-    Autonomous().
-    Scenario()
-```
+## 相关文档
 
-## 与 YAML 的关系
-
-- **YAML**：运维/产品协作、CI schema 校验、可视化编辑
-- **Builder**：Go 代码内动态构造、测试 fixture、避免 magic string
-- **运行时接线**（`WithLLMGateway`、`WithToolExecutor`）两种方式相同，DSL 只负责场景结构
-
-## 可运行示例
-
-| 示例 | 说明 |
-|------|------|
-| [examples/go/builder/main.go](../examples/go/builder/main.go) | 最小 autonomous 运行 |
-| [examples/go/validate/main.go](../examples/go/validate/main.go) | `-kind builder` 批量校验全部 stack |
+- [product-direction.md](./product-direction.md)
+- [configuration-reference.md](./configuration-reference.md) — `core.Scenario` 字段说明
+- [examples/go/scenario](../examples/go/scenario/scenario.go) — 可运行示例共享 stack

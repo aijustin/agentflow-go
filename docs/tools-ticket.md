@@ -26,8 +26,7 @@ if err != nil {
   log.Fatal(err)
 }
 
-fw, err := agentflow.NewFromFile(
-  "examples/ticket_handling.yaml",
+fw, err := agentflow.New(builder.MinimalTicketHandling("support"),
   agentflow.WithToolExecutor("ticket", ticketTool),
 )
 ```
@@ -48,4 +47,4 @@ fw, err := agentflow.NewFromFile(
 
 ## 示例场景
 
-- [examples/ticket_handling.yaml](../examples/ticket_handling.yaml)：自主模式 + HITL + `scenario.triggers` 事件路由。
+- `builder.MinimalTicketHandling("support")`：自主模式 + HITL + `scenario.triggers` 事件路由。

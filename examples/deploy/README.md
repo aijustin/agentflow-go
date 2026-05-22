@@ -24,7 +24,7 @@ go run ../go/http-worker/main.go
 
 The [tier-worker](../go/tier-worker/main.go) example wires:
 
-- `tier_memory.yaml` with hot/warm/cold tier memory
+- `builder.TierMemoryAutonomous` via [examples/go/scenario](../go/scenario/scenario.go) with hot/warm/cold tier memory
 - Postgres **warm** tier (`agentflow_memory_tier_records`, migration `0002`)
 - Local **cold** tier directory (`AGENT_TIER_COLD_DIR`, default temp dir)
 - Postgres job queue for async `memory.reconcile` jobs after tier writes
@@ -49,7 +49,7 @@ curl -s -X POST http://127.0.0.1:8080/v1/jobs/runs \
 curl -s http://127.0.0.1:8080/metrics | grep 'agentflow_memory_tier\|agentflow_queue'
 ```
 
-Without `AGENT_POSTGRES_DSN`, tier-worker falls back to in-memory queue and the default in-memory tier store from scenario YAML.
+Without `AGENT_POSTGRES_DSN`, tier-worker falls back to in-memory queue and the default in-memory tier store from the builder stack.
 
 ## Kubernetes / Helm
 

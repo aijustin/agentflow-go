@@ -20,7 +20,7 @@ schema := agentflow.ScenarioJSONSchema()
 校验场景文件：
 
 ```sh
-go run ./examples/go/validate scenario.yaml
+go run ./examples/go/validate -kind builder autonomous-echo
 ```
 
 ## 顶层结构
@@ -290,6 +290,10 @@ Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
 | `query_router` | 按关键词将请求路由到 `rag` / `direct` / `hitl` 路径（Adaptive RAG 入口）。 |
 | `rag_grade` | 评估检索结果相关性，输出 `relevant`、`score` 与可选 `rewrite_query`（Corrective/Self-RAG）。 |
 | `supervisor` | 并行调用多个 Agent 并汇总输出（多专家协调，不依赖 LLM 路由）。 |
+| `subgraph` | 运行时执行 `orchestration.workflows[ref]` 中的命名子图；父节点输出含 `steps` 映射。见 [orchestration-parity.md](./orchestration-parity.md)。 |
+| `map` | 按 `items_path` 指向的数组动态 fan-out，每项并行执行 `branch`（agent/tool/transform）；输出 `members` 映射。见 [orchestration-parity.md](./orchestration-parity.md)。 |
+
+`orchestration.workflows`：命名可复用 workflow 图，供 `subgraph` 节点引用。
 
 `parallel_group` 节点的 `input` 示例：
 
@@ -299,6 +303,19 @@ Workflow 节点位于 `scenario.orchestration.workflow.nodes`。
   input:
     refs: [researcher-a, researcher-b]
     tools: [status_tool]
+    on_error: collect_errors
+```
+
+`map` 节点的 `input` 示例：
+
+```yaml
+- id: fanout
+  kind: map
+  input:
+    items_path: steps.items.list
+    branch:
+      kind: agent
+      ref: analyst
     on_error: collect_errors
 ```
 
@@ -413,6 +430,8 @@ go run ./examples/go/event-trigger/main.go
 | `Framework.Run` | 自主/工作流/hybrid 分发 | `autonomous`、`fixed_workflow`、`hybrid` |
 | `Framework.HandleEvent` | 按 `scenario.triggers` 路由 | 同上 |
 | `Framework.ResumeAndContinue` | HITL 续跑 | 同上 |
+| `Framework.ListRunSteps` | 列出 run 的 step 输出与版本 | `fixed_workflow`、`hybrid` |
+| `Framework.ResumeFromStep` | 从指定 workflow 节点定点重跑 | `fixed_workflow`、`hybrid` |
 | `NewProductionHTTPHandler` + Worker | 宿主 HTTP 服务 + 异步队列 | 同上 |
 
 测试与 `examples/` 可使用 `testutil.WiringOptions`（mock LLM 与 demo 工具）。生产嵌入应显式 `WithLLMGateway` 与 `WithToolExecutor` / `WithToolResolver`。

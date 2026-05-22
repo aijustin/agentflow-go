@@ -5,23 +5,14 @@ import (
 	"fmt"
 	"log"
 
+	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	agentflow "github.com/aijustin/agentflow-go"
-	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 
 func main() {
-	// One-liner for the common autonomous-echo stack:
-	scenario := builder.MinimalAutonomous("assistant",
-		builder.MinimalScenarioName("autonomous-echo"),
-		builder.MinimalInstructions("Answer the user clearly."),
-	)
-
-	if err := agentflow.ValidateScenario(scenario); err != nil {
-		log.Fatal(err)
-	}
-
-	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: "../../"})
+	scenario := examplescenario.AutonomousEcho()
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: examplescenario.WorkDir})
 	if err != nil {
 		log.Fatal(err)
 	}
