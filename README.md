@@ -577,6 +577,8 @@ Webhook 事件在配置 `Framework` 时使用 `POST /v1/events`。详见 [docs/a
 
 ## YAML 场景格式
 
+> **Deprecated**：新场景请用 [`pkg/builder`](docs/builder-reference.md) 在 Go 中定义。本节描述 YAML 字段与 schema，供 Studio 导入/导出、legacy 校验与迁移参考。详见 [product-direction.md](docs/product-direction.md)。
+
 所有场景配置都位于一个 `scenario:` 根节点下。
 
 如需编辑器补全、枚举提示和 CI 校验，可使用 JSON Schema：[schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json)。完整字段参考见 [docs/configuration-reference.md](docs/configuration-reference.md)，编排执行流程与**模式/节点选型指南**见 [docs/orchestration-flow.md](docs/orchestration-flow.md)，Go 中可通过 `agentflow.ScenarioJSONSchema()` 加载同一份 schema。

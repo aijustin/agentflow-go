@@ -4,9 +4,7 @@ package testutil
 import (
 	"context"
 	"encoding/json"
-	"testing"
 
-	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
@@ -38,27 +36,4 @@ type NoopTool struct{}
 
 func (NoopTool) Execute(context.Context, core.ToolCall) (core.ToolResult, error) {
 	return core.ToolResult{}, nil
-}
-
-// NewTestFramework builds a Framework with test wiring for a scenario file.
-func NewTestFramework(t *testing.T, scenarioFile string, extra ...agentflow.Option) *agentflow.Framework {
-	t.Helper()
-	scenario, err := agentflow.LoadScenarioFile(scenarioFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	workDir, err := ScenarioWorkDir(scenarioFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts, err := WiringOptions(scenario, WiringConfig{WorkDir: workDir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts = append(opts, extra...)
-	fw, err := agentflow.New(scenario, opts...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return fw
 }

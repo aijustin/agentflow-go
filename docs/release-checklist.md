@@ -10,7 +10,7 @@
 GOTOOLCHAIN=auto make release-check
 ```
 
-该目标会执行 `fmt`、`test`、`vet`、`security`（govulncheck）、`validate-builder`（18 条 Go DSL catalog stack）、`validate-catalog`（`examples/catalog/` 下 tool/skill manifest）。
+该目标会执行 `fmt`、`test`、`vet`、`security`（govulncheck）、`validate-builder`（19 条 Go DSL catalog stack）、`validate-catalog`（`examples/catalog/` 下 tool/skill manifest）。
 
 ## 推荐的人工检查
 

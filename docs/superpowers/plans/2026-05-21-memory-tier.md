@@ -30,7 +30,7 @@
 **验收**：
 
 - 集成测试：hot 满 demote、access promote、recall budget 分配
-- `make validate-examples` 含 tier 场景
+- `make validate-builder` 含 tier 场景
 
 ## Phase 3：生产适配器（M5/M6）
 

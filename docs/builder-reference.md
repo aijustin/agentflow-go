@@ -67,6 +67,7 @@ fanout := builder.NewWorkflow().
 |-----------|----------------|
 | `autonomous-echo` | `MinimalAutonomous("assistant")` |
 | `human-in-loop` | `MinimalHumanInLoop("assistant")` |
+| `declarative-interrupt` | `MinimalDeclarativeInterrupt()` |
 | `context-governance` | `ContextGovernance("assistant")` |
 | `fixed-workflow-review` | `MinimalFixedWorkflowReview("reviewer")` |
 | `workflow-enhancements` | `WorkflowEnhancements()` |

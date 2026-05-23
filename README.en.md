@@ -45,7 +45,7 @@ Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHan
 
 | Directory | Purpose | Command |
 |-----------|---------|---------|
-| [minimal](examples/go/minimal/main.go) | Minimal in-process embed: `LoadScenario` → `testutil.WiringOptions` → `New` → `Run` | `go run ./examples/go/minimal/main.go` |
+| [minimal](examples/go/minimal/main.go) | Minimal in-process embed: builder scenario → `testutil.WiringOptions` → `New` → `Run` | `go run ./examples/go/minimal/main.go` |
 | [postgres](examples/go/postgres/main.go) | Postgres RunState / JobQueue persistence | `go run ./examples/go/postgres/main.go` |
 | [http-worker](examples/go/http-worker/main.go) | `NewProductionHTTPHandler` + async worker | `go run ./examples/go/http-worker/main.go` |
 | [hitl-resume](examples/go/hitl-resume/main.go) | HITL pause and `ResumeAndContinue` | `go run ./examples/go/hitl-resume/main.go` |

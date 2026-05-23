@@ -34,8 +34,7 @@ import (
 
 scenario := builder.MinimalAutonomous("assistant")
 if err := agentflow.ValidateScenario(scenario); err != nil { /* fail fast */ }
-workDir, _ := testutil.ScenarioWorkDir("autonomous-echo")
-opts, _ := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
+opts, _ := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: "."})
 if err := agentflow.ValidateWiring(scenario, opts...); err != nil { /* fail fast */ }
 fw, _ := agentflow.New(scenario, opts...)
 defer fw.Close(context.Background())

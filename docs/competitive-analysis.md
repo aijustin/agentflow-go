@@ -9,7 +9,7 @@
 
 | 维度 | agentflow-go | LangGraph | LlamaIndex | CrewAI | Haystack 2 |
 |------|-------------|-----------|------------|--------|------------|
-| 编排模型 | YAML 三模式 | 代码状态图 | 事件 `@step` | Flow + Crew | Pipeline 多图 |
+| 编排模型 | Go builder 三模式（+ legacy YAML 导出） | 代码状态图 | 事件 `@step` | Flow + Crew | Pipeline 多图 |
 | Agentic RAG | CRAG/Self-RAG 模板 + router 节点 | Adaptive/Corrective/Self-RAG 图 | Critic-reflect | MCP 外部 | Agentic pipeline |
 | Hybrid 检索 | pgvector + FTS RRF | 生态 | 原生 | 外部 | 多 retriever |
 | 认知记忆 | `memory.CognitiveMemory`（`pkg/memory/cognitive.go`） | Store | Context KV | Cognitive Memory | state_schema |

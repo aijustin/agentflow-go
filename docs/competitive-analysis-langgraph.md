@@ -268,13 +268,13 @@ graph = builder.compile(checkpointer=checkpointer)
 | 运行时 subgraph | ✅ |
 | 动态 fan-out (`map` / Send) | ✅ Phase 2 |
 | Checkpoint 列表 / 定点恢复 | ✅ Phase 3（含历史链 + Studio UI） |
-| 图内 `agent_loop` | 🔲 Phase 4 |
-| Studio 可视化 | ✅ Graph / Time Travel / Editor / Compare / Thread（含 undo、YAML 导出、试运行） |
+| 图内 `agent_loop` | ⏸ 不做（用 `hybrid` + `autonomous`） |
+| Studio 可视化 | ✅ Graph / Time Travel / Editor / Compare / Thread（含 undo、YAML 导出/导入、试运行） |
 
 ### agentflow-go 优势（非治理向）
 
 - Go 生产栈一体嵌入
-- YAML + Builder 与 18 个示例 catalog 对齐
+- Builder catalog（19 条 stack）与 `ValidateScenario` 对齐
 - hybrid + RAG workflow 节点开箱
 - Library-first，无 Platform lock-in
 

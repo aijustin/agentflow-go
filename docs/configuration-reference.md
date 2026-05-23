@@ -1,6 +1,6 @@
 # 配置参考
 
-AgentFlow 应用主要通过场景 YAML 构建。本参考列出支持的配置段、关键字段和枚举值。编辑器补全和 CI 校验可使用机器可读 Schema：[`schemas/agentflow.scenario.schema.json`](../schemas/agentflow.scenario.schema.json)。
+AgentFlow 场景字段参考。**推荐**用 `pkg/builder` 或 `core.Scenario` 在 Go 中定义场景；Studio 可导出 legacy YAML 供对照。机器可读 Schema：[`schemas/agentflow.scenario.schema.json`](../schemas/agentflow.scenario.schema.json)。
 
 ```yaml
 # yaml-language-server: $schema=../schemas/agentflow.scenario.schema.json

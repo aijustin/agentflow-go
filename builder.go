@@ -47,6 +47,9 @@ var HybridResearch = scenariobuilder.HybridResearch
 // MinimalHumanInLoop builds the human-in-loop demo stack.
 var MinimalHumanInLoop = scenariobuilder.MinimalHumanInLoop
 
+// MinimalDeclarativeInterrupt builds the declarative interrupt demo stack.
+var MinimalDeclarativeInterrupt = scenariobuilder.MinimalDeclarativeInterrupt
+
 // MultiExpertResearch builds the multi-expert hybrid example stack.
 var MultiExpertResearch = scenariobuilder.MultiExpertResearch
 
@@ -97,6 +100,9 @@ var WorkflowEnhancementsWorkflow = scenariobuilder.WorkflowEnhancementsWorkflow
 
 // FixedWorkflowReviewWorkflow builds the inspect → review workflow graph.
 var FixedWorkflowReviewWorkflow = scenariobuilder.FixedWorkflowReviewWorkflow
+
+// DeclarativeInterruptWorkflow builds the prepare → interrupt → continue graph.
+var DeclarativeInterruptWorkflow = scenariobuilder.DeclarativeInterruptWorkflow
 
 // MapBranch configures a map node fan-out branch.
 type MapBranch = scenariobuilder.MapBranch

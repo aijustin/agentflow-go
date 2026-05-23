@@ -137,11 +137,11 @@ orchestration:
 
 | 目标 | 推荐 | 示例 |
 |------|------|------|
-| 多步 Research + 综合 | `hybrid` 或 subgraph + `agent_loop` | `multi_expert_research.yaml` |
-| Agentic RAG 闭环 | `fixed_workflow` + RAG 节点 | `adaptive_rag.yaml` |
-| 可复用子流程 | **`subgraph`** | 见 Phase 1 YAML |
-| 开放 tool 循环 | `autonomous` | `autonomous.yaml` |
-| 动态并行 | **`map`（计划）** | — |
+| 多步 Research + 综合 | `hybrid` 或 subgraph | `builder.MultiExpertResearch()` |
+| Agentic RAG 闭环 | `fixed_workflow` + RAG 节点 | `builder.AdaptiveRAG("assistant")` |
+| 可复用子流程 | **`subgraph`** | `builder.NewWorkflow().NodeSubgraph(...)` |
+| 开放 tool 循环 | `autonomous` | `builder.MinimalAutonomous("assistant")` |
+| 动态并行 | **`map`** | `builder.WorkflowEnhancements()` 或 `NodeMap` |
 
 ---
 

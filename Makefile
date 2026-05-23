@@ -1,6 +1,9 @@
-.PHONY: test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check
+.PHONY: build test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check
 
 GO_TEST_LDFLAGS ?= -w
+
+build:
+	CGO_ENABLED=0 go build ./...
 
 fmt:
 	gofmt -w .

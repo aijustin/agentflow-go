@@ -77,7 +77,7 @@ func LLMContext(policy contextwindow.Policy) LLMOption {
 	}
 }
 
-// SelfRAGChatContext configures sliding_window_with_summary governance from self_rag.yaml.
+// SelfRAGChatContext configures sliding_window_with_summary governance for SelfRAG stacks.
 func SelfRAGChatContext() LLMOption {
 	return LLMContext(contextwindow.Policy{
 		Strategy:          contextwindow.StrategySlidingWindowWithSummary,

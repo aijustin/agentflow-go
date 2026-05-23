@@ -11,7 +11,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
-// WiringConfig controls test and example wiring for scenarios loaded from YAML.
+// WiringConfig controls test and example wiring for programmatic scenarios.
 type WiringConfig struct {
 	// WorkDir is the default git allowlist root and relative repo path base.
 	WorkDir string
