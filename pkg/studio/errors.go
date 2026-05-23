@@ -35,6 +35,9 @@ var (
 	ErrCheckpointMissing  = &CodedError{Code: "studio.checkpoint_missing", Message: "checkpoint history is not configured"}
 	ErrCompareRunsMissing = &CodedError{Code: "studio.compare_runs_missing", Message: "compare requires run_a and run_b"}
 	ErrUnsupportedMode    = &CodedError{Code: "studio.unsupported_mode", Message: "studio run supports fixed_workflow and hybrid scenarios"}
+	ErrNodeIDRequired     = &CodedError{Code: "obs.node_id_required", Message: "node_id is required"}
+	ErrVersionRequired    = &CodedError{Code: "obs.version_required", Message: "version must be a positive integer"}
+	ErrStreamingUnsupported = &CodedError{Code: "obs.streaming_unsupported", Message: "streaming is not supported"}
 )
 
 var duplicateNodePattern = regexp.MustCompile(`duplicate workflow node "([^"]+)"`)
@@ -71,8 +74,53 @@ func ErrorPayloadFrom(err error) ErrorPayload {
 		return ErrorPayload{Code: "graph.invalid", Message: msg}
 	case strings.Contains(msg, "decode body"), strings.Contains(msg, "invalid character"):
 		return ErrorPayload{Code: "studio.invalid_json", Message: msg}
+	case strings.Contains(msg, "node_id is required"):
+		return payloadFrom(ErrNodeIDRequired, msg)
+	case strings.Contains(msg, "version must be a positive integer"):
+		return payloadFrom(ErrVersionRequired, msg)
+	case strings.Contains(msg, "run_a and run_b are required"):
+		return payloadFrom(ErrCompareRunsMissing, msg)
+	case strings.Contains(msg, "streaming is not supported"):
+		return payloadFrom(ErrStreamingUnsupported, msg)
+	case strings.Contains(msg, " is not configured"):
+		return ErrorPayload{Code: "obs.not_configured", Message: msg, Params: map[string]string{"feature": notConfiguredFeature(msg)}}
 	default:
 		return ErrorPayload{Code: "studio.internal", Message: msg}
+	}
+}
+
+func notConfiguredFeature(msg string) string {
+	switch {
+	case strings.Contains(msg, "graph export"):
+		return "graph_export"
+	case strings.Contains(msg, "run steps"):
+		return "run_steps"
+	case strings.Contains(msg, "resume-from-step"):
+		return "resume_from_step"
+	case strings.Contains(msg, "checkpoint history"):
+		return "checkpoint_history"
+	case strings.Contains(msg, "checkpoint loading"):
+		return "checkpoint_loading"
+	case strings.Contains(msg, "resume-from-checkpoint"):
+		return "resume_from_checkpoint"
+	case strings.Contains(msg, "run compare"):
+		return "run_compare"
+	case strings.Contains(msg, "studio validate"):
+		return "studio_validate"
+	case strings.Contains(msg, "studio codegen"):
+		return "studio_codegen"
+	case strings.Contains(msg, "studio yaml"):
+		return "studio_yaml"
+	case strings.Contains(msg, "studio run"):
+		return "studio_run"
+	case strings.Contains(msg, "studio save"):
+		return "studio_save"
+	case strings.Contains(msg, "run thread"):
+		return "run_thread"
+	case strings.Contains(msg, "run fork"):
+		return "run_fork"
+	default:
+		return "feature"
 	}
 }
 

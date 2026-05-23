@@ -670,7 +670,7 @@ func writeJSON(w nethttp.ResponseWriter, status int, value any) {
 }
 
 func writeError(w nethttp.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	writeStudioError(w, status, err)
 }
 
 func writeStudioError(w nethttp.ResponseWriter, status int, err error) {
@@ -691,7 +691,7 @@ func writeSSE(w nethttp.ResponseWriter, flusher nethttp.Flusher, record obspkg.E
 }
 
 func writeSSEError(w nethttp.ResponseWriter, flusher nethttp.Flusher, err error) {
-	data, _ := json.Marshal(map[string]string{"error": err.Error()})
+	data, _ := json.Marshal(map[string]any{"error": studio.ErrorPayloadFrom(err)})
 	_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", data)
 	flusher.Flush()
 }

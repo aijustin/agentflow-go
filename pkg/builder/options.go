@@ -125,6 +125,11 @@ func TierSessionMemory(namespace string, opts ...TierMemoryOption) MemoryOption 
 			WarmCapacity:  100,
 			ColdCapacity:  1000,
 			PromoteAccess: 3,
+			ColdSummary: &core.MemoryTierColdSummarySettings{
+				Enabled:         true,
+				MinBytes:        512,
+				MaxSummaryChars: 256,
+			},
 			RecallBudget: core.MemoryTierRecallBudget{
 				Total: 10,
 				Hot:   8,

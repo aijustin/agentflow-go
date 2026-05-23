@@ -109,7 +109,7 @@ func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGr
 	return SaveStudioResult{
 		Path:         path,
 		ScenarioName: scenario.Name,
-		Graph:        graph.ExportScenario(scenario),
+		Graph:        graph.MergeLayout(edited, graph.ExportScenario(scenario)),
 	}, nil
 }
 

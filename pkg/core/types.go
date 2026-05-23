@@ -156,6 +156,13 @@ type MemoryTierSettings struct {
 	DemoteIdle    string                  `json:"demote_idle,omitempty"`
 	RecallBudget  MemoryTierRecallBudget  `json:"recall_budget,omitempty"`
 	RecallWeights MemoryTierRecallWeights `json:"recall_weights,omitempty"`
+	ColdSummary   *MemoryTierColdSummarySettings `json:"cold_summary,omitempty"`
+}
+
+type MemoryTierColdSummarySettings struct {
+	Enabled         bool  `json:"enabled,omitempty"`
+	MinBytes        int64 `json:"min_bytes,omitempty"`
+	MaxSummaryChars int   `json:"max_summary_chars,omitempty"`
 }
 
 type MemoryTierRecallWeights struct {

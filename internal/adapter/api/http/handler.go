@@ -26,6 +26,7 @@ type HandlerConfig struct {
 	HITLHandler        nethttp.Handler
 	CheckpointHandler  nethttp.Handler
 	StudioHandler      nethttp.Handler
+	RetentionHandler   nethttp.Handler
 }
 
 type Handler struct {
@@ -80,6 +81,13 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 			studio = config.AuthMiddleware(studio)
 		}
 		handler.mux.Handle("/v1/studio/", studio)
+	}
+	if config.RetentionHandler != nil {
+		retention := config.RetentionHandler
+		if config.AuthMiddleware != nil {
+			retention = config.AuthMiddleware(retention)
+		}
+		handler.mux.Handle("/v1/admin/retention/", retention)
 	}
 	if config.MetricsHandler != nil {
 		handler.mux.Handle("/metrics", config.MetricsHandler)

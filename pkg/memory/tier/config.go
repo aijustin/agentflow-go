@@ -18,6 +18,7 @@ type Settings struct {
 	DemoteIdle    time.Duration `json:"demote_idle,omitempty" yaml:"demote_idle"`
 	RecallBudget  RecallBudget  `json:"recall_budget,omitempty" yaml:"recall_budget"`
 	RecallWeights RecallWeights `json:"recall_weights,omitempty" yaml:"recall_weights"`
+	ColdSummary   ColdSummarySettings `json:"cold_summary,omitempty" yaml:"cold_summary"`
 }
 
 // Policy returns the effective tier policy from settings, overlaying defaults.

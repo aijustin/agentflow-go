@@ -154,6 +154,12 @@ func main() {
 		}
 	}()
 
+	if interval := envDuration("AGENT_RETENTION_INTERVAL", 0); interval > 0 {
+		maxAge := envDuration("AGENT_RETENTION_MAX_AGE", 7*24*time.Hour)
+		go runRetentionLoop(ctx, fw, interval, maxAge)
+		fmt.Printf("retention worker enabled (interval=%s max_age=%s; POST /v1/admin/retention/*)\n", interval, maxAge)
+	}
+
 	server := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		fmt.Printf("HTTP server listening on %s (metrics at /metrics, studio at /observability/, save path %s)\n", addr, studioSavePath)
@@ -174,4 +180,42 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if d, err := time.ParseDuration(value); err == nil {
+			return d
+		}
+	}
+	return fallback
+}
+
+func runRetentionLoop(ctx context.Context, fw *agentflow.Framework, interval, maxAge time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	runOnce := func() {
+		removed, err := fw.PurgeWithPolicy(ctx, agentflow.RetentionPolicy{MaxAge: maxAge})
+		if err != nil {
+			log.Printf("retention purge: %v", err)
+			return
+		}
+		gc, err := fw.PurgeOrphanBlobs(ctx)
+		if err != nil {
+			log.Printf("retention blob gc: %v", err)
+			return
+		}
+		if removed > 0 || gc > 0 {
+			log.Printf("retention: removed %d runs, %d orphan blobs", removed, gc)
+		}
+	}
+	runOnce()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runOnce()
+		}
+	}
 }

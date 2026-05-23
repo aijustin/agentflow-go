@@ -68,6 +68,16 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 			return nil, err
 		}
 		apiConfig.StudioHandler = studioHandler
+		retentionHandler, err := NewRetentionHTTPHandler(RetentionHTTPHandlerConfig{
+			Framework:    config.Framework,
+			Policy:         config.Policy,
+			Audit:          config.Audit,
+			MaxBodyBytes:   config.MaxBodyBytes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		apiConfig.RetentionHandler = retentionHandler
 	}
 	return apihttp.NewHandler(apiConfig)
 }

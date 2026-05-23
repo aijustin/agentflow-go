@@ -9,8 +9,8 @@
 | 结构化 API 错误码 + UI i18n | ✅ `pkg/studio/errors.go` |
 | Save 后 reload + 保留 subgraph 上下文 | ✅ |
 | Editor 多选 / 删边 / 拖线连边 | ✅ |
-| API 错误全路由 i18n | 🔲 非 Studio 路由仍英文 |
-| Save 响应携带 graph（省 GET） | 🔲 可选优化 |
+| API 错误全路由 i18n | ✅ Observability API 结构化错误 + UI i18n |
+| Save 响应携带 graph（省 GET） | ✅ Save 响应 merge layout |
 
 ## 企业 M1 — Retention / GC
 
@@ -20,7 +20,7 @@
 | `PurgeWithPolicy` 终态语义与 `PurgeExpired` 对齐 | ✅ |
 | 跨进程 file runstate + blob 集成测试 | ✅ `internal/integration/retention_integration_test.go` |
 | S3 `BlobAdmin` List/Delete | ✅ `internal/adapter/blob/s3/store.go` |
-| 定时 Retention worker / HTTP admin | 🔲 宿主自行调度 |
+| 定时 Retention worker / HTTP admin | ✅ `/v1/admin/retention/*` + http-worker ticker |
 
 ## Memory Tier — Warm/Cold 生产化
 
@@ -30,7 +30,7 @@
 | `RecordTierDepth` 指标（tier-worker） | ✅ |
 | Blob/S3 cold tier adapter | ✅ `internal/adapter/memory/tier/blobcold` + tier-worker `AGENT_TIER_COLD_BACKEND=blob` |
 | 迁移事件 `EventMemoryPromoted/Demoted` | ✅ `pkg/memory/tier/event_observer.go` |
-| RAG + cold 摘要协同（M5） | 🔲 |
+| RAG + cold 摘要协同（M5） | ✅ cold_summary + 可选向量索引 |
 
 ## 相关文档
 

@@ -390,6 +390,18 @@ const indexHTML = `<!doctype html>
         'confirm.revertGraph': '丢弃本地编辑并重新加载已加载的场景图？', 'alert.savedTo': '已保存到 {path}', 'alert.scenarioFile': '场景文件', 'alert.reloadFailed': '重新加载图失败',
         'errors.studio.save_path_missing': '未配置场景保存路径', 'errors.studio.graph_required': '缺少 graph 数据',
         'errors.graph.duplicate_node': '重复节点 {id}', 'errors.graph.invalid': '图无效', 'errors.studio.internal': '内部错误',
+        'errors.studio.invalid_json': '请求 JSON 无效', 'errors.studio.run_state_missing': '未配置 run-state',
+        'errors.studio.checkpoint_missing': '未配置 checkpoint 历史', 'errors.studio.compare_runs_missing': '需要 run_a 与 run_b',
+        'errors.studio.unsupported_mode': 'Studio 运行仅支持 fixed_workflow 与 hybrid',
+        'errors.obs.node_id_required': '需要 node_id', 'errors.obs.version_required': 'version 必须为正整数',
+        'errors.obs.streaming_unsupported': '不支持流式传输',
+        'errors.obs.not_configured': '未配置 {feature}',
+        'obs.feature.graph_export': '图导出', 'obs.feature.run_steps': '步骤列表', 'obs.feature.resume_from_step': '从步骤恢复',
+        'obs.feature.checkpoint_history': 'checkpoint 历史', 'obs.feature.checkpoint_loading': 'checkpoint 加载',
+        'obs.feature.resume_from_checkpoint': '从 checkpoint 恢复', 'obs.feature.run_compare': '运行对比',
+        'obs.feature.studio_validate': 'Studio 校验', 'obs.feature.studio_codegen': 'Studio 代码生成',
+        'obs.feature.studio_yaml': 'Studio YAML', 'obs.feature.studio_run': 'Studio 运行', 'obs.feature.studio_save': 'Studio 保存',
+        'obs.feature.run_thread': '运行线程', 'obs.feature.run_fork': '运行分叉', 'obs.feature.feature': '功能',
         'status.running': '运行中', 'status.paused': '已暂停', 'status.completed': '已完成', 'status.failed': '失败'
       },
       'en': {
@@ -430,6 +442,18 @@ const indexHTML = `<!doctype html>
         'confirm.revertGraph': 'Discard local edits and reload the loaded scenario graph?', 'alert.savedTo': 'Saved to {path}', 'alert.scenarioFile': 'scenario file', 'alert.reloadFailed': 'Failed to reload graph',
         'errors.studio.save_path_missing': 'Studio save path is not configured', 'errors.studio.graph_required': 'Graph is required',
         'errors.graph.duplicate_node': 'Duplicate node {id}', 'errors.graph.invalid': 'Invalid graph', 'errors.studio.internal': 'Internal error',
+        'errors.studio.invalid_json': 'Invalid request JSON', 'errors.studio.run_state_missing': 'Run-state repository is not configured',
+        'errors.studio.checkpoint_missing': 'Checkpoint history is not configured', 'errors.studio.compare_runs_missing': 'run_a and run_b are required',
+        'errors.studio.unsupported_mode': 'Studio run supports fixed_workflow and hybrid only',
+        'errors.obs.node_id_required': 'node_id is required', 'errors.obs.version_required': 'version must be a positive integer',
+        'errors.obs.streaming_unsupported': 'Streaming is not supported',
+        'errors.obs.not_configured': '{feature} is not configured',
+        'obs.feature.graph_export': 'Graph export', 'obs.feature.run_steps': 'Run steps', 'obs.feature.resume_from_step': 'Resume from step',
+        'obs.feature.checkpoint_history': 'Checkpoint history', 'obs.feature.checkpoint_loading': 'Checkpoint loading',
+        'obs.feature.resume_from_checkpoint': 'Resume from checkpoint', 'obs.feature.run_compare': 'Run compare',
+        'obs.feature.studio_validate': 'Studio validate', 'obs.feature.studio_codegen': 'Studio codegen',
+        'obs.feature.studio_yaml': 'Studio YAML', 'obs.feature.studio_run': 'Studio run', 'obs.feature.studio_save': 'Studio save',
+        'obs.feature.run_thread': 'Run thread', 'obs.feature.run_fork': 'Run fork', 'obs.feature.feature': 'Feature',
         'status.running': 'running', 'status.paused': 'paused', 'status.completed': 'completed', 'status.failed': 'failed'
       }
     };
@@ -451,7 +475,11 @@ const indexHTML = `<!doctype html>
       const code = err.code || '';
       const i18nKey = 'errors.' + code;
       if (code && I18N[locale] && I18N[locale][i18nKey]) {
-        return t(i18nKey, err.params || {});
+        const vars = Object.assign({}, err.params || {});
+        if (code === 'obs.not_configured' && vars.feature) {
+          vars.feature = t('obs.feature.' + vars.feature, vars);
+        }
+        return t(i18nKey, vars);
       }
       return err.message || t(fallbackKey);
     }
@@ -1253,7 +1281,7 @@ const indexHTML = `<!doctype html>
       }
       const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/thread');
       const body = await res.json();
-      if (!res.ok) { $('threadCanvas').innerHTML = '<div class="empty">' + escapeHTML(body.error || t('empty.threadUnavailable')) + '</div>'; return; }
+      if (!res.ok) { $('threadCanvas').innerHTML = '<div class="empty">' + escapeHTML(formatApiError(body, 'empty.threadUnavailable')) + '</div>'; return; }
       state.threadRuns = body.runs || [];
       renderThread();
     }
@@ -1297,7 +1325,7 @@ const indexHTML = `<!doctype html>
       });
       const body = await res.json();
       if (!res.ok) {
-        alert(body.error || t('alert.resumeFailed'));
+        alert(formatApiError(body, 'alert.resumeFailed'));
         updateTimeTravelBar();
         return;
       }
@@ -1317,7 +1345,7 @@ const indexHTML = `<!doctype html>
       });
       const body = await res.json();
       if (!res.ok) {
-        alert(body.error || t('alert.resumeFailed'));
+        alert(formatApiError(body, 'alert.resumeFailed'));
         updateTimeTravelBar();
         return;
       }

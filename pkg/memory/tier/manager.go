@@ -4,35 +4,42 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/memory"
 )
 
 type defaultManager struct {
-	store    Store
-	policy   Policy
-	observer MigrationObserver
-	weights  memory.RecallWeights
+	store       Store
+	policy      Policy
+	observer    MigrationObserver
+	weights     memory.RecallWeights
+	coldSummary ColdSummaryBackend
 }
 
 // NewManager constructs a tier Manager backed by store and policy.
 func NewManager(store Store, policy Policy, observer MigrationObserver) Manager {
-	return NewManagerWithWeights(store, policy, observer, memory.DefaultRecallWeights())
+	return NewManagerWithWeights(store, policy, observer, memory.DefaultRecallWeights(), NoopColdSummaryBackend{})
 }
 
 // NewManagerWithWeights constructs a tier Manager with custom RankMemories weights.
-func NewManagerWithWeights(store Store, policy Policy, observer MigrationObserver, weights memory.RecallWeights) Manager {
+func NewManagerWithWeights(store Store, policy Policy, observer MigrationObserver, weights memory.RecallWeights, coldSummary ColdSummaryBackend) Manager {
 	if observer == nil {
 		observer = NoopMigrationObserver{}
 	}
+	if coldSummary == nil {
+		coldSummary = NoopColdSummaryBackend{}
+	}
 	return &defaultManager{
-		store:    store,
-		policy:   policy,
-		observer: observer,
-		weights:  weights.Normalize(),
+		store:       store,
+		policy:      policy,
+		observer:    observer,
+		weights:     weights.Normalize(),
+		coldSummary: coldSummary,
 	}
 }
 
@@ -65,6 +72,14 @@ func (m *defaultManager) Recall(ctx context.Context, ns memory.Namespace, query 
 	now := time.Now().UTC()
 
 	candidates := make([]Record, 0, budget.Total*2)
+	seen := make(map[string]struct{})
+	appendCandidate := func(record Record) {
+		if _, ok := seen[record.ID]; ok {
+			return
+		}
+		seen[record.ID] = struct{}{}
+		candidates = append(candidates, record)
+	}
 	for _, level := range []Level{LevelHot, LevelWarm, LevelCold} {
 		limit := budgetForLevel(budget, level)
 		if limit <= 0 {
@@ -74,7 +89,27 @@ func (m *defaultManager) Recall(ctx context.Context, ns memory.Namespace, query 
 		if err != nil {
 			return nil, err
 		}
-		candidates = append(candidates, records...)
+		for _, record := range records {
+			appendCandidate(record)
+		}
+	}
+	if budget.Cold > 0 && strings.TrimSpace(query) != "" && m.coldSummary != nil {
+		ids, err := m.coldSummary.SearchRecordIDs(ctx, ns, query, budget.Cold*2)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			record, err := m.store.Get(ctx, ns, id)
+			if err != nil {
+				if errors.Is(err, memory.ErrNotFound) {
+					continue
+				}
+				return nil, err
+			}
+			if record.Tier == LevelCold {
+				appendCandidate(record)
+			}
+		}
 	}
 	if len(candidates) == 0 {
 		return nil, nil
@@ -129,6 +164,9 @@ func (m *defaultManager) Reconcile(ctx context.Context, ns memory.Namespace, now
 		for i := range records {
 			record := records[i]
 			if record.Tier == LevelCold && m.policy.ShouldDemote(record, now, counts[LevelCold]) {
+				if err := m.coldSummary.Delete(ctx, ns, record.ID); err != nil {
+					return report, err
+				}
 				if err := m.store.Delete(ctx, ns, record.ID); err != nil {
 					return report, err
 				}
@@ -170,6 +208,11 @@ func (m *defaultManager) applyTargetTier(ctx context.Context, ns memory.Namespac
 	}
 	record.Tier = target
 	record.PromotedAt = now
+	if target == LevelCold && tierRank(from) > tierRank(target) {
+		if err := m.coldSummary.Archive(ctx, ns, record); err != nil {
+			return err
+		}
+	}
 	if err := m.store.Put(ctx, ns, *record); err != nil {
 		return err
 	}

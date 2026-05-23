@@ -96,6 +96,7 @@ type options struct {
 	memory      map[string]memory.Repository
 	tierMemory  map[string]tier.Manager
 	tierStores  map[string]tier.Store
+	tierColdIndexers map[string]tier.ColdSummaryIndexer
 	cognitive   map[string]memory.CognitiveMemory
 	jobQueue    async.Queue
 	tokenSecret []byte
@@ -314,7 +315,8 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 			store = tierinmem.NewStore()
 		}
 		settings, _ := tier.SettingsFromCore(ref.Tiers)
-		manager := tier.NewManagerWithWeights(store, settings.Policy(), tierMigrationObserver(scenario, cfg.recorder, cfg.events), settings.Weights())
+		coldSummary := tierColdSummaryBackend(settings.ColdSummary, cfg.tierColdIndexers[name])
+		manager := tier.NewManagerWithWeights(store, settings.Policy(), tierMigrationObserver(scenario, cfg.recorder, cfg.events), settings.Weights(), coldSummary)
 		cognitive := cfg.cognitive[name]
 		if cognitive == nil {
 			if cfg.cognitive == nil {
@@ -605,12 +607,32 @@ func WithTierStore(name string, store tier.Store, policy tier.Policy) Option {
 			o.tierStores = make(map[string]tier.Store)
 		}
 		o.tierStores[name] = store
-		if o.tierMemory == nil {
-			o.tierMemory = make(map[string]tier.Manager)
-		}
-		o.tierMemory[name] = tier.NewManager(store, policy, tier.NoopMigrationObserver{})
 		return nil
 	}
+}
+
+// WithTierColdSummaryIndexer wires a vector indexer for cold-tier summary recall on a memory name.
+func WithTierColdSummaryIndexer(name string, indexer tier.ColdSummaryIndexer) Option {
+	return func(o *options) error {
+		if name == "" {
+			return fmt.Errorf("agentflow: tier cold summary memory name is required")
+		}
+		if indexer == nil {
+			return fmt.Errorf("agentflow: tier cold summary indexer for %q is nil", name)
+		}
+		if o.tierColdIndexers == nil {
+			o.tierColdIndexers = make(map[string]tier.ColdSummaryIndexer)
+		}
+		o.tierColdIndexers[name] = indexer
+		return nil
+	}
+}
+
+func tierColdSummaryBackend(settings tier.ColdSummarySettings, indexer tier.ColdSummaryIndexer) tier.ColdSummaryBackend {
+	if !settings.Enabled {
+		return tier.NoopColdSummaryBackend{}
+	}
+	return tier.TruncateColdSummaryBackend{Settings: settings, Vector: indexer}
 }
 
 // WithCognitiveMemory wires a cognitive memory backend by scenario memory name.

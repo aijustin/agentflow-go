@@ -74,6 +74,8 @@ curl -s http://127.0.0.1:7070/metrics | head
 | `AGENT_TIER_COLD_BACKEND` | `file` (default) or `blob` | tier-worker cold tier backend |
 | `AGENT_TIER_COLD_INDEX_DIR` | temp dir | blob cold tier index when `AGENT_TIER_COLD_BACKEND=blob` |
 | `AGENT_BLOB_DIR` | temp dir | file blob store for blob cold tier (when S3 env unset) |
+| `AGENT_RETENTION_INTERVAL` | unset (disabled) | http-worker periodic retention purge |
+| `AGENT_RETENTION_MAX_AGE` | `168h` | retention max age when interval enabled |
 | `AGENT_HTTP_ADDR` | `127.0.0.1:7060` (http-worker) / `127.0.0.1:7070` (tier-worker) | bind address |
 | `AGENT_REDIS_ADDR` | `127.0.0.1:6379` | Redis run-state / locker |
 | `AGENT_S3_ENDPOINT` | `http://127.0.0.1:9000` | Blob store |

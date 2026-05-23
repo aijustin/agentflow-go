@@ -44,5 +44,12 @@ func SettingsFromCore(ref *core.MemoryTierSettings) (Settings, bool) {
 			settings.DemoteIdle = d
 		}
 	}
+	if ref.ColdSummary != nil {
+		settings.ColdSummary = ColdSummarySettings{
+			Enabled:         ref.ColdSummary.Enabled,
+			MinBytes:        ref.ColdSummary.MinBytes,
+			MaxSummaryChars: ref.ColdSummary.MaxSummaryChars,
+		}
+	}
 	return settings, true
 }

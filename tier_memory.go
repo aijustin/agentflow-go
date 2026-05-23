@@ -5,8 +5,11 @@ import (
 
 	tiercold "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/cold"
 	tierblobcold "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/blobcold"
+	coldindex "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/coldindex"
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	tierpostgres "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/postgres"
+	"github.com/aijustin/agentflow-go/pkg/knowledge"
+	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -43,6 +46,24 @@ func NewBlobTierColdStore(config BlobTierColdStoreConfig) (tier.Store, error) {
 	return tierblobcold.NewStore(tierblobcold.Config{
 		Blobs:    config.Blobs,
 		IndexDir: config.IndexDir,
+	})
+}
+
+// TierColdSummaryIndexerConfig configures vector indexing for cold-tier summaries.
+type TierColdSummaryIndexerConfig struct {
+	Embedder   llm.Embedder
+	Store      knowledge.VectorStore
+	Profile    string
+	MemoryName string
+}
+
+// NewTierColdSummaryIndexer indexes cold-tier summaries for semantic recall.
+func NewTierColdSummaryIndexer(config TierColdSummaryIndexerConfig) (tier.ColdSummaryIndexer, error) {
+	return coldindex.NewIndexer(coldindex.Config{
+		Embedder:   config.Embedder,
+		Store:      config.Store,
+		Profile:    config.Profile,
+		MemoryName: config.MemoryName,
 	})
 }
 
