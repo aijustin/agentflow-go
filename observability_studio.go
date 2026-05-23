@@ -61,6 +61,18 @@ func (adapter *studioFramework) GenerateStudioScenarioYAML(ctx context.Context, 
 	return adapter.framework.GenerateStudioScenarioYAML(ctx, graph)
 }
 
+func (adapter *studioFramework) ImportStudioScenarioYAML(ctx context.Context, yamlData []byte, layout any) (any, error) {
+	var layoutGraph graph.ScenarioGraph
+	if layout != nil {
+		var err error
+		layoutGraph, err = decodeStudioGraph(layout)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return adapter.framework.ImportStudioScenarioYAML(ctx, yamlData, layoutGraph)
+}
+
 func (adapter *studioFramework) RunStudioGraph(ctx context.Context, edited any, req any) (any, error) {
 	graph, err := decodeStudioGraph(edited)
 	if err != nil {

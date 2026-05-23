@@ -160,9 +160,10 @@ type MemoryTierSettings struct {
 }
 
 type MemoryTierColdSummarySettings struct {
-	Enabled         bool  `json:"enabled,omitempty"`
-	MinBytes        int64 `json:"min_bytes,omitempty"`
-	MaxSummaryChars int   `json:"max_summary_chars,omitempty"`
+	Enabled         bool   `json:"enabled,omitempty"`
+	MinBytes        int64  `json:"min_bytes,omitempty"`
+	MaxSummaryChars int    `json:"max_summary_chars,omitempty"`
+	SummaryProfile  string `json:"summary_profile,omitempty"`
 }
 
 type MemoryTierRecallWeights struct {

@@ -14,9 +14,15 @@ const defaultColdSummaryMaxChars = 512
 
 // ColdSummarySettings configures cold-tier summarization before archive.
 type ColdSummarySettings struct {
-	Enabled         bool  `json:"enabled,omitempty" yaml:"enabled"`
-	MinBytes        int64 `json:"min_bytes,omitempty" yaml:"min_bytes"`
-	MaxSummaryChars int   `json:"max_summary_chars,omitempty" yaml:"max_summary_chars"`
+	Enabled         bool   `json:"enabled,omitempty" yaml:"enabled"`
+	MinBytes        int64  `json:"min_bytes,omitempty" yaml:"min_bytes"`
+	MaxSummaryChars int    `json:"max_summary_chars,omitempty" yaml:"max_summary_chars"`
+	SummaryProfile  string `json:"summary_profile,omitempty" yaml:"summary_profile"`
+}
+
+// ContentSummarizer compresses large record content before cold archive.
+type ContentSummarizer interface {
+	Summarize(ctx context.Context, content string, maxChars int) (string, error)
 }
 
 // ColdSummaryBackend archives cold records and optionally indexes summaries for semantic recall.
@@ -37,8 +43,9 @@ func (NoopColdSummaryBackend) Delete(context.Context, memory.Namespace, string) 
 
 // TruncateColdSummaryBackend summarizes large records with a deterministic truncate fallback.
 type TruncateColdSummaryBackend struct {
-	Settings ColdSummarySettings
-	Vector   ColdSummaryIndexer
+	Settings   ColdSummarySettings
+	Vector     ColdSummaryIndexer
+	Summarizer ContentSummarizer
 }
 
 // ColdSummaryIndexer stores and searches cold summaries in a vector index.
@@ -57,7 +64,15 @@ func (b TruncateColdSummaryBackend) Archive(ctx context.Context, ns memory.Names
 	if size < settings.MinBytes {
 		return nil
 	}
-	summary := truncateSummary(extractSearchable(*record), settings.MaxSummaryChars)
+	source := extractSearchable(*record)
+	summary := truncateSummary(source, settings.MaxSummaryChars)
+	if b.Summarizer != nil {
+		if llmSummary, err := b.Summarizer.Summarize(ctx, source, settings.MaxSummaryChars); err == nil {
+			if trimmed := strings.TrimSpace(llmSummary); trimmed != "" {
+				summary = truncateSummary(trimmed, settings.MaxSummaryChars)
+			}
+		}
+	}
 	if record.Metadata == nil {
 		record.Metadata = map[string]string{}
 	}

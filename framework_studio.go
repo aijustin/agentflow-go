@@ -90,6 +90,29 @@ func (f *Framework) GenerateStudioScenarioYAML(_ context.Context, edited graph.S
 	return CodegenResult{Language: "yaml", Code: string(yamlDoc)}, nil
 }
 
+// ImportStudioResult describes a YAML import into an editable Studio graph.
+type ImportStudioResult struct {
+	ScenarioName string              `json:"scenario_name"`
+	Graph        graph.ScenarioGraph `json:"graph"`
+}
+
+// ImportStudioScenarioYAML parses legacy scenario YAML and returns an editable graph.
+// When layout is non-empty, node positions from layout are merged onto the imported graph.
+func (f *Framework) ImportStudioScenarioYAML(_ context.Context, yamlData []byte, layout graph.ScenarioGraph) (ImportStudioResult, error) {
+	scenario, err := configyaml.Load(yamlData)
+	if err != nil {
+		return ImportStudioResult{}, err
+	}
+	if err := ValidateScenario(scenario); err != nil {
+		return ImportStudioResult{}, err
+	}
+	exported := graph.ExportScenario(scenario)
+	if len(layout.Workflow.Nodes) > 0 || len(layout.Workflows) > 0 {
+		exported = graph.MergeLayout(layout, exported)
+	}
+	return ImportStudioResult{ScenarioName: scenario.Name, Graph: exported}, nil
+}
+
 // SaveStudioGraph validates an edited graph, writes legacy YAML to path, and updates the framework scenario.
 func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGraph, path string) (SaveStudioResult, error) {
 	if path == "" {

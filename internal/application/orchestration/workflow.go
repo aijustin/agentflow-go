@@ -118,8 +118,10 @@ func (r *WorkflowRunner) Resume(ctx context.Context, scenario core.Scenario, run
 		done[nodeID] = true
 	}
 	if snapshot.CurrentNodeID != "" {
-		if node, ok := workflowNodeByID(scenario, snapshot.CurrentNodeID); ok && node.Kind == core.NodeHumanGate && snapshot.PendingGate == nil {
-			done[snapshot.CurrentNodeID] = true
+		if node, ok := workflowNodeByID(scenario, snapshot.CurrentNodeID); ok && snapshot.PendingGate == nil {
+			if node.Kind == core.NodeHumanGate || node.Interrupt {
+				done[snapshot.CurrentNodeID] = true
+			}
 		}
 	}
 	return r.run(ctx, scenario, runID, done)
@@ -244,6 +246,9 @@ func (r *WorkflowRunner) runNodeWithRetry(ctx context.Context, scenario core.Sce
 		if err := r.runNode(ctx, scenario, node, runID); err != nil {
 			lastErr = err
 			continue
+		}
+		if node.Interrupt {
+			return r.pauseForInterrupt(ctx, node, runID)
 		}
 		return nil
 	}
@@ -387,6 +392,37 @@ func (r *WorkflowRunner) runHumanGateNode(ctx context.Context, node core.Workflo
 		return err
 	}
 	r.emitJSON(ctx, core.EventRunPaused, "", runID, map[string]any{"node_id": node.ID})
+	return WorkflowPausedError{RunID: runID, NodeID: node.ID, Token: token}
+}
+
+func (r *WorkflowRunner) pauseForInterrupt(ctx context.Context, node core.WorkflowNode, runID string) error {
+	if r.gate == nil {
+		return fmt.Errorf("orchestration: human gate is required for interrupt on node %q", node.ID)
+	}
+	if r.runs == nil {
+		return fmt.Errorf("orchestration: run-state repository is required for interrupt")
+	}
+	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
+	if err != nil {
+		return err
+	}
+	payloadMap := map[string]any{"node_id": node.ID, "interrupt": true}
+	if ref, ok := snapshot.StepOutputs[node.ID]; ok {
+		payloadMap["output"] = ref
+	}
+	payload, err := json.Marshal(payloadMap)
+	if err != nil {
+		return fmt.Errorf("orchestration: interrupt payload for node %q: %w", node.ID, err)
+	}
+	snapshot.CurrentNodeID = node.ID
+	if err := r.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+		return err
+	}
+	token, err := r.gate.Pause(ctx, core.CheckpointState{RunID: runID, Version: snapshot.Version, NodeID: node.ID, Payload: json.RawMessage(payload)})
+	if err != nil {
+		return err
+	}
+	r.emitJSON(ctx, core.EventRunPaused, "", runID, map[string]any{"node_id": node.ID, "interrupt": true})
 	return WorkflowPausedError{RunID: runID, NodeID: node.ID, Token: token}
 }
 

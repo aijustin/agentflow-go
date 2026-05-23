@@ -197,6 +197,62 @@ func TestWorkflowRunnerTransformCopiesPreviousStepOutput(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunnerPausesAfterDeclarativeInterrupt(t *testing.T) {
+	reg := registry.New()
+	if err := reg.RegisterTool("after", builtin.NewEchoTool()); err != nil {
+		t.Fatal(err)
+	}
+	runs := newWorkflowRun(t)
+	gate := &workflowGate{repo: runs}
+	runner := NewWorkflowRunner(reg, runs, nil, WithHumanGate(gate))
+	scenario := core.Scenario{
+		Name: "scenario",
+		Orchestration: core.Orchestration{
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "work", Kind: core.NodeTransform, Interrupt: true, Input: json.RawMessage(`{"set":{"done":true}}`)},
+					{ID: "after", Kind: core.NodeTool, Ref: "after"},
+				},
+				Edges: []core.WorkflowEdge{{From: "work", To: "after"}},
+			},
+		},
+	}
+	err := runner.Run(context.Background(), scenario, "run-1")
+	var paused WorkflowPausedError
+	if !errors.As(err, &paused) {
+		t.Fatalf("expected WorkflowPausedError, got %v", err)
+	}
+	if paused.NodeID != "work" {
+		t.Fatalf("unexpected pause node: %+v", paused)
+	}
+	snapshot, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusPaused || snapshot.CurrentNodeID != "work" {
+		t.Fatalf("expected paused at work, got %+v", snapshot)
+	}
+	if _, ok := snapshot.StepOutputs["work"]; !ok {
+		t.Fatalf("expected work output before pause: %+v", snapshot.StepOutputs)
+	}
+	if _, ok := snapshot.StepOutputs["after"]; ok {
+		t.Fatalf("downstream should not run before resume: %+v", snapshot.StepOutputs)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Resume(context.Background(), scenario, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.StepOutputs["after"]; !ok {
+		t.Fatalf("expected downstream output after resume: %+v", loaded.StepOutputs)
+	}
+}
+
 func TestWorkflowRunnerPausesAndResumesHumanGate(t *testing.T) {
 	reg := registry.New()
 	if err := reg.RegisterTool("after", builtin.NewEchoTool()); err != nil {

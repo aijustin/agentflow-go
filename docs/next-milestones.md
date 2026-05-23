@@ -30,7 +30,15 @@
 | `RecordTierDepth` 指标（tier-worker） | ✅ |
 | Blob/S3 cold tier adapter | ✅ `internal/adapter/memory/tier/blobcold` + tier-worker `AGENT_TIER_COLD_BACKEND=blob` |
 | 迁移事件 `EventMemoryPromoted/Demoted` | ✅ `pkg/memory/tier/event_observer.go` |
-| RAG + cold 摘要协同（M5） | ✅ cold_summary + 可选向量索引 |
+| RAG + cold 摘要协同（M5） | ✅ cold_summary + 可选向量索引 + LLM 摘要（`summary_profile` / `WithTierColdSummarizer`） |
+
+## Studio P7 — YAML 导入与 interrupt 编辑
+
+| 项 | 状态 |
+|----|------|
+| Import YAML API + Editor UI | ✅ |
+| Editor 快捷键（Save/Undo/Delete） | ✅ |
+| Declarative interrupt 节点编辑 | ✅ |
 
 ## 相关文档
 

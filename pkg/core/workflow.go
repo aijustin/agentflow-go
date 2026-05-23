@@ -31,6 +31,7 @@ type WorkflowNode struct {
 	Input     json.RawMessage  `json:"input,omitempty"`
 	DependsOn []string         `json:"depends_on,omitempty"`
 	Condition string           `json:"condition,omitempty"`
+	Interrupt bool             `json:"interrupt,omitempty"`
 	Retry     RetryPolicy      `json:"retry"`
 }
 

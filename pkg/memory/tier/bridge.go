@@ -49,6 +49,7 @@ func SettingsFromCore(ref *core.MemoryTierSettings) (Settings, bool) {
 			Enabled:         ref.ColdSummary.Enabled,
 			MinBytes:        ref.ColdSummary.MinBytes,
 			MaxSummaryChars: ref.ColdSummary.MaxSummaryChars,
+			SummaryProfile:  ref.ColdSummary.SummaryProfile,
 		}
 	}
 	return settings, true

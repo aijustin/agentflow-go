@@ -8,7 +8,7 @@
 ## 对齐原则
 
 1. **代码是一等公民**：`builder` / `core.Scenario` 为主路径；YAML 仅 legacy。
-2. **够用图编排**：subgraph、map、checkpoint 已落地；不追加 `agent_loop` / 任意 interrupt 节点。
+2. **够用图编排**：subgraph、map、checkpoint 已落地；declarative `interrupt` 节点已支持（post-step pause）。
 3. **Checkpoint 语义清晰**：RunState CAS + `ListRunSteps` / `ResumeFromStep`。
 4. **显式接线**：Gateway、ToolExecutor、RunState 由宿主 Go 服务控制。
 
@@ -25,7 +25,7 @@
 | 有界循环 | `loop` 节点 | ✅ |
 | **Subgraph（运行时嵌套）** | `orchestration.workflows` + `subgraph`；内层 step 命名空间 `{parent}::{inner}` | ✅ v2 |
 | **Send / 动态 fan-out** | `map` 节点（含 `branch.kind: subgraph`） | ✅ 已落地 |
-| `interrupt()` 任意点暂停 | `human_gate` + tool pause + `before_final_answer` | ⚠️ 部分（缺任意节点 declarative interrupt） |
+| `interrupt()` 任意点暂停 | `human_gate` + tool pause + `before_final_answer` + 节点 `interrupt: true`（post-step） | ✅ declarative interrupt |
 | Checkpoint 列表 / time-travel | RunState + `ListRunSteps` / `ResumeFromStep` / `ListRunCheckpoints` / `ResumeFromCheckpoint` | ✅ API + Observability Graph UI + append-only 历史链 |
 | Store 长期记忆 | tier memory + CognitiveMemory | ⚠️ 模型不同，语义对齐中 |
 | Autonomous 作为图节点 | `agent_loop` 节点（图内 ReAct） | ⏸ 不做（用 `hybrid` + `autonomous`） |

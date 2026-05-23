@@ -73,6 +73,35 @@ func (s *stubColdIndexer) DeleteSummary(_ context.Context, _ memory.Namespace, _
 	return nil
 }
 
+type stubSummarizer struct {
+	summary string
+}
+
+func (s stubSummarizer) Summarize(_ context.Context, _ string, _ int) (string, error) {
+	return s.summary, nil
+}
+
+func TestTruncateColdSummaryBackendUsesLLMSummarizer(t *testing.T) {
+	ctx := context.Background()
+	record := tier.Record{
+		CognitiveRecord: memory.CognitiveRecord{
+			ID:       "cold-2",
+			Content:  strings.Repeat("detail ", 32),
+			Metadata: map[string]string{"searchable": strings.Repeat("detail ", 32)},
+		},
+	}
+	backend := tier.TruncateColdSummaryBackend{
+		Settings:   tier.ColdSummarySettings{Enabled: true, MinBytes: 10, MaxSummaryChars: 64},
+		Summarizer: stubSummarizer{summary: "llm compressed facts"},
+	}
+	if err := backend.Archive(ctx, memory.Namespace{Scope: memory.ScopeSession, SessionID: "s1", Agent: "assistant"}, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Content != "llm compressed facts" {
+		t.Fatalf("expected llm summary content, got %q", record.Content)
+	}
+}
+
 func TestTruncateColdSummaryBackendArchivesLargeRecords(t *testing.T) {
 	ctx := context.Background()
 	indexer := &stubColdIndexer{}

@@ -287,6 +287,8 @@ const indexHTML = `<!doctype html>
           <button id="deleteNodeButton" data-i18n="editor.delete">删除</button>
           <button id="validateGraphButton" data-i18n="editor.validate">校验</button>
           <button id="yamlGraphButton" data-i18n="editor.exportYaml">导出 YAML</button>
+          <button id="importYamlButton" data-i18n="editor.importYaml">导入 YAML</button>
+          <input type="file" id="importYamlFile" accept=".yaml,.yml,text/yaml" hidden />
           <button id="previewSaveButton" data-i18n="editor.previewSave">预览保存</button>
           <button id="saveGraphButton" data-i18n="editor.saveScenario">保存场景</button>
           <button id="revertGraphButton" data-i18n="editor.revertLoaded">恢复到已加载</button>
@@ -313,6 +315,7 @@ const indexHTML = `<!doctype html>
           <input id="editorNodeCondition" data-i18n-placeholder="editor.nodeConditionPlaceholder" placeholder="节点 condition，例如 steps.a.output.ok" />
           <input id="editorNodeDependsOn" data-i18n-placeholder="editor.dependsOnPlaceholder" placeholder="depends_on 逗号分隔，例如 prep,review" />
           <textarea id="editorNodeInput" data-i18n-placeholder="editor.inputPlaceholder" placeholder='input JSON，例如 {"set":{"x":1}}'></textarea>
+          <label class="meta"><input type="checkbox" id="editorNodeInterrupt" /> <span data-i18n="editor.interrupt">Declarative interrupt（执行后暂停）</span></label>
           <button id="saveNodePropsButton" data-i18n="editor.applyNodeProps">应用节点属性</button>
         </div>
         <div class="editor-props" id="editorEdgeProps" hidden>
@@ -367,12 +370,12 @@ const indexHTML = `<!doctype html>
         'empty.selectRunForThread': '请选择运行以查看分叉线程', 'empty.selectRun': '请选择运行', 'empty.noThreadRuns': '暂无线程运行', 'empty.threadUnavailable': '线程不可用',
         'empty.noCheckpoints': '暂无 checkpoint 记录', 'empty.checkpointRequiresHistory': '需要配置 WithCheckpointHistory 才能查看 checkpoint 历史', 'empty.selectEventOrCheckpoint': '请选择事件或 checkpoint',
         'editor.addSubgraph': '添加子图', 'editor.addNode': '添加节点', 'editor.undo': '撤销', 'editor.redo': '重做',         'editor.connect': '连边', 'editor.fromNode': '从 {node}', 'editor.deleteEdge': '删除边',
-        'editor.delete': '删除', 'editor.validate': '校验', 'editor.exportYaml': '导出 YAML', 'editor.previewSave': '预览保存', 'editor.saveScenario': '保存场景',
+        'editor.delete': '删除', 'editor.validate': '校验', 'editor.exportYaml': '导出 YAML', 'editor.importYaml': '导入 YAML', 'editor.previewSave': '预览保存', 'editor.saveScenario': '保存场景',
         'editor.revertLoaded': '恢复到已加载', 'editor.exportGo': '导出 Go', 'editor.runGraph': '运行图', 'editor.quickAdd': '快速添加：',
         'editor.nodeProps': '所选节点属性', 'editor.edgeProps': '所选边', 'editor.applyNodeProps': '应用节点属性', 'editor.applyEdgeProps': '应用边属性',
         'editor.runPromptPlaceholder': 'Studio 运行提示词（可选）', 'editor.refPlaceholder': 'ref（agent/tool/skill/subgraph）',
         'editor.nodeConditionPlaceholder': '节点 condition，例如 steps.a.output.ok', 'editor.dependsOnPlaceholder': 'depends_on 逗号分隔，例如 prep,review',
-        'editor.inputPlaceholder': 'input JSON，例如 {"set":{"x":1}}', 'editor.edgeConditionPlaceholder': '边 condition，例如 steps.flag.output.ok', 'editor.canvasAria': '编辑器画布',
+        'editor.inputPlaceholder': 'input JSON，例如 {"set":{"x":1}}', 'editor.interrupt': 'Declarative interrupt（执行后暂停）', 'editor.edgeConditionPlaceholder': '边 condition，例如 steps.flag.output.ok', 'editor.canvasAria': '编辑器画布',
         'compare.labelB': '对比 B', 'compare.button': '对比', 'compare.onlyA': '仅 A：', 'compare.onlyB': '仅 B：', 'compare.shared': '共享：',
         'thread.fork': '分叉当前运行', 'thread.refresh': '刷新线程', 'thread.thread': '线程', 'thread.forkOf': '分叉自', 'thread.root': '根',
         'timeTravel.resumeStep': '从所选节点恢复', 'timeTravel.resumeCheckpoint': '从 checkpoint 恢复', 'timeTravel.noNode': '未选择节点',
@@ -384,7 +387,7 @@ const indexHTML = `<!doctype html>
         'editor.workflowOption': '工作流：{name}', 'editor.subgraphOption': '子图：{name}',
         'prompt.subgraphName': '子图名称', 'prompt.edgeCondition': '边 condition（可选）', 'prompt.nodeId': '节点 ID', 'prompt.refOptional': 'Ref（可选）',
         'alert.subgraphExists': '子图已存在', 'alert.nodeExists': '节点已存在', 'alert.invalidJson': 'input 必须是合法 JSON',
-        'alert.graphValid': '图校验通过', 'alert.invalidGraph': '图无效', 'alert.codegenFailed': '代码生成失败', 'alert.yamlFailed': 'YAML 导出失败',
+        'alert.graphValid': '图校验通过', 'alert.invalidGraph': '图无效', 'alert.codegenFailed': '代码生成失败', 'alert.yamlFailed': 'YAML 导出失败', 'alert.importYamlFailed': 'YAML 导入失败',
         'alert.previewFailed': '预览失败', 'alert.saveFailed': '保存失败', 'alert.runFailed': 'Studio 运行失败', 'alert.compareFailed': '对比失败',
         'alert.forkFailed': '分叉失败', 'alert.resumeFailed': '恢复失败', 'confirm.saveGraph': '将编辑后的图保存到宿主场景文件？',
         'confirm.revertGraph': '丢弃本地编辑并重新加载已加载的场景图？', 'alert.savedTo': '已保存到 {path}', 'alert.scenarioFile': '场景文件', 'alert.reloadFailed': '重新加载图失败',
@@ -400,7 +403,7 @@ const indexHTML = `<!doctype html>
         'obs.feature.checkpoint_history': 'checkpoint 历史', 'obs.feature.checkpoint_loading': 'checkpoint 加载',
         'obs.feature.resume_from_checkpoint': '从 checkpoint 恢复', 'obs.feature.run_compare': '运行对比',
         'obs.feature.studio_validate': 'Studio 校验', 'obs.feature.studio_codegen': 'Studio 代码生成',
-        'obs.feature.studio_yaml': 'Studio YAML', 'obs.feature.studio_run': 'Studio 运行', 'obs.feature.studio_save': 'Studio 保存',
+        'obs.feature.studio_yaml': 'Studio YAML', 'obs.feature.studio_import_yaml': 'Studio YAML 导入', 'obs.feature.studio_run': 'Studio 运行', 'obs.feature.studio_save': 'Studio 保存',
         'obs.feature.run_thread': '运行线程', 'obs.feature.run_fork': '运行分叉', 'obs.feature.feature': '功能',
         'status.running': '运行中', 'status.paused': '已暂停', 'status.completed': '已完成', 'status.failed': '失败'
       },
@@ -419,12 +422,12 @@ const indexHTML = `<!doctype html>
         'empty.selectRunForThread': 'Select a run to view fork thread', 'empty.selectRun': 'Select a run', 'empty.noThreadRuns': 'No thread runs', 'empty.threadUnavailable': 'thread unavailable',
         'empty.noCheckpoints': 'No checkpoints recorded', 'empty.checkpointRequiresHistory': 'Checkpoint history requires WithCheckpointHistory wiring', 'empty.selectEventOrCheckpoint': 'Select an event or checkpoint',
         'editor.addSubgraph': 'Add subgraph', 'editor.addNode': 'Add node', 'editor.undo': 'Undo', 'editor.redo': 'Redo',         'editor.connect': 'Connect', 'editor.fromNode': 'From {node}', 'editor.deleteEdge': 'Delete edge',
-        'editor.delete': 'Delete', 'editor.validate': 'Validate', 'editor.exportYaml': 'Export YAML', 'editor.previewSave': 'Preview save', 'editor.saveScenario': 'Save scenario',
+        'editor.delete': 'Delete', 'editor.validate': 'Validate', 'editor.exportYaml': 'Export YAML', 'editor.importYaml': 'Import YAML', 'editor.previewSave': 'Preview save', 'editor.saveScenario': 'Save scenario',
         'editor.revertLoaded': 'Revert to loaded', 'editor.exportGo': 'Export Go', 'editor.runGraph': 'Run graph', 'editor.quickAdd': 'Quick add:',
         'editor.nodeProps': 'Selected node properties', 'editor.edgeProps': 'Selected edge', 'editor.applyNodeProps': 'Apply node properties', 'editor.applyEdgeProps': 'Apply edge properties',
         'editor.runPromptPlaceholder': 'Prompt for studio run (optional)', 'editor.refPlaceholder': 'ref (agent/tool/skill/subgraph)',
         'editor.nodeConditionPlaceholder': 'node condition e.g. steps.a.output.ok', 'editor.dependsOnPlaceholder': 'depends_on comma-separated e.g. prep,review',
-        'editor.inputPlaceholder': 'input JSON e.g. {"set":{"x":1}}', 'editor.edgeConditionPlaceholder': 'edge condition e.g. steps.flag.output.ok', 'editor.canvasAria': 'Editor canvas',
+        'editor.inputPlaceholder': 'input JSON e.g. {"set":{"x":1}}', 'editor.interrupt': 'Declarative interrupt (pause after step)', 'editor.edgeConditionPlaceholder': 'edge condition e.g. steps.flag.output.ok', 'editor.canvasAria': 'Editor canvas',
         'compare.labelB': 'Compare B', 'compare.button': 'Compare', 'compare.onlyA': 'Only A:', 'compare.onlyB': 'Only B:', 'compare.shared': 'Shared:',
         'thread.fork': 'Fork current run', 'thread.refresh': 'Refresh thread', 'thread.thread': 'thread', 'thread.forkOf': 'fork of', 'thread.root': 'root',
         'timeTravel.resumeStep': 'Resume from selected node', 'timeTravel.resumeCheckpoint': 'Resume from checkpoint', 'timeTravel.noNode': 'No node selected',
@@ -436,7 +439,7 @@ const indexHTML = `<!doctype html>
         'editor.workflowOption': 'workflow: {name}', 'editor.subgraphOption': 'subgraph: {name}',
         'prompt.subgraphName': 'Subgraph name', 'prompt.edgeCondition': 'Edge condition (optional)', 'prompt.nodeId': 'Node id', 'prompt.refOptional': 'Ref (optional)',
         'alert.subgraphExists': 'subgraph already exists', 'alert.nodeExists': 'node already exists', 'alert.invalidJson': 'input must be valid JSON',
-        'alert.graphValid': 'Graph is valid', 'alert.invalidGraph': 'invalid graph', 'alert.codegenFailed': 'codegen failed', 'alert.yamlFailed': 'yaml export failed',
+        'alert.graphValid': 'Graph is valid', 'alert.invalidGraph': 'invalid graph', 'alert.codegenFailed': 'codegen failed', 'alert.yamlFailed': 'yaml export failed', 'alert.importYamlFailed': 'yaml import failed',
         'alert.previewFailed': 'preview failed', 'alert.saveFailed': 'save failed', 'alert.runFailed': 'studio run failed', 'alert.compareFailed': 'compare failed',
         'alert.forkFailed': 'fork failed', 'alert.resumeFailed': 'resume failed', 'confirm.saveGraph': 'Save edited graph back to the host scenario file?',
         'confirm.revertGraph': 'Discard local edits and reload the loaded scenario graph?', 'alert.savedTo': 'Saved to {path}', 'alert.scenarioFile': 'scenario file', 'alert.reloadFailed': 'Failed to reload graph',
@@ -452,7 +455,7 @@ const indexHTML = `<!doctype html>
         'obs.feature.checkpoint_history': 'Checkpoint history', 'obs.feature.checkpoint_loading': 'Checkpoint loading',
         'obs.feature.resume_from_checkpoint': 'Resume from checkpoint', 'obs.feature.run_compare': 'Run compare',
         'obs.feature.studio_validate': 'Studio validate', 'obs.feature.studio_codegen': 'Studio codegen',
-        'obs.feature.studio_yaml': 'Studio YAML', 'obs.feature.studio_run': 'Studio run', 'obs.feature.studio_save': 'Studio save',
+        'obs.feature.studio_yaml': 'Studio YAML', 'obs.feature.studio_import_yaml': 'Studio YAML import', 'obs.feature.studio_run': 'Studio run', 'obs.feature.studio_save': 'Studio save',
         'obs.feature.run_thread': 'Run thread', 'obs.feature.run_fork': 'Run fork', 'obs.feature.feature': 'Feature',
         'status.running': 'running', 'status.paused': 'paused', 'status.completed': 'completed', 'status.failed': 'failed'
       }
@@ -879,6 +882,7 @@ const indexHTML = `<!doctype html>
       $('editorNodeCondition').value = node.condition || '';
       $('editorNodeDependsOn').value = (node.depends_on || []).join(', ');
       $('editorNodeInput').value = node.input ? (typeof node.input === 'string' ? node.input : JSON.stringify(node.input, null, 2)) : '';
+      $('editorNodeInterrupt').checked = !!node.interrupt;
     }
     function applyEditorNodeProps() {
       const view = editorView();
@@ -905,6 +909,8 @@ const indexHTML = `<!doctype html>
           return;
         }
       }
+      if ($('editorNodeInterrupt').checked) node.interrupt = true;
+      else delete node.interrupt;
       renderEditor();
     }
     function applyEditorEdgeProps() {
@@ -968,7 +974,7 @@ const indexHTML = `<!doctype html>
         html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
         html += '<rect width="120" height="48" rx="8"></rect>';
         html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text>';
-        html += '<text x="8" y="34" fill="#697586">' + escapeHTML(node.kind + (node.ref ? ':' + node.ref : '')) + '</text>';
+        html += '<text x="8" y="34" fill="#697586">' + escapeHTML(node.kind + (node.ref ? ':' + node.ref : '') + (node.interrupt ? ' ⏸' : '')) + '</text>';
         html += '<circle class="graph-port" cx="120" cy="24" r="5" data-port="' + escapeHTML(node.id) + '"></circle>';
         html += '</g>';
       });
@@ -1133,6 +1139,21 @@ const indexHTML = `<!doctype html>
       state.selectedCheckpoint = null;
       $('detailType').textContent = t('detail.codegen');
       $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
+    }
+    async function importEditorYaml(yamlText) {
+      const res = await fetch('api/studio/import-yaml', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ yaml: yamlText, layout_graph: editorGraphPayload() }),
+      });
+      const body = await res.json();
+      if (!res.ok) { alert(formatApiError(body, 'alert.importYamlFailed')); return; }
+      if (!body.graph) return;
+      state.graph = body.graph;
+      state.nodeMeta = buildNodeMeta(state.graph);
+      resetEditorGraph();
+      renderEditor();
+      setView('editor');
     }
     async function yamlEditorGraph() {
       if (!state.editorGraph) return;
@@ -1495,6 +1516,16 @@ const indexHTML = `<!doctype html>
     };
     $('validateGraphButton').onclick = () => validateEditorGraph();
     $('yamlGraphButton').onclick = () => yamlEditorGraph();
+    $('importYamlButton').onclick = () => $('importYamlFile').click();
+    $('importYamlFile').onchange = async (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      try {
+        await importEditorYaml(await file.text());
+      } finally {
+        event.target.value = '';
+      }
+    };
     $('previewSaveButton').onclick = () => previewSaveEditorGraph();
     $('saveGraphButton').onclick = () => saveEditorGraph();
     $('revertGraphButton').onclick = () => revertEditorGraph();
@@ -1520,6 +1551,24 @@ const indexHTML = `<!doctype html>
     };
     $('langSelect').value = locale;
     $('langSelect').onchange = () => setLocale($('langSelect').value);
+    document.addEventListener('keydown', (event) => {
+      if (state.view !== 'editor') return;
+      const tag = (event.target && event.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || event.target.isContentEditable) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        saveEditorGraph();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        undoEditor();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && event.shiftKey) {
+        event.preventDefault();
+        redoEditor();
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (state.selectedEdge) deleteEditorEdge();
+        else if (state.selectedNode || (state.selectedNodes || []).length) deleteEditorNode();
+      }
+    });
     applyStaticI18n();
     loadGraph().then(() => loadRuns());
     setInterval(() => { if (state.live) loadRuns(); }, 3000);

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	memoryfile "github.com/aijustin/agentflow-go/internal/adapter/memory/file"
 	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
+	tierllmsummary "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/llmsummary"
 	runstatefile "github.com/aijustin/agentflow-go/internal/adapter/runstate/file"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	runstatepostgres "github.com/aijustin/agentflow-go/internal/adapter/runstate/postgres"
@@ -96,7 +98,8 @@ type options struct {
 	memory      map[string]memory.Repository
 	tierMemory  map[string]tier.Manager
 	tierStores  map[string]tier.Store
-	tierColdIndexers map[string]tier.ColdSummaryIndexer
+	tierColdIndexers    map[string]tier.ColdSummaryIndexer
+	tierColdSummarizers map[string]tier.ContentSummarizer
 	cognitive   map[string]memory.CognitiveMemory
 	jobQueue    async.Queue
 	tokenSecret []byte
@@ -315,7 +318,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 			store = tierinmem.NewStore()
 		}
 		settings, _ := tier.SettingsFromCore(ref.Tiers)
-		coldSummary := tierColdSummaryBackend(settings.ColdSummary, cfg.tierColdIndexers[name])
+		coldSummary := tierColdSummaryBackend(settings.ColdSummary, cfg.tierColdIndexers[name], tierColdSummarizer(&cfg, name, settings.ColdSummary))
 		manager := tier.NewManagerWithWeights(store, settings.Policy(), tierMigrationObserver(scenario, cfg.recorder, cfg.events), settings.Weights(), coldSummary)
 		cognitive := cfg.cognitive[name]
 		if cognitive == nil {
@@ -628,11 +631,41 @@ func WithTierColdSummaryIndexer(name string, indexer tier.ColdSummaryIndexer) Op
 	}
 }
 
-func tierColdSummaryBackend(settings tier.ColdSummarySettings, indexer tier.ColdSummaryIndexer) tier.ColdSummaryBackend {
+// WithTierColdSummarizer wires an LLM summarizer for cold-tier archive on a memory name.
+func WithTierColdSummarizer(name string, summarizer tier.ContentSummarizer) Option {
+	return func(o *options) error {
+		if name == "" {
+			return fmt.Errorf("agentflow: tier cold summarizer memory name is required")
+		}
+		if summarizer == nil {
+			return fmt.Errorf("agentflow: tier cold summarizer for %q is nil", name)
+		}
+		if o.tierColdSummarizers == nil {
+			o.tierColdSummarizers = make(map[string]tier.ContentSummarizer)
+		}
+		o.tierColdSummarizers[name] = summarizer
+		return nil
+	}
+}
+
+func tierColdSummarizer(cfg *options, name string, settings tier.ColdSummarySettings) tier.ContentSummarizer {
+	if cfg.tierColdSummarizers != nil {
+		if summarizer, ok := cfg.tierColdSummarizers[name]; ok {
+			return summarizer
+		}
+	}
+	profile := strings.TrimSpace(settings.SummaryProfile)
+	if profile == "" || cfg.llm == nil {
+		return nil
+	}
+	return tierllmsummary.NewSummarizer(cfg.llm, profile)
+}
+
+func tierColdSummaryBackend(settings tier.ColdSummarySettings, indexer tier.ColdSummaryIndexer, summarizer tier.ContentSummarizer) tier.ColdSummaryBackend {
 	if !settings.Enabled {
 		return tier.NoopColdSummaryBackend{}
 	}
-	return tier.TruncateColdSummaryBackend{Settings: settings, Vector: indexer}
+	return tier.TruncateColdSummaryBackend{Settings: settings, Vector: indexer, Summarizer: summarizer}
 }
 
 // WithCognitiveMemory wires a cognitive memory backend by scenario memory name.

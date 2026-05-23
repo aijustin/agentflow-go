@@ -37,6 +37,7 @@ type GraphNode struct {
 	Input      json.RawMessage `json:"input,omitempty"`
 	Condition  string          `json:"condition,omitempty"`
 	DependsOn  []string        `json:"depends_on,omitempty"`
+	Interrupt  bool            `json:"interrupt,omitempty"`
 	Resumable  bool            `json:"resumable"`
 	ResumeHint string          `json:"resume_hint,omitempty"`
 }
@@ -82,6 +83,7 @@ func exportWorkflow(id string, workflow core.Workflow) GraphView {
 			Input:      cloneJSON(node.Input),
 			Condition:  strings.TrimSpace(node.Condition),
 			DependsOn:  append([]string(nil), node.DependsOn...),
+			Interrupt:  node.Interrupt,
 			Resumable:  resumable,
 			ResumeHint: hint,
 		})

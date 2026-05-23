@@ -25,6 +25,10 @@ type YAMLExporter interface {
 	GenerateStudioScenarioYAML(ctx context.Context, graph any) (any, error)
 }
 
+type YAMLImporter interface {
+	ImportStudioScenarioYAML(ctx context.Context, yaml []byte, layout any) (any, error)
+}
+
 type Runner interface {
 	RunStudioGraph(ctx context.Context, graph any, req any) (any, error)
 }
@@ -37,6 +41,7 @@ type HandlerConfig struct {
 	Validate     Validator
 	Codegen      CodeGenerator
 	YAML         YAMLExporter
+	ImportYAML   YAMLImporter
 	Run          Runner
 	Save         Saver
 	MaxBodyBytes int64
@@ -46,6 +51,7 @@ type Handler struct {
 	validate     Validator
 	codegen      CodeGenerator
 	yaml         YAMLExporter
+	importYAML   YAMLImporter
 	run          Runner
 	save         Saver
 	maxBodyBytes int64
@@ -60,6 +66,7 @@ func NewHandler(config HandlerConfig) *Handler {
 		validate:     config.Validate,
 		codegen:      config.Codegen,
 		yaml:         config.YAML,
+		importYAML:   config.ImportYAML,
 		run:          config.Run,
 		save:         config.Save,
 		maxBodyBytes: maxBodyBytes,
@@ -79,6 +86,8 @@ func (h *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
 		h.handleCodegen(w, r)
 	case "v1/studio/yaml":
 		h.handleYAML(w, r)
+	case "v1/studio/import-yaml":
+		h.handleImportYAML(w, r)
 	case "v1/studio/run":
 		h.handleRun(w, r)
 	case "v1/studio/save":
@@ -147,6 +156,40 @@ func (h *Handler) handleYAML(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	result, err := h.yaml.GenerateStudioScenarioYAML(r.Context(), graph)
+	if err != nil {
+		writeStudioError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (h *Handler) handleImportYAML(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if h.importYAML == nil {
+		writeError(w, nethttp.StatusNotImplemented, "studio yaml import is not configured")
+		return
+	}
+	body, err := readBody(r, h.maxBodyBytes)
+	if err != nil {
+		writeStudioError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	var payload struct {
+		YAML        string `json:"yaml"`
+		LayoutGraph any    `json:"layout_graph"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeStudioError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(payload.YAML) == "" {
+		writeError(w, nethttp.StatusBadRequest, "yaml is required")
+		return
+	}
+	result, err := h.importYAML.ImportStudioScenarioYAML(r.Context(), []byte(payload.YAML), payload.LayoutGraph)
 	if err != nil {
 		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return

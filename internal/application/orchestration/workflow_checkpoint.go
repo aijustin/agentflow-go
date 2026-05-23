@@ -59,8 +59,10 @@ func alreadyDoneFromSnapshot(scenario core.Scenario, snapshot runstate.RunSnapsh
 		done[nodeID] = true
 	}
 	if snapshot.CurrentNodeID != "" {
-		if node, ok := workflowNodeByID(scenario, snapshot.CurrentNodeID); ok && node.Kind == core.NodeHumanGate && snapshot.PendingGate == nil {
-			done[snapshot.CurrentNodeID] = true
+		if node, ok := workflowNodeByID(scenario, snapshot.CurrentNodeID); ok && snapshot.PendingGate == nil {
+			if node.Kind == core.NodeHumanGate || node.Interrupt {
+				done[snapshot.CurrentNodeID] = true
+			}
 		}
 	}
 	return done
@@ -123,6 +125,9 @@ func (r *WorkflowRunner) ResumeFromStep(ctx context.Context, scenario core.Scena
 	}
 	if node.Kind == core.NodeHumanGate {
 		return fmt.Errorf("orchestration: cannot resume from human_gate node %q; use gate resume instead", nodeID)
+	}
+	if node.Interrupt {
+		return fmt.Errorf("orchestration: cannot resume from interrupt node %q; use gate resume instead", nodeID)
 	}
 
 	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)

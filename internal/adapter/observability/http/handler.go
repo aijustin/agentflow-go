@@ -27,6 +27,7 @@ type Config struct {
 	Studio         StudioValidator
 	Codegen        StudioCodeGenerator
 	YAML           StudioYAMLExporter
+	ImportYAML     StudioYAMLImporter
 	RunStudio      StudioRunner
 	StudioSave     StudioSaver
 	Compare        RunComparer
@@ -70,6 +71,10 @@ type StudioYAMLExporter interface {
 	GenerateStudioScenarioYAML(ctx context.Context, graph any) (any, error)
 }
 
+type StudioYAMLImporter interface {
+	ImportStudioScenarioYAML(ctx context.Context, yaml []byte, layout any) (any, error)
+}
+
 type StudioRunner interface {
 	RunStudioGraph(ctx context.Context, graph any, req any) (any, error)
 }
@@ -102,6 +107,7 @@ type Handler struct {
 	studio     StudioValidator
 	codegen    StudioCodeGenerator
 	yaml       StudioYAMLExporter
+	importYAML StudioYAMLImporter
 	runStudio  StudioRunner
 	studioSave StudioSaver
 	compare    RunComparer
@@ -127,6 +133,7 @@ func NewHandler(config Config) (*Handler, error) {
 		studio:     config.Studio,
 		codegen:    config.Codegen,
 		yaml:       config.YAML,
+		importYAML: config.ImportYAML,
 		runStudio:  config.RunStudio,
 		studioSave: config.StudioSave,
 		compare:    config.Compare,
@@ -153,6 +160,7 @@ func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/api/studio/validate", handler.handleStudioValidate)
 	handler.mux.HandleFunc("/api/studio/codegen", handler.handleStudioCodegen)
 	handler.mux.HandleFunc("/api/studio/yaml", handler.handleStudioYAML)
+	handler.mux.HandleFunc("/api/studio/import-yaml", handler.handleStudioImportYAML)
 	handler.mux.HandleFunc("/api/studio/run", handler.handleStudioRun)
 	handler.mux.HandleFunc("/api/studio/save", handler.handleStudioSave)
 	handler.mux.HandleFunc("/api/runs", handler.handleRuns)
@@ -429,6 +437,35 @@ func (handler *Handler) handleStudioYAML(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	result, err := handler.yaml.GenerateStudioScenarioYAML(r.Context(), graph)
+	if err != nil {
+		writeStudioError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleStudioImportYAML(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.importYAML == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio yaml import is not configured"))
+		return
+	}
+	var body struct {
+		YAML        string `json:"yaml"`
+		LayoutGraph any    `json:"layout_graph"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("decode body: %w", err))
+		return
+	}
+	if strings.TrimSpace(body.YAML) == "" {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("yaml is required"))
+		return
+	}
+	result, err := handler.importYAML.ImportStudioScenarioYAML(r.Context(), []byte(body.YAML), body.LayoutGraph)
 	if err != nil {
 		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return

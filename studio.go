@@ -17,6 +17,7 @@ type StudioHTTPHandlerConfig struct {
 //   - POST /v1/studio/validate
 //   - POST /v1/studio/codegen
 //   - POST /v1/studio/yaml
+//   - POST /v1/studio/import-yaml
 //   - POST /v1/studio/run
 //   - POST /v1/studio/save (when StudioSavePath is set)
 func NewStudioHTTPHandler(config StudioHTTPHandlerConfig) (http.Handler, error) {
@@ -28,6 +29,7 @@ func NewStudioHTTPHandler(config StudioHTTPHandlerConfig) (http.Handler, error) 
 		Validate:     adapter,
 		Codegen:      adapter,
 		YAML:         adapter,
+		ImportYAML:   adapter,
 		Run:          adapter,
 		MaxBodyBytes: config.MaxBodyBytes,
 	}

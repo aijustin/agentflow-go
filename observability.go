@@ -95,6 +95,7 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 		httpConfig.Studio = adapter
 		httpConfig.Codegen = adapter
 		httpConfig.YAML = adapter
+		httpConfig.ImportYAML = adapter
 		httpConfig.RunStudio = adapter
 		if config.StudioSavePath != "" {
 			httpConfig.StudioSave = adapter

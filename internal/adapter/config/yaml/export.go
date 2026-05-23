@@ -324,6 +324,7 @@ func workflowFromCore(wf core.Workflow) (Workflow, error) {
 			Input:     input,
 			DependsOn: node.DependsOn,
 			Condition: node.Condition,
+			Interrupt: node.Interrupt,
 			Retry:     RetryPolicy{MaxAttempts: node.Retry.MaxAttempts},
 		})
 	}

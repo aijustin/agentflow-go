@@ -216,6 +216,7 @@ type WorkflowNode struct {
 	Input     map[string]any `yaml:"input"`
 	DependsOn []string       `yaml:"depends_on"`
 	Condition string         `yaml:"condition"`
+	Interrupt bool           `yaml:"interrupt"`
 	Retry     RetryPolicy    `yaml:"retry"`
 }
 
@@ -548,6 +549,7 @@ func (w Workflow) toCore() (core.Workflow, error) {
 			Input:     input,
 			DependsOn: node.DependsOn,
 			Condition: node.Condition,
+			Interrupt: node.Interrupt,
 			Retry:     core.RetryPolicy{MaxAttempts: node.Retry.MaxAttempts},
 		})
 	}

@@ -32,6 +32,9 @@ func nodeResumeMeta(workflow core.Workflow, node core.WorkflowNode) (bool, strin
 	case core.NodeHumanGate:
 		return false, "human_gate nodes require POST /v1/hitl/resume"
 	}
+	if node.Interrupt {
+		return false, "interrupt nodes require POST /v1/hitl/resume after review"
+	}
 	if loopBodyNodeIDs(workflow)[node.ID] {
 		return false, "loop body nodes cannot be resumed; resume from the loop node instead"
 	}

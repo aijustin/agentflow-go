@@ -183,6 +183,25 @@ Production HTTP：
 | **Save reload + 保留 subgraph** | ✅ 保存后 reload，保留当前画布 |
 | **Editor 多选 / 删边 / 拖线连边** | ✅ Shift 多选、Delete edge、port 拖线 |
 
+## P7（已交付 — YAML 导入与 Editor 快捷键）
+
+| 能力 | 状态 |
+|------|------|
+| **Import YAML** | ✅ `POST /api/studio/import-yaml`（保留 layout） |
+| **Editor 快捷键** | ✅ Ctrl/Cmd+S 保存、Z/Shift+Z 撤销重做、Delete 删节点/边 |
+| **Declarative interrupt 编辑** | ✅ 节点属性 `interrupt` checkbox + 画布 ⏸ 标记 |
+
+### Studio YAML 导入
+
+```go
+result, err := fw.ImportStudioScenarioYAML(ctx, yamlBytes, currentLayoutGraph)
+```
+
+HTTP：
+
+- `POST /observability/api/studio/import-yaml` — body: `{"yaml":"...","layout_graph":{...}}`
+- `POST /v1/studio/import-yaml` — Production 同名路由
+
 ## 相关文档
 
 - [next-milestones.md](./next-milestones.md)

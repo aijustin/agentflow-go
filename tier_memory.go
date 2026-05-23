@@ -6,6 +6,7 @@ import (
 	tiercold "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/cold"
 	tierblobcold "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/blobcold"
 	coldindex "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/coldindex"
+	tierllmsummary "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/llmsummary"
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	tierpostgres "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/postgres"
 	"github.com/aijustin/agentflow-go/pkg/knowledge"
@@ -86,6 +87,11 @@ func NewCompositeTierStore(config CompositeTierStoreConfig) tier.Store {
 // NewInMemoryTierHotStore creates an in-process hot-tier store.
 func NewInMemoryTierHotStore() tier.Store {
 	return tierinmem.NewStore()
+}
+
+// NewLLMTierSummarizer creates an LLM-backed cold-tier content summarizer.
+func NewLLMTierSummarizer(gateway llm.Chatter, profile string) tier.ContentSummarizer {
+	return tierllmsummary.NewSummarizer(gateway, profile)
 }
 
 // NewCognitiveTierMemory exposes a tier Manager through the CognitiveMemory port.
