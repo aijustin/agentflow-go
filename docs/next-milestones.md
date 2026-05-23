@@ -40,6 +40,25 @@
 | Editor 快捷键（Save/Undo/Delete） | ✅ |
 | Declarative interrupt 节点编辑 | ✅ |
 
+## Studio P9 — Graph 调试体验（已完成）
+
+| 项 | 状态 |
+|----|------|
+| **Graph 节点 Inspector**（step 输出 + 关联事件） | ✅ |
+| **Timeline ↔ Graph 节点联动**（事件 payload `node_id`） | ✅ |
+| **Checkpoint 时间轴 scrub** + revision diff | ✅ |
+| **从此 checkpoint 分叉**（Time Travel 栏） | ✅ |
+| Autonomous tool loop overlay（Graph 下方 LLM/Tool 时间线） | ✅ P9.2 |
+| Builder `MapOver` / `RouteIf` / 条件 DSL | ✅ P8 |
+
+## Builder P8 — Workflow DSL（已完成）
+
+| 项 | 状态 |
+|----|------|
+| `StepPath` / `ConditionEq` 等条件 helper | ✅ |
+| `MapOver` + `Map*Branch` fan-out | ✅ |
+| `RouteIf` 条件边 | ✅ |
+
 ## 相关文档
 
 - [studio-roadmap.md](./studio-roadmap.md)

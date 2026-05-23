@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Observability Graph **node inspector**: step output, related workflow events, Timeline ↔ Graph `node_id` linkage.
+- Checkpoint **timeline scrub**, revision step diff, and **fork from checkpoint** in Time Travel bar.
+- **Autonomous trace** panel under Graph for hybrid/autonomous LLM and tool events (P9.2).
+- Workflow events from agent/tool nodes include **`node_id`** in payload for Timeline ↔ Graph linkage (P9.2).
+- Builder workflow DSL: `StepPath`, `ConditionEq/Ne/Exists/Missing`, `MapOver`, `Map*Branch`, `RouteIf` (P8).
+
 ## [0.2.0] - 2026-05-22
 
 ### Removed

@@ -328,6 +328,7 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if err != nil {
 		return err
 	}
+	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
 	if r.toolGov != nil {
 		if err := r.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
 			RunID:      runID,
@@ -364,6 +365,7 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 	if err != nil {
 		return err
 	}
+	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
 	output, err := agent.Run(ctx, core.AgentInput{RunID: runID, Context: input})
 	if err != nil {
 		return err

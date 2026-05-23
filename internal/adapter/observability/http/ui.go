@@ -119,6 +119,7 @@ const indexHTML = `<!doctype html>
       background: #fffbeb;
     }
     .hitl-bar .meta { flex: 1; }
+    .event {
       display: grid;
       gap: 7px;
       padding: 12px 14px 12px 18px;
@@ -197,6 +198,77 @@ const indexHTML = `<!doctype html>
     }
     .checkpoint-item:hover, .checkpoint-item.active { background: #f0f7f6; border-color: #b8ded7; }
     .checkpoint-item .title { font-size: 13px; font-weight: 700; }
+    .checkpoint-scrub {
+      position: relative;
+      height: 36px;
+      margin: 8px 0 12px;
+    }
+    .checkpoint-scrub-track {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      top: 16px;
+      height: 4px;
+      background: var(--line);
+      border-radius: 999px;
+    }
+    .checkpoint-scrub-dot {
+      position: absolute;
+      top: 8px;
+      width: 18px;
+      height: 18px;
+      margin-left: -9px;
+      border-radius: 999px;
+      border: 2px solid #fff;
+      background: #94a3b8;
+      box-shadow: 0 0 0 1px var(--line);
+      cursor: pointer;
+      padding: 0;
+      min-height: 0;
+      z-index: 1;
+    }
+    .checkpoint-scrub-dot.active { background: var(--accent); box-shadow: 0 0 0 2px #b8ded7; }
+    .checkpoint-scrub-dot:hover { background: var(--accent-2); }
+    .inspector-section { margin-top: 12px; }
+    .inspector-section .panel-title { margin-bottom: 8px; }
+    .event-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .event-chip {
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      cursor: pointer;
+      min-height: 0;
+    }
+    .event-chip.tool { border-color: #b8ded7; background: #e7f6f3; }
+    .event-chip.llm { border-color: #bfdbfe; background: #eff6ff; }
+    .event-chip.failed { border-color: #f0c4bb; background: #fff0ed; }
+    .event-chip.active { outline: 2px solid var(--accent); }
+    .checkpoint-diff-added { color: var(--ok); }
+    .checkpoint-diff-removed { color: var(--danger); }
+    .autonomous-trace {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--line);
+    }
+    .trace-item {
+      display: grid;
+      gap: 4px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      background: #fff;
+      width: 100%;
+      text-align: left;
+      font: inherit;
+    }
+    .trace-item:hover, .trace-item.active { background: #f0f7f6; border-color: #b8ded7; }
+    .trace-item.tool { border-left: 3px solid var(--accent); }
+    .trace-item.llm { border-left: 3px solid #2563eb; }
+    .trace-item.failed { border-left: 3px solid var(--danger); }
     .editor-toolbar, .compare-toolbar, .thread-toolbar { display: flex; gap: 8px; padding: 0 12px 12px; flex-wrap: wrap; align-items: center; }
     .editor-toolbar select { min-width: 120px; }
     .graph-node.editing rect { stroke: #2563eb; }
@@ -358,6 +430,7 @@ const indexHTML = `<!doctype html>
       <div class="time-travel" id="timeTravelBar" hidden>
         <button class="primary" id="resumeStepButton" disabled data-i18n="timeTravel.resumeStep">从所选节点恢复</button>
         <button id="resumeCheckpointButton" disabled data-i18n="timeTravel.resumeCheckpoint">从 checkpoint 恢复</button>
+        <button id="forkCheckpointButton" disabled data-i18n="timeTravel.forkCheckpoint">从此 checkpoint 分叉</button>
         <span class="meta" id="selectedNodeLabel" data-i18n="timeTravel.noNode">未选择节点</span>
       </div>
     </section>
@@ -391,13 +464,19 @@ const indexHTML = `<!doctype html>
         'editor.inputPlaceholder': 'input JSON，例如 {"set":{"x":1}}', 'editor.interrupt': 'Declarative interrupt（执行后暂停）', 'editor.edgeConditionPlaceholder': '边 condition，例如 steps.flag.output.ok', 'editor.canvasAria': '编辑器画布',
         'compare.labelB': '对比 B', 'compare.button': '对比', 'compare.onlyA': '仅 A：', 'compare.onlyB': '仅 B：', 'compare.shared': '共享：',
         'thread.fork': '分叉当前运行', 'thread.refresh': '刷新线程', 'thread.thread': '线程', 'thread.forkOf': '分叉自', 'thread.root': '根',
-        'timeTravel.resumeStep': '从所选节点恢复', 'timeTravel.resumeCheckpoint': '从 checkpoint 恢复', 'timeTravel.noNode': '未选择节点',
+        'timeTravel.resumeStep': '从所选节点恢复', 'timeTravel.resumeCheckpoint': '从 checkpoint 恢复', 'timeTravel.forkCheckpoint': '从此 checkpoint 分叉', 'timeTravel.noNode': '未选择节点',
         'timeTravel.nodeLabel': '节点：{node}{hint}', 'timeTravel.notResumable': '此节点无法从步骤恢复',
+        'inspector.node': '节点 Inspector', 'inspector.kind': '类型', 'inspector.stepStatus': '步骤状态', 'inspector.stepOutput': '步骤输出',
+        'inspector.relatedEvents': '关联事件', 'inspector.noRelatedEvents': '暂无关联事件', 'inspector.noStepOutput': '（无输出）',
+        'inspector.pending': '待执行', 'inspector.completed': '已完成', 'inspector.running': '执行中',
+        'detail.nodeInspector': '节点 Inspector', 'detail.checkpointDiff': '相对上一 revision 的步骤变化',
+        'detail.stepsAdded': '新增', 'detail.stepsRemoved': '移除',
         'hitl.approve': '批准并继续', 'hitl.reject': '拒绝', 'hitl.pending': '等待审批：{node}（{kind}）', 'hitl.interrupt': 'declarative interrupt', 'hitl.humanGate': 'human gate',
         'detail.run': '运行', 'detail.scenario': '场景', 'detail.sequence': '序号', 'detail.occurred': '发生时间', 'detail.stored': '入库时间',
         'detail.version': '版本', 'detail.status': '状态', 'detail.steps': '步骤', 'detail.recorded': '记录时间', 'detail.current': '当前节点',
         'detail.checkpoint': 'Checkpoint', 'detail.codegen': '代码生成', 'detail.yaml': '场景 YAML', 'detail.savePreview': '保存预览', 'detail.checkpointHistory': 'Checkpoint 历史', 'detail.stepsCount': '{n} 步',
         'run.events': '{n} 个事件', 'run.scenarioFallback': '场景', 'graph.subgraph': '子图：{name}', 'graph.mode': '{name}（{mode}）',
+        'trace.title': 'Autonomous 追踪', 'trace.hybridPhase2': 'Hybrid Phase-2：workflow 节点外 LLM/Tool 调用', 'trace.empty': '暂无 autonomous 事件',
         'editor.workflowOption': '工作流：{name}', 'editor.subgraphOption': '子图：{name}',
         'prompt.subgraphName': '子图名称', 'prompt.edgeCondition': '边 condition（可选）', 'prompt.nodeId': '节点 ID', 'prompt.refOptional': 'Ref（可选）',
         'alert.subgraphExists': '子图已存在', 'alert.nodeExists': '节点已存在', 'alert.invalidJson': 'input 必须是合法 JSON',
@@ -444,13 +523,20 @@ const indexHTML = `<!doctype html>
         'editor.inputPlaceholder': 'input JSON e.g. {"set":{"x":1}}', 'editor.interrupt': 'Declarative interrupt (pause after step)', 'editor.edgeConditionPlaceholder': 'edge condition e.g. steps.flag.output.ok', 'editor.canvasAria': 'Editor canvas',
         'compare.labelB': 'Compare B', 'compare.button': 'Compare', 'compare.onlyA': 'Only A:', 'compare.onlyB': 'Only B:', 'compare.shared': 'Shared:',
         'thread.fork': 'Fork current run', 'thread.refresh': 'Refresh thread', 'thread.thread': 'thread', 'thread.forkOf': 'fork of', 'thread.root': 'root',
-        'timeTravel.resumeStep': 'Resume from selected node', 'timeTravel.resumeCheckpoint': 'Resume from checkpoint', 'timeTravel.noNode': 'No node selected',
+        'timeTravel.resumeStep': 'Resume from selected node', 'timeTravel.resumeCheckpoint': 'Resume from checkpoint', 'timeTravel.forkCheckpoint': 'Fork from checkpoint', 'timeTravel.noNode': 'No node selected',
         'timeTravel.nodeLabel': 'Node: {node}{hint}', 'timeTravel.notResumable': 'This node cannot be resumed from step',
+        'inspector.node': 'Node inspector', 'inspector.kind': 'Kind', 'inspector.stepStatus': 'Step status', 'inspector.stepOutput': 'Step output',
+        'inspector.relatedEvents': 'Related events', 'inspector.noRelatedEvents': 'No related events', 'inspector.noStepOutput': '(no output)',
+        'inspector.pending': 'pending', 'inspector.completed': 'completed', 'inspector.running': 'running',
+        'inspector.viewInTimeline': 'View in timeline',
+        'detail.nodeInspector': 'Node inspector', 'detail.checkpointDiff': 'Step changes vs previous revision',
+        'detail.stepsAdded': 'added', 'detail.stepsRemoved': 'removed',
         'hitl.approve': 'Approve & continue', 'hitl.reject': 'Reject', 'hitl.pending': 'Awaiting approval: {node} ({kind})', 'hitl.interrupt': 'declarative interrupt', 'hitl.humanGate': 'human gate',
         'detail.run': 'Run', 'detail.scenario': 'Scenario', 'detail.sequence': 'Sequence', 'detail.occurred': 'Occurred', 'detail.stored': 'Stored',
         'detail.version': 'Version', 'detail.status': 'Status', 'detail.steps': 'Steps', 'detail.recorded': 'Recorded', 'detail.current': 'Current',
         'detail.checkpoint': 'Checkpoint', 'detail.codegen': 'Codegen', 'detail.yaml': 'Scenario YAML', 'detail.savePreview': 'Save preview', 'detail.checkpointHistory': 'Checkpoint history', 'detail.stepsCount': '{n} steps',
         'run.events': '{n} events', 'run.scenarioFallback': 'scenario', 'graph.subgraph': 'subgraph: {name}', 'graph.mode': '{name} ({mode})',
+        'trace.title': 'Autonomous trace', 'trace.hybridPhase2': 'Hybrid phase-2: LLM/tool calls outside workflow nodes', 'trace.empty': 'No autonomous events yet',
         'editor.workflowOption': 'workflow: {name}', 'editor.subgraphOption': 'subgraph: {name}',
         'prompt.subgraphName': 'Subgraph name', 'prompt.edgeCondition': 'Edge condition (optional)', 'prompt.nodeId': 'Node id', 'prompt.refOptional': 'Ref (optional)',
         'alert.subgraphExists': 'subgraph already exists', 'alert.nodeExists': 'node already exists', 'alert.invalidJson': 'input must be valid JSON',
@@ -476,7 +562,7 @@ const indexHTML = `<!doctype html>
       }
     };
     let locale = localStorage.getItem('obs-lang') || 'zh-CN';
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
     const t = (key, vars) => {
       let text = (I18N[locale] && I18N[locale][key]) || (I18N.en && I18N.en[key]) || key;
       if (vars) Object.keys(vars).forEach((name) => { text = text.split('{' + name + '}').join(String(vars[name])); });
@@ -746,7 +832,7 @@ const indexHTML = `<!doctype html>
       $('editorView').hidden = view !== 'editor';
       $('compareView').hidden = view !== 'compare';
       $('threadView').hidden = view !== 'thread';
-      $('timeTravelBar').hidden = view !== 'graph';
+      $('timeTravelBar').hidden = view !== 'graph' && view !== 'timeline';
       if (view === 'graph') renderGraph();
       if (view === 'editor') renderEditor();
       if (view === 'compare') { renderCompareRunOptions(); renderCompare(); }
@@ -807,6 +893,218 @@ const indexHTML = `<!doctype html>
       if (!state.steps || !state.steps.steps) return new Set();
       return new Set(state.steps.steps.map((step) => step.node_id));
     }
+    function eventPayloadNodeID(record) {
+      const payload = record && record.event && record.event.payload;
+      if (!payload || typeof payload.node_id !== 'string') return '';
+      return payload.node_id;
+    }
+    function graphHighlightNodeID(nodeID) {
+      if (!nodeID) return '';
+      if (state.nodeMeta[nodeID]) return nodeID;
+      const split = nodeID.indexOf('::');
+      if (split > 0) {
+        const parent = nodeID.slice(0, split);
+        if (state.nodeMeta[parent]) return parent;
+      }
+      return nodeID;
+    }
+    function eventsForNode(nodeID) {
+      if (!nodeID) return [];
+      const prefix = nodeID + '::';
+      return state.events.filter((record) => {
+        const id = eventPayloadNodeID(record);
+        return id === nodeID || id.startsWith(prefix);
+      });
+    }
+    function isAutonomousTraceEvent(record) {
+      const type = (record && record.event && record.event.type) || '';
+      if (!type) return false;
+      const prefixes = ['LLMCalled', 'LLMReturned', 'ToolCalled', 'ToolReturned', 'ToolDenied', 'ContextPrepared'];
+      if (!prefixes.some((prefix) => type.includes(prefix))) return false;
+      return !eventPayloadNodeID(record);
+    }
+    function autonomousTraceEvents() {
+      return state.events.filter(isAutonomousTraceEvent);
+    }
+    function showAutonomousTrace() {
+      if (!state.graph) return autonomousTraceEvents().length > 0;
+      const mode = String(state.graph.mode || '').toLowerCase();
+      if (mode === 'autonomous' || mode === 'hybrid') return true;
+      return autonomousTraceEvents().length > 0;
+    }
+    function traceEventSummary(record) {
+      const payload = (record.event && record.event.payload) || {};
+      const tool = payload.tool_name || payload.tool || payload.name;
+      const model = payload.model || payload.provider;
+      if (tool) return String(tool);
+      if (model) return String(model);
+      return record.event.type;
+    }
+    function renderAutonomousTrace() {
+      if (!showAutonomousTrace()) return '';
+      const events = autonomousTraceEvents();
+      let html = '<div class="autonomous-trace">';
+      html += '<div class="panel-title">' + escapeHTML(t('trace.title')) + '</div>';
+      if (state.graph && String(state.graph.mode || '').toLowerCase() === 'hybrid') {
+        html += '<div class="meta">' + escapeHTML(t('trace.hybridPhase2')) + '</div>';
+      }
+      if (!events.length) {
+        html += '<div class="meta">' + escapeHTML(t('trace.empty')) + '</div>';
+      } else {
+        events.forEach((record) => {
+          const active = state.selectedEvent && state.selectedEvent.id === record.id;
+          html += '<button type="button" class="trace-item ' + eventKind(record.event.type) + (active ? ' active' : '') + '" data-id="' + record.id + '">';
+          html += '<strong>' + escapeHTML(record.event.type) + '</strong> #' + record.sequence;
+          html += '<span class="meta">' + escapeHTML(traceEventSummary(record)) + ' · ' + fmtTime(record.event.timestamp) + '</span>';
+          html += '</button>';
+        });
+      }
+      html += '</div>';
+      return html;
+    }
+    function bindAutonomousTrace() {
+      document.querySelectorAll('.trace-item').forEach((item) => {
+        item.onclick = () => {
+          state.selectedEvent = state.events.find((record) => String(record.id) === item.dataset.id) || null;
+          renderEvents();
+          renderDetails();
+          renderGraph();
+        };
+      });
+    }
+    function findStepForNode(nodeID) {
+      if (!state.steps || !state.steps.steps || !nodeID) return null;
+      let step = state.steps.steps.find((item) => item.node_id === nodeID);
+      if (step) return step;
+      const prefix = nodeID + '::';
+      const inner = state.steps.steps.filter((item) => item.node_id.startsWith(prefix));
+      return inner.length ? inner[inner.length - 1] : null;
+    }
+    function formatStepOutput(output) {
+      if (!output) return t('inspector.noStepOutput');
+      if (output.inline) {
+        try {
+          const parsed = typeof output.inline === 'string' ? JSON.parse(output.inline) : output.inline;
+          return JSON.stringify(parsed, null, 2);
+        } catch (_) {
+          return String(output.inline);
+        }
+      }
+      if (output.blob) {
+        return JSON.stringify({ blob: output.blob, note: 'large output stored in blob store' }, null, 2);
+      }
+      return t('inspector.noStepOutput');
+    }
+    function renderCheckpointScrub() {
+      const items = (state.checkpoints && state.checkpoints.checkpoints) || [];
+      if (!items.length) return '';
+      const maxV = Math.max(...items.map((cp) => cp.version), 1);
+      let html = '<div class="checkpoint-scrub"><div class="checkpoint-scrub-track"></div>';
+      items.forEach((cp) => {
+        const pct = Math.min(100, Math.max(0, (cp.version / maxV) * 100));
+        const active = state.selectedCheckpoint && state.selectedCheckpoint.version === cp.version;
+        html += '<button type="button" class="checkpoint-scrub-dot' + (active ? ' active' : '') + '" style="left:calc(8px + (100% - 16px) * ' + (pct / 100) + ')" data-version="' + cp.version + '" title="v' + cp.version + ' · ' + statusLabel(cp.status) + '"></button>';
+      });
+      html += '</div>';
+      return html;
+    }
+    function checkpointStepDiff(prevSnap, currSnap) {
+      const prev = new Set(Object.keys((prevSnap && prevSnap.step_outputs) || {}));
+      const curr = new Set(Object.keys((currSnap && currSnap.step_outputs) || {}));
+      return {
+        added: [...curr].filter((key) => !prev.has(key)),
+        removed: [...prev].filter((key) => !curr.has(key)),
+      };
+    }
+    function renderNodeInspector(nodeID) {
+      const meta = state.nodeMeta[nodeID] || {};
+      const step = findStepForNode(nodeID);
+      const related = eventsForNode(nodeID);
+      const done = stepNodeIDs();
+      const current = state.steps && state.steps.current_node_id;
+      let stepStatus = t('inspector.pending');
+      if (done.has(nodeID) || (step && step.node_id !== nodeID)) stepStatus = t('inspector.completed');
+      if (current === nodeID || graphHighlightNodeID(current) === nodeID) stepStatus = t('inspector.running');
+      let html = '<div class="inspector-section">';
+      html += '<div class="panel-title">' + escapeHTML(t('inspector.node')) + ': ' + escapeHTML(nodeID) + '</div>';
+      html += '<div class="kv"><span>' + escapeHTML(t('inspector.kind')) + '</span><span>' + escapeHTML((meta.kind || '-') + (meta.ref ? ':' + meta.ref : '')) + '</span></div>';
+      html += '<div class="kv"><span>' + escapeHTML(t('inspector.stepStatus')) + '</span><span>' + escapeHTML(stepStatus) + '</span></div>';
+      if (meta.resumable === false) {
+        html += '<div class="meta">' + escapeHTML(meta.resume_hint || t('timeTravel.notResumable')) + '</div>';
+      }
+      if (meta.interrupt) html += '<div class="badge paused" style="margin-top:6px;">' + escapeHTML(t('editor.interrupt')) + '</div>';
+      if (step) {
+        html += '<div class="inspector-section"><div class="panel-title">' + escapeHTML(t('inspector.stepOutput')) + ' · ' + escapeHTML(step.node_id) + '</div>';
+        html += '<pre>' + escapeHTML(formatStepOutput(step.output)) + '</pre></div>';
+      }
+      html += '<div class="inspector-section"><div class="panel-title">' + escapeHTML(t('inspector.relatedEvents')) + ' (' + related.length + ')</div>';
+      if (related.length) {
+        html += '<div class="event-chips">';
+        related.forEach((record) => {
+          const active = state.selectedEvent && state.selectedEvent.id === record.id;
+          html += '<button type="button" class="event-chip ' + eventKind(record.event.type) + (active ? ' active' : '') + '" data-id="' + record.id + '">' + escapeHTML(record.event.type) + ' #' + record.sequence + '</button>';
+        });
+        html += '</div>';
+      } else {
+        html += '<div class="meta">' + escapeHTML(t('inspector.noRelatedEvents')) + '</div>';
+      }
+      html += '</div></div>';
+      return html;
+    }
+    function bindInspectorEventChips() {
+      document.querySelectorAll('.event-chip').forEach((chip) => {
+        chip.onclick = () => {
+          state.selectedEvent = state.events.find((record) => String(record.id) === chip.dataset.id) || null;
+          renderEvents();
+          renderDetails();
+        };
+      });
+    }
+    function bindCheckpointScrub() {
+      document.querySelectorAll('.checkpoint-scrub-dot').forEach((dot) => {
+        dot.onclick = () => {
+          const version = Number(dot.dataset.version);
+          const cp = (state.checkpoints.checkpoints || []).find((item) => item.version === version);
+          if (cp) selectCheckpoint(cp);
+        };
+      });
+      document.querySelectorAll('.checkpoint-item').forEach((node) => {
+        node.onclick = async () => {
+          const version = Number(node.dataset.version);
+          const cp = (state.checkpoints.checkpoints || []).find((item) => item.version === version);
+          if (cp) await selectCheckpoint(cp);
+        };
+      });
+    }
+    async function selectCheckpoint(cp) {
+      state.selectedEvent = null;
+      state.selectedCheckpoint = cp || null;
+      state.checkpointSnapshot = null;
+      state.checkpointPrevSnapshot = null;
+      if (cp && cp.current_node_id) state.selectedNode = cp.current_node_id;
+      if (cp && state.selectedRun && state.checkpointEnabled) {
+        try {
+          const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/checkpoints/' + cp.version);
+          if (res.ok) state.checkpointSnapshot = await res.json();
+          const items = (state.checkpoints && state.checkpoints.checkpoints) || [];
+          const idx = items.findIndex((item) => item.version === cp.version);
+          if (idx > 0) {
+            const prevRes = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/checkpoints/' + items[idx - 1].version);
+            if (prevRes.ok) state.checkpointPrevSnapshot = await prevRes.json();
+          }
+        } catch (_) {}
+      }
+      if (state.view === 'graph') renderGraph();
+      updateTimeTravelBar();
+      renderDetails();
+    }
+    function selectGraphNode(nodeID) {
+      state.selectedNode = nodeID || '';
+      state.selectedEvent = null;
+      renderGraph();
+      updateTimeTravelBar();
+      renderDetails();
+    }
     function renderGraphView(container, view, title) {
       if (!view || !view.nodes || !view.nodes.length) {
         container.innerHTML = '<div class="empty">' + escapeHTML(t('empty.noGraph')) + '</div>';
@@ -816,6 +1114,7 @@ const indexHTML = `<!doctype html>
       const { nodes, edges, positions } = layoutGraph(view);
       const done = stepNodeIDs();
       const current = state.steps && state.steps.current_node_id ? state.steps.current_node_id : '';
+      const highlightID = graphHighlightNodeID(state.selectedNode);
       const width = Math.max(640, ...Object.values(positions).map((p) => p.x + 160));
       const height = Math.max(320, ...Object.values(positions).map((p) => p.y + 70));
       let html = title ? '<div class="graph-sub-title">' + escapeHTML(title) + '</div>' : '';
@@ -830,9 +1129,9 @@ const indexHTML = `<!doctype html>
       nodes.forEach((node) => {
         const pos = positions[node.id];
         const classes = ['graph-node'];
-        if (state.selectedNode === node.id) classes.push('active');
+        if (highlightID === node.id) classes.push('active');
         if (done.has(node.id)) classes.push('done');
-        if (current === node.id) classes.push('current');
+        if (graphHighlightNodeID(current) === node.id) classes.push('current');
         if (state.activeSubgraphs[node.id]) classes.push('subgraph-active');
         if (node.resumable === false) classes.push('not-resumable');
         html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
@@ -843,11 +1142,7 @@ const indexHTML = `<!doctype html>
       });
       html += '</svg>';
       container.innerHTML = html;
-      container.querySelectorAll('.graph-node').forEach((node) => node.onclick = () => {
-        state.selectedNode = node.dataset.node;
-        renderGraph();
-        updateTimeTravelBar();
-      });
+      container.querySelectorAll('.graph-node').forEach((node) => node.onclick = () => selectGraphNode(node.dataset.node));
     }
     function renderGraph() {
       const container = $('graphView');
@@ -867,12 +1162,10 @@ const indexHTML = `<!doctype html>
           html += sub.outerHTML;
         });
       }
+      html += renderAutonomousTrace();
       container.innerHTML = html;
-      container.querySelectorAll('.graph-node').forEach((node) => node.onclick = () => {
-        state.selectedNode = node.dataset.node;
-        renderGraph();
-        updateTimeTravelBar();
-      });
+      container.querySelectorAll('.graph-node').forEach((node) => node.onclick = () => selectGraphNode(node.dataset.node));
+      bindAutonomousTrace();
     }
     function editorWorkflow() {
       return editorView();
@@ -1377,6 +1670,21 @@ const indexHTML = `<!doctype html>
         : t('timeTravel.noNode');
       $('resumeStepButton').disabled = !(state.resumeEnabled && state.selectedNode && state.selectedRun && meta.resumable !== false);
       $('resumeCheckpointButton').disabled = !(state.checkpointEnabled && state.selectedCheckpoint && state.selectedRun);
+      const forkBtn = $('forkCheckpointButton');
+      if (forkBtn) forkBtn.disabled = !(state.checkpointEnabled && state.selectedCheckpoint && state.selectedRun);
+    }
+    async function forkFromCheckpoint() {
+      if (!state.selectedRun || !state.selectedCheckpoint) return;
+      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: state.selectedCheckpoint.version }),
+      });
+      const body = await res.json();
+      if (!res.ok) { alert(formatApiError(body, 'alert.forkFailed')); return; }
+      await loadRuns();
+      await selectRun(body.run_id);
+      setView('graph');
     }
     async function resumeFromCheckpoint() {
       if (!state.selectedRun || !state.selectedCheckpoint) return;
@@ -1482,15 +1790,19 @@ const indexHTML = `<!doctype html>
       document.querySelectorAll('.event').forEach((node) => node.onclick = () => {
         state.selectedEvent = state.events.find((record) => String(record.id) === node.dataset.id);
         state.selectedCheckpoint = null;
+        state.checkpointSnapshot = null;
+        const nodeID = eventPayloadNodeID(state.selectedEvent);
+        if (nodeID) state.selectedNode = graphHighlightNodeID(nodeID);
         renderEvents();
         renderDetails();
+        if (state.view === 'graph') renderGraph();
         updateTimeTravelBar();
       });
     }
     function renderDetails() {
       const record = state.selectedEvent;
-      $('detailType').textContent = record ? record.event.type : (state.selectedCheckpoint ? t('detail.checkpoint') : t('detail.run'));
       if (record) {
+        $('detailType').textContent = record.event.type;
         $('details').innerHTML =
           '<div class="kv"><span>' + escapeHTML(t('detail.run')) + '</span><span>' + escapeHTML(record.event.run_id) + '</span></div>' +
           '<div class="kv"><span>' + escapeHTML(t('detail.scenario')) + '</span><span>' + escapeHTML(record.event.scenario_name || '-') + '</span></div>' +
@@ -1504,39 +1816,59 @@ const indexHTML = `<!doctype html>
       if (state.selectedRun) {
         html += '<div class="kv"><span>' + escapeHTML(t('detail.run')) + '</span><span>' + escapeHTML(state.selectedRun) + '</span></div>';
       }
-      if (state.selectedCheckpoint) {
-        const cp = state.selectedCheckpoint;
-        html += '<div class="kv"><span>' + escapeHTML(t('detail.version')) + '</span><span>v' + cp.version + '</span></div>';
-        html += '<div class="kv"><span>' + escapeHTML(t('detail.status')) + '</span><span>' + escapeHTML(statusLabel(cp.status)) + '</span></div>';
-        html += '<div class="kv"><span>' + escapeHTML(t('detail.steps')) + '</span><span>' + cp.step_count + '</span></div>';
-        html += '<div class="kv"><span>' + escapeHTML(t('detail.recorded')) + '</span><span>' + fmtTime(cp.recorded_at) + '</span></div>';
-        if (cp.current_node_id) {
-          html += '<div class="kv"><span>' + escapeHTML(t('detail.current')) + '</span><span>' + escapeHTML(cp.current_node_id) + '</span></div>';
-        }
-      }
       if (state.checkpointEnabled && state.checkpoints && state.checkpoints.checkpoints) {
         const items = state.checkpoints.checkpoints;
+        html += renderCheckpointScrub();
+        if (state.selectedCheckpoint) {
+          const cp = state.selectedCheckpoint;
+          html += '<div class="kv"><span>' + escapeHTML(t('detail.version')) + '</span><span>v' + cp.version + '</span></div>';
+          html += '<div class="kv"><span>' + escapeHTML(t('detail.status')) + '</span><span>' + escapeHTML(statusLabel(cp.status)) + '</span></div>';
+          html += '<div class="kv"><span>' + escapeHTML(t('detail.steps')) + '</span><span>' + cp.step_count + '</span></div>';
+          html += '<div class="kv"><span>' + escapeHTML(t('detail.recorded')) + '</span><span>' + fmtTime(cp.recorded_at) + '</span></div>';
+          if (cp.current_node_id) {
+            html += '<div class="kv"><span>' + escapeHTML(t('detail.current')) + '</span><span>' + escapeHTML(cp.current_node_id) + '</span></div>';
+          }
+          if (state.checkpointSnapshot && state.checkpointSnapshot.step_outputs) {
+            const keys = Object.keys(state.checkpointSnapshot.step_outputs);
+            html += '<div class="meta">' + escapeHTML(t('detail.stepsCount', { n: keys.length })) + '</div>';
+            html += '<pre>' + escapeHTML(JSON.stringify(state.checkpointSnapshot.step_outputs, null, 2)) + '</pre>';
+          }
+          if (state.checkpointPrevSnapshot && state.checkpointSnapshot) {
+            const diff = checkpointStepDiff(state.checkpointPrevSnapshot, state.checkpointSnapshot);
+            if (diff.added.length || diff.removed.length) {
+              html += '<div class="inspector-section"><div class="panel-title">' + escapeHTML(t('detail.checkpointDiff')) + '</div>';
+              if (diff.added.length) html += '<div class="checkpoint-diff-added">' + escapeHTML(t('detail.stepsAdded')) + ': ' + escapeHTML(diff.added.join(', ')) + '</div>';
+              if (diff.removed.length) html += '<div class="checkpoint-diff-removed">' + escapeHTML(t('detail.stepsRemoved')) + ': ' + escapeHTML(diff.removed.join(', ')) + '</div>';
+              html += '</div>';
+            }
+          }
+        }
         html += '<div class="panel-title" style="margin-top:8px;">' + escapeHTML(t('detail.checkpointHistory')) + '</div>';
         html += items.length ? '<div class="checkpoint-list">' + items.map((cp) =>
           '<div class="checkpoint-item ' + (state.selectedCheckpoint && state.selectedCheckpoint.version === cp.version ? 'active' : '') + '" data-version="' + cp.version + '">' +
             '<div class="title">v' + cp.version + ' · ' + escapeHTML(statusLabel(cp.status)) + '</div>' +
-            '<div class="meta"><span>' + escapeHTML(t('detail.stepsCount', { n: cp.step_count })) + '</span><span>' + fmtTime(cp.recorded_at) + '</span></div>' +
-          '</div>').join('') + '</div>' : '<div class="empty">' + escapeHTML(t('empty.noCheckpoints')) + '</div>';
+            '<div class="meta"><span>' + escapeHTML(t('detail.stepsCount', { n: cp.step_count })) + '</span><span>' + fmtTime(cp.recorded_at) + '</span>' +
+            (cp.current_node_id ? '<span>' + escapeHTML(cp.current_node_id) + '</span>' : '') +
+            '</div></div>').join('') + '</div>' : '<div class="empty">' + escapeHTML(t('empty.noCheckpoints')) + '</div>';
+        $('detailType').textContent = state.selectedCheckpoint ? t('detail.checkpoint') : t('detail.run');
+        $('details').innerHTML = html;
+        bindCheckpointScrub();
+        return;
       } else if (state.selectedRun) {
         html += '<div class="empty">' + escapeHTML(t('empty.checkpointRequiresHistory')) + '</div>';
+      }
+      if (state.selectedNode && !record) {
+        $('detailType').textContent = t('detail.nodeInspector');
+        $('details').innerHTML = renderNodeInspector(state.selectedNode);
+        bindInspectorEventChips();
+        return;
       }
       if (!html) {
         html = '<div class="empty">' + escapeHTML(t('empty.selectEventOrCheckpoint')) + '</div>';
       }
+      $('detailType').textContent = t('detail.run');
       $('details').innerHTML = html;
-      document.querySelectorAll('.checkpoint-item').forEach((node) => node.onclick = async () => {
-        const version = Number(node.dataset.version);
-        state.selectedEvent = null;
-        state.selectedCheckpoint = (state.checkpoints.checkpoints || []).find((cp) => cp.version === version) || null;
-        renderEvents();
-        renderDetails();
-        updateTimeTravelBar();
-      });
+      bindCheckpointScrub();
     }
     $('refreshButton').onclick = () => loadRuns();
     $('statusFilter').onchange = () => loadRuns();
@@ -1586,6 +1918,7 @@ const indexHTML = `<!doctype html>
     $('refreshThreadButton').onclick = () => loadThread();
     $('resumeStepButton').onclick = () => resumeFromStep();
     $('resumeCheckpointButton').onclick = () => resumeFromCheckpoint();
+    $('forkCheckpointButton').onclick = () => forkFromCheckpoint();
     $('hitlApproveButton').onclick = () => resumeRunHITL('approve');
     $('hitlRejectButton').onclick = () => resumeRunHITL('reject');
     $('liveButton').onclick = () => {

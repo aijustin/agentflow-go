@@ -61,6 +61,30 @@ fanout := builder.NewWorkflow().
     Build()
 ```
 
+## Workflow DSL（MapOver / 条件边）
+
+```go
+fanout := builder.NewWorkflow().
+    NodeTransform("items", json.RawMessage(`{"set":{"list":["a","b"]}}`)).
+    MapOver("fanout", builder.StepPath("items", "list"), builder.MapAgentBranch("analyst"), builder.MapOnError("collect_errors")).
+    Edge("items", "fanout").
+    Build()
+
+routed := builder.NewWorkflow().
+    NodeTransform("status", json.RawMessage(`{"set":{"message":"ready"}}`)).
+    NodeTransform("ready_branch", json.RawMessage(`{"set":{"ok":true}}`)).
+    RouteIf("status", "ready_branch", builder.StepPath("status", "output", "message"), "ready").
+    Build()
+```
+
+| Helper | 说明 |
+|--------|------|
+| `StepPath(node, fields...)` | 生成 `steps.<node>.<fields...>` 表达式路径 |
+| `ConditionEq/Ne/Exists/Missing` | 边/节点 condition 字符串 |
+| `MapOver(id, itemsPath, branch, opts...)` | LangGraph Send 风格 fan-out map 节点 |
+| `MapAgentBranch` / `MapToolBranch` / `MapSubgraphBranch` / `MapTransformBranch` | map 分支配置 |
+| `RouteIf(from, to, path, value)` | 条件边（内部 `ConditionEq`） |
+
 ## Catalog 对照表
 
 | Catalog ID | Builder 函数 |

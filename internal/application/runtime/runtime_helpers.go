@@ -321,11 +321,27 @@ func (e *Engine) logWarn(ctx context.Context, msg string, keysAndValues ...any) 
 }
 
 func (e *Engine) emitJSON(ctx context.Context, typ core.EventType, runID string, payload any) {
+	payload = enrichEventPayload(ctx, payload)
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		raw = []byte(fmt.Sprintf(`{"error":%q}`, err.Error()))
 	}
 	e.emit(ctx, typ, runID, raw)
+}
+
+func enrichEventPayload(ctx context.Context, payload any) any {
+	nodeID := core.WorkflowNodeFromContext(ctx)
+	if nodeID == "" {
+		return payload
+	}
+	m, ok := payload.(map[string]any)
+	if !ok {
+		return payload
+	}
+	if _, exists := m["node_id"]; !exists {
+		m["node_id"] = nodeID
+	}
+	return m
 }
 
 func (e *Engine) startSpan(ctx context.Context, name observability.SpanName, attrs ...observability.Attribute) (context.Context, observability.Span) {
