@@ -1,4 +1,4 @@
-// tier-worker runs the tier-memory builder stack with Postgres warm tier, file cold tier, and
+// tier-worker runs the tier-memory builder stack with Postgres warm tier, file or blob cold tier, and
 // async memory.reconcile jobs via a shared job queue.
 //
 // Prerequisites (reference stack):
@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
 
@@ -166,14 +168,7 @@ func newCompositeTierStore(_ context.Context, db *sql.DB) (tier.Store, string, e
 	if err != nil {
 		return nil, "", err
 	}
-	coldDir := os.Getenv("AGENT_TIER_COLD_DIR")
-	if coldDir == "" {
-		coldDir = filepath.Join(os.TempDir(), "agentflow-tier-cold")
-	}
-	if err := os.MkdirAll(coldDir, 0o700); err != nil {
-		return nil, "", err
-	}
-	cold, err := agentflow.NewFileTierColdStore(coldDir)
+	cold, coldLabel, err := newColdTierStore()
 	if err != nil {
 		return nil, "", err
 	}
@@ -182,7 +177,82 @@ func newCompositeTierStore(_ context.Context, db *sql.DB) (tier.Store, string, e
 		Warm: warm,
 		Cold: cold,
 	})
-	return store, coldDir, nil
+	return store, coldLabel, nil
+}
+
+func newColdTierStore() (tier.Store, string, error) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENT_TIER_COLD_BACKEND"))) {
+	case "blob":
+		indexDir := os.Getenv("AGENT_TIER_COLD_INDEX_DIR")
+		if indexDir == "" {
+			indexDir = filepath.Join(os.TempDir(), "agentflow-tier-cold-index")
+		}
+		if err := os.MkdirAll(indexDir, 0o700); err != nil {
+			return nil, "", err
+		}
+		blobs, blobLabel, err := openBlobAdmin()
+		if err != nil {
+			return nil, "", err
+		}
+		cold, err := agentflow.NewBlobTierColdStore(agentflow.BlobTierColdStoreConfig{
+			Blobs:    blobs,
+			IndexDir: indexDir,
+		})
+		if err != nil {
+			return nil, "", err
+		}
+		return cold, fmt.Sprintf("blob(%s,index=%s)", blobLabel, indexDir), nil
+	default:
+		coldDir := os.Getenv("AGENT_TIER_COLD_DIR")
+		if coldDir == "" {
+			coldDir = filepath.Join(os.TempDir(), "agentflow-tier-cold")
+		}
+		if err := os.MkdirAll(coldDir, 0o700); err != nil {
+			return nil, "", err
+		}
+		cold, err := agentflow.NewFileTierColdStore(coldDir)
+		if err != nil {
+			return nil, "", err
+		}
+		return cold, coldDir, nil
+	}
+}
+
+func openBlobAdmin() (runstate.BlobAdmin, string, error) {
+	if endpoint := os.Getenv("AGENT_S3_ENDPOINT"); endpoint != "" {
+		store, err := agentflow.NewS3BlobStore(agentflow.S3BlobStoreConfig{
+			Endpoint:        endpoint,
+			Bucket:          envOr("AGENT_S3_BUCKET", "agentflow"),
+			Region:          envOr("AGENT_S3_REGION", "us-east-1"),
+			Prefix:          os.Getenv("AGENT_S3_PREFIX"),
+			AccessKeyID:     os.Getenv("AGENT_S3_ACCESS_KEY"),
+			SecretAccessKey: os.Getenv("AGENT_S3_SECRET_KEY"),
+		})
+		if err != nil {
+			return nil, "", err
+		}
+		admin, ok := store.(runstate.BlobAdmin)
+		if !ok {
+			return nil, "", fmt.Errorf("s3 blob store does not implement BlobAdmin")
+		}
+		return admin, envOr("AGENT_S3_BUCKET", "agentflow"), nil
+	}
+	dir := os.Getenv("AGENT_BLOB_DIR")
+	if dir == "" {
+		dir = filepath.Join(os.TempDir(), "agentflow-blobs")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, "", err
+	}
+	store, err := agentflow.NewFileBlobStore(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	admin, ok := store.(runstate.BlobAdmin)
+	if !ok {
+		return nil, "", fmt.Errorf("file blob store does not implement BlobAdmin")
+	}
+	return admin, dir, nil
 }
 
 func tierPolicyFromScenario(scenario core.Scenario) tier.Policy {

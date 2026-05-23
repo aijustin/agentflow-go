@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
+
+var _ runstate.BlobAdmin = (*Store)(nil)
 
 const (
 	serviceName = "s3"
@@ -155,6 +158,76 @@ func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
 	return data, nil
 }
 
+func (s *Store) List(ctx context.Context) ([]runstate.BlobRef, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	requestURL := s.listURL()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	payloadHash := sha256Hex(nil)
+	if err := s.sign(req, payloadHash, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("s3 blob: list: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, responseError("list", "", resp)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("s3 blob: read list response: %w", err)
+	}
+	var result listBucketResult
+	if err := xml.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("s3 blob: decode list response: %w", err)
+	}
+	out := make([]runstate.BlobRef, 0, len(result.Contents))
+	for _, item := range result.Contents {
+		id, ok := s.blobIDFromObjectKey(item.Key)
+		if !ok {
+			continue
+		}
+		out = append(out, runstate.BlobRef{ID: id, Size: item.Size, Sha256: id})
+	}
+	return out, nil
+}
+
+func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !blobIDPattern.MatchString(ref.ID) {
+		return fmt.Errorf("s3 blob: invalid blob id %q", ref.ID)
+	}
+	requestURL := s.objectURL(ref.ID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, requestURL.String(), nil)
+	if err != nil {
+		return err
+	}
+	payloadHash := sha256Hex(nil)
+	if err := s.sign(req, payloadHash, time.Now().UTC()); err != nil {
+		return err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("s3 blob: delete %s: %w", ref.ID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusAccepted {
+		return responseError("delete", ref.ID, resp)
+	}
+	return nil
+}
+
 func (s *Store) objectURL(id string) url.URL {
 	objectKey := id + ".blob"
 	if s.prefix != "" {
@@ -163,6 +236,45 @@ func (s *Store) objectURL(id string) url.URL {
 	u := *s.endpoint
 	u.Path = path.Join(u.Path, s.bucket, objectKey)
 	return u
+}
+
+func (s *Store) listURL() url.URL {
+	u := *s.endpoint
+	u.Path = path.Join(u.Path, s.bucket)
+	query := url.Values{}
+	query.Set("list-type", "2")
+	if s.prefix != "" {
+		query.Set("prefix", s.prefix+"/")
+	}
+	u.RawQuery = query.Encode()
+	return u
+}
+
+func (s *Store) blobIDFromObjectKey(key string) (string, bool) {
+	if s.prefix != "" {
+		prefix := s.prefix + "/"
+		if !strings.HasPrefix(key, prefix) {
+			return "", false
+		}
+		key = strings.TrimPrefix(key, prefix)
+	}
+	if !strings.HasSuffix(key, ".blob") {
+		return "", false
+	}
+	id := strings.TrimSuffix(key, ".blob")
+	if !blobIDPattern.MatchString(id) {
+		return "", false
+	}
+	return id, true
+}
+
+type listBucketResult struct {
+	Contents []listObject `xml:"Contents"`
+}
+
+type listObject struct {
+	Key  string `xml:"Key"`
+	Size int64  `xml:"Size"`
 }
 
 func (s *Store) sign(req *http.Request, payloadHash string, now time.Time) error {

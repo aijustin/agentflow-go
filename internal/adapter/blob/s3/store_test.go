@@ -3,9 +3,11 @@ package s3
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -89,6 +91,57 @@ func TestStoreDetectsChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestStoreListsAndDeletesBlobs(t *testing.T) {
+	ctx := context.Background()
+	server := newFakeS3(t)
+	store, err := NewStore(Config{
+		Endpoint:        server.URL,
+		Bucket:          "agentflow-blobs",
+		Region:          "us-east-1",
+		Prefix:          "runs/steps",
+		AccessKeyID:     "test-access",
+		SecretAccessKey: "test-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refA, err := store.Put(ctx, []byte("alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refB, err := store.Put(ctx, []byte("beta"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, err := store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %+v", refs)
+	}
+	if err := store.Delete(ctx, refA); err != nil {
+		t.Fatal(err)
+	}
+	refs, err = store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || refs[0].ID != refB.ID {
+		t.Fatalf("unexpected refs after delete: %+v", refs)
+	}
+	if err := store.Delete(ctx, refB); err != nil {
+		t.Fatal(err)
+	}
+	refs, err = store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 0 {
+		t.Fatalf("expected empty list, got %+v", refs)
+	}
+}
+
 func TestNewStoreValidatesConfig(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -147,6 +200,10 @@ func (s *fakeS3) handle(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodGet:
+		if r.URL.Query().Get("list-type") == "2" {
+			s.writeListResponse(w, r)
+			return
+		}
 		s.mu.Lock()
 		data, ok := s.objects[r.URL.Path]
 		s.mu.Unlock()
@@ -155,9 +212,35 @@ func (s *fakeS3) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = w.Write(data)
+	case http.MethodDelete:
+		s.mu.Lock()
+		delete(s.objects, r.URL.Path)
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "unsupported method", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *fakeS3) writeListResponse(w http.ResponseWriter, r *http.Request) {
+	prefix := r.URL.Query().Get("prefix")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := make([]string, 0, len(s.objects))
+	for objectPath := range s.objects {
+		key := strings.TrimPrefix(objectPath, "/agentflow-blobs/")
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := listBucketResult{Contents: make([]listObject, len(keys))}
+	for i, key := range keys {
+		result.Contents[i] = listObject{Key: key, Size: int64(len(s.objects["/agentflow-blobs/"+key]))}
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	_ = xml.NewEncoder(w).Encode(result)
 }
 
 func (s *fakeS3) assertSawSignedRequests(t *testing.T) {

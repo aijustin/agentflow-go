@@ -83,7 +83,11 @@ func TestFixedWorkflowIntegration(t *testing.T) {
 	if err := reg.RegisterTool("repo_search", builtin.NewEchoTool()); err != nil {
 		t.Fatal(err)
 	}
-	runner := orchestration.NewWorkflowRunner(reg, repo, nil)
+	runner := orchestration.NewWorkflowRunner(reg, repo, nil, orchestration.WithAgentRegistry(integrationAgentRegistry{
+		agents: map[string]integrationAgent{
+			"reviewer": {output: "approved"},
+		},
+	}))
 	if err := runner.Run(context.Background(), scenario, "run-workflow"); err != nil {
 		t.Fatal(err)
 	}
@@ -94,4 +98,21 @@ func TestFixedWorkflowIntegration(t *testing.T) {
 	if _, ok := loaded.StepOutputs["inspect"]; !ok {
 		t.Fatalf("expected inspect output: %+v", loaded.StepOutputs)
 	}
+}
+
+type integrationAgent struct {
+	output string
+}
+
+func (a integrationAgent) Run(_ context.Context, input core.AgentInput) (core.AgentOutput, error) {
+	return core.AgentOutput{RunID: input.RunID, Text: a.output}, nil
+}
+
+type integrationAgentRegistry struct {
+	agents map[string]integrationAgent
+}
+
+func (r integrationAgentRegistry) Agent(name string) (core.AgentRunner, bool) {
+	agent, ok := r.agents[name]
+	return agent, ok
 }

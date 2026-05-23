@@ -77,7 +77,7 @@ func (e *Engine) ReconcileTierMemory(ctx context.Context, runID, memoryName, age
 		observability.Attribute{Key: "agent", Value: agentName},
 	)
 	defer span.End()
-	_, err := manager.Reconcile(ctx, ns, time.Now().UTC())
+	_, err := manager.Reconcile(tier.WithMigrationRunID(ctx, runID), ns, time.Now().UTC())
 	return err
 }
 

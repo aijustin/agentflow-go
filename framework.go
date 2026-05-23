@@ -314,7 +314,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 			store = tierinmem.NewStore()
 		}
 		settings, _ := tier.SettingsFromCore(ref.Tiers)
-		manager := tier.NewManagerWithWeights(store, settings.Policy(), tierMigrationObserver(scenario, cfg.recorder), settings.Weights())
+		manager := tier.NewManagerWithWeights(store, settings.Policy(), tierMigrationObserver(scenario, cfg.recorder, cfg.events), settings.Weights())
 		cognitive := cfg.cognitive[name]
 		if cognitive == nil {
 			if cfg.cognitive == nil {
@@ -641,11 +641,15 @@ func WithJobQueue(queue async.Queue) Option {
 	}
 }
 
-func tierMigrationObserver(scenario core.Scenario, recorder observability.Recorder) tier.MigrationObserver {
-	if recorder == nil {
-		return tier.NoopMigrationObserver{}
+func tierMigrationObserver(scenario core.Scenario, recorder observability.Recorder, events core.EventSink) tier.MigrationObserver {
+	observers := make([]tier.MigrationObserver, 0, 2)
+	if recorder != nil {
+		observers = append(observers, tier.MetricsObserver{Recorder: recorder, Scenario: scenario.Name})
 	}
-	return tier.MetricsObserver{Recorder: recorder, Scenario: scenario.Name}
+	if events != nil {
+		observers = append(observers, tier.EventSinkMigrationObserver{Sink: events, Scenario: scenario.Name})
+	}
+	return tier.ChainMigrationObservers(observers...)
 }
 
 // WithHITLTokenSecret wires the built-in HMAC-token human gate using the same

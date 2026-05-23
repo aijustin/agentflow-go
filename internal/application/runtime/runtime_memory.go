@@ -121,7 +121,7 @@ func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Ag
 	if !ok {
 		return nil, nil
 	}
-	records, err := manager.Recall(ctx, ns, query, e.tierRecallBudget(agent, settings))
+	records, err := manager.Recall(tier.WithMigrationRunID(ctx, runID), ns, query, e.tierRecallBudget(agent, settings))
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (e *Engine) writeTierMemory(ctx context.Context, runID string, agent core.A
 		if err != nil {
 			return err
 		}
-		if err := manager.Remember(ctx, ns, record); err != nil {
+		if err := manager.Remember(tier.WithMigrationRunID(ctx, runID), ns, record); err != nil {
 			return err
 		}
 	}

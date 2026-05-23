@@ -19,7 +19,7 @@
 | `PurgeRuns` / `PurgeExpired` / `PurgeOrphanBlobs` | ✅ |
 | `PurgeWithPolicy` 终态语义与 `PurgeExpired` 对齐 | ✅ |
 | 跨进程 file runstate + blob 集成测试 | ✅ `internal/integration/retention_integration_test.go` |
-| S3 `BlobAdmin` List/Delete | 🔲 |
+| S3 `BlobAdmin` List/Delete | ✅ `internal/adapter/blob/s3/store.go` |
 | 定时 Retention worker / HTTP admin | 🔲 宿主自行调度 |
 
 ## Memory Tier — Warm/Cold 生产化
@@ -28,8 +28,8 @@
 |----|------|
 | Postgres warm + file gzip cold | ✅ |
 | `RecordTierDepth` 指标（tier-worker） | ✅ |
-| Blob/S3 cold tier adapter | 🔲 |
-| 迁移事件 `EventMemoryPromoted/Demoted` | 🔲 |
+| Blob/S3 cold tier adapter | ✅ `internal/adapter/memory/tier/blobcold` + tier-worker `AGENT_TIER_COLD_BACKEND=blob` |
+| 迁移事件 `EventMemoryPromoted/Demoted` | ✅ `pkg/memory/tier/event_observer.go` |
 | RAG + cold 摘要协同（M5） | 🔲 |
 
 ## 相关文档

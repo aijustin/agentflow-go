@@ -50,7 +50,6 @@ func TestCrossProcessRetentionAndBlobGC(t *testing.T) {
 		RunID:        "run-retention",
 		ScenarioName: scenario.Name,
 		Status:       runstate.RunStatusCompleted,
-		UpdatedAt:    time.Now().UTC().Add(-2 * time.Hour),
 		StepOutputs: map[string]runstate.StepOutputRef{
 			"prep": {Blob: &ref},
 		},
@@ -58,6 +57,7 @@ func TestCrossProcessRetentionAndBlobGC(t *testing.T) {
 	if err := repo1.Save(ctx, snap, 0); err != nil {
 		t.Fatal(err)
 	}
+	time.Sleep(1100 * time.Millisecond)
 	orphanRef, err := blobs.Put(ctx, []byte("should-be-gc"))
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestCrossProcessRetentionAndBlobGC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removed, err := fw2.PurgeWithPolicy(ctx, agentflow.RetentionPolicy{MaxAge: time.Hour})
+	removed, err := fw2.PurgeWithPolicy(ctx, agentflow.RetentionPolicy{MaxAge: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,11 +90,11 @@ func TestCrossProcessRetentionAndBlobGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gc != 1 {
-		t.Fatalf("expected one orphan blob removed, got %d", gc)
+	if gc != 2 {
+		t.Fatalf("expected two orphan blobs removed after run purge, got %d", gc)
 	}
-	if _, err := blobs2.Get(ctx, ref); err != nil {
-		t.Fatalf("referenced blob should remain: %v", err)
+	if _, err := blobs2.Get(ctx, ref); err == nil {
+		t.Fatal("referenced blob should be deleted after run purge")
 	}
 	if _, err := blobs2.Get(ctx, orphanRef); err == nil {
 		t.Fatal("orphan blob should be deleted")

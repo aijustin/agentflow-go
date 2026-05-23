@@ -4,10 +4,12 @@ import (
 	"database/sql"
 
 	tiercold "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/cold"
+	tierblobcold "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/blobcold"
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	tierpostgres "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/postgres"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 // PostgresTierWarmStoreConfig configures a Postgres-backed warm tier store.
@@ -28,6 +30,20 @@ func NewPostgresTierWarmStore(config PostgresTierWarmStoreConfig) (tier.Store, e
 // NewFileTierColdStore creates a gzip JSON cold-tier store on the local filesystem.
 func NewFileTierColdStore(dir string) (tier.Store, error) {
 	return tiercold.NewStore(dir)
+}
+
+// BlobTierColdStoreConfig configures a blob-backed cold tier with a local index directory.
+type BlobTierColdStoreConfig struct {
+	Blobs    runstate.BlobStore
+	IndexDir string
+}
+
+// NewBlobTierColdStore stores gzip JSON cold-tier records in a BlobAdmin backend.
+func NewBlobTierColdStore(config BlobTierColdStoreConfig) (tier.Store, error) {
+	return tierblobcold.NewStore(tierblobcold.Config{
+		Blobs:    config.Blobs,
+		IndexDir: config.IndexDir,
+	})
 }
 
 // CompositeTierStoreConfig wires hot, warm, and cold tier backends.
