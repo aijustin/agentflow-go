@@ -10,6 +10,7 @@ import (
 
 type studioFramework struct {
 	framework *Framework
+	savePath  string
 }
 
 func (adapter *studioFramework) ListRunSteps(ctx context.Context, runID string) (any, error) {
@@ -94,6 +95,17 @@ func (adapter *studioFramework) ListRunThread(ctx context.Context, runID string)
 
 func (adapter *studioFramework) ForkRun(ctx context.Context, runID string, version int64) (any, error) {
 	return adapter.framework.ForkRun(ctx, runID, version)
+}
+
+func (adapter *studioFramework) SaveStudioGraph(ctx context.Context, edited any) (any, error) {
+	if adapter.savePath == "" {
+		return nil, fmt.Errorf("studio save path is not configured")
+	}
+	graph, err := decodeStudioGraph(edited)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.framework.SaveStudioGraph(ctx, graph, adapter.savePath)
 }
 
 func decodeStudioGraph(value any) (graph.ScenarioGraph, error) {

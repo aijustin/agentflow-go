@@ -27,6 +27,7 @@ type Config struct {
 	Codegen        StudioCodeGenerator
 	YAML           StudioYAMLExporter
 	RunStudio      StudioRunner
+	StudioSave     StudioSaver
 	Compare        RunComparer
 	Thread         ThreadLister
 	Fork           RunForker
@@ -72,6 +73,10 @@ type StudioRunner interface {
 	RunStudioGraph(ctx context.Context, graph any, req any) (any, error)
 }
 
+type StudioSaver interface {
+	SaveStudioGraph(ctx context.Context, graph any) (any, error)
+}
+
 type RunComparer interface {
 	CompareRuns(ctx context.Context, runA, runB string) (any, error)
 }
@@ -97,6 +102,7 @@ type Handler struct {
 	codegen    StudioCodeGenerator
 	yaml       StudioYAMLExporter
 	runStudio  StudioRunner
+	studioSave StudioSaver
 	compare    RunComparer
 	thread     ThreadLister
 	fork       RunForker
@@ -121,6 +127,7 @@ func NewHandler(config Config) (*Handler, error) {
 		codegen:    config.Codegen,
 		yaml:       config.YAML,
 		runStudio:  config.RunStudio,
+		studioSave: config.StudioSave,
 		compare:    config.Compare,
 		thread:     config.Thread,
 		fork:       config.Fork,
@@ -146,6 +153,7 @@ func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/api/studio/codegen", handler.handleStudioCodegen)
 	handler.mux.HandleFunc("/api/studio/yaml", handler.handleStudioYAML)
 	handler.mux.HandleFunc("/api/studio/run", handler.handleStudioRun)
+	handler.mux.HandleFunc("/api/studio/save", handler.handleStudioSave)
 	handler.mux.HandleFunc("/api/runs", handler.handleRuns)
 	handler.mux.HandleFunc("/api/runs/", handler.handleRunResource)
 }
@@ -456,6 +464,28 @@ func (handler *Handler) handleStudioRun(w nethttp.ResponseWriter, r *nethttp.Req
 		"run_id": strings.TrimSpace(body.RunID),
 	}
 	result, err := handler.runStudio.RunStudioGraph(r.Context(), body.Graph, req)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleStudioSave(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.studioSave == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio save is not configured"))
+		return
+	}
+	graph, err := decodeScenarioGraph(r.Body)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	result, err := handler.studioSave.SaveStudioGraph(r.Context(), graph)
 	if err != nil {
 		writeError(w, nethttp.StatusBadRequest, err)
 		return

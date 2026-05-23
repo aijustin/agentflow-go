@@ -33,6 +33,8 @@ type ObservabilityHTTPHandlerConfig struct {
 	AuthMiddleware func(http.Handler) http.Handler
 	// Framework enables Studio graph export, step listing, and resume-from-step.
 	Framework *Framework
+	// StudioSavePath enables POST /observability/api/studio/save for the configured scenario file.
+	StudioSavePath string
 }
 
 func NewSlogEventSink(logger *stdslog.Logger) core.EventSink {
@@ -83,7 +85,7 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 		AuthMiddleware: config.AuthMiddleware,
 	}
 	if config.Framework != nil {
-		adapter := &studioFramework{framework: config.Framework}
+		adapter := &studioFramework{framework: config.Framework, savePath: config.StudioSavePath}
 		httpConfig.Steps = adapter
 		httpConfig.Graph = adapter
 		httpConfig.Resume = adapter
@@ -94,6 +96,9 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 		httpConfig.Codegen = adapter
 		httpConfig.YAML = adapter
 		httpConfig.RunStudio = adapter
+		if config.StudioSavePath != "" {
+			httpConfig.StudioSave = adapter
+		}
 		httpConfig.Compare = adapter
 		httpConfig.Thread = adapter
 		httpConfig.Fork = adapter

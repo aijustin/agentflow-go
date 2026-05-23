@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	configyaml "github.com/aijustin/agentflow-go/internal/adapter/config/yaml"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/graph"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -34,7 +35,12 @@ type ThreadRunSummary struct {
 	ScenarioName    string             `json:"scenario_name,omitempty"`
 }
 
-// ForkRunResult describes a newly forked run snapshot.
+// SaveStudioResult describes a persisted Studio graph write.
+type SaveStudioResult struct {
+	Path         string `json:"path"`
+	ScenarioName string `json:"scenario_name"`
+}
+
 type ForkRunResult struct {
 	RunID           string `json:"run_id"`
 	ParentRunID     string `json:"parent_run_id"`
@@ -67,17 +73,36 @@ func (f *Framework) GenerateStudioBuilderCode(_ context.Context, edited graph.Sc
 	return CodegenResult{Language: "go", Code: code}, nil
 }
 
-// GenerateStudioScenarioYAML renders scenario YAML for an edited Studio graph.
+// GenerateStudioScenarioYAML renders legacy scenario YAML for an edited Studio graph.
 func (f *Framework) GenerateStudioScenarioYAML(_ context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
 	scenario, err := graph.ApplyGraph(f.scenario, edited)
 	if err != nil {
 		return CodegenResult{}, err
 	}
-	yamlDoc, err := graph.GenerateScenarioYAML(scenario)
+	yamlDoc, err := configyaml.Marshal(scenario)
 	if err != nil {
 		return CodegenResult{}, err
 	}
-	return CodegenResult{Language: "yaml", Code: yamlDoc}, nil
+	return CodegenResult{Language: "yaml", Code: string(yamlDoc)}, nil
+}
+
+// SaveStudioGraph validates an edited graph, writes legacy YAML to path, and updates the framework scenario.
+func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGraph, path string) (SaveStudioResult, error) {
+	if path == "" {
+		return SaveStudioResult{}, fmt.Errorf("agentflow: studio save path is required")
+	}
+	scenario, err := graph.ApplyGraph(f.scenario, edited)
+	if err != nil {
+		return SaveStudioResult{}, err
+	}
+	if err := ValidateScenario(scenario); err != nil {
+		return SaveStudioResult{}, err
+	}
+	if err := configyaml.SaveFile(path, scenario); err != nil {
+		return SaveStudioResult{}, err
+	}
+	f.scenario = scenario
+	return SaveStudioResult{Path: path, ScenarioName: scenario.Name}, nil
 }
 
 // RunStudioGraph validates an edited graph and executes it as a new run.

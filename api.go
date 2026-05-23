@@ -22,6 +22,8 @@ type ProductionHTTPHandlerConfig struct {
 	Version        string
 	// Framework enables sync /v1/events and /v1/hitl/resume when set.
 	Framework *Framework
+	// StudioSavePath enables POST /v1/studio/save for the configured scenario file.
+	StudioSavePath string
 }
 
 func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler, error) {
@@ -57,6 +59,15 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 			return nil, err
 		}
 		apiConfig.CheckpointHandler = checkpointHandler
+		studioHandler, err := NewStudioHTTPHandler(StudioHTTPHandlerConfig{
+			Framework:      config.Framework,
+			StudioSavePath: config.StudioSavePath,
+			MaxBodyBytes:   config.MaxBodyBytes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		apiConfig.StudioHandler = studioHandler
 	}
 	return apihttp.NewHandler(apiConfig)
 }

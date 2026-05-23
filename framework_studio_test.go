@@ -3,6 +3,7 @@ package agentflow_test
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -139,8 +140,46 @@ func TestFrameworkGenerateStudioScenarioYAML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Language != "yaml" || result.Code == "" || !strings.Contains(result.Code, "studio-yaml") {
+	if result.Language != "yaml" || result.Code == "" || !strings.Contains(result.Code, "scenario:") || !strings.Contains(result.Code, "studio-yaml") {
 		t.Fatalf("unexpected yaml export: %+v", result)
+	}
+}
+
+func TestFrameworkSaveStudioGraph(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-save",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "scenario.yaml")
+	edited := fw.ExportScenarioGraph()
+	edited.Workflow.Nodes = append(edited.Workflow.Nodes, graph.GraphNode{ID: "b", Kind: string(core.NodeTransform), Input: json.RawMessage(`{"set":{"y":2}}`)})
+	result, err := fw.SaveStudioGraph(context.Background(), edited, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != path || result.ScenarioName != "studio-save" {
+		t.Fatalf("unexpected save result: %+v", result)
+	}
+	reloaded, err := agentflow.LoadScenarioFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Orchestration.Workflow == nil || len(reloaded.Orchestration.Workflow.Nodes) != 2 {
+		t.Fatalf("expected saved workflow with 2 nodes, got %+v", reloaded.Orchestration.Workflow)
 	}
 }
 

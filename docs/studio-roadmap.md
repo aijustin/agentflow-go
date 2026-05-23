@@ -132,6 +132,36 @@ HTTP：
 
 - `POST /observability/api/studio/yaml` — 返回 scenario YAML
 - `POST /observability/api/studio/run` — body: `{"graph":{...},"prompt":"...","agent":"...","run_id":"..."}`
+- `POST /observability/api/studio/save` — persist edited graph to host `StudioSavePath`
+
+## P4（已交付 — 生产化与持久化）
+
+| 能力 | 状态 |
+|------|------|
+| **Legacy YAML** 导出对齐 | ✅ `config/yaml.Marshal` → `scenario:` 根文档 |
+| **Production Studio API** | ✅ `POST /v1/studio/{validate,codegen,yaml,run,save}` |
+| **Editor 保存 scenario 文件** | ✅ `StudioSavePath` + Save scenario 按钮 |
+
+### 宿主接线
+
+```go
+savePath := "/etc/agentflow/scenario.yaml"
+dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+    Store: eventStore,
+    Hub:   eventHub,
+    Framework: fw,
+    StudioSavePath: savePath,
+})
+prod, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+    Queue: queue,
+    Framework: fw,
+    StudioSavePath: savePath,
+})
+```
+
+Production HTTP：
+
+- `POST /v1/studio/validate|codegen|yaml|run|save`
 
 ## 相关文档
 

@@ -279,6 +279,7 @@ const indexHTML = `<!doctype html>
           <button id="deleteNodeButton">Delete</button>
           <button id="validateGraphButton">Validate</button>
           <button id="yamlGraphButton">Export YAML</button>
+          <button id="saveGraphButton">Save scenario</button>
           <button class="primary" id="codegenGraphButton">Export Go</button>
         </div>
         <div class="editor-palette" id="editorPalette">
@@ -792,6 +793,16 @@ const indexHTML = `<!doctype html>
       $('detailType').textContent = 'Scenario YAML';
       $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
     }
+    async function saveEditorGraph() {
+      if (!state.editorGraph) return;
+      if (!confirm('Save edited graph back to the host scenario file?')) return;
+      const res = await fetch('api/studio/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.editorGraph) });
+      const body = await res.json();
+      if (!res.ok) { alert(body.error || 'save failed'); return; }
+      alert('Saved to ' + (body.path || 'scenario file'));
+      await loadGraph();
+      setView('editor');
+    }
     async function runEditorGraph() {
       if (!state.editorGraph) return;
       $('runEditorGraphButton').disabled = true;
@@ -1084,6 +1095,7 @@ const indexHTML = `<!doctype html>
     };
     $('validateGraphButton').onclick = () => validateEditorGraph();
     $('yamlGraphButton').onclick = () => yamlEditorGraph();
+    $('saveGraphButton').onclick = () => saveEditorGraph();
     $('codegenGraphButton').onclick = () => codegenEditorGraph();
     $('runEditorGraphButton').onclick = () => runEditorGraph();
     $('undoEditorButton').onclick = () => undoEditor();
