@@ -71,7 +71,7 @@ curl -s http://127.0.0.1:7070/metrics | head
 |----------|---------|---------|
 | `AGENT_POSTGRES_DSN` | `postgres://agentflow:agentflow@127.0.0.1:5432/agentflow?sslmode=disable` | Postgres adapters, tier warm store, job queue |
 | `AGENT_TIER_COLD_DIR` | `/var/lib/agentflow/tier-cold` | tier-worker cold tier (gzip JSON) |
-| `AGENT_HTTP_ADDR` | `127.0.0.1:7070` | tier-worker / http-worker bind address |
+| `AGENT_HTTP_ADDR` | `127.0.0.1:7060` (http-worker) / `127.0.0.1:7070` (tier-worker) | bind address |
 | `AGENT_REDIS_ADDR` | `127.0.0.1:6379` | Redis run-state / locker |
 | `AGENT_S3_ENDPOINT` | `http://127.0.0.1:9000` | Blob store |
 | `AGENT_S3_ACCESS_KEY` | `minioadmin` | Blob store |

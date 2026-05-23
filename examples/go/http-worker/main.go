@@ -83,7 +83,7 @@ func main() {
 	}
 	defer fw.Close(context.Background())
 
-	studioSavePath := envOr("AGENT_STUDIO_SCENARIO_PATH", filepath.Join(examplescenario.WorkDir, "examples", "go", "http-worker", ".studio", "scenario.yaml"))
+	studioSavePath := envOr("AGENT_STUDIO_SCENARIO_PATH", filepath.Join(".studio", "scenario.yaml"))
 	if err := os.MkdirAll(filepath.Dir(studioSavePath), 0o700); err != nil {
 		log.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	addr := envOr("AGENT_HTTP_ADDR", "127.0.0.1:7070")
+	addr := envOr("AGENT_HTTP_ADDR", "127.0.0.1:7060")
 
 	go func() {
 		if err := worker.Run(ctx); err != nil && ctx.Err() == nil {

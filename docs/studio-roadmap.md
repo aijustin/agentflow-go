@@ -64,7 +64,7 @@ HTTP（Observability + Production）：
 - `GET .../checkpoints/{version}`
 - `POST .../resume-from-checkpoint` body: `{"version": 3}`
 
-本地示例：`go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7070/observability/`（默认端口，可用 `AGENT_HTTP_ADDR` 覆盖）
+本地示例：`go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7060/observability/`（默认端口，可用 `AGENT_HTTP_ADDR` 覆盖）
 
 ## P2（已交付 MVP）
 

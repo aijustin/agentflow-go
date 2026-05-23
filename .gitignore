@@ -13,5 +13,6 @@ coverage.out
 *.log
 .env
 .env.*
+.studio/
 .DS_Store
 .idea/

@@ -855,7 +855,7 @@ GOTOOLCHAIN=auto make release-check</code></pre>
           <tbody>
             <tr><td><code>examples/go/minimal</code></td><td>进程内最小嵌入</td><td><code>go run ./examples/go/minimal/main.go</code></td></tr>
             <tr><td><code>examples/go/postgres</code></td><td>Postgres 持久化接线</td><td><code>go run ./examples/go/postgres/main.go</code></td></tr>
-            <tr><td><code>examples/go/http-worker</code></td><td>HTTP Handler + 异步 Worker + Studio（默认 <code>127.0.0.1:7070</code>）</td><td><code>go run ./examples/go/http-worker/main.go</code></td></tr>
+            <tr><td><code>examples/go/http-worker</code></td><td>HTTP Handler + 异步 Worker + Studio（默认 <code>127.0.0.1:7060</code>）</td><td><code>go run ./examples/go/http-worker/main.go</code></td></tr>
             <tr><td><code>examples/go/hitl-resume</code></td><td>HITL 暂停与续跑</td><td><code>go run ./examples/go/hitl-resume/main.go</code></td></tr>
             <tr><td><code>examples/go/event-trigger</code></td><td>事件 trigger 驱动 Run</td><td><code>go run ./examples/go/event-trigger/main.go</code></td></tr>
             <tr><td><code>examples/go/tier-memory</code></td><td>进程内 tier 记忆最小示例</td><td><code>go run ./examples/go/tier-memory/main.go</code></td></tr>
@@ -1295,7 +1295,7 @@ mux.Handle("/observability/",
             <h4>可运行示例</h4>
             <p>完整路径与命令见 <a href="#examples">示例路径对照表</a>；复制 <code>examples/go/</code> 到你的服务即可。</p>
             <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/http-worker/main.go
-# Studio: http://127.0.0.1:7070/observability/
+# Studio: http://127.0.0.1:7060/observability/
 # 端口可通过 AGENT_HTTP_ADDR 覆盖
 # 保存路径：AGENT_STUDIO_SCENARIO_PATH 或默认 .studio/scenario.yaml</code></pre></div>
           </div>

@@ -162,7 +162,7 @@ Production routes (when `Framework` is wired via `NewProductionHTTPHandler`):
 - `GET /observability/api/runs/{run_id}/thread` — list fork/thread group runs.
 - `POST /observability/api/runs/{run_id}/fork` — copy run state to a new run ID.
 
-Open the dashboard and switch to the **Graph** tab for read-only graph debug, **Editor** for drag-and-drop topology edits (per-node input JSON, `condition`, `depends_on`, conditional edges, canvas layout persisted in `GraphView.layout`, subgraph canvas switching, Preview save diff, and Revert to loaded), **Compare** for multi-run diffs, and **Thread** for fork lineage. See [studio-roadmap.md](./studio-roadmap.md).
+Open the dashboard and switch to the **Graph** tab for read-only graph debug, **Editor** for drag-and-drop topology edits (per-node input JSON, `condition`, `depends_on`, conditional edges, canvas layout persisted in `GraphView.layout`, subgraph canvas switching, Preview save diff, and Revert to loaded), **Compare** for multi-run diffs, and **Thread** for fork lineage. The UI defaults to **中文**; use the header language selector for **English**. Preference is stored in `localStorage` (`obs-lang`). See [studio-roadmap.md](./studio-roadmap.md).
 
 Protect the handler with the same middleware used for production APIs:
 
@@ -189,7 +189,7 @@ Production API (when `ProductionHTTPHandlerConfig.Framework` is set):
 
 Checkpoint history requires `WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory())` (or a custom `runstate.CheckpointHistory` adapter).
 
-See [studio-roadmap.md](./studio-roadmap.md). Example: `go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7070/observability/`.
+See [studio-roadmap.md](./studio-roadmap.md). Example: `go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7060/observability/`.
 
 ## Data Safety
 

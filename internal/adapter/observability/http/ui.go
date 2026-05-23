@@ -1,11 +1,11 @@
 package http
 
 const indexHTML = `<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AgentFlow Observability</title>
+  <title>AgentFlow 可观测性</title>
   <style>
     :root {
       color-scheme: light;
@@ -220,49 +220,53 @@ const indexHTML = `<!doctype html>
 </head>
 <body>
   <header>
-    <h1>AgentFlow Observability</h1>
+    <h1 data-i18n="app.title">AgentFlow 可观测性</h1>
     <div class="toolbar">
-      <select id="statusFilter" aria-label="Status filter">
-        <option value="">All runs</option>
-        <option value="running">Running</option>
-        <option value="paused">Paused</option>
-        <option value="completed">Completed</option>
-        <option value="failed">Failed</option>
+      <select id="langSelect" aria-label="Language">
+        <option value="zh-CN">中文</option>
+        <option value="en">English</option>
       </select>
-      <button id="refreshButton">Refresh</button>
-      <button class="primary" id="liveButton">Live on</button>
+      <select id="statusFilter" data-i18n-aria="filter.aria">
+        <option value="" data-i18n="filter.all">全部运行</option>
+        <option value="running" data-i18n="filter.running">运行中</option>
+        <option value="paused" data-i18n="filter.paused">已暂停</option>
+        <option value="completed" data-i18n="filter.completed">已完成</option>
+        <option value="failed" data-i18n="filter.failed">失败</option>
+      </select>
+      <button id="refreshButton" data-i18n="action.refresh">刷新</button>
+      <button class="primary" id="liveButton" data-i18n="action.liveOn">实时开</button>
     </div>
   </header>
   <main>
     <section class="panel">
-      <div class="panel-head"><div class="panel-title">Sessions</div><span class="badge" id="runCount">0</span></div>
-      <div class="list" id="runs"><div class="empty">No sessions</div></div>
+      <div class="panel-head"><div class="panel-title" data-i18n="panel.sessions">会话</div><span class="badge" id="runCount">0</span></div>
+      <div class="list" id="runs"><div class="empty" data-i18n="empty.noSessions">暂无会话</div></div>
     </section>
     <section class="panel">
       <div class="panel-head">
-        <div class="panel-title">Run View</div>
+        <div class="panel-title" data-i18n="panel.runView">运行视图</div>
         <div class="view-tabs">
-          <button id="timelineTab" class="active">Timeline</button>
-          <button id="graphTab">Graph</button>
-          <button id="editorTab">Editor</button>
-          <button id="compareTab">Compare</button>
-          <button id="threadTab">Thread</button>
+          <button id="timelineTab" class="active" data-i18n="tab.timeline">时间线</button>
+          <button id="graphTab" data-i18n="tab.graph">图</button>
+          <button id="editorTab" data-i18n="tab.editor">编辑器</button>
+          <button id="compareTab" data-i18n="tab.compare">对比</button>
+          <button id="threadTab" data-i18n="tab.thread">线程</button>
         </div>
       </div>
       <div class="panel-head" style="border-top:0; min-height:40px;">
-        <span class="badge" id="selectedRun">No run</span>
+        <span class="badge" id="selectedRun" data-i18n="empty.noRun">未选择运行</span>
       </div>
       <div class="stats">
-        <div class="stat"><b id="statEvents">0</b><span>events</span></div>
-        <div class="stat"><b id="statTools">0</b><span>tool calls</span></div>
-        <div class="stat"><b id="statLLM">0</b><span>LLM calls</span></div>
+        <div class="stat"><b id="statEvents">0</b><span data-i18n="stat.events">事件</span></div>
+        <div class="stat"><b id="statTools">0</b><span data-i18n="stat.tools">工具调用</span></div>
+        <div class="stat"><b id="statLLM">0</b><span data-i18n="stat.llm">LLM 调用</span></div>
       </div>
-      <div class="timeline" id="events"><div class="empty">Select a session</div></div>
-      <div class="graph-wrap" id="graphView" hidden><div class="empty">Graph export requires Framework wiring</div></div>
+      <div class="timeline" id="events"><div class="empty" data-i18n="empty.selectSession">请选择会话</div></div>
+      <div class="graph-wrap" id="graphView" hidden><div class="empty" data-i18n="empty.graphRequiresFramework">需要接入 Framework 才能导出图</div></div>
       <div class="graph-wrap" id="editorView" hidden>
         <div class="editor-toolbar">
-          <select id="editorTargetSelect" aria-label="Editor canvas"></select>
-          <button id="addSubgraphButton">Add subgraph</button>
+          <select id="editorTargetSelect" data-i18n-aria="editor.canvasAria"></select>
+          <button id="addSubgraphButton" data-i18n="editor.addSubgraph">添加子图</button>
           <select id="editorNodeKind">
             <option value="transform">transform</option>
             <option value="agent">agent</option>
@@ -273,20 +277,20 @@ const indexHTML = `<!doctype html>
             <option value="map">map</option>
             <option value="loop">loop</option>
           </select>
-          <button id="addNodeButton">Add node</button>
-          <button id="undoEditorButton" disabled>Undo</button>
-          <button id="redoEditorButton" disabled>Redo</button>
-          <button id="connectModeButton">Connect</button>
-          <button id="deleteNodeButton">Delete</button>
-          <button id="validateGraphButton">Validate</button>
-          <button id="yamlGraphButton">Export YAML</button>
-          <button id="previewSaveButton">Preview save</button>
-          <button id="saveGraphButton">Save scenario</button>
-          <button id="revertGraphButton">Revert to loaded</button>
-          <button class="primary" id="codegenGraphButton">Export Go</button>
+          <button id="addNodeButton" data-i18n="editor.addNode">添加节点</button>
+          <button id="undoEditorButton" disabled data-i18n="editor.undo">撤销</button>
+          <button id="redoEditorButton" disabled data-i18n="editor.redo">重做</button>
+          <button id="connectModeButton" data-i18n="editor.connect">连边</button>
+          <button id="deleteNodeButton" data-i18n="editor.delete">删除</button>
+          <button id="validateGraphButton" data-i18n="editor.validate">校验</button>
+          <button id="yamlGraphButton" data-i18n="editor.exportYaml">导出 YAML</button>
+          <button id="previewSaveButton" data-i18n="editor.previewSave">预览保存</button>
+          <button id="saveGraphButton" data-i18n="editor.saveScenario">保存场景</button>
+          <button id="revertGraphButton" data-i18n="editor.revertLoaded">恢复到已加载</button>
+          <button class="primary" id="codegenGraphButton" data-i18n="editor.exportGo">导出 Go</button>
         </div>
         <div class="editor-palette" id="editorPalette">
-          <span class="meta">Quick add:</span>
+          <span class="meta" data-i18n="editor.quickAdd">快速添加：</span>
           <button type="button" class="node-chip" data-kind="transform">transform</button>
           <button type="button" class="node-chip" data-kind="agent">agent</button>
           <button type="button" class="node-chip" data-kind="tool">tool</button>
@@ -297,54 +301,179 @@ const indexHTML = `<!doctype html>
           <button type="button" class="node-chip" data-kind="loop">loop</button>
         </div>
         <div class="editor-run-bar">
-          <input id="editorRunPrompt" placeholder="Prompt for studio run (optional)" />
-          <button class="primary" id="runEditorGraphButton">Run graph</button>
+          <input id="editorRunPrompt" data-i18n-placeholder="editor.runPromptPlaceholder" placeholder="Studio 运行提示词（可选）" />
+          <button class="primary" id="runEditorGraphButton" data-i18n="editor.runGraph">运行图</button>
         </div>
         <div class="editor-props" id="editorProps" hidden>
-          <div class="meta">Selected node properties</div>
-          <input id="editorNodeRef" placeholder="ref (agent/tool/skill/subgraph)" />
-          <input id="editorNodeCondition" placeholder="node condition e.g. steps.a.output.ok" />
-          <input id="editorNodeDependsOn" placeholder="depends_on comma-separated e.g. prep,review" />
-          <textarea id="editorNodeInput" placeholder='input JSON e.g. {"set":{"x":1}}'></textarea>
-          <button id="saveNodePropsButton">Apply node properties</button>
+          <div class="meta" data-i18n="editor.nodeProps">所选节点属性</div>
+          <input id="editorNodeRef" data-i18n-placeholder="editor.refPlaceholder" placeholder="ref（agent/tool/skill/subgraph）" />
+          <input id="editorNodeCondition" data-i18n-placeholder="editor.nodeConditionPlaceholder" placeholder="节点 condition，例如 steps.a.output.ok" />
+          <input id="editorNodeDependsOn" data-i18n-placeholder="editor.dependsOnPlaceholder" placeholder="depends_on 逗号分隔，例如 prep,review" />
+          <textarea id="editorNodeInput" data-i18n-placeholder="editor.inputPlaceholder" placeholder='input JSON，例如 {"set":{"x":1}}'></textarea>
+          <button id="saveNodePropsButton" data-i18n="editor.applyNodeProps">应用节点属性</button>
         </div>
         <div class="editor-props" id="editorEdgeProps" hidden>
-          <div class="meta">Selected edge</div>
+          <div class="meta" data-i18n="editor.edgeProps">所选边</div>
           <input id="editorEdgeFrom" readonly />
           <input id="editorEdgeTo" readonly />
-          <input id="editorEdgeCondition" placeholder="edge condition e.g. steps.flag.output.ok" />
-          <button id="saveEdgePropsButton">Apply edge properties</button>
+          <input id="editorEdgeCondition" data-i18n-placeholder="editor.edgeConditionPlaceholder" placeholder="边 condition，例如 steps.flag.output.ok" />
+          <button id="saveEdgePropsButton" data-i18n="editor.applyEdgeProps">应用边属性</button>
         </div>
-        <div id="editorCanvas"><div class="empty">Load graph to edit</div></div>
+        <div id="editorCanvas"><div class="empty" data-i18n="empty.loadGraphToEdit">加载图以开始编辑</div></div>
       </div>
       <div class="graph-wrap" id="compareView" hidden>
         <div class="compare-toolbar">
-          <label class="meta">Compare B</label>
+          <label class="meta" data-i18n="compare.labelB">对比 B</label>
           <select id="compareRunB"></select>
-          <button id="compareRunsButton">Compare</button>
+          <button id="compareRunsButton" data-i18n="compare.button">对比</button>
         </div>
-        <div id="compareCanvas"><div class="empty">Select a run and choose compare target</div></div>
+        <div id="compareCanvas"><div class="empty" data-i18n="empty.selectCompareRun">请选择运行并选择对比目标</div></div>
       </div>
       <div class="graph-wrap" id="threadView" hidden>
         <div class="thread-toolbar">
-          <button id="forkRunButton">Fork current run</button>
-          <button id="refreshThreadButton">Refresh thread</button>
+          <button id="forkRunButton" data-i18n="thread.fork">分叉当前运行</button>
+          <button id="refreshThreadButton" data-i18n="thread.refresh">刷新线程</button>
         </div>
-        <div id="threadCanvas"><div class="empty">Select a run to view fork thread</div></div>
+        <div id="threadCanvas"><div class="empty" data-i18n="empty.selectRunForThread">请选择运行以查看分叉线程</div></div>
       </div>
       <div class="time-travel" id="timeTravelBar" hidden>
-        <button class="primary" id="resumeStepButton" disabled>Resume from selected node</button>
-        <button id="resumeCheckpointButton" disabled>Resume from checkpoint</button>
-        <span class="meta" id="selectedNodeLabel">No node selected</span>
+        <button class="primary" id="resumeStepButton" disabled data-i18n="timeTravel.resumeStep">从所选节点恢复</button>
+        <button id="resumeCheckpointButton" disabled data-i18n="timeTravel.resumeCheckpoint">从 checkpoint 恢复</button>
+        <span class="meta" id="selectedNodeLabel" data-i18n="timeTravel.noNode">未选择节点</span>
       </div>
     </section>
     <section class="panel detail">
-      <div class="panel-head"><div class="panel-title">Details</div><span class="badge" id="detailType">Empty</span></div>
-      <div class="detail-body" id="details"><div class="empty">Select an event</div></div>
+      <div class="panel-head"><div class="panel-title" data-i18n="panel.details">详情</div><span class="badge" id="detailType" data-i18n="empty.empty">空</span></div>
+      <div class="detail-body" id="details"><div class="empty" data-i18n="empty.selectEvent">请选择事件</div></div>
     </section>
   </main>
   <script>
+    const I18N = {
+      'zh-CN': {
+        'app.title': 'AgentFlow 可观测性',
+        'filter.all': '全部运行', 'filter.running': '运行中', 'filter.paused': '已暂停', 'filter.completed': '已完成', 'filter.failed': '失败', 'filter.aria': '状态筛选',
+        'action.refresh': '刷新', 'action.liveOn': '实时开', 'action.liveOff': '实时关',
+        'panel.sessions': '会话', 'panel.runView': '运行视图', 'panel.details': '详情',
+        'stat.events': '事件', 'stat.tools': '工具调用', 'stat.llm': 'LLM 调用',
+        'tab.timeline': '时间线', 'tab.graph': '图', 'tab.editor': '编辑器', 'tab.compare': '对比', 'tab.thread': '线程',
+        'empty.noSessions': '暂无会话', 'empty.selectSession': '请选择会话', 'empty.noRun': '未选择运行', 'empty.selectEvent': '请选择事件', 'empty.empty': '空',
+        'empty.noEvents': '暂无事件', 'empty.noGraph': '无工作流图',
+        'empty.graphRequiresFramework': '需要在 ObservabilityHTTPHandlerConfig.Framework 中接入 Framework 才能导出图',
+        'empty.graphRequiresFrameworkShort': '需要接入 Framework 才能导出图',
+        'empty.loadGraphToEdit': '加载图以开始编辑', 'empty.selectCompareRun': '请选择运行并选择对比目标', 'empty.chooseCompareTarget': '选择对比目标并点击「对比」',
+        'empty.selectRunForThread': '请选择运行以查看分叉线程', 'empty.selectRun': '请选择运行', 'empty.noThreadRuns': '暂无线程运行', 'empty.threadUnavailable': '线程不可用',
+        'empty.noCheckpoints': '暂无 checkpoint 记录', 'empty.checkpointRequiresHistory': '需要配置 WithCheckpointHistory 才能查看 checkpoint 历史', 'empty.selectEventOrCheckpoint': '请选择事件或 checkpoint',
+        'editor.addSubgraph': '添加子图', 'editor.addNode': '添加节点', 'editor.undo': '撤销', 'editor.redo': '重做', 'editor.connect': '连边', 'editor.fromNode': '从 {node}',
+        'editor.delete': '删除', 'editor.validate': '校验', 'editor.exportYaml': '导出 YAML', 'editor.previewSave': '预览保存', 'editor.saveScenario': '保存场景',
+        'editor.revertLoaded': '恢复到已加载', 'editor.exportGo': '导出 Go', 'editor.runGraph': '运行图', 'editor.quickAdd': '快速添加：',
+        'editor.nodeProps': '所选节点属性', 'editor.edgeProps': '所选边', 'editor.applyNodeProps': '应用节点属性', 'editor.applyEdgeProps': '应用边属性',
+        'editor.runPromptPlaceholder': 'Studio 运行提示词（可选）', 'editor.refPlaceholder': 'ref（agent/tool/skill/subgraph）',
+        'editor.nodeConditionPlaceholder': '节点 condition，例如 steps.a.output.ok', 'editor.dependsOnPlaceholder': 'depends_on 逗号分隔，例如 prep,review',
+        'editor.inputPlaceholder': 'input JSON，例如 {"set":{"x":1}}', 'editor.edgeConditionPlaceholder': '边 condition，例如 steps.flag.output.ok', 'editor.canvasAria': '编辑器画布',
+        'compare.labelB': '对比 B', 'compare.button': '对比', 'compare.onlyA': '仅 A：', 'compare.onlyB': '仅 B：', 'compare.shared': '共享：',
+        'thread.fork': '分叉当前运行', 'thread.refresh': '刷新线程', 'thread.thread': '线程', 'thread.forkOf': '分叉自', 'thread.root': '根',
+        'timeTravel.resumeStep': '从所选节点恢复', 'timeTravel.resumeCheckpoint': '从 checkpoint 恢复', 'timeTravel.noNode': '未选择节点',
+        'timeTravel.nodeLabel': '节点：{node}{hint}', 'timeTravel.notResumable': '此节点无法从步骤恢复',
+        'detail.run': '运行', 'detail.scenario': '场景', 'detail.sequence': '序号', 'detail.occurred': '发生时间', 'detail.stored': '入库时间',
+        'detail.version': '版本', 'detail.status': '状态', 'detail.steps': '步骤', 'detail.recorded': '记录时间', 'detail.current': '当前节点',
+        'detail.checkpoint': 'Checkpoint', 'detail.codegen': '代码生成', 'detail.yaml': '场景 YAML', 'detail.savePreview': '保存预览', 'detail.checkpointHistory': 'Checkpoint 历史', 'detail.stepsCount': '{n} 步',
+        'run.events': '{n} 个事件', 'run.scenarioFallback': '场景', 'graph.subgraph': '子图：{name}', 'graph.mode': '{name}（{mode}）',
+        'editor.workflowOption': '工作流：{name}', 'editor.subgraphOption': '子图：{name}',
+        'prompt.subgraphName': '子图名称', 'prompt.edgeCondition': '边 condition（可选）', 'prompt.nodeId': '节点 ID', 'prompt.refOptional': 'Ref（可选）',
+        'alert.subgraphExists': '子图已存在', 'alert.nodeExists': '节点已存在', 'alert.invalidJson': 'input 必须是合法 JSON',
+        'alert.graphValid': '图校验通过', 'alert.invalidGraph': '图无效', 'alert.codegenFailed': '代码生成失败', 'alert.yamlFailed': 'YAML 导出失败',
+        'alert.previewFailed': '预览失败', 'alert.saveFailed': '保存失败', 'alert.runFailed': 'Studio 运行失败', 'alert.compareFailed': '对比失败',
+        'alert.forkFailed': '分叉失败', 'alert.resumeFailed': '恢复失败', 'confirm.saveGraph': '将编辑后的图保存到宿主场景文件？',
+        'confirm.revertGraph': '丢弃本地编辑并重新加载已加载的场景图？', 'alert.savedTo': '已保存到 {path}', 'alert.scenarioFile': '场景文件',
+        'status.running': '运行中', 'status.paused': '已暂停', 'status.completed': '已完成', 'status.failed': '失败'
+      },
+      'en': {
+        'app.title': 'AgentFlow Observability',
+        'filter.all': 'All runs', 'filter.running': 'Running', 'filter.paused': 'Paused', 'filter.completed': 'Completed', 'filter.failed': 'Failed', 'filter.aria': 'Status filter',
+        'action.refresh': 'Refresh', 'action.liveOn': 'Live on', 'action.liveOff': 'Live off',
+        'panel.sessions': 'Sessions', 'panel.runView': 'Run View', 'panel.details': 'Details',
+        'stat.events': 'events', 'stat.tools': 'tool calls', 'stat.llm': 'LLM calls',
+        'tab.timeline': 'Timeline', 'tab.graph': 'Graph', 'tab.editor': 'Editor', 'tab.compare': 'Compare', 'tab.thread': 'Thread',
+        'empty.noSessions': 'No sessions', 'empty.selectSession': 'Select a session', 'empty.noRun': 'No run', 'empty.selectEvent': 'Select an event', 'empty.empty': 'Empty',
+        'empty.noEvents': 'No events', 'empty.noGraph': 'No workflow graph',
+        'empty.graphRequiresFramework': 'Graph export requires Framework wiring on ObservabilityHTTPHandlerConfig.Framework',
+        'empty.graphRequiresFrameworkShort': 'Graph export requires Framework wiring',
+        'empty.loadGraphToEdit': 'Load graph to edit', 'empty.selectCompareRun': 'Select a run and choose compare target', 'empty.chooseCompareTarget': 'Choose compare target and click Compare',
+        'empty.selectRunForThread': 'Select a run to view fork thread', 'empty.selectRun': 'Select a run', 'empty.noThreadRuns': 'No thread runs', 'empty.threadUnavailable': 'thread unavailable',
+        'empty.noCheckpoints': 'No checkpoints recorded', 'empty.checkpointRequiresHistory': 'Checkpoint history requires WithCheckpointHistory wiring', 'empty.selectEventOrCheckpoint': 'Select an event or checkpoint',
+        'editor.addSubgraph': 'Add subgraph', 'editor.addNode': 'Add node', 'editor.undo': 'Undo', 'editor.redo': 'Redo', 'editor.connect': 'Connect', 'editor.fromNode': 'From {node}',
+        'editor.delete': 'Delete', 'editor.validate': 'Validate', 'editor.exportYaml': 'Export YAML', 'editor.previewSave': 'Preview save', 'editor.saveScenario': 'Save scenario',
+        'editor.revertLoaded': 'Revert to loaded', 'editor.exportGo': 'Export Go', 'editor.runGraph': 'Run graph', 'editor.quickAdd': 'Quick add:',
+        'editor.nodeProps': 'Selected node properties', 'editor.edgeProps': 'Selected edge', 'editor.applyNodeProps': 'Apply node properties', 'editor.applyEdgeProps': 'Apply edge properties',
+        'editor.runPromptPlaceholder': 'Prompt for studio run (optional)', 'editor.refPlaceholder': 'ref (agent/tool/skill/subgraph)',
+        'editor.nodeConditionPlaceholder': 'node condition e.g. steps.a.output.ok', 'editor.dependsOnPlaceholder': 'depends_on comma-separated e.g. prep,review',
+        'editor.inputPlaceholder': 'input JSON e.g. {"set":{"x":1}}', 'editor.edgeConditionPlaceholder': 'edge condition e.g. steps.flag.output.ok', 'editor.canvasAria': 'Editor canvas',
+        'compare.labelB': 'Compare B', 'compare.button': 'Compare', 'compare.onlyA': 'Only A:', 'compare.onlyB': 'Only B:', 'compare.shared': 'Shared:',
+        'thread.fork': 'Fork current run', 'thread.refresh': 'Refresh thread', 'thread.thread': 'thread', 'thread.forkOf': 'fork of', 'thread.root': 'root',
+        'timeTravel.resumeStep': 'Resume from selected node', 'timeTravel.resumeCheckpoint': 'Resume from checkpoint', 'timeTravel.noNode': 'No node selected',
+        'timeTravel.nodeLabel': 'Node: {node}{hint}', 'timeTravel.notResumable': 'This node cannot be resumed from step',
+        'detail.run': 'Run', 'detail.scenario': 'Scenario', 'detail.sequence': 'Sequence', 'detail.occurred': 'Occurred', 'detail.stored': 'Stored',
+        'detail.version': 'Version', 'detail.status': 'Status', 'detail.steps': 'Steps', 'detail.recorded': 'Recorded', 'detail.current': 'Current',
+        'detail.checkpoint': 'Checkpoint', 'detail.codegen': 'Codegen', 'detail.yaml': 'Scenario YAML', 'detail.savePreview': 'Save preview', 'detail.checkpointHistory': 'Checkpoint history', 'detail.stepsCount': '{n} steps',
+        'run.events': '{n} events', 'run.scenarioFallback': 'scenario', 'graph.subgraph': 'subgraph: {name}', 'graph.mode': '{name} ({mode})',
+        'editor.workflowOption': 'workflow: {name}', 'editor.subgraphOption': 'subgraph: {name}',
+        'prompt.subgraphName': 'Subgraph name', 'prompt.edgeCondition': 'Edge condition (optional)', 'prompt.nodeId': 'Node id', 'prompt.refOptional': 'Ref (optional)',
+        'alert.subgraphExists': 'subgraph already exists', 'alert.nodeExists': 'node already exists', 'alert.invalidJson': 'input must be valid JSON',
+        'alert.graphValid': 'Graph is valid', 'alert.invalidGraph': 'invalid graph', 'alert.codegenFailed': 'codegen failed', 'alert.yamlFailed': 'yaml export failed',
+        'alert.previewFailed': 'preview failed', 'alert.saveFailed': 'save failed', 'alert.runFailed': 'studio run failed', 'alert.compareFailed': 'compare failed',
+        'alert.forkFailed': 'fork failed', 'alert.resumeFailed': 'resume failed', 'confirm.saveGraph': 'Save edited graph back to the host scenario file?',
+        'confirm.revertGraph': 'Discard local edits and reload the loaded scenario graph?', 'alert.savedTo': 'Saved to {path}', 'alert.scenarioFile': 'scenario file',
+        'status.running': 'running', 'status.paused': 'paused', 'status.completed': 'completed', 'status.failed': 'failed'
+      }
+    };
+    let locale = localStorage.getItem('obs-lang') || 'zh-CN';
     const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
+    const t = (key, vars) => {
+      let text = (I18N[locale] && I18N[locale][key]) || (I18N.en && I18N.en[key]) || key;
+      if (vars) Object.keys(vars).forEach((name) => { text = text.split('{' + name + '}').join(String(vars[name])); });
+      return text;
+    };
+    const statusLabel = (status) => {
+      const key = 'status.' + status;
+      return (I18N[locale] && I18N[locale][key]) ? t(key) : status;
+    };
+    function applyStaticI18n() {
+      document.documentElement.lang = locale;
+      document.title = t('app.title');
+      document.querySelectorAll('[data-i18n]').forEach((el) => {
+        if (el.id === 'selectedRun' || el.id === 'detailType' || el.id === 'selectedNodeLabel') return;
+        el.textContent = t(el.getAttribute('data-i18n'));
+      });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+        el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+      });
+      document.querySelectorAll('[data-i18n-aria]').forEach((el) => {
+        el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));
+      });
+      updateLiveButton();
+      updateConnectButton();
+    }
+    function updateLiveButton() {
+      $('liveButton').textContent = state.live ? t('action.liveOn') : t('action.liveOff');
+    }
+    function updateConnectButton() {
+      if (!$('connectModeButton')) return;
+      $('connectModeButton').textContent = state.editorConnectFrom ? t('editor.fromNode', { node: state.editorConnectFrom }) : t('editor.connect');
+    }
+    function setLocale(next) {
+      locale = next || 'zh-CN';
+      localStorage.setItem('obs-lang', locale);
+      $('langSelect').value = locale;
+      applyStaticI18n();
+      renderRuns();
+      renderEvents();
+      renderDetails();
+      updateTimeTravelBar();
+      if (state.view === 'graph') renderGraph();
+      if (state.view === 'editor') { renderEditorTargetOptions(); renderEditor(); }
+      if (state.view === 'compare') renderCompare();
+      if (state.view === 'thread') renderThread();
+    }
     const $ = (id) => document.getElementById(id);
     const fmtTime = (value) => value ? new Date(value).toLocaleTimeString() : '-';
     const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -480,9 +609,9 @@ const indexHTML = `<!doctype html>
     function renderEditorTargetOptions() {
       const select = $('editorTargetSelect');
       if (!select || !state.editorGraph) return;
-      const options = [{ value: 'workflow', label: 'workflow: ' + (state.editorGraph.name || 'main') }];
+      const options = [{ value: 'workflow', label: t('editor.workflowOption', { name: state.editorGraph.name || 'main' }) }];
       Object.keys(state.editorGraph.workflows || {}).sort().forEach((name) => {
-        options.push({ value: name, label: 'subgraph: ' + name });
+        options.push({ value: name, label: t('editor.subgraphOption', { name }) });
       });
       select.innerHTML = options.map((item) =>
         '<option value="' + escapeHTML(item.value) + '"' + (item.value === state.editorTarget ? ' selected' : '') + '>' + escapeHTML(item.label) + '</option>'
@@ -583,7 +712,7 @@ const indexHTML = `<!doctype html>
     }
     function renderGraphView(container, view, title) {
       if (!view || !view.nodes || !view.nodes.length) {
-        container.innerHTML = '<div class="empty">No workflow graph</div>';
+        container.innerHTML = '<div class="empty">' + escapeHTML(t('empty.noGraph')) + '</div>';
         return;
       }
       syncSubgraphOverlay();
@@ -626,18 +755,18 @@ const indexHTML = `<!doctype html>
     function renderGraph() {
       const container = $('graphView');
       if (!state.graphEnabled) {
-        container.innerHTML = '<div class="empty">Graph export requires Framework wiring on ObservabilityHTTPHandlerConfig.Framework</div>';
+        container.innerHTML = '<div class="empty">' + escapeHTML(t('empty.graphRequiresFramework')) + '</div>';
         return;
       }
       let html = '';
       const root = document.createElement('div');
-      renderGraphView(root, state.graph.workflow, state.graph.name + ' (' + (state.graph.mode || 'mode') + ')');
+      renderGraphView(root, state.graph.workflow, t('graph.mode', { name: state.graph.name, mode: state.graph.mode || 'mode' }));
       html += root.innerHTML;
       if (state.graph.workflows) {
         Object.entries(state.graph.workflows).forEach(([name, view]) => {
           const sub = document.createElement('div');
           sub.className = 'graph-sub';
-          renderGraphView(sub, view, 'subgraph: ' + name);
+          renderGraphView(sub, view, t('graph.subgraph', { name }));
           html += sub.outerHTML;
         });
       }
@@ -695,7 +824,7 @@ const indexHTML = `<!doctype html>
         try {
           node.input = JSON.parse(raw);
         } catch (_) {
-          alert('input must be valid JSON');
+          alert(t('alert.invalidJson'));
           return;
         }
       }
@@ -713,11 +842,11 @@ const indexHTML = `<!doctype html>
     }
     function addEditorSubgraph() {
       if (!state.editorGraph) return;
-      const name = prompt('Subgraph name');
+      const name = prompt(t('prompt.subgraphName'));
       if (!name) return;
       pushEditorHistory();
       if (!state.editorGraph.workflows) state.editorGraph.workflows = {};
-      if (state.editorGraph.workflows[name]) { alert('subgraph already exists'); return; }
+      if (state.editorGraph.workflows[name]) { alert(t('alert.subgraphExists')); return; }
       state.editorGraph.workflows[name] = { id: name, nodes: [], edges: [] };
       state.editorTarget = name;
       renderEditorTargetOptions();
@@ -734,7 +863,7 @@ const indexHTML = `<!doctype html>
       const canvas = $('editorCanvas');
       const view = editorWorkflow();
       if (!state.graphEnabled || !view) {
-        canvas.innerHTML = '<div class="empty">Graph export requires Framework wiring</div>';
+        canvas.innerHTML = '<div class="empty">' + escapeHTML(t('empty.graphRequiresFrameworkShort')) + '</div>';
         return;
       }
       const { nodes, edges, positions } = layoutEditorGraph(view);
@@ -788,14 +917,14 @@ const indexHTML = `<!doctype html>
           view.edges = view.edges || [];
           if (!view.edges.some((edge) => edge.from === state.editorConnectFrom && edge.to === nodeID)) {
             pushEditorHistory();
-            const cond = prompt('Edge condition (optional)', '') || '';
+            const cond = prompt(t('prompt.edgeCondition'), '') || '';
             const edge = { from: state.editorConnectFrom, to: nodeID };
             if (cond.trim()) edge.condition = cond.trim();
             view.edges.push(edge);
           }
         }
         state.editorConnectFrom = '';
-        $('connectModeButton').textContent = 'Connect';
+        updateConnectButton();
       }
       state.selectedEdge = null;
       state.selectedNode = nodeID;
@@ -841,12 +970,12 @@ const indexHTML = `<!doctype html>
     function addEditorNode(kindOverride) {
       const view = editorWorkflow();
       if (!view) return;
-      const id = prompt('Node id');
+      const id = prompt(t('prompt.nodeId'));
       if (!id) return;
       const kind = kindOverride || $('editorNodeKind').value;
-      const ref = (kind === 'agent' || kind === 'tool' || kind === 'skill' || kind === 'subgraph') ? (prompt('Ref (optional)') || '') : '';
+      const ref = (kind === 'agent' || kind === 'tool' || kind === 'skill' || kind === 'subgraph') ? (prompt(t('prompt.refOptional')) || '') : '';
       view.nodes = view.nodes || [];
-      if (view.nodes.some((node) => node.id === id)) { alert('node already exists'); return; }
+      if (view.nodes.some((node) => node.id === id)) { alert(t('alert.nodeExists')); return; }
       pushEditorHistory();
       view.nodes.push({ id, kind, ref, resumable: kind !== 'human_gate' && kind !== 'loop' });
       renderEditor();
@@ -865,26 +994,26 @@ const indexHTML = `<!doctype html>
       if (!state.editorGraph) return;
       const res = await fetch('api/studio/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
-      alert(body.valid ? 'Graph is valid' : (body.error || 'invalid graph'));
+      alert(body.valid ? t('alert.graphValid') : (body.error || t('alert.invalidGraph')));
     }
     async function codegenEditorGraph() {
       if (!state.editorGraph) return;
       const res = await fetch('api/studio/codegen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || 'codegen failed'); return; }
+      if (!res.ok) { alert(body.error || t('alert.codegenFailed')); return; }
       state.selectedEvent = null;
       state.selectedCheckpoint = null;
-      $('detailType').textContent = 'Codegen';
+      $('detailType').textContent = t('detail.codegen');
       $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
     }
     async function yamlEditorGraph() {
       if (!state.editorGraph) return;
       const res = await fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || 'yaml export failed'); return; }
+      if (!res.ok) { alert(body.error || t('alert.yamlFailed')); return; }
       state.selectedEvent = null;
       state.selectedCheckpoint = null;
-      $('detailType').textContent = 'Scenario YAML';
+      $('detailType').textContent = t('detail.yaml');
       $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
     }
     function renderTextDiff(before, after) {
@@ -912,27 +1041,27 @@ const indexHTML = `<!doctype html>
       const baseBody = await baseRes.json();
       const editBody = await editRes.json();
       if (!baseRes.ok || !editRes.ok) {
-        alert((editBody.error || baseBody.error) || 'preview failed');
+        alert((editBody.error || baseBody.error) || t('alert.previewFailed'));
         return;
       }
       state.selectedEvent = null;
       state.selectedCheckpoint = null;
-      $('detailType').textContent = 'Save preview';
+      $('detailType').textContent = t('detail.savePreview');
       $('details').innerHTML = '<pre>' + escapeHTML(renderTextDiff(baseBody.code || '', editBody.code || '')) + '</pre>';
     }
     async function saveEditorGraph() {
       if (!state.editorGraph) return;
-      if (!confirm('Save edited graph back to the host scenario file?')) return;
+      if (!confirm(t('confirm.saveGraph'))) return;
       const res = await fetch('api/studio/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || 'save failed'); return; }
-      alert('Saved to ' + (body.path || 'scenario file'));
+      if (!res.ok) { alert(body.error || t('alert.saveFailed')); return; }
+      alert(t('alert.savedTo', { path: body.path || t('alert.scenarioFile') }));
       await loadGraph();
       setView('editor');
     }
     function revertEditorGraph() {
       if (!state.graph) return;
-      if (!confirm('Discard local edits and reload the loaded scenario graph?')) return;
+      if (!confirm(t('confirm.revertGraph'))) return;
       resetEditorGraph();
       renderEditor();
     }
@@ -946,7 +1075,7 @@ const indexHTML = `<!doctype html>
       });
       const body = await res.json();
       $('runEditorGraphButton').disabled = false;
-      if (!res.ok) { alert(body.error || 'studio run failed'); return; }
+      if (!res.ok) { alert(body.error || t('alert.runFailed')); return; }
       await loadRuns();
       if (body.run_id) {
         await selectRun(body.run_id);
@@ -963,20 +1092,20 @@ const indexHTML = `<!doctype html>
       state.compareRunB = $('compareRunB').value;
       const res = await fetch('api/compare?run_a=' + encodeURIComponent(state.selectedRun) + '&run_b=' + encodeURIComponent(state.compareRunB));
       const body = await res.json();
-      if (!res.ok) { alert(body.error || 'compare failed'); return; }
+      if (!res.ok) { alert(body.error || t('alert.compareFailed')); return; }
       state.compareResult = body;
       renderCompare();
     }
     function renderCompare() {
       const canvas = $('compareCanvas');
       if (!state.compareResult) {
-        canvas.innerHTML = '<div class="empty">Choose compare target and click Compare</div>';
+        canvas.innerHTML = '<div class="empty">' + escapeHTML(t('empty.chooseCompareTarget')) + '</div>';
         return;
       }
       const diff = state.compareResult;
-      let html = '<div class="meta"><span>Only A: ' + (diff.steps_only_a || []).join(', ') + '</span></div>';
-      html += '<div class="meta"><span>Only B: ' + (diff.steps_only_b || []).join(', ') + '</span></div>';
-      html += '<div class="meta"><span>Shared: ' + (diff.shared_steps || []).length + '</span></div>';
+      let html = '<div class="meta"><span>' + escapeHTML(t('compare.onlyA')) + ' ' + (diff.steps_only_a || []).join(', ') + '</span></div>';
+      html += '<div class="meta"><span>' + escapeHTML(t('compare.onlyB')) + ' ' + (diff.steps_only_b || []).join(', ') + '</span></div>';
+      html += '<div class="meta"><span>' + escapeHTML(t('compare.shared')) + ' ' + (diff.shared_steps || []).length + '</span></div>';
       const changed = new Set((diff.shared_steps || []).filter((step) => !step.same).map((step) => step.node_id));
       const onlyA = new Set(diff.steps_only_a || []);
       const onlyB = new Set(diff.steps_only_b || []);
@@ -1011,12 +1140,12 @@ const indexHTML = `<!doctype html>
     }
     async function loadThread() {
       if (!state.selectedRun) {
-        $('threadCanvas').innerHTML = '<div class="empty">Select a run</div>';
+        $('threadCanvas').innerHTML = '<div class="empty">' + escapeHTML(t('empty.selectRun')) + '</div>';
         return;
       }
       const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/thread');
       const body = await res.json();
-      if (!res.ok) { $('threadCanvas').innerHTML = '<div class="empty">' + escapeHTML(body.error || 'thread unavailable') + '</div>'; return; }
+      if (!res.ok) { $('threadCanvas').innerHTML = '<div class="empty">' + escapeHTML(body.error || t('empty.threadUnavailable')) + '</div>'; return; }
       state.threadRuns = body.runs || [];
       renderThread();
     }
@@ -1025,9 +1154,9 @@ const indexHTML = `<!doctype html>
       canvas.innerHTML = state.threadRuns.length ? state.threadRuns.map((run) =>
         '<div class="thread-item ' + (run.run_id === state.selectedRun ? 'active' : '') + '" data-run="' + escapeHTML(run.run_id) + '">' +
           '<div class="title">' + escapeHTML(run.run_id) + ' · ' + escapeHTML(run.status) + '</div>' +
-          '<div class="meta"><span>thread ' + escapeHTML(run.thread_id) + '</span>' +
-          (run.parent_run_id ? '<span>fork of ' + escapeHTML(run.parent_run_id) + '</span>' : '<span>root</span>') +
-          '</div></div>').join('') : '<div class="empty">No thread runs</div>';
+          '<div class="meta"><span>' + escapeHTML(t('thread.thread')) + ' ' + escapeHTML(run.thread_id) + '</span>' +
+          (run.parent_run_id ? '<span>' + escapeHTML(t('thread.forkOf')) + ' ' + escapeHTML(run.parent_run_id) + '</span>' : '<span>' + escapeHTML(t('thread.root')) + '</span>') +
+          '</div></div>').join('') : '<div class="empty">' + escapeHTML(t('empty.noThreadRuns')) + '</div>';
       canvas.querySelectorAll('.thread-item').forEach((node) => node.onclick = () => selectRun(node.dataset.run));
     }
     async function forkCurrentRun() {
@@ -1036,17 +1165,17 @@ const indexHTML = `<!doctype html>
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
       });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || 'fork failed'); return; }
+      if (!res.ok) { alert(body.error || t('alert.forkFailed')); return; }
       await loadRuns();
       await selectRun(body.run_id);
       setView('thread');
     }
     function updateTimeTravelBar() {
       const meta = state.nodeMeta[state.selectedNode] || {};
-      const hint = meta.resume_hint || (meta.resumable === false ? 'This node cannot be resumed from step' : '');
+      const hint = meta.resume_hint || (meta.resumable === false ? t('timeTravel.notResumable') : '');
       $('selectedNodeLabel').textContent = state.selectedNode
-        ? ('Node: ' + state.selectedNode + (hint ? ' — ' + hint : ''))
-        : 'No node selected';
+        ? t('timeTravel.nodeLabel', { node: state.selectedNode, hint: hint ? ' — ' + hint : '' })
+        : t('timeTravel.noNode');
       $('resumeStepButton').disabled = !(state.resumeEnabled && state.selectedNode && state.selectedRun && meta.resumable !== false);
       $('resumeCheckpointButton').disabled = !(state.checkpointEnabled && state.selectedCheckpoint && state.selectedRun);
     }
@@ -1060,7 +1189,7 @@ const indexHTML = `<!doctype html>
       });
       const body = await res.json();
       if (!res.ok) {
-        alert(body.error || 'resume failed');
+        alert(body.error || t('alert.resumeFailed'));
         updateTimeTravelBar();
         return;
       }
@@ -1080,7 +1209,7 @@ const indexHTML = `<!doctype html>
       });
       const body = await res.json();
       if (!res.ok) {
-        alert(body.error || 'resume failed');
+        alert(body.error || t('alert.resumeFailed'));
         updateTimeTravelBar();
         return;
       }
@@ -1136,13 +1265,13 @@ const indexHTML = `<!doctype html>
       $('runCount').textContent = state.runs.length;
       $('runs').innerHTML = state.runs.length ? state.runs.map((run) =>
         '<div class="run ' + (run.run_id === state.selectedRun ? 'active' : '') + '" data-run="' + escapeHTML(run.run_id) + '">' +
-          '<div class="run-main"><div class="run-id">' + escapeHTML(run.run_id) + '</div><span class="badge ' + escapeHTML(run.status) + '">' + escapeHTML(run.status) + '</span></div>' +
-          '<div class="meta"><span>' + escapeHTML(run.scenario_name || 'scenario') + '</span><span>' + run.event_count + ' events</span><span>' + fmtTime(run.last_seen_at) + '</span></div>' +
-        '</div>').join('') : '<div class="empty">No sessions</div>';
+          '<div class="run-main"><div class="run-id">' + escapeHTML(run.run_id) + '</div><span class="badge ' + escapeHTML(run.status) + '">' + escapeHTML(statusLabel(run.status)) + '</span></div>' +
+          '<div class="meta"><span>' + escapeHTML(run.scenario_name || t('run.scenarioFallback')) + '</span><span>' + escapeHTML(t('run.events', { n: run.event_count })) + '</span><span>' + fmtTime(run.last_seen_at) + '</span></div>' +
+        '</div>').join('') : '<div class="empty">' + escapeHTML(t('empty.noSessions')) + '</div>';
       document.querySelectorAll('.run').forEach((node) => node.onclick = () => selectRun(node.dataset.run));
     }
     function renderEvents() {
-      $('selectedRun').textContent = state.selectedRun || 'No run';
+      $('selectedRun').textContent = state.selectedRun || t('empty.noRun');
       $('statEvents').textContent = state.events.length;
       $('statTools').textContent = state.events.filter((record) => record.event.type.includes('ToolCalled')).length;
       $('statLLM').textContent = state.events.filter((record) => record.event.type.includes('LLMCalled')).length;
@@ -1150,7 +1279,7 @@ const indexHTML = `<!doctype html>
         '<div class="event ' + eventKind(record.event.type) + ' ' + (state.selectedEvent && state.selectedEvent.id === record.id ? 'active' : '') + '" data-id="' + record.id + '">' +
           '<div class="event-main"><div class="event-type">' + escapeHTML(record.event.type) + '</div><span class="badge">#' + record.sequence + '</span></div>' +
           '<div class="meta"><span>' + fmtTime(record.event.timestamp) + '</span><span>' + escapeHTML(record.event.trace_id || 'trace -') + '</span><span>' + escapeHTML(record.event.span_id || 'span -') + '</span></div>' +
-        '</div>').join('') : '<div class="empty">No events</div>';
+        '</div>').join('') : '<div class="empty">' + escapeHTML(state.selectedRun ? t('empty.noEvents') : t('empty.selectSession')) + '</div>';
       document.querySelectorAll('.event').forEach((node) => node.onclick = () => {
         state.selectedEvent = state.events.find((record) => String(record.id) === node.dataset.id);
         state.selectedCheckpoint = null;
@@ -1161,44 +1290,44 @@ const indexHTML = `<!doctype html>
     }
     function renderDetails() {
       const record = state.selectedEvent;
-      $('detailType').textContent = record ? record.event.type : (state.selectedCheckpoint ? 'Checkpoint' : 'Run');
+      $('detailType').textContent = record ? record.event.type : (state.selectedCheckpoint ? t('detail.checkpoint') : t('detail.run'));
       if (record) {
         $('details').innerHTML =
-          '<div class="kv"><span>Run</span><span>' + escapeHTML(record.event.run_id) + '</span></div>' +
-          '<div class="kv"><span>Scenario</span><span>' + escapeHTML(record.event.scenario_name || '-') + '</span></div>' +
-          '<div class="kv"><span>Sequence</span><span>' + record.sequence + '</span></div>' +
-          '<div class="kv"><span>Occurred</span><span>' + escapeHTML(record.event.timestamp) + '</span></div>' +
-          '<div class="kv"><span>Stored</span><span>' + escapeHTML(record.created_at) + '</span></div>' +
+          '<div class="kv"><span>' + escapeHTML(t('detail.run')) + '</span><span>' + escapeHTML(record.event.run_id) + '</span></div>' +
+          '<div class="kv"><span>' + escapeHTML(t('detail.scenario')) + '</span><span>' + escapeHTML(record.event.scenario_name || '-') + '</span></div>' +
+          '<div class="kv"><span>' + escapeHTML(t('detail.sequence')) + '</span><span>' + record.sequence + '</span></div>' +
+          '<div class="kv"><span>' + escapeHTML(t('detail.occurred')) + '</span><span>' + escapeHTML(record.event.timestamp) + '</span></div>' +
+          '<div class="kv"><span>' + escapeHTML(t('detail.stored')) + '</span><span>' + escapeHTML(record.created_at) + '</span></div>' +
           '<pre>' + escapeHTML(JSON.stringify(record.event.payload || {}, null, 2)) + '</pre>';
         return;
       }
       let html = '';
       if (state.selectedRun) {
-        html += '<div class="kv"><span>Run</span><span>' + escapeHTML(state.selectedRun) + '</span></div>';
+        html += '<div class="kv"><span>' + escapeHTML(t('detail.run')) + '</span><span>' + escapeHTML(state.selectedRun) + '</span></div>';
       }
       if (state.selectedCheckpoint) {
         const cp = state.selectedCheckpoint;
-        html += '<div class="kv"><span>Version</span><span>v' + cp.version + '</span></div>';
-        html += '<div class="kv"><span>Status</span><span>' + escapeHTML(cp.status) + '</span></div>';
-        html += '<div class="kv"><span>Steps</span><span>' + cp.step_count + '</span></div>';
-        html += '<div class="kv"><span>Recorded</span><span>' + fmtTime(cp.recorded_at) + '</span></div>';
+        html += '<div class="kv"><span>' + escapeHTML(t('detail.version')) + '</span><span>v' + cp.version + '</span></div>';
+        html += '<div class="kv"><span>' + escapeHTML(t('detail.status')) + '</span><span>' + escapeHTML(statusLabel(cp.status)) + '</span></div>';
+        html += '<div class="kv"><span>' + escapeHTML(t('detail.steps')) + '</span><span>' + cp.step_count + '</span></div>';
+        html += '<div class="kv"><span>' + escapeHTML(t('detail.recorded')) + '</span><span>' + fmtTime(cp.recorded_at) + '</span></div>';
         if (cp.current_node_id) {
-          html += '<div class="kv"><span>Current</span><span>' + escapeHTML(cp.current_node_id) + '</span></div>';
+          html += '<div class="kv"><span>' + escapeHTML(t('detail.current')) + '</span><span>' + escapeHTML(cp.current_node_id) + '</span></div>';
         }
       }
       if (state.checkpointEnabled && state.checkpoints && state.checkpoints.checkpoints) {
         const items = state.checkpoints.checkpoints;
-        html += '<div class="panel-title" style="margin-top:8px;">Checkpoint history</div>';
+        html += '<div class="panel-title" style="margin-top:8px;">' + escapeHTML(t('detail.checkpointHistory')) + '</div>';
         html += items.length ? '<div class="checkpoint-list">' + items.map((cp) =>
           '<div class="checkpoint-item ' + (state.selectedCheckpoint && state.selectedCheckpoint.version === cp.version ? 'active' : '') + '" data-version="' + cp.version + '">' +
-            '<div class="title">v' + cp.version + ' · ' + escapeHTML(cp.status) + '</div>' +
-            '<div class="meta"><span>' + cp.step_count + ' steps</span><span>' + fmtTime(cp.recorded_at) + '</span></div>' +
-          '</div>').join('') + '</div>' : '<div class="empty">No checkpoints recorded</div>';
+            '<div class="title">v' + cp.version + ' · ' + escapeHTML(statusLabel(cp.status)) + '</div>' +
+            '<div class="meta"><span>' + escapeHTML(t('detail.stepsCount', { n: cp.step_count })) + '</span><span>' + fmtTime(cp.recorded_at) + '</span></div>' +
+          '</div>').join('') + '</div>' : '<div class="empty">' + escapeHTML(t('empty.noCheckpoints')) + '</div>';
       } else if (state.selectedRun) {
-        html += '<div class="empty">Checkpoint history requires WithCheckpointHistory wiring</div>';
+        html += '<div class="empty">' + escapeHTML(t('empty.checkpointRequiresHistory')) + '</div>';
       }
       if (!html) {
-        html = '<div class="empty">Select an event or checkpoint</div>';
+        html = '<div class="empty">' + escapeHTML(t('empty.selectEventOrCheckpoint')) + '</div>';
       }
       $('details').innerHTML = html;
       document.querySelectorAll('.checkpoint-item').forEach((node) => node.onclick = async () => {
@@ -1225,7 +1354,7 @@ const indexHTML = `<!doctype html>
     $('deleteNodeButton').onclick = () => deleteEditorNode();
     $('connectModeButton').onclick = () => {
       state.editorConnectFrom = state.selectedNode || '';
-      $('connectModeButton').textContent = state.editorConnectFrom ? ('From ' + state.editorConnectFrom) : 'Connect';
+      updateConnectButton();
     };
     $('validateGraphButton').onclick = () => validateEditorGraph();
     $('yamlGraphButton').onclick = () => yamlEditorGraph();
@@ -1249,9 +1378,12 @@ const indexHTML = `<!doctype html>
     $('resumeCheckpointButton').onclick = () => resumeFromCheckpoint();
     $('liveButton').onclick = () => {
       state.live = !state.live;
-      $('liveButton').textContent = state.live ? 'Live on' : 'Live off';
+      updateLiveButton();
       if (state.live) openStream(); else closeStream();
     };
+    $('langSelect').value = locale;
+    $('langSelect').onchange = () => setLocale($('langSelect').value);
+    applyStaticI18n();
     loadGraph().then(() => loadRuns());
     setInterval(() => { if (state.live) loadRuns(); }, 3000);
   </script>

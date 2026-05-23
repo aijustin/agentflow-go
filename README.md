@@ -557,12 +557,12 @@ make validate-builder
 go run ./examples/go/http-worker/main.go
 ```
 
-默认监听 `127.0.0.1:7070`（可通过 `AGENT_HTTP_ADDR` 覆盖）；Studio 面板：`http://127.0.0.1:7070/observability/`。
+默认监听 `127.0.0.1:7060`（可通过 `AGENT_HTTP_ADDR` 覆盖）；Studio 面板：`http://127.0.0.1:7060/observability/`。
 
 生产环境 HITL 续跑使用 `NewProductionHTTPHandler` 或 `NewHumanHTTPHandler` 的 `POST /v1/hitl/resume`。设置 `"continue": true` 会调用 `ResumeAndContinue`：
 
 ```sh
-curl -X POST http://localhost:7070/v1/hitl/resume \
+curl -X POST http://localhost:7060/v1/hitl/resume \
   -H 'Content-Type: application/json' \
   -d '{
     "token": "'"$TOKEN"'",

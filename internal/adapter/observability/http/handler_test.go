@@ -33,7 +33,7 @@ func TestHandlerServesDashboardRunsAndEvents(t *testing.T) {
 
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "AgentFlow Observability") {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "AgentFlow 可观测性") || !strings.Contains(page.Body.String(), "id=\"langSelect\"") {
 		t.Fatalf("dashboard page was not served: code=%d body=%q", page.Code, page.Body.String())
 	}
 
