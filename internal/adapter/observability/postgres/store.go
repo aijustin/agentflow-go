@@ -81,6 +81,9 @@ ON %s (event_type, occurred_at DESC)`, indexPrefix, store.table),
 			return fmt.Errorf("postgres observability: ensure schema: %w", err)
 		}
 	}
+	if _, err := store.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS parent_span_id text NOT NULL DEFAULT ''`, store.table)); err != nil {
+		return fmt.Errorf("postgres observability: ensure parent_span_id column: %w", err)
+	}
 	return nil
 }
 
@@ -109,12 +112,12 @@ func (store *Store) Append(ctx context.Context, event core.Event) (obspkg.EventR
 	if err := tx.QueryRowContext(ctx, sequenceQuery, event.RunID).Scan(&sequence); err != nil {
 		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: next sequence for run %q: %w", event.RunID, err)
 	}
-	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, sequence, event_type, scenario_name, trace_id, span_id, occurred_at, payload_json)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, sequence, event_type, scenario_name, trace_id, span_id, parent_span_id, occurred_at, payload_json)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, created_at`, store.table)
 	var id int64
 	var createdAt time.Time
-	if err := tx.QueryRowContext(ctx, insertQuery, event.RunID, sequence, string(event.Type), event.ScenarioName, event.TraceID, event.SpanID, event.Timestamp, payload).Scan(&id, &createdAt); err != nil {
+	if err := tx.QueryRowContext(ctx, insertQuery, event.RunID, sequence, string(event.Type), event.ScenarioName, event.TraceID, event.SpanID, event.ParentSpanID, event.Timestamp, payload).Scan(&id, &createdAt); err != nil {
 		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: append event for run %q: %w", event.RunID, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -178,7 +181,7 @@ func (store *Store) ListEvents(ctx context.Context, runID string, query obspkg.E
 		return nil, err
 	}
 	query = obspkg.NormalizeEventQuery(query)
-	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, scenario_name, trace_id, span_id, occurred_at, payload_json, created_at
+	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, scenario_name, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
 FROM %s
 WHERE run_id = $1 AND sequence > $2
 ORDER BY sequence ASC
@@ -206,7 +209,7 @@ func scanRecord(row interface{ Scan(dest ...any) error }) (obspkg.EventRecord, e
 	var record obspkg.EventRecord
 	var eventType string
 	var payload []byte
-	if err := row.Scan(&record.ID, &record.Sequence, &eventType, &record.Event.RunID, &record.Event.ScenarioName, &record.Event.TraceID, &record.Event.SpanID, &record.Event.Timestamp, &payload, &record.CreatedAt); err != nil {
+	if err := row.Scan(&record.ID, &record.Sequence, &eventType, &record.Event.RunID, &record.Event.ScenarioName, &record.Event.TraceID, &record.Event.SpanID, &record.Event.ParentSpanID, &record.Event.Timestamp, &payload, &record.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return obspkg.EventRecord{}, err
 		}

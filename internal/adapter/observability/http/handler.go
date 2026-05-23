@@ -19,6 +19,7 @@ type Config struct {
 	Store          obspkg.EventStore
 	Hub            *obspkg.EventHub
 	AuthMiddleware func(nethttp.Handler) nethttp.Handler
+	TraceExploreURL string
 	Steps          StepsLister
 	HITLResume     RunHITLResumer
 	Graph          GraphExporter
@@ -120,6 +121,7 @@ type Handler struct {
 	compare    RunComparer
 	thread     ThreadLister
 	fork       RunForker
+	traceExploreURL string
 	mux        *nethttp.ServeMux
 	handler    nethttp.Handler
 }
@@ -147,6 +149,7 @@ func NewHandler(config Config) (*Handler, error) {
 		compare:    config.Compare,
 		thread:     config.Thread,
 		fork:       config.Fork,
+		traceExploreURL: config.TraceExploreURL,
 		mux:        nethttp.NewServeMux(),
 	}
 	handler.routes()
@@ -163,6 +166,7 @@ func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/", handler.handleDashboard)
+	handler.mux.HandleFunc("/api/ui-config", handler.handleUIConfig)
 	handler.mux.HandleFunc("/api/graph", handler.handleGraph)
 	handler.mux.HandleFunc("/api/compare", handler.handleCompare)
 	handler.mux.HandleFunc("/api/studio/validate", handler.handleStudioValidate)
@@ -199,6 +203,16 @@ func (handler *Handler) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Req
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
 	_, _ = w.Write([]byte(indexHTML))
+}
+
+func (handler *Handler) handleUIConfig(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]string{
+		"trace_explore_url": handler.traceExploreURL,
+	})
 }
 
 func (handler *Handler) handleRuns(w nethttp.ResponseWriter, r *nethttp.Request) {

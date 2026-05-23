@@ -68,6 +68,14 @@
 | Inspector 内嵌事件 payload 预览 | ✅ |
 | Compare 共享步骤输出 diff | ✅ |
 
+## Studio P11 — Editor 预览与 Trace 树（已完成）
+
+| 项 | 状态 |
+|----|------|
+| Editor Studio Run 画布实时高亮 | ✅ |
+| Inspector Trace/Span 树 + 外链 | ✅ |
+| Event `parent_span_id` 传播 | ✅ |
+
 ## 相关文档
 
 - [studio-roadmap.md](./studio-roadmap.md)

@@ -43,6 +43,7 @@ type Event struct {
 	Timestamp    time.Time       `json:"timestamp"`
 	TraceID      string          `json:"trace_id,omitempty"`
 	SpanID       string          `json:"span_id,omitempty"`
+	ParentSpanID string          `json:"parent_span_id,omitempty"`
 	Payload      json.RawMessage `json:"payload,omitempty"`
 }
 

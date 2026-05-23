@@ -61,11 +61,12 @@ func syncObservabilityTrace(ctx context.Context, otelSpan oteltrace.Span) contex
 	if otelSpan == nil {
 		return ctx
 	}
+	_, parentSpanID := observability.TraceFromContext(ctx)
 	sc := otelSpan.SpanContext()
 	if !sc.IsValid() {
 		return ctx
 	}
-	return observability.WithTrace(ctx, sc.TraceID().String(), sc.SpanID().String())
+	return observability.WithTraceParent(ctx, sc.TraceID().String(), sc.SpanID().String(), parentSpanID)
 }
 
 func toAttributes(attrs []observability.Attribute) []attribute.KeyValue {

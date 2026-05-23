@@ -228,6 +228,14 @@ HTTP：
 | Inspector 事件 payload 预览 | ✅ |
 | Compare 步骤输出 diff | ✅ |
 
+## P11（已交付 — Editor 预览与 Trace 树）
+
+| 能力 | 状态 |
+|------|------|
+| Editor Studio Run 画布实时高亮 | ✅ |
+| Inspector Trace/Span 树 + `TraceExploreURL` | ✅ |
+| Event `parent_span_id` 传播 | ✅ |
+
 ## 相关文档
 
 - [next-milestones.md](./next-milestones.md)

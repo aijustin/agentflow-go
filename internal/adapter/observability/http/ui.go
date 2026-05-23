@@ -278,9 +278,23 @@ const indexHTML = `<!doctype html>
     .compare-step-diff pre { max-height: 180px; overflow: auto; font-size: 11px; }
     .graph-node.running rect { stroke: #2563eb; stroke-width: 2.5; animation: pulse-node 1.2s ease-in-out infinite; }
     @keyframes pulse-node { 0%,100% { opacity: 1; } 50% { opacity: 0.72; } }
+    .span-tree-item {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 4px 8px;
+      background: #fff;
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+    .span-tree-item:hover, .span-tree-item.active { background: #f0f7f6; border-color: #b8ded7; }
+    .span-tree-node { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+    .editor-preview-status { padding: 0 12px 8px; }
     .editor-toolbar, .compare-toolbar, .thread-toolbar { display: flex; gap: 8px; padding: 0 12px 12px; flex-wrap: wrap; align-items: center; }
     .editor-toolbar select { min-width: 120px; }
     .graph-node.editing rect { stroke: #2563eb; }
+    .graph-node.editing.done rect { fill: #ecfdf5; stroke: var(--ok); }
+    .graph-node.editing.current rect { stroke: #2563eb; stroke-width: 2.5; animation: pulse-node 1.2s ease-in-out infinite; }
     .graph-node.multi-selected rect { stroke: #7c3aed; stroke-width: 2.5; fill: #f5f3ff; }
     .graph-port { fill: #2563eb; cursor: crosshair; }
     .graph-node.diff-a rect { stroke: #b45309; fill: #fff5e5; }
@@ -398,6 +412,7 @@ const indexHTML = `<!doctype html>
           <input id="editorRunPrompt" data-i18n-placeholder="editor.runPromptPlaceholder" placeholder="Studio 运行提示词（可选）" />
           <button class="primary" id="runEditorGraphButton" data-i18n="editor.runGraph">运行图</button>
         </div>
+        <div class="editor-preview-status meta" id="editorRunStatus" hidden></div>
         <div class="editor-props" id="editorProps" hidden>
           <div class="meta" data-i18n="editor.nodeProps">所选节点属性</div>
           <input id="editorNodeRef" data-i18n-placeholder="editor.refPlaceholder" placeholder="ref（agent/tool/skill/subgraph）" />
@@ -466,7 +481,7 @@ const indexHTML = `<!doctype html>
         'empty.noCheckpoints': '暂无 checkpoint 记录', 'empty.checkpointRequiresHistory': '需要配置 WithCheckpointHistory 才能查看 checkpoint 历史', 'empty.selectEventOrCheckpoint': '请选择事件或 checkpoint',
         'editor.addSubgraph': '添加子图', 'editor.addNode': '添加节点', 'editor.undo': '撤销', 'editor.redo': '重做',         'editor.connect': '连边', 'editor.fromNode': '从 {node}', 'editor.deleteEdge': '删除边',
         'editor.delete': '删除', 'editor.validate': '校验', 'editor.exportYaml': '导出 YAML', 'editor.importYaml': '导入 YAML', 'editor.previewSave': '预览保存', 'editor.saveScenario': '保存场景',
-        'editor.revertLoaded': '恢复到已加载', 'editor.exportGo': '导出 Go', 'editor.runGraph': '运行图', 'editor.quickAdd': '快速添加：',
+        'editor.revertLoaded': '恢复到已加载', 'editor.exportGo': '导出 Go', 'editor.runGraph': '运行图', 'editor.previewRun': '预览运行 {run} · 当前 {current}', 'editor.quickAdd': '快速添加：',
         'editor.nodeProps': '所选节点属性', 'editor.edgeProps': '所选边', 'editor.applyNodeProps': '应用节点属性', 'editor.applyEdgeProps': '应用边属性',
         'editor.runPromptPlaceholder': 'Studio 运行提示词（可选）', 'editor.refPlaceholder': 'ref（agent/tool/skill/subgraph）',
         'editor.nodeConditionPlaceholder': '节点 condition，例如 steps.a.output.ok', 'editor.dependsOnPlaceholder': 'depends_on 逗号分隔，例如 prep,review',
@@ -478,6 +493,7 @@ const indexHTML = `<!doctype html>
         'inspector.node': '节点 Inspector', 'inspector.kind': '类型', 'inspector.stepStatus': '步骤状态', 'inspector.stepOutput': '步骤输出',
         'inspector.relatedEvents': '关联事件', 'inspector.noRelatedEvents': '暂无关联事件', 'inspector.noStepOutput': '（无输出）',
         'inspector.pending': '待执行', 'inspector.completed': '已完成', 'inspector.running': '执行中',
+        'inspector.spanTree': 'Trace / Span 树', 'inspector.openTrace': '打开 Trace', 'inspector.copySpan': '复制 Span',
         'detail.nodeInspector': '节点 Inspector', 'detail.checkpointDiff': '相对上一 revision 的步骤变化',
         'detail.stepsAdded': '新增', 'detail.stepsRemoved': '移除',
         'hitl.approve': '批准并继续', 'hitl.reject': '拒绝', 'hitl.pending': '等待审批：{node}（{kind}）', 'hitl.interrupt': 'declarative interrupt', 'hitl.humanGate': 'human gate',
@@ -528,7 +544,7 @@ const indexHTML = `<!doctype html>
         'empty.noCheckpoints': 'No checkpoints recorded', 'empty.checkpointRequiresHistory': 'Checkpoint history requires WithCheckpointHistory wiring', 'empty.selectEventOrCheckpoint': 'Select an event or checkpoint',
         'editor.addSubgraph': 'Add subgraph', 'editor.addNode': 'Add node', 'editor.undo': 'Undo', 'editor.redo': 'Redo',         'editor.connect': 'Connect', 'editor.fromNode': 'From {node}', 'editor.deleteEdge': 'Delete edge',
         'editor.delete': 'Delete', 'editor.validate': 'Validate', 'editor.exportYaml': 'Export YAML', 'editor.importYaml': 'Import YAML', 'editor.previewSave': 'Preview save', 'editor.saveScenario': 'Save scenario',
-        'editor.revertLoaded': 'Revert to loaded', 'editor.exportGo': 'Export Go', 'editor.runGraph': 'Run graph', 'editor.quickAdd': 'Quick add:',
+        'editor.revertLoaded': 'Revert to loaded', 'editor.exportGo': 'Export Go', 'editor.runGraph': 'Run graph', 'editor.previewRun': 'Preview run {run} · current {current}', 'editor.quickAdd': 'Quick add:',
         'editor.nodeProps': 'Selected node properties', 'editor.edgeProps': 'Selected edge', 'editor.applyNodeProps': 'Apply node properties', 'editor.applyEdgeProps': 'Apply edge properties',
         'editor.runPromptPlaceholder': 'Prompt for studio run (optional)', 'editor.refPlaceholder': 'ref (agent/tool/skill/subgraph)',
         'editor.nodeConditionPlaceholder': 'node condition e.g. steps.a.output.ok', 'editor.dependsOnPlaceholder': 'depends_on comma-separated e.g. prep,review',
@@ -541,6 +557,7 @@ const indexHTML = `<!doctype html>
         'inspector.relatedEvents': 'Related events', 'inspector.noRelatedEvents': 'No related events', 'inspector.noStepOutput': '(no output)',
         'inspector.pending': 'pending', 'inspector.completed': 'completed', 'inspector.running': 'running',
         'inspector.viewInTimeline': 'View in timeline',
+        'inspector.spanTree': 'Trace / span tree', 'inspector.openTrace': 'Open trace', 'inspector.copySpan': 'Copy span',
         'detail.nodeInspector': 'Node inspector', 'detail.checkpointDiff': 'Step changes vs previous revision',
         'detail.stepsAdded': 'added', 'detail.stepsRemoved': 'removed',
         'hitl.approve': 'Approve & continue', 'hitl.reject': 'Reject', 'hitl.pending': 'Awaiting approval: {node} ({kind})', 'hitl.interrupt': 'declarative interrupt', 'hitl.humanGate': 'human gate',
@@ -577,7 +594,7 @@ const indexHTML = `<!doctype html>
       }
     };
     let locale = localStorage.getItem('obs-lang') || 'zh-CN';
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [], drillSubgraph: null };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [], drillSubgraph: null, editorPreviewRun: '', traceExploreURL: '' };
     const t = (key, vars) => {
       let text = (I18N[locale] && I18N[locale][key]) || (I18N.en && I18N.en[key]) || key;
       if (vars) Object.keys(vars).forEach((name) => { text = text.split('{' + name + '}').join(String(vars[name])); });
@@ -710,6 +727,8 @@ const indexHTML = `<!doctype html>
       } catch (_) {}
       if (options.preserveSelection && prevSelected) state.selectedNode = prevSelected;
       renderGraph();
+      if (state.view === 'editor') renderEditor();
+      else renderEditorRunStatus();
       updateTimeTravelBar();
       updateHitlBar();
     }
@@ -951,6 +970,159 @@ const indexHTML = `<!doctype html>
       renderGraph();
       renderDetails();
     }
+    function editorPreviewActive() {
+      return state.editorPreviewRun && state.selectedRun === state.editorPreviewRun && state.steps;
+    }
+    function editorNodeDone(nodeID) {
+      if (!editorPreviewActive()) return false;
+      const done = stepNodeIDs();
+      if (done.has(nodeID)) return true;
+      const prefix = nodeID + '::';
+      return [...done].some((id) => id.startsWith(prefix));
+    }
+    function editorNodeCurrent(nodeID) {
+      if (!editorPreviewActive()) return false;
+      const current = state.steps.current_node_id || '';
+      return current === nodeID || current.startsWith(nodeID + '::');
+    }
+    function renderEditorRunStatus() {
+      const el = $('editorRunStatus');
+      if (!el) return;
+      if (editorPreviewActive()) {
+        el.hidden = false;
+        el.textContent = t('editor.previewRun', {
+          run: state.editorPreviewRun,
+          current: state.steps.current_node_id || '-',
+        });
+      } else {
+        el.hidden = true;
+        el.textContent = '';
+      }
+    }
+    function traceExploreURL(traceID) {
+      if (!state.traceExploreURL || !traceID) return '';
+      return state.traceExploreURL
+        .replaceAll('{trace_id}', encodeURIComponent(traceID))
+        .replaceAll('{traceId}', encodeURIComponent(traceID));
+    }
+    function buildSpanTree(records) {
+      const nodes = new Map();
+      records.forEach((record) => {
+        const spanID = record.event.span_id || ('seq:' + record.sequence);
+        nodes.set(spanID, {
+          spanID,
+          parentSpanID: record.event.parent_span_id || '',
+          label: record.event.type,
+          sequence: record.sequence,
+          traceID: record.event.trace_id || '',
+          record,
+          children: [],
+        });
+      });
+      const roots = [];
+      nodes.forEach((node) => {
+        if (node.parentSpanID && nodes.has(node.parentSpanID)) {
+          nodes.get(node.parentSpanID).children.push(node);
+        } else {
+          roots.push(node);
+        }
+      });
+      const sortNodes = (list) => {
+        list.sort((a, b) => a.sequence - b.sequence);
+        list.forEach((item) => sortNodes(item.children));
+      };
+      sortNodes(roots);
+      if (roots.length === records.length && records.length > 1) {
+        return buildHeuristicSpanTree(records);
+      }
+      return roots;
+    }
+    function buildHeuristicSpanTree(records) {
+      const sorted = records.slice().sort((a, b) => a.sequence - b.sequence);
+      const root = sorted.find((record) => (record.event.type || '').includes('RunStarted')) || sorted[0];
+      const rootNode = {
+        spanID: root.event.span_id || ('seq:' + root.sequence),
+        parentSpanID: '',
+        label: root.event.type,
+        sequence: root.sequence,
+        traceID: root.event.trace_id || '',
+        record: root,
+        children: [],
+      };
+      let currentStep = null;
+      sorted.forEach((record) => {
+        if (record.id === root.id) return;
+        const type = record.event.type || '';
+        const node = {
+          spanID: record.event.span_id || ('seq:' + record.sequence),
+          parentSpanID: '',
+          label: type,
+          sequence: record.sequence,
+          traceID: record.event.trace_id || '',
+          record,
+          children: [],
+        };
+        if (type.includes('StepStarted') || type.includes('SubgraphStarted')) {
+          currentStep = node;
+          rootNode.children.push(node);
+          return;
+        }
+        if (currentStep && (type.includes('LLM') || type.includes('Tool') || type.includes('StepCompleted') || type.includes('SubgraphCompleted'))) {
+          currentStep.children.push(node);
+          return;
+        }
+        rootNode.children.push(node);
+      });
+      return [rootNode];
+    }
+    function renderSpanTreeHTML(nodes, depth) {
+      let html = '';
+      nodes.forEach((node) => {
+        const active = state.selectedEvent && state.selectedEvent.id === node.record.id;
+        const traceURL = traceExploreURL(node.traceID);
+        html += '<div class="span-tree-node" style="padding-left:' + (depth * 12) + 'px">';
+        html += '<button type="button" class="span-tree-item' + (active ? ' active' : '') + '" data-id="' + node.record.id + '">';
+        html += escapeHTML(node.label) + ' #' + node.sequence;
+        if (node.spanID) html += ' <span class="meta">' + escapeHTML(String(node.spanID).slice(0, 12)) + '</span>';
+        html += '</button>';
+        if (traceURL) {
+          html += '<a class="meta" href="' + escapeHTML(traceURL) + '" target="_blank" rel="noopener">' + escapeHTML(t('inspector.openTrace')) + '</a>';
+        }
+        html += '</div>';
+        html += renderSpanTreeHTML(node.children, depth + 1);
+      });
+      return html;
+    }
+    function renderSpanTreeSection(records) {
+      const traced = (records || []).filter((record) => record.event.trace_id);
+      if (!traced.length) return '';
+      const traceID = traced[0].event.trace_id;
+      const traceEvents = state.events.filter((record) => record.event.trace_id === traceID);
+      const tree = buildSpanTree(traceEvents.length ? traceEvents : traced);
+      if (!tree.length) return '';
+      let html = '<div class="inspector-section"><div class="panel-title">' + escapeHTML(t('inspector.spanTree')) + '</div>';
+      html += '<div class="meta">trace: ' + escapeHTML(traceID.slice(0, 16)) + (traceExploreURL(traceID) ? ' · <a href="' + escapeHTML(traceExploreURL(traceID)) + '" target="_blank" rel="noopener">' + escapeHTML(t('inspector.openTrace')) + '</a>' : '') + '</div>';
+      html += renderSpanTreeHTML(tree, 0);
+      html += '</div>';
+      return html;
+    }
+    function bindSpanTreeItems() {
+      document.querySelectorAll('.span-tree-item').forEach((item) => {
+        item.onclick = () => {
+          state.selectedEvent = state.events.find((record) => String(record.id) === item.dataset.id) || null;
+          renderEvents();
+          renderDetails();
+        };
+      });
+    }
+    async function loadUIConfig() {
+      try {
+        const res = await fetch('api/ui-config');
+        if (!res.ok) return;
+        const body = await res.json();
+        state.traceExploreURL = body.trace_explore_url || '';
+      } catch (_) {}
+    }
     function eventPayloadNodeID(record) {
       const payload = record && record.event && record.event.payload;
       if (!payload || typeof payload.node_id !== 'string') return '';
@@ -1114,6 +1286,7 @@ const indexHTML = `<!doctype html>
       if (meta.kind === 'subgraph' && meta.ref && state.graph && state.graph.workflows && state.graph.workflows[meta.ref]) {
         html += '<button type="button" class="secondary" id="drillSubgraphButton" style="margin-top:8px;">' + escapeHTML(t('graph.drillSubgraph')) + '</button>';
       }
+      html += renderSpanTreeSection(related.length ? related : state.events.filter((record) => eventPayloadNodeID(record) === nodeID));
       html += '</div></div>';
       return html;
     }
@@ -1384,6 +1557,8 @@ const indexHTML = `<!doctype html>
         const classes = ['graph-node', 'editing'];
         if (state.selectedNode === node.id) classes.push('active');
         if (isNodeSelected(node.id) && (state.selectedNodes || []).length > 1) classes.push('multi-selected');
+        if (editorNodeDone(node.id)) classes.push('done');
+        if (editorNodeCurrent(node.id)) classes.push('current');
         html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
         html += '<rect width="120" height="48" rx="8"></rect>';
         html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text>';
@@ -1423,6 +1598,7 @@ const indexHTML = `<!doctype html>
         };
       });
       renderEditorNodeProps();
+      renderEditorRunStatus();
     }
     function finishEdgeDrag(targetID) {
       const from = state.editorEdgeDrag && state.editorEdgeDrag.from;
@@ -1648,8 +1824,10 @@ const indexHTML = `<!doctype html>
       if (!res.ok) { alert(formatApiError(body, 'alert.runFailed')); return; }
       await loadRuns();
       if (body.run_id) {
+        state.editorPreviewRun = body.run_id;
         await selectRun(body.run_id);
-        setView('timeline');
+        setView('editor');
+        renderEditorRunStatus();
       }
     }
     function renderCompareRunOptions() {
@@ -1876,6 +2054,7 @@ const indexHTML = `<!doctype html>
         }
         if (type.includes('Subgraph') || type.includes('Step') || type.includes('LLM') || type.includes('Tool')) {
           if (state.view === 'graph') renderGraph();
+          if (state.view === 'editor') renderEditor();
           renderDetails();
         }
       });
@@ -1978,6 +2157,7 @@ const indexHTML = `<!doctype html>
         $('detailType').textContent = t('detail.nodeInspector');
         $('details').innerHTML = renderNodeInspector(state.selectedNode);
         bindInspectorEventChips();
+        bindSpanTreeItems();
         return;
       }
       if (!html) {
@@ -2064,7 +2244,7 @@ const indexHTML = `<!doctype html>
       }
     });
     applyStaticI18n();
-    loadGraph().then(() => loadRuns());
+    loadUIConfig().then(() => loadGraph()).then(() => loadRuns());
     setInterval(() => { if (state.live) loadRuns(); }, 3000);
   </script>
 </body>

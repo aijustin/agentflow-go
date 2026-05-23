@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Editor **live run preview**: Studio Run stays on Editor with done/current node highlighting during SSE updates.
+- Inspector **trace/span tree** with optional external trace link (`TraceExploreURL` / `GET /api/ui-config`).
+- Event `parent_span_id` propagation for nested OTel spans.
+
 ## [0.2.1] - 2026-05-22
 
 ### Added

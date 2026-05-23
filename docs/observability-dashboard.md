@@ -191,6 +191,23 @@ Checkpoint history requires `WithCheckpointHistory(agentflow.NewInMemoryCheckpoi
 
 See [studio-roadmap.md](./studio-roadmap.md). Example: `go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7060/observability/`.
 
+### Editor live preview & trace links
+
+- **Editor → Run graph** keeps you on the Editor tab; nodes highlight `done` / `current` while the run streams.
+- **Graph / Inspector → Trace / Span tree** shows nested spans when `parent_span_id` is present; click a row to jump to Timeline.
+- Optional external trace UI:
+
+```go
+dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+    Store:           eventStore,
+    Hub:             eventHub,
+    Framework:       fw,
+    TraceExploreURL: "https://jaeger.example.com/trace/{trace_id}",
+})
+```
+
+The UI reads `GET /observability/api/ui-config` for `trace_explore_url`.
+
 ## Data Safety
 
 The detail pane renders event payload JSON. Runtime events are intended to carry operational metadata, not secrets. Keep these rules in place:

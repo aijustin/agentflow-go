@@ -19,7 +19,15 @@ func TestTracerRecordsSpanAndSyncsTraceContext(t *testing.T) {
 	ctx, span := tracer.Start(context.Background(), observability.SpanRun,
 		observability.Attribute{Key: "run_id", Value: "run-1"},
 	)
+	childCtx, childSpan := tracer.Start(ctx, observability.SpanToolCall,
+		observability.Attribute{Key: "tool", Value: "echo"},
+	)
+	childSpan.End()
 	span.End()
+
+	if parent := observability.ParentSpanFromContext(childCtx); parent == "" {
+		t.Fatal("expected parent span on nested context")
+	}
 
 	traceID, spanID := observability.TraceFromContext(ctx)
 	if traceID == "" || spanID == "" {
@@ -27,11 +35,15 @@ func TestTracerRecordsSpanAndSyncsTraceContext(t *testing.T) {
 	}
 
 	spans := exporter.GetSpans()
-	if len(spans) != 1 {
-		t.Fatalf("expected one span, got %d", len(spans))
+	if len(spans) != 2 {
+		t.Fatalf("expected two spans, got %d", len(spans))
 	}
-	if spans[0].Name != string(observability.SpanRun) {
-		t.Fatalf("unexpected span name: %s", spans[0].Name)
+	names := map[string]bool{}
+	for _, span := range spans {
+		names[span.Name] = true
+	}
+	if !names[string(observability.SpanRun)] || !names[string(observability.SpanToolCall)] {
+		t.Fatalf("unexpected span names: %+v", names)
 	}
 }
 

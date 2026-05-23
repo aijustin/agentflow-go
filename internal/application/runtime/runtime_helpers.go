@@ -309,6 +309,9 @@ func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, pay
 		event.TraceID = traceID
 		event.SpanID = spanID
 	}
+	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
+		event.ParentSpanID = parentSpanID
+	}
 	_ = e.events.Emit(ctx, event)
 }
 

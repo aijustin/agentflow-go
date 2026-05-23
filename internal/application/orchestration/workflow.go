@@ -13,6 +13,7 @@ import (
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
+	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -735,11 +736,19 @@ func (r *WorkflowRunner) emitJSON(ctx context.Context, typ core.EventType, scena
 
 func (r *WorkflowRunner) emit(ctx context.Context, typ core.EventType, scenarioName, runID string, payload json.RawMessage) {
 	payload = governance.RedactEventPayload(ctx, r.redactor, runID, typ, payload)
-	_ = r.events.Emit(ctx, core.Event{
+	event := core.Event{
 		Type:         typ,
 		RunID:        runID,
 		ScenarioName: scenarioName,
 		Timestamp:    time.Now().UTC(),
 		Payload:      payload,
-	})
+	}
+	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
+		event.TraceID = traceID
+		event.SpanID = spanID
+	}
+	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
+		event.ParentSpanID = parentSpanID
+	}
+	_ = r.events.Emit(ctx, event)
 }

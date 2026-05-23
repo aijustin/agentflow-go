@@ -183,6 +183,7 @@ type testRow struct {
 	scenarioName string
 	traceID      string
 	spanID       string
+	parentSpanID string
 	occurredAt   time.Time
 	payload      []byte
 	createdAt    time.Time
@@ -259,8 +260,9 @@ func (c *testConn) insertEvent(args []driver.NamedValue) (driver.Rows, error) {
 		scenarioName: namedString(args[3]),
 		traceID:      namedString(args[4]),
 		spanID:       namedString(args[5]),
-		occurredAt:   args[6].Value.(time.Time),
-		payload:      valueBytes(args[7].Value),
+		parentSpanID: namedString(args[6]),
+		occurredAt:   args[7].Value.(time.Time),
+		payload:      valueBytes(args[8].Value),
 		createdAt:    createdAt,
 	}
 	c.state.rows = append(c.state.rows, row)
@@ -338,7 +340,7 @@ func (c *testConn) listRuns(args []driver.NamedValue) (driver.Rows, error) {
 }
 
 func (row testRow) values() []driver.Value {
-	return []driver.Value{row.id, row.sequence, row.eventType, row.runID, row.scenarioName, row.traceID, row.spanID, row.occurredAt, cloneBytes(row.payload), row.createdAt}
+	return []driver.Value{row.id, row.sequence, row.eventType, row.runID, row.scenarioName, row.traceID, row.spanID, row.parentSpanID, row.occurredAt, cloneBytes(row.payload), row.createdAt}
 }
 
 type testRows struct {
@@ -363,7 +365,7 @@ func (rows *testRows) Next(dest []driver.Value) error {
 }
 
 func eventColumns() []string {
-	return []string{"id", "sequence", "event_type", "run_id", "scenario_name", "trace_id", "span_id", "occurred_at", "payload_json", "created_at"}
+	return []string{"id", "sequence", "event_type", "run_id", "scenario_name", "trace_id", "span_id", "parent_span_id", "occurred_at", "payload_json", "created_at"}
 }
 
 func runColumns() []string {

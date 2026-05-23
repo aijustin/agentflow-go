@@ -35,6 +35,8 @@ type ObservabilityHTTPHandlerConfig struct {
 	Framework *Framework
 	// StudioSavePath enables POST /observability/api/studio/save for the configured scenario file.
 	StudioSavePath string
+	// TraceExploreURL is an optional trace UI link template, e.g. https://jaeger.example.com/trace/{trace_id}.
+	TraceExploreURL string
 }
 
 func NewSlogEventSink(logger *stdslog.Logger) core.EventSink {
@@ -80,9 +82,10 @@ func NewEventFanoutSink(sinks ...core.EventSink) core.EventSink {
 
 func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Handler, error) {
 	httpConfig := observabilityhttp.Config{
-		Store:          config.Store,
-		Hub:            config.Hub,
-		AuthMiddleware: config.AuthMiddleware,
+		Store:           config.Store,
+		Hub:             config.Hub,
+		AuthMiddleware:  config.AuthMiddleware,
+		TraceExploreURL: config.TraceExploreURL,
 	}
 	if config.Framework != nil {
 		adapter := &studioFramework{framework: config.Framework, savePath: config.StudioSavePath}
