@@ -2,10 +2,56 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/aijustin/agentflow-go.svg)](https://pkg.go.dev/github.com/aijustin/agentflow-go)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/aijustin/agentflow-go?label=release)](https://github.com/aijustin/agentflow-go/releases)
 
 [English](./README.en.md) | 简体中文
 
-`agentflow-go` 是面向 **Go 后端工程师** 的可嵌入 Agent **运行时库**：用 Go 代码（`pkg/builder` 或 `core.Scenario`）组合 Agent、Tool、Skill、LLM Gateway、Memory、Run State 与 Human-in-the-loop，在自有服务中显式接线后调用 `Framework.Run`。
+`agentflow-go` 是面向 **Go 后端工程师** 的可嵌入 Agent **运行时库**：用 Go 代码（`pkg/builder` 或 `core.Scenario`）定义 Agent、Tool、Skill 与工作流，在自有服务中显式接线 LLM Gateway、Memory、RunState 与 Human-in-the-loop，然后调用 `Framework.Run`——**无需 Python 运行时，也无需把业务托管到外部 Agent 平台**。
+
+**适合谁：** 已有 Go 后端、要在进程内或自管 Worker 中落地 Agent/工作流，并重视类型安全、可测试性、审批治理与生产可观测的团队。
+
+## 功能强项
+
+### 编排与运行时
+
+- **三种编排模式**：`autonomous`（ReAct 工具循环）、`fixed_workflow`（确定性 DAG）、`hybrid`（工作流阶段 + 自主阶段）
+- **图表达能力**：subgraph 嵌套、`map` 动态 fan-out、`parallel_group`、`loop`、条件边；Builder 提供 `MapOver`、`RouteIf`、`ParallelGroup` 等 DSL
+- **Skill 语义**：prompt 片段 + tool 白名单/策略 + 可内联 workflow 子图，编译期展开为命名空间节点
+- **多 Agent**：supervisor + `sub_agents` 虚拟 delegation tool；可选 planning pass（自主执行前 JSON 计划）
+
+### 生产治理
+
+- **工具治理**：Agent 白名单、审批拒绝、每 run rate cap、分类 LLM/Tool 重试、工具结果大小限制
+- **Human-in-the-loop**：自主暂停、workflow `human_gate` 节点、HMAC Token、`ResumeAndContinue` 续跑
+- **企业能力**：Identity 上下文、API Key / JWT middleware、RBAC、`AuditSink` 审计事件
+- **持久化与时间旅行**：File / PostgreSQL / Redis RunState；S3 兼容 Blob；CAS 快照、Checkpoint 历史链、从任意 step/checkpoint **恢复或分叉**
+
+### AgentFlow Studio（内置 Web 调试台）
+
+挂载 `NewObservabilityHTTPHandler` 即可在 `/observability/` 获得可视化面板（默认中文，可切换 English）：
+
+| 标签 | 能力 |
+|------|------|
+| **Graph** | 拓扑高亮、运行中 done/current 状态、subgraph 钻取、节点 Inspector、autonomous trace |
+| **Time Travel** | Checkpoint 时间轴 scrub、revision diff、从 checkpoint 恢复/分叉 |
+| **Editor** | 拖拽编辑、Undo/Redo、YAML 导入/导出、Go codegen、Studio Run **实时画布预览**、subgraph 画布钻取 |
+| **Compare / Thread** | 多 run 步骤输出 diff、分叉 lineage |
+| **Inspector** | step 输出、关联事件、嵌套 **Trace/Span 树**（可选 Jaeger/Tempo 外链） |
+
+示例：`go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7060/observability/`。详见 [observability-dashboard.md](docs/observability-dashboard.md)、[studio-roadmap.md](docs/studio-roadmap.md)。
+
+### 可观测与部署
+
+- **指标与追踪**：Prometheus recorder、OpenTelemetry tracer、事件级 `parent_span_id` 传播
+- **HTTP 生产套件**：`NewProductionHTTPHandler`、异步 Job Worker（`run` / `event` / `resume.continue`）
+- **Memory Tier**：Postgres warm + file/S3 cold tier、迁移事件、可选 RAG 摘要协同
+- **参考部署**：[Compose 栈](examples/deploy/README.md)、[Helm chart](examples/deploy/helm/agentflow-reference/)
+
+### 开发者体验
+
+- **Builder-first（v0.2+）**：场景即 Go 代码，`ValidateScenario` + `make validate-builder` 可进 CI；Studio 仍支持 YAML 导入/导出互操作
+- **显式 Hexagonal 接线**：Gateway、ToolExecutor、RunState、EventSink 由宿主控制，单测与 mock 友好
+- **与 LangGraph 的差异**：Go 原生嵌入、Scenario 可校验、企业可读 tool 契约；借鉴编排概念但**不做 Python 全量 parity**（见 [competitive-analysis-langgraph.md](docs/competitive-analysis-langgraph.md)）
 
 ## 快速开始
 
@@ -913,41 +959,18 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 ## 当前状态
 
-已实现：
+**最新发布：[v0.2.2](CHANGELOG.md)** — Studio P11（Editor 实时预览、Trace/Span 树、subgraph 画布钻取）、P10 Graph 调试增强、Builder DSL sugar、Helm 参考 chart、跨进程集成测试。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
-- `pkg/builder` Go DSL（19 条 catalog stack）、`ValidateScenario` 与 Studio YAML 互操作（导入/导出）
-- Autonomous runtime engine，包含自主执行前的可选 planning pass
-- 已接入根门面的 Fixed-workflow runner
-- In-memory Memory、RunStateRepository、BlobStore
-- LLM 抽象，以及 OpenAI-compatible、Anthropic、local、router 和 mock 测试路径的根包构造函数
-- 注册工具、OpenAI-compatible function calling 和 Anthropic Messages tool use 的自主工具调用循环
-- 通过 `WithToolResolver` 在运行时策略检查后惰性绑定重型或租户隔离工具 executor
-- Runtime memory integration：注入历史并持久化用户/助手/工具观察结果
-- 固定工作流图调度：依赖、并行、`parallel_group`/`loop` 节点、重试、条件、transform/agent/human-gate 节点、CAS 安全输出保存
-- Workflow-level HITL pause/resume，以及 `ResumeAndContinue` 续跑路径
-- 事件触发器（`scenario.triggers`）、`HandleEvent`、Webhook HTTP 和异步 `event` job
-- 内置 Git / ticket 工具 executor，适用于代码审查和客服工单场景
-- 自主运行中的 planning pass 执行跟踪
-- 通过虚拟 sub-agent tools 实现多 Agent delegation baseline
-- Skill prompt/workflow expansion、compatible-agent 校验、Agent policy overlay 和 Tool policy overlay
-- 文件版 RunState、Blob、Memory 持久化适配器，以及 PostgreSQL RunState、Redis RunState 和 S3-compatible BlobStore 持久化适配器
-- 用于 Worker 和工作流协调的 Redis 分布式租约适配器
-- 异步 Job Queue 和 Worker 契约、内存/PostgreSQL 队列适配器、租约续租、支持 `run`/`event`/`resume.continue` 的 framework job handler，以及带可选同步 event/HITL 路由的生产 HTTP handler
-- 企业 identity context、API Key middleware、静态/JWKS Discovery JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization
-- Audit event 模型，以及 noop、内存和 JSONL 文件 sink，加上 framework audit wiring
-- `ResumeAndContinue` 与 `HandleEvent` 事件驱动运行
-- Runtime hardening：全局/Agent/Profile timeout、分类 LLM/Tool retry + 指数退避、Tool rate cap、工具结果回填上限、失败状态持久化、大输出 Blob 外置
-- 结构化输出和流式输出 Runtime 路径，包含带工具 Agent 的流式运行
-- 上下文治理：滑动窗口、启发式摘要压缩、丰富 LLM Profile 配置、`ContextPrepared` 事件
-- HTTP HITL 与 Webhook 路由（`NewHumanHTTPHandler`、`NewWebhookHTTPHandler`）
-- GitHub Actions CI、golangci-lint、govulncheck/CodeQL、Dependabot 与模块发版检查
-- 单元测试和集成测试
+核心模块已可用：
 
-后续生产路线：
+- **场景构造**：`pkg/builder`（19 条 catalog stack）、`ValidateScenario`、Studio YAML 互操作
+- **运行时**：autonomous / fixed_workflow / hybrid、subgraph / map / loop / parallel、planning pass、Skill 展开
+- **治理**：工具白名单与审批、HITL、Identity/RBAC/Audit、timeout 与分类重试
+- **持久化**：File / Postgres / Redis RunState、S3 Blob、Checkpoint 历史、Memory Tier
+- **集成**：Production HTTP、异步 Worker、Webhook/事件触发、Prometheus + OTel
+- **Studio**：Graph / Editor / Time Travel / Compare / Thread 全链路调试 UI
 
-- 在现有 recorder/tracer 端口之上补充具体 Prometheus/OpenTelemetry exporter
-- 在当前 Compose 和 Kustomize base 之外补充 Helm chart 打包
-- 完善 Tool/Skill catalog manifest 校验、打包流程，以及针对托管服务的集成测试矩阵
+后续方向（非阻塞）：Tool/Skill catalog 版本化 manifest、托管环境集成测试矩阵扩展、http-worker 示例接 `TraceExploreURL`。产品边界见 [product-direction.md](docs/product-direction.md)（不做 `agent_loop` 图节点、不做 LangGraph Store 全量 parity）。
 
 ## 贡献
 

@@ -2,10 +2,56 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/aijustin/agentflow-go.svg)](https://pkg.go.dev/github.com/aijustin/agentflow-go)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/aijustin/agentflow-go?label=release)](https://github.com/aijustin/agentflow-go/releases)
 
 [简体中文](./README.md) | English
 
-Scenario-configured Go **runtime library for Go backend engineers**. Define scenarios in Go (`pkg/builder` or `core.Scenario`), wire gateways and executors explicitly, then call `Framework.Run` in-process or mount the provided HTTP handlers in your own server.
+`agentflow-go` is an embeddable Agent **runtime library for Go backend engineers**. Define scenarios in Go (`pkg/builder` or `core.Scenario`), wire LLM gateways, tools, memory, and run state explicitly in your own service, then call `Framework.Run`—**no Python runtime and no external agent platform required**.
+
+**Who it is for:** teams with existing Go backends that need in-process or self-hosted agent/workflow capabilities, with strong typing, testability, governance, and production observability.
+
+## Strengths at a glance
+
+### Orchestration & runtime
+
+- **Three orchestration modes**: `autonomous` (ReAct tool loop), `fixed_workflow` (deterministic DAG), `hybrid` (workflow phase + autonomous phase)
+- **Graph features**: nested subgraphs, dynamic `map` fan-out, `parallel_group`, `loop`, conditional edges; Builder DSL helpers such as `MapOver`, `RouteIf`, `ParallelGroup`
+- **Skills**: prompt fragments + tool whitelist/policy + inline workflow subgraphs, expanded at compile time
+- **Multi-agent**: supervisor + virtual `sub_agents` delegation tools; optional planning pass before autonomous execution
+
+### Production governance
+
+- **Tool governance**: agent whitelist, approval gates, per-run rate caps, classified LLM/tool retries, bounded tool result payloads
+- **Human-in-the-loop**: autonomous pause, workflow `human_gate` nodes, HMAC tokens, `ResumeAndContinue`
+- **Enterprise**: identity context, API key / JWT middleware, RBAC, `AuditSink` events
+- **Persistence & time travel**: file / PostgreSQL / Redis run state; S3-compatible blobs; CAS snapshots, checkpoint history, **resume or fork from any step/checkpoint**
+
+### AgentFlow Studio (built-in debug UI)
+
+Mount `NewObservabilityHTTPHandler` for a web panel at `/observability/` (Chinese by default, English available):
+
+| Tab | Capabilities |
+|-----|--------------|
+| **Graph** | topology highlighting, live done/current states, subgraph drill-down, node inspector, autonomous trace |
+| **Time Travel** | checkpoint timeline scrub, revision diff, resume/fork from checkpoint |
+| **Editor** | drag-and-drop editing, undo/redo, YAML import/export, Go codegen, **live run preview**, subgraph canvas drill-down |
+| **Compare / Thread** | multi-run step output diff, fork lineage |
+| **Inspector** | step output, related events, nested **trace/span tree** (optional Jaeger/Tempo link) |
+
+Try: `go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7060/observability/`. See [observability-dashboard.md](docs/observability-dashboard.md) and [studio-roadmap.md](docs/studio-roadmap.md).
+
+### Observability & deployment
+
+- **Metrics & tracing**: Prometheus recorder, OpenTelemetry tracer, event-level `parent_span_id` propagation
+- **HTTP production kit**: `NewProductionHTTPHandler`, async job workers (`run` / `event` / `resume.continue`)
+- **Memory tier**: Postgres warm + file/S3 cold tier, migration events, optional RAG summary integration
+- **Reference deploy**: [Compose stack](examples/deploy/README.md), [Helm chart](examples/deploy/helm/agentflow-reference/)
+
+### Developer experience
+
+- **Builder-first (v0.2+)**: scenarios as Go code, `ValidateScenario` + `make validate-builder` for CI; Studio YAML import/export for interoperability
+- **Explicit hexagonal wiring**: gateways, tool executors, run state, and event sinks controlled by the host—easy to mock in tests
+- **vs LangGraph**: Go-native embedding, validatable scenarios, enterprise-friendly tool contracts; borrows orchestration ideas without Python runtime parity ([comparison](docs/competitive-analysis-langgraph.md))
 
 ## Quick start
 
@@ -915,42 +961,18 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 ## Current status
 
-Implemented:
+**Latest release: [v0.2.2](CHANGELOG.md)** — Studio P11 (Editor live preview, trace/span tree, subgraph canvas drill-down), P10 graph debugging, Builder DSL sugar, reference Helm chart, cross-process integration tests. Full notes in [CHANGELOG.md](CHANGELOG.md).
 
-- `pkg/builder` Go DSL (19 catalog stacks), `ValidateScenario`, and Studio YAML interchange (import/export)
-- Autonomous runtime engine with optional planning pass before governed execution
-- Fixed-workflow runner wired through the root facade
-- In-memory Memory, RunStateRepository, and BlobStore
-- LLM abstractions plus root constructors for OpenAI-compatible, Anthropic, local, router, and mock testing paths
-- Autonomous tool-calling loop for registered tools, OpenAI-compatible function calling, and Anthropic Messages tool use
-- Lazy tool resolution through `WithToolResolver` for heavy or tenant-scoped executors after runtime policy checks
-- Runtime memory integration for injected history and persisted user/assistant/tool observations
-- Fixed-workflow graph scheduler with dependencies, parallelism, `parallel_group` and `loop` nodes, retries, conditions, transform/agent/human-gate nodes, and CAS-safe output saves
-- Workflow-level HITL pause/resume with saved scheduler position, plus `ResumeAndContinue` for autonomous, workflow, and tool-approval pause paths
-- Event triggers (`scenario.triggers`) with `HandleEvent`, Webhook HTTP,  and async `event` jobs
-- Built-in Git and ticket tool executors for code-review and support-ticket scenarios
-- Planning pass execution tracking during autonomous runs
-- Multi-agent delegation through virtual sub-agent tools and persisted delegated outputs
-- Skill prompt/workflow expansion, compatible-agent checks, agent policy overlays, and tool policy overlays during scenario build
-- File-backed durable adapters for run state, blobs, and memory, plus PostgreSQL-backed run state, Redis-backed run state, PostgreSQL-backed async queue, and S3-compatible blob storage
-- Redis-backed distributed lease adapter for worker and workflow coordination
-- Async job queue and worker contracts with in-memory/PostgreSQL queue adapters, lease renewal, framework job handler for `run`/`event`/`resume.continue`, HTTP submit/status/cancel handler, and production handler with optional sync event/HITL routes
-- Enterprise identity context, API key middleware, static/JWKS-discovered JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization
-- Audit event model with noop, in-memory, JSONL file, and structured `slog` sinks, plus framework audit wiring
-- Governance hooks for tool budgets, tool side-effect ceilings, and persisted output redaction
-- `ResumeAndContinue` and `HandleEvent` for event-driven runs
-- Runtime hardening: global/agent/profile timeouts, classified LLM/tool retry with exponential backoff, tool rate caps, bounded tool-result context feedback, failed-run status persistence, and blob externalization for large outputs
-- Structured output and streaming runtime paths exposed through the root facade, including tool-enabled streaming runs
-- Context governance with sliding-window trimming, heuristic summary compression, richer LLM profile config, and `ContextPrepared` events
-- HTTP HITL and Webhook routes via `NewHumanHTTPHandler` and `NewWebhookHTTPHandler`
-- GitHub Actions CI, golangci-lint, govulncheck/CodeQL, Dependabot, and module release checks
-- Unit and integration tests
+Core modules are production-ready:
 
-Remaining production roadmap:
+- **Scenarios**: `pkg/builder` (19 catalog stacks), `ValidateScenario`, Studio YAML interchange
+- **Runtime**: autonomous / fixed_workflow / hybrid, subgraph / map / loop / parallel, planning pass, skill expansion
+- **Governance**: tool whitelist & approval, HITL, identity/RBAC/audit, timeouts & classified retries
+- **Persistence**: file / Postgres / Redis run state, S3 blobs, checkpoint history, memory tier
+- **Integration**: production HTTP, async workers, webhook/event triggers, Prometheus + OTel
+- **Studio**: Graph / Editor / Time Travel / Compare / Thread debug UI
 
-- Concrete Prometheus/OpenTelemetry exporters on top of the existing recorder/tracer ports
-- Helm chart examples for host applications (not shipped as first-party binaries)
-- Tool/Skill catalog manifest validation, packaging workflows, and integration test matrices for managed services
+Next (non-blocking): versioned Tool/Skill catalog manifests, expanded managed-service integration tests, `TraceExploreURL` wiring in http-worker example. Product boundaries: [product-direction.md](docs/product-direction.md) (no `agent_loop` graph node, no full LangGraph Store parity).
 
 ## Contributing
 
