@@ -182,6 +182,7 @@ const indexHTML = `<!doctype html>
     .graph-node.done rect { fill: #ecfdf5; stroke: #34d399; }
     .graph-node.current rect { fill: #fff5e5; stroke: var(--accent-2); stroke-width: 2.5; }
     .graph-node.subgraph-active rect { stroke: #2563eb; stroke-width: 2.5; fill: #eff6ff; }
+    .graph-node.subgraph rect { stroke-dasharray: 5 3; }
     .graph-node.not-resumable rect { stroke-dasharray: 4 3; }
     .graph-node text { font-size: 11px; fill: #1e2732; pointer-events: none; }
     .graph-edge { stroke: #94a3b8; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
@@ -421,6 +422,7 @@ const indexHTML = `<!doctype html>
           <textarea id="editorNodeInput" data-i18n-placeholder="editor.inputPlaceholder" placeholder='input JSON，例如 {"set":{"x":1}}'></textarea>
           <label class="meta"><input type="checkbox" id="editorNodeInterrupt" /> <span data-i18n="editor.interrupt">Declarative interrupt（执行后暂停）</span></label>
           <button id="saveNodePropsButton" data-i18n="editor.applyNodeProps">应用节点属性</button>
+          <button type="button" class="secondary" id="editorDrillSubgraphButton" hidden data-i18n="graph.drillSubgraph">钻取子图</button>
         </div>
         <div class="editor-props" id="editorEdgeProps" hidden>
           <div class="meta" data-i18n="editor.edgeProps">所选边</div>
@@ -504,6 +506,7 @@ const indexHTML = `<!doctype html>
         'trace.title': 'Autonomous 追踪', 'trace.hybridPhase2': 'Hybrid Phase-2：workflow 节点外 LLM/Tool 调用', 'trace.empty': '暂无 autonomous 事件',
         'graph.drillSubgraph': '钻取子图', 'graph.drillBack': '返回主图', 'graph.drillTitle': '{parent} → {name}',
         'graph.drillHint': '双击 subgraph 节点可钻取内层图',
+        'editor.drillHint': '双击 subgraph 节点可钻取内层画布',
         'compare.outputDiff': '共享步骤输出差异', 'compare.runA': 'Run A', 'compare.runB': 'Run B',
         'editor.workflowOption': '工作流：{name}', 'editor.subgraphOption': '子图：{name}',
         'prompt.subgraphName': '子图名称', 'prompt.edgeCondition': '边 condition（可选）', 'prompt.nodeId': '节点 ID', 'prompt.refOptional': 'Ref（可选）',
@@ -568,6 +571,7 @@ const indexHTML = `<!doctype html>
         'trace.title': 'Autonomous trace', 'trace.hybridPhase2': 'Hybrid phase-2: LLM/tool calls outside workflow nodes', 'trace.empty': 'No autonomous events yet',
         'graph.drillSubgraph': 'Drill into subgraph', 'graph.drillBack': 'Back to main graph', 'graph.drillTitle': '{parent} → {name}',
         'graph.drillHint': 'Double-click a subgraph node to drill down',
+        'editor.drillHint': 'Double-click a subgraph node to drill into its canvas',
         'compare.outputDiff': 'Shared step output diff', 'compare.runA': 'Run A', 'compare.runB': 'Run B',
         'editor.workflowOption': 'workflow: {name}', 'editor.subgraphOption': 'subgraph: {name}',
         'prompt.subgraphName': 'Subgraph name', 'prompt.edgeCondition': 'Edge condition (optional)', 'prompt.nodeId': 'Node id', 'prompt.refOptional': 'Ref (optional)',
@@ -594,7 +598,7 @@ const indexHTML = `<!doctype html>
       }
     };
     let locale = localStorage.getItem('obs-lang') || 'zh-CN';
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [], drillSubgraph: null, editorPreviewRun: '', traceExploreURL: '' };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorDrillSubgraph: null, editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [], drillSubgraph: null, editorPreviewRun: '', traceExploreURL: '' };
     const t = (key, vars) => {
       let text = (I18N[locale] && I18N[locale][key]) || (I18N.en && I18N.en[key]) || key;
       if (vars) Object.keys(vars).forEach((name) => { text = text.split('{' + name + '}').join(String(vars[name])); });
@@ -743,6 +747,7 @@ const indexHTML = `<!doctype html>
       state.editorPositions = {};
       state.editorConnectFrom = '';
       state.editorTarget = target;
+      state.editorDrillSubgraph = null;
       state.selectedEdge = null;
       state.selectedNode = selectedNode;
       state.selectedNodes = selectedNodes.slice();
@@ -784,6 +789,7 @@ const indexHTML = `<!doctype html>
         graph: state.editorGraph,
         positions: state.editorPositions,
         target: state.editorTarget,
+        drill: state.editorDrillSubgraph,
         selectedNode: state.selectedNode,
         selectedEdge: state.selectedEdge,
       });
@@ -793,6 +799,7 @@ const indexHTML = `<!doctype html>
       state.editorGraph = saved.graph;
       state.editorPositions = saved.positions || {};
       state.editorTarget = saved.target || 'workflow';
+      state.editorDrillSubgraph = saved.drill || null;
       state.selectedNode = saved.selectedNode || '';
       state.selectedEdge = saved.selectedEdge || null;
       renderEditorTargetOptions();
@@ -839,7 +846,11 @@ const indexHTML = `<!doctype html>
     }
     function switchEditorTarget() {
       syncEditorLayout(editorView());
-      state.editorTarget = $('editorTargetSelect').value;
+      const next = $('editorTargetSelect').value;
+      if (!state.editorDrillSubgraph || state.editorDrillSubgraph.ref !== next) {
+        state.editorDrillSubgraph = null;
+      }
+      state.editorTarget = next;
       state.editorPositions = {};
       state.selectedNode = '';
       state.selectedEdge = null;
@@ -970,20 +981,70 @@ const indexHTML = `<!doctype html>
       renderGraph();
       renderDetails();
     }
+    function clearEditorDrill() {
+      if (!state.editorDrillSubgraph) return;
+      const drill = state.editorDrillSubgraph;
+      syncEditorLayout(editorView());
+      state.editorDrillSubgraph = null;
+      state.editorTarget = drill.returnTarget || 'workflow';
+      state.editorPositions = {};
+      state.selectedNode = drill.parentId || '';
+      state.selectedEdge = null;
+      hydrateEditorLayout(editorView());
+      renderEditorTargetOptions();
+      renderEditor();
+    }
+    function drillIntoEditorSubgraph(parentId, ref) {
+      if (!ref || !state.editorGraph) return;
+      if (!state.editorGraph.workflows) state.editorGraph.workflows = {};
+      if (!state.editorGraph.workflows[ref]) {
+        state.editorGraph.workflows[ref] = { id: ref, nodes: [], edges: [] };
+      }
+      syncEditorLayout(editorView());
+      state.editorDrillSubgraph = { parentId, ref, returnTarget: state.editorTarget };
+      state.editorTarget = ref;
+      state.editorPositions = {};
+      state.selectedNode = '';
+      state.selectedEdge = null;
+      hydrateEditorLayout(editorView());
+      renderEditorTargetOptions();
+      renderEditor();
+    }
+    function onEditorNodeDblClick(nodeID) {
+      if (state.editorDrillSubgraph) return;
+      const view = editorView();
+      if (!view) return;
+      const node = (view.nodes || []).find((item) => item.id === nodeID);
+      if (node && node.kind === 'subgraph' && node.ref) drillIntoEditorSubgraph(nodeID, node.ref);
+    }
+    function editorStepScopePrefix() {
+      if (!state.editorDrillSubgraph) return '';
+      return state.editorDrillSubgraph.parentId + '::';
+    }
     function editorPreviewActive() {
       return state.editorPreviewRun && state.selectedRun === state.editorPreviewRun && state.steps;
     }
     function editorNodeDone(nodeID) {
       if (!editorPreviewActive()) return false;
       const done = stepNodeIDs();
-      if (done.has(nodeID)) return true;
-      const prefix = nodeID + '::';
-      return [...done].some((id) => id.startsWith(prefix));
+      const scoped = editorStepScopePrefix() + nodeID;
+      if (done.has(scoped)) return true;
+      if (!editorStepScopePrefix() && done.has(nodeID)) return true;
+      if (!editorStepScopePrefix()) {
+        const prefix = nodeID + '::';
+        return [...done].some((id) => id.startsWith(prefix));
+      }
+      return false;
     }
     function editorNodeCurrent(nodeID) {
       if (!editorPreviewActive()) return false;
       const current = state.steps.current_node_id || '';
-      return current === nodeID || current.startsWith(nodeID + '::');
+      const scoped = editorStepScopePrefix() + nodeID;
+      if (current === scoped) return true;
+      if (!editorStepScopePrefix()) {
+        return current === nodeID || current.startsWith(nodeID + '::');
+      }
+      return false;
     }
     function renderEditorRunStatus() {
       const el = $('editorRunStatus');
@@ -1469,6 +1530,12 @@ const indexHTML = `<!doctype html>
       $('editorNodeDependsOn').value = (node.depends_on || []).join(', ');
       $('editorNodeInput').value = node.input ? (typeof node.input === 'string' ? node.input : JSON.stringify(node.input, null, 2)) : '';
       $('editorNodeInterrupt').checked = !!node.interrupt;
+      const drillButton = $('editorDrillSubgraphButton');
+      if (drillButton) {
+        const canDrill = node.kind === 'subgraph' && !!node.ref && !state.editorDrillSubgraph;
+        drillButton.hidden = !canDrill;
+        drillButton.onclick = canDrill ? () => drillIntoEditorSubgraph(node.id, node.ref) : null;
+      }
     }
     function applyEditorNodeProps() {
       const view = editorView();
@@ -1535,10 +1602,19 @@ const indexHTML = `<!doctype html>
         canvas.innerHTML = '<div class="empty">' + escapeHTML(t('empty.graphRequiresFrameworkShort')) + '</div>';
         return;
       }
+      syncSubgraphOverlay();
       const { nodes, edges, positions } = layoutEditorGraph(view);
       const width = Math.max(640, ...Object.values(positions).map((p) => p.x + 160));
       const height = Math.max(320, ...Object.values(positions).map((p) => p.y + 70));
-      let html = '<svg class="graph-svg" id="editorSvg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '">';
+      let html = '';
+      if (state.editorDrillSubgraph) {
+        const drill = state.editorDrillSubgraph;
+        html += '<div class="graph-breadcrumb"><button type="button" id="editorDrillBackButton">' + escapeHTML(t('graph.drillBack')) + '</button>';
+        html += '<span class="meta">' + escapeHTML(t('graph.drillTitle', { parent: drill.parentId, name: drill.ref })) + '</span></div>';
+      } else if (state.editorTarget === 'workflow') {
+        html += '<div class="meta">' + escapeHTML(t('editor.drillHint')) + '</div>';
+      }
+      html += '<svg class="graph-svg" id="editorSvg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '">';
       html += '<defs><marker id="arrow-editor" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>';
       edges.forEach((edge) => {
         const from = positions[edge.from];
@@ -1559,6 +1635,8 @@ const indexHTML = `<!doctype html>
         if (isNodeSelected(node.id) && (state.selectedNodes || []).length > 1) classes.push('multi-selected');
         if (editorNodeDone(node.id)) classes.push('done');
         if (editorNodeCurrent(node.id)) classes.push('current');
+        if (!state.editorDrillSubgraph && node.kind === 'subgraph' && state.activeSubgraphs[node.id]) classes.push('subgraph-active');
+        if (node.kind === 'subgraph' && node.ref && !state.editorDrillSubgraph) classes.push('subgraph');
         html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
         html += '<rect width="120" height="48" rx="8"></rect>';
         html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text>';
@@ -1568,6 +1646,8 @@ const indexHTML = `<!doctype html>
       });
       html += '</svg>';
       canvas.innerHTML = html;
+      const drillBack = document.getElementById('editorDrillBackButton');
+      if (drillBack) drillBack.onclick = () => clearEditorDrill();
       canvas.querySelectorAll('.graph-edge').forEach((edgeEl) => edgeEl.onclick = (event) => {
         event.stopPropagation();
         state.selectedNode = '';
@@ -1595,6 +1675,11 @@ const indexHTML = `<!doctype html>
           event.stopPropagation();
           if (state.editorEdgeDrag) return;
           handleEditorNodeClick(nodeEl.dataset.node, event);
+        };
+        nodeEl.ondblclick = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onEditorNodeDblClick(nodeEl.dataset.node);
         };
       });
       renderEditorNodeProps();

@@ -235,6 +235,7 @@ HTTP：
 | Editor Studio Run 画布实时高亮 | ✅ |
 | Inspector Trace/Span 树 + `TraceExploreURL` | ✅ |
 | Event `parent_span_id` 传播 | ✅ |
+| Editor subgraph 钻取（双击 / 属性面板 / 面包屑） | ✅ |
 
 ## 相关文档
 

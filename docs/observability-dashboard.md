@@ -194,6 +194,7 @@ See [studio-roadmap.md](./studio-roadmap.md). Example: `go run ./examples/go/htt
 ### Editor live preview & trace links
 
 - **Editor → Run graph** keeps you on the Editor tab; nodes highlight `done` / `current` while the run streams.
+- **Editor subgraph drill-down**: double-click a `subgraph` node (or use **Drill into subgraph** in node properties) to edit the inner canvas; **Back to main graph** returns to the parent workflow. Step highlighting uses `{parent}::{inner}` when drilled during a live run.
 - **Graph / Inspector → Trace / Span tree** shows nested spans when `parent_span_id` is present; click a row to jump to Timeline.
 - Optional external trace UI:
 
