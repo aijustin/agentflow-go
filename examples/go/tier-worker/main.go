@@ -26,6 +26,7 @@ import (
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 	"github.com/aijustin/agentflow-go/pkg/security"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
@@ -46,6 +47,7 @@ func main() {
 	defer cancel()
 
 	var queue async.Queue
+	var tierStoreMetrics tier.Store
 	if dsn := os.Getenv("AGENT_POSTGRES_DSN"); dsn != "" {
 		db, err := sql.Open("pgx", dsn)
 		if err != nil {
@@ -67,6 +69,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		tierStoreMetrics = tierStore
 		policy := tierPolicyFromScenario(scenario)
 		opts = append(opts,
 			agentflow.WithRunStateRepository(repo),
@@ -133,6 +136,11 @@ func main() {
 			case <-metricsTicker.C:
 				if err := recorder.RecordQueueMetrics(ctx, queue); err != nil {
 					log.Printf("queue metrics: %v", err)
+				}
+				if tierStoreMetrics != nil {
+					tier.RecordTierDepth(ctx, tierStoreMetrics, recorder, scenario.Name, memory.Namespace{
+						Scope: memory.ScopeSession, SessionID: "tier-worker", Agent: "assistant",
+					})
 				}
 			}
 		}

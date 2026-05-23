@@ -14,9 +14,17 @@ import (
 
 // ValidateStudioResult reports graph/scenario validation output for Studio.
 type ValidateStudioResult struct {
-	Valid   bool   `json:"valid"`
-	Error   string `json:"error,omitempty"`
-	Scenario string `json:"scenario_name"`
+	Valid        bool   `json:"valid"`
+	Error        string `json:"error,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	Scenario     string `json:"scenario_name"`
+}
+
+// SaveStudioResult describes a persisted Studio graph write.
+type SaveStudioResult struct {
+	Path         string              `json:"path"`
+	ScenarioName string              `json:"scenario_name"`
+	Graph        graph.ScenarioGraph `json:"graph,omitempty"`
 }
 
 // CodegenResult contains generated builder code for a Studio graph.
@@ -35,12 +43,6 @@ type ThreadRunSummary struct {
 	ScenarioName    string             `json:"scenario_name,omitempty"`
 }
 
-// SaveStudioResult describes a persisted Studio graph write.
-type SaveStudioResult struct {
-	Path         string `json:"path"`
-	ScenarioName string `json:"scenario_name"`
-}
-
 type ForkRunResult struct {
 	RunID           string `json:"run_id"`
 	ParentRunID     string `json:"parent_run_id"`
@@ -52,10 +54,12 @@ type ForkRunResult struct {
 func (f *Framework) ValidateStudioGraph(_ context.Context, edited graph.ScenarioGraph) (ValidateStudioResult, error) {
 	scenario, err := graph.ApplyGraph(f.scenario, edited)
 	if err != nil {
-		return ValidateStudioResult{Valid: false, Error: err.Error(), Scenario: f.scenario.Name}, nil
+		payload := studio.ErrorPayloadFrom(studio.WrapGraphError(err))
+		return ValidateStudioResult{Valid: false, Error: payload.Message, ErrorCode: payload.Code, Scenario: f.scenario.Name}, nil
 	}
 	if err := ValidateScenario(scenario); err != nil {
-		return ValidateStudioResult{Valid: false, Error: err.Error(), Scenario: scenario.Name}, nil
+		payload := studio.ErrorPayloadFrom(err)
+		return ValidateStudioResult{Valid: false, Error: payload.Message, ErrorCode: payload.Code, Scenario: scenario.Name}, nil
 	}
 	return ValidateStudioResult{Valid: true, Scenario: scenario.Name}, nil
 }
@@ -89,11 +93,11 @@ func (f *Framework) GenerateStudioScenarioYAML(_ context.Context, edited graph.S
 // SaveStudioGraph validates an edited graph, writes legacy YAML to path, and updates the framework scenario.
 func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGraph, path string) (SaveStudioResult, error) {
 	if path == "" {
-		return SaveStudioResult{}, fmt.Errorf("agentflow: studio save path is required")
+		return SaveStudioResult{}, &studio.CodedError{Code: "studio.save_path_missing", Message: "agentflow: studio save path is required"}
 	}
 	scenario, err := graph.ApplyGraph(f.scenario, edited)
 	if err != nil {
-		return SaveStudioResult{}, err
+		return SaveStudioResult{}, studio.WrapGraphError(err)
 	}
 	if err := ValidateScenario(scenario); err != nil {
 		return SaveStudioResult{}, err
@@ -102,7 +106,11 @@ func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGr
 		return SaveStudioResult{}, err
 	}
 	f.scenario = scenario
-	return SaveStudioResult{Path: path, ScenarioName: scenario.Name}, nil
+	return SaveStudioResult{
+		Path:         path,
+		ScenarioName: scenario.Name,
+		Graph:        graph.ExportScenario(scenario),
+	}, nil
 }
 
 // RunStudioGraph validates an edited graph and executes it as a new run.

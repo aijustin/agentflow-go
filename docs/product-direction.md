@@ -40,7 +40,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{...})
 | Phase 4 `agent_loop` 节点 | ⏸ 不做（用 `hybrid` + `autonomous`） |
 | Phase 5 declarative interrupt | ⏸ 不做（用 `human_gate` + tool pause） |
 | LangGraph Store 语义对齐 | ⏸ 不做 |
-| Studio 级图编辑器 | ✅ P0–P4 已交付（Graph / Editor / Compare / Thread / YAML 保存）；见 [studio-roadmap.md](./studio-roadmap.md) |
+| Studio 级图编辑器 | ✅ P0–P6 已交付（Graph / Editor / Compare / Thread / YAML 保存 / i18n）；见 [studio-roadmap.md](./studio-roadmap.md) |
 
 ## 差异化（对外叙事）
 

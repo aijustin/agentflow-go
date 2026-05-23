@@ -85,6 +85,10 @@ func (f *Framework) PurgeWithPolicy(ctx context.Context, policy RetentionPolicy)
 	return f.PurgeRuns(ctx, filter)
 }
 
+func isTerminalRunStatus(status runstate.RunStatus) bool {
+	return status == runstate.RunStatusCompleted || status == runstate.RunStatusFailed || status == runstate.RunStatusCancelled
+}
+
 func (f *Framework) purgeExpiredWithLimit(ctx context.Context, policy RetentionPolicy) (int, error) {
 	if f.runs == nil {
 		return 0, nil
@@ -108,7 +112,11 @@ func (f *Framework) purgeExpiredWithLimit(ctx context.Context, policy RetentionP
 	cutoff := time.Now().UTC().Add(-policy.MaxAge)
 	removed := 0
 	for _, snapshot := range snapshots {
-		if policy.Status != "" && snapshot.Status != policy.Status {
+		if policy.Status != "" {
+			if snapshot.Status != policy.Status {
+				continue
+			}
+		} else if !isTerminalRunStatus(snapshot.Status) {
 			continue
 		}
 		if snapshot.UpdatedAt.IsZero() || !snapshot.UpdatedAt.Before(cutoff) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
+	"github.com/aijustin/agentflow-go/pkg/studio"
 )
 
 type Config struct {
@@ -380,12 +381,12 @@ func (handler *Handler) handleStudioValidate(w nethttp.ResponseWriter, r *nethtt
 	}
 	graph, err := decodeScenarioGraph(r.Body)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	result, err := handler.studio.ValidateStudioGraph(r.Context(), graph)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, result)
@@ -402,12 +403,12 @@ func (handler *Handler) handleStudioCodegen(w nethttp.ResponseWriter, r *nethttp
 	}
 	graph, err := decodeScenarioGraph(r.Body)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	result, err := handler.codegen.GenerateStudioBuilderCode(r.Context(), graph)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, result)
@@ -424,12 +425,12 @@ func (handler *Handler) handleStudioYAML(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	graph, err := decodeScenarioGraph(r.Body)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	result, err := handler.yaml.GenerateStudioScenarioYAML(r.Context(), graph)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, result)
@@ -465,7 +466,7 @@ func (handler *Handler) handleStudioRun(w nethttp.ResponseWriter, r *nethttp.Req
 	}
 	result, err := handler.runStudio.RunStudioGraph(r.Context(), body.Graph, req)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, result)
@@ -482,12 +483,12 @@ func (handler *Handler) handleStudioSave(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	graph, err := decodeScenarioGraph(r.Body)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	result, err := handler.studioSave.SaveStudioGraph(r.Context(), graph)
 	if err != nil {
-		writeError(w, nethttp.StatusBadRequest, err)
+		writeStudioError(w, nethttp.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, result)
@@ -670,6 +671,10 @@ func writeJSON(w nethttp.ResponseWriter, status int, value any) {
 
 func writeError(w nethttp.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func writeStudioError(w nethttp.ResponseWriter, status int, err error) {
+	writeJSON(w, status, map[string]any{"error": studio.ErrorPayloadFrom(err)})
 }
 
 func writeSSE(w nethttp.ResponseWriter, flusher nethttp.Flusher, record obspkg.EventRecord) bool {

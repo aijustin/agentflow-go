@@ -192,6 +192,8 @@ const indexHTML = `<!doctype html>
     .editor-toolbar, .compare-toolbar, .thread-toolbar { display: flex; gap: 8px; padding: 0 12px 12px; flex-wrap: wrap; align-items: center; }
     .editor-toolbar select { min-width: 120px; }
     .graph-node.editing rect { stroke: #2563eb; }
+    .graph-node.multi-selected rect { stroke: #7c3aed; stroke-width: 2.5; fill: #f5f3ff; }
+    .graph-port { fill: #2563eb; cursor: crosshair; }
     .graph-node.diff-a rect { stroke: #b45309; fill: #fff5e5; }
     .graph-node.diff-b rect { stroke: #2563eb; fill: #eff6ff; }
     .graph-node.diff-changed rect { stroke: #b42318; fill: #fff0ed; }
@@ -281,6 +283,7 @@ const indexHTML = `<!doctype html>
           <button id="undoEditorButton" disabled data-i18n="editor.undo">撤销</button>
           <button id="redoEditorButton" disabled data-i18n="editor.redo">重做</button>
           <button id="connectModeButton" data-i18n="editor.connect">连边</button>
+          <button id="deleteEdgeButton" data-i18n="editor.deleteEdge">删除边</button>
           <button id="deleteNodeButton" data-i18n="editor.delete">删除</button>
           <button id="validateGraphButton" data-i18n="editor.validate">校验</button>
           <button id="yamlGraphButton" data-i18n="editor.exportYaml">导出 YAML</button>
@@ -363,7 +366,7 @@ const indexHTML = `<!doctype html>
         'empty.loadGraphToEdit': '加载图以开始编辑', 'empty.selectCompareRun': '请选择运行并选择对比目标', 'empty.chooseCompareTarget': '选择对比目标并点击「对比」',
         'empty.selectRunForThread': '请选择运行以查看分叉线程', 'empty.selectRun': '请选择运行', 'empty.noThreadRuns': '暂无线程运行', 'empty.threadUnavailable': '线程不可用',
         'empty.noCheckpoints': '暂无 checkpoint 记录', 'empty.checkpointRequiresHistory': '需要配置 WithCheckpointHistory 才能查看 checkpoint 历史', 'empty.selectEventOrCheckpoint': '请选择事件或 checkpoint',
-        'editor.addSubgraph': '添加子图', 'editor.addNode': '添加节点', 'editor.undo': '撤销', 'editor.redo': '重做', 'editor.connect': '连边', 'editor.fromNode': '从 {node}',
+        'editor.addSubgraph': '添加子图', 'editor.addNode': '添加节点', 'editor.undo': '撤销', 'editor.redo': '重做',         'editor.connect': '连边', 'editor.fromNode': '从 {node}', 'editor.deleteEdge': '删除边',
         'editor.delete': '删除', 'editor.validate': '校验', 'editor.exportYaml': '导出 YAML', 'editor.previewSave': '预览保存', 'editor.saveScenario': '保存场景',
         'editor.revertLoaded': '恢复到已加载', 'editor.exportGo': '导出 Go', 'editor.runGraph': '运行图', 'editor.quickAdd': '快速添加：',
         'editor.nodeProps': '所选节点属性', 'editor.edgeProps': '所选边', 'editor.applyNodeProps': '应用节点属性', 'editor.applyEdgeProps': '应用边属性',
@@ -384,7 +387,9 @@ const indexHTML = `<!doctype html>
         'alert.graphValid': '图校验通过', 'alert.invalidGraph': '图无效', 'alert.codegenFailed': '代码生成失败', 'alert.yamlFailed': 'YAML 导出失败',
         'alert.previewFailed': '预览失败', 'alert.saveFailed': '保存失败', 'alert.runFailed': 'Studio 运行失败', 'alert.compareFailed': '对比失败',
         'alert.forkFailed': '分叉失败', 'alert.resumeFailed': '恢复失败', 'confirm.saveGraph': '将编辑后的图保存到宿主场景文件？',
-        'confirm.revertGraph': '丢弃本地编辑并重新加载已加载的场景图？', 'alert.savedTo': '已保存到 {path}', 'alert.scenarioFile': '场景文件',
+        'confirm.revertGraph': '丢弃本地编辑并重新加载已加载的场景图？', 'alert.savedTo': '已保存到 {path}', 'alert.scenarioFile': '场景文件', 'alert.reloadFailed': '重新加载图失败',
+        'errors.studio.save_path_missing': '未配置场景保存路径', 'errors.studio.graph_required': '缺少 graph 数据',
+        'errors.graph.duplicate_node': '重复节点 {id}', 'errors.graph.invalid': '图无效', 'errors.studio.internal': '内部错误',
         'status.running': '运行中', 'status.paused': '已暂停', 'status.completed': '已完成', 'status.failed': '失败'
       },
       'en': {
@@ -401,7 +406,7 @@ const indexHTML = `<!doctype html>
         'empty.loadGraphToEdit': 'Load graph to edit', 'empty.selectCompareRun': 'Select a run and choose compare target', 'empty.chooseCompareTarget': 'Choose compare target and click Compare',
         'empty.selectRunForThread': 'Select a run to view fork thread', 'empty.selectRun': 'Select a run', 'empty.noThreadRuns': 'No thread runs', 'empty.threadUnavailable': 'thread unavailable',
         'empty.noCheckpoints': 'No checkpoints recorded', 'empty.checkpointRequiresHistory': 'Checkpoint history requires WithCheckpointHistory wiring', 'empty.selectEventOrCheckpoint': 'Select an event or checkpoint',
-        'editor.addSubgraph': 'Add subgraph', 'editor.addNode': 'Add node', 'editor.undo': 'Undo', 'editor.redo': 'Redo', 'editor.connect': 'Connect', 'editor.fromNode': 'From {node}',
+        'editor.addSubgraph': 'Add subgraph', 'editor.addNode': 'Add node', 'editor.undo': 'Undo', 'editor.redo': 'Redo',         'editor.connect': 'Connect', 'editor.fromNode': 'From {node}', 'editor.deleteEdge': 'Delete edge',
         'editor.delete': 'Delete', 'editor.validate': 'Validate', 'editor.exportYaml': 'Export YAML', 'editor.previewSave': 'Preview save', 'editor.saveScenario': 'Save scenario',
         'editor.revertLoaded': 'Revert to loaded', 'editor.exportGo': 'Export Go', 'editor.runGraph': 'Run graph', 'editor.quickAdd': 'Quick add:',
         'editor.nodeProps': 'Selected node properties', 'editor.edgeProps': 'Selected edge', 'editor.applyNodeProps': 'Apply node properties', 'editor.applyEdgeProps': 'Apply edge properties',
@@ -422,12 +427,14 @@ const indexHTML = `<!doctype html>
         'alert.graphValid': 'Graph is valid', 'alert.invalidGraph': 'invalid graph', 'alert.codegenFailed': 'codegen failed', 'alert.yamlFailed': 'yaml export failed',
         'alert.previewFailed': 'preview failed', 'alert.saveFailed': 'save failed', 'alert.runFailed': 'studio run failed', 'alert.compareFailed': 'compare failed',
         'alert.forkFailed': 'fork failed', 'alert.resumeFailed': 'resume failed', 'confirm.saveGraph': 'Save edited graph back to the host scenario file?',
-        'confirm.revertGraph': 'Discard local edits and reload the loaded scenario graph?', 'alert.savedTo': 'Saved to {path}', 'alert.scenarioFile': 'scenario file',
+        'confirm.revertGraph': 'Discard local edits and reload the loaded scenario graph?', 'alert.savedTo': 'Saved to {path}', 'alert.scenarioFile': 'scenario file', 'alert.reloadFailed': 'Failed to reload graph',
+        'errors.studio.save_path_missing': 'Studio save path is not configured', 'errors.studio.graph_required': 'Graph is required',
+        'errors.graph.duplicate_node': 'Duplicate node {id}', 'errors.graph.invalid': 'Invalid graph', 'errors.studio.internal': 'Internal error',
         'status.running': 'running', 'status.paused': 'paused', 'status.completed': 'completed', 'status.failed': 'failed'
       }
     };
     let locale = localStorage.getItem('obs-lang') || 'zh-CN';
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
     const t = (key, vars) => {
       let text = (I18N[locale] && I18N[locale][key]) || (I18N.en && I18N.en[key]) || key;
       if (vars) Object.keys(vars).forEach((name) => { text = text.split('{' + name + '}').join(String(vars[name])); });
@@ -437,6 +444,32 @@ const indexHTML = `<!doctype html>
       const key = 'status.' + status;
       return (I18N[locale] && I18N[locale][key]) ? t(key) : status;
     };
+    function formatApiError(body, fallbackKey) {
+      const err = body && body.error;
+      if (!err) return t(fallbackKey);
+      if (typeof err === 'string') return err;
+      const code = err.code || '';
+      const i18nKey = 'errors.' + code;
+      if (code && I18N[locale] && I18N[locale][i18nKey]) {
+        return t(i18nKey, err.params || {});
+      }
+      return err.message || t(fallbackKey);
+    }
+    function isNodeSelected(nodeID) {
+      return state.selectedNode === nodeID || (state.selectedNodes || []).includes(nodeID);
+    }
+    function setNodeSelection(nodeID, additive) {
+      if (!additive) {
+        state.selectedNodes = nodeID ? [nodeID] : [];
+        state.selectedNode = nodeID || '';
+        return;
+      }
+      const selected = new Set(state.selectedNodes || []);
+      if (state.selectedNode) selected.add(state.selectedNode);
+      if (selected.has(nodeID)) selected.delete(nodeID); else selected.add(nodeID);
+      state.selectedNodes = Array.from(selected);
+      state.selectedNode = state.selectedNodes[0] || '';
+    }
     function applyStaticI18n() {
       document.documentElement.lang = locale;
       document.title = t('app.title');
@@ -484,16 +517,25 @@ const indexHTML = `<!doctype html>
       if (type.includes('Run') || type.includes('Step')) return 'run';
       return '';
     };
-    async function loadGraph() {
+    async function loadGraph(options) {
+      options = options || {};
       try {
         const res = await fetch('api/graph');
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (options.alertOnError) alert(t('alert.reloadFailed'));
+          return false;
+        }
         state.graph = await res.json();
         state.graphEnabled = true;
         state.nodeMeta = buildNodeMeta(state.graph);
-        resetEditorGraph();
+        resetEditorGraph({ preserveTarget: options.preserveTarget === true });
         $('timeTravelBar').hidden = false;
-      } catch (_) {}
+        if (state.view === 'graph') renderGraph();
+        return true;
+      } catch (_) {
+        if (options.alertOnError) alert(t('alert.reloadFailed'));
+        return false;
+      }
     }
     async function loadCheckpoints(runID) {
       state.checkpoints = null;
@@ -519,13 +561,20 @@ const indexHTML = `<!doctype html>
       renderGraph();
       updateTimeTravelBar();
     }
-    function resetEditorGraph() {
+    function resetEditorGraph(options) {
+      options = options || {};
       if (!state.graph) return;
+      const preserveTarget = options.preserveTarget === true;
+      const target = preserveTarget ? state.editorTarget : 'workflow';
+      const selectedNode = preserveTarget ? state.selectedNode : '';
+      const selectedNodes = preserveTarget ? (state.selectedNodes || []) : [];
       state.editorGraph = JSON.parse(JSON.stringify(state.graph));
       state.editorPositions = {};
       state.editorConnectFrom = '';
-      state.editorTarget = 'workflow';
+      state.editorTarget = target;
       state.selectedEdge = null;
+      state.selectedNode = selectedNode;
+      state.selectedNodes = selectedNodes.slice();
       state.editorHistory = [];
       state.editorHistoryIndex = -1;
       hydrateEditorLayout(state.editorGraph.workflow);
@@ -887,10 +936,12 @@ const indexHTML = `<!doctype html>
         const pos = positions[node.id];
         const classes = ['graph-node', 'editing'];
         if (state.selectedNode === node.id) classes.push('active');
+        if (isNodeSelected(node.id) && (state.selectedNodes || []).length > 1) classes.push('multi-selected');
         html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
         html += '<rect width="120" height="48" rx="8"></rect>';
         html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text>';
         html += '<text x="8" y="34" fill="#697586">' + escapeHTML(node.kind + (node.ref ? ':' + node.ref : '')) + '</text>';
+        html += '<circle class="graph-port" cx="120" cy="24" r="5" data-port="' + escapeHTML(node.id) + '"></circle>';
         html += '</g>';
       });
       html += '</svg>';
@@ -898,19 +949,50 @@ const indexHTML = `<!doctype html>
       canvas.querySelectorAll('.graph-edge').forEach((edgeEl) => edgeEl.onclick = (event) => {
         event.stopPropagation();
         state.selectedNode = '';
+        state.selectedNodes = [];
         state.selectedEdge = { from: edgeEl.dataset.from, to: edgeEl.dataset.to };
         renderEditor();
       });
+      canvas.querySelectorAll('.graph-port').forEach((portEl) => {
+        portEl.onmousedown = (event) => {
+          event.stopPropagation();
+          state.editorEdgeDrag = { from: portEl.dataset.port };
+        };
+      });
       canvas.querySelectorAll('.graph-node').forEach((nodeEl) => {
-        nodeEl.onmousedown = (event) => startEditorDrag(event, nodeEl);
+        nodeEl.onmousedown = (event) => {
+          if (event.target.classList.contains('graph-port')) return;
+          startEditorDrag(event, nodeEl);
+        };
+        nodeEl.onmouseup = (event) => {
+          if (!state.editorEdgeDrag || state.editorEdgeDrag.from === nodeEl.dataset.node) return;
+          finishEdgeDrag(nodeEl.dataset.node);
+          event.stopPropagation();
+        };
         nodeEl.onclick = (event) => {
           event.stopPropagation();
-          handleEditorNodeClick(nodeEl.dataset.node);
+          if (state.editorEdgeDrag) return;
+          handleEditorNodeClick(nodeEl.dataset.node, event);
         };
       });
       renderEditorNodeProps();
     }
-    function handleEditorNodeClick(nodeID) {
+    function finishEdgeDrag(targetID) {
+      const from = state.editorEdgeDrag && state.editorEdgeDrag.from;
+      state.editorEdgeDrag = null;
+      if (!from || !targetID || from === targetID) return;
+      const view = editorWorkflow();
+      if (!view) return;
+      view.edges = view.edges || [];
+      if (view.edges.some((edge) => edge.from === from && edge.to === targetID)) return;
+      pushEditorHistory();
+      const cond = prompt(t('prompt.edgeCondition'), '') || '';
+      const edge = { from, to: targetID };
+      if (cond.trim()) edge.condition = cond.trim();
+      view.edges.push(edge);
+      renderEditor();
+    }
+    function handleEditorNodeClick(nodeID, event) {
       if (state.editorConnectFrom) {
         const view = editorWorkflow();
         if (view && state.editorConnectFrom !== nodeID) {
@@ -925,27 +1007,45 @@ const indexHTML = `<!doctype html>
         }
         state.editorConnectFrom = '';
         updateConnectButton();
+      } else {
+        setNodeSelection(nodeID, event && event.shiftKey);
       }
       state.selectedEdge = null;
-      state.selectedNode = nodeID;
+      renderEditor();
+    }
+    function deleteEditorEdge() {
+      const view = editorWorkflow();
+      if (!view || !state.selectedEdge) return;
+      pushEditorHistory();
+      view.edges = (view.edges || []).filter((edge) => !(edge.from === state.selectedEdge.from && edge.to === state.selectedEdge.to));
+      state.selectedEdge = null;
       renderEditor();
     }
     function startEditorDrag(event, nodeEl) {
       if (state.editorConnectFrom) return;
       event.preventDefault();
       const nodeID = nodeEl.dataset.node;
+      if (!isNodeSelected(nodeID)) setNodeSelection(nodeID, false);
+      const nodeIDs = (state.selectedNodes && state.selectedNodes.length) ? state.selectedNodes.slice() : [nodeID];
       const svg = $('editorSvg');
       const start = svgPoint(svg, event.clientX, event.clientY);
-      const pos = state.editorPositions[nodeID] || parseTranslate(nodeEl.getAttribute('transform'));
-      state.editorDrag = { nodeID, offsetX: start.x - pos.x, offsetY: start.y - pos.y, moved: false };
+      const offsets = {};
+      nodeIDs.forEach((id) => {
+        const pos = state.editorPositions[id] || parseTranslate(nodeEl.getAttribute('transform'));
+        offsets[id] = { offsetX: start.x - pos.x, offsetY: start.y - pos.y };
+      });
+      state.editorDrag = { nodeIDs, offsets, moved: false };
       const move = (ev) => {
         if (!state.editorDrag) return;
         state.editorDrag.moved = true;
         const point = svgPoint(svg, ev.clientX, ev.clientY);
-        state.editorPositions[state.editorDrag.nodeID] = {
-          x: Math.max(0, point.x - state.editorDrag.offsetX),
-          y: Math.max(0, point.y - state.editorDrag.offsetY),
-        };
+        state.editorDrag.nodeIDs.forEach((id) => {
+          const offset = state.editorDrag.offsets[id];
+          state.editorPositions[id] = {
+            x: Math.max(0, point.x - offset.offsetX),
+            y: Math.max(0, point.y - offset.offsetY),
+          };
+        });
         renderEditor();
       };
       const up = () => {
@@ -994,13 +1094,13 @@ const indexHTML = `<!doctype html>
       if (!state.editorGraph) return;
       const res = await fetch('api/studio/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
-      alert(body.valid ? t('alert.graphValid') : (body.error || t('alert.invalidGraph')));
+      alert(body.valid ? t('alert.graphValid') : (body.error_code && I18N[locale]['errors.' + body.error_code] ? t('errors.' + body.error_code) : (body.error || t('alert.invalidGraph'))));
     }
     async function codegenEditorGraph() {
       if (!state.editorGraph) return;
       const res = await fetch('api/studio/codegen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || t('alert.codegenFailed')); return; }
+      if (!res.ok) { alert(formatApiError(body, 'alert.codegenFailed')); return; }
       state.selectedEvent = null;
       state.selectedCheckpoint = null;
       $('detailType').textContent = t('detail.codegen');
@@ -1010,7 +1110,7 @@ const indexHTML = `<!doctype html>
       if (!state.editorGraph) return;
       const res = await fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || t('alert.yamlFailed')); return; }
+      if (!res.ok) { alert(formatApiError(body, 'alert.yamlFailed')); return; }
       state.selectedEvent = null;
       state.selectedCheckpoint = null;
       $('detailType').textContent = t('detail.yaml');
@@ -1041,7 +1141,7 @@ const indexHTML = `<!doctype html>
       const baseBody = await baseRes.json();
       const editBody = await editRes.json();
       if (!baseRes.ok || !editRes.ok) {
-        alert((editBody.error || baseBody.error) || t('alert.previewFailed'));
+        alert(formatApiError({ error: editBody.error || baseBody.error }, 'alert.previewFailed'));
         return;
       }
       state.selectedEvent = null;
@@ -1054,9 +1154,17 @@ const indexHTML = `<!doctype html>
       if (!confirm(t('confirm.saveGraph'))) return;
       const res = await fetch('api/studio/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || t('alert.saveFailed')); return; }
+      if (!res.ok) { alert(formatApiError(body, 'alert.saveFailed')); return; }
       alert(t('alert.savedTo', { path: body.path || t('alert.scenarioFile') }));
-      await loadGraph();
+      if (body.graph) {
+        state.graph = body.graph;
+        state.nodeMeta = buildNodeMeta(state.graph);
+        resetEditorGraph({ preserveTarget: true });
+        renderEditor();
+      } else {
+        await loadGraph({ preserveTarget: true, alertOnError: true });
+        if (state.view === 'editor') renderEditor();
+      }
       setView('editor');
     }
     function revertEditorGraph() {
@@ -1075,7 +1183,7 @@ const indexHTML = `<!doctype html>
       });
       const body = await res.json();
       $('runEditorGraphButton').disabled = false;
-      if (!res.ok) { alert(body.error || t('alert.runFailed')); return; }
+      if (!res.ok) { alert(formatApiError(body, 'alert.runFailed')); return; }
       await loadRuns();
       if (body.run_id) {
         await selectRun(body.run_id);
@@ -1092,7 +1200,7 @@ const indexHTML = `<!doctype html>
       state.compareRunB = $('compareRunB').value;
       const res = await fetch('api/compare?run_a=' + encodeURIComponent(state.selectedRun) + '&run_b=' + encodeURIComponent(state.compareRunB));
       const body = await res.json();
-      if (!res.ok) { alert(body.error || t('alert.compareFailed')); return; }
+      if (!res.ok) { alert(formatApiError(body, 'alert.compareFailed')); return; }
       state.compareResult = body;
       renderCompare();
     }
@@ -1165,7 +1273,7 @@ const indexHTML = `<!doctype html>
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
       });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || t('alert.forkFailed')); return; }
+      if (!res.ok) { alert(formatApiError(body, 'alert.forkFailed')); return; }
       await loadRuns();
       await selectRun(body.run_id);
       setView('thread');
@@ -1352,6 +1460,7 @@ const indexHTML = `<!doctype html>
     $('saveEdgePropsButton').onclick = () => applyEditorEdgeProps();
     $('addNodeButton').onclick = () => addEditorNode();
     $('deleteNodeButton').onclick = () => deleteEditorNode();
+    $('deleteEdgeButton').onclick = () => deleteEditorEdge();
     $('connectModeButton').onclick = () => {
       state.editorConnectFrom = state.selectedNode || '';
       updateConnectButton();

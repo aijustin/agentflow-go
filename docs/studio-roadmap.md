@@ -174,7 +174,18 @@ Production HTTP：
 | **Revert to loaded** | ✅ 丢弃本地编辑 |
 | **http-worker 保存演示** | ✅ `StudioSavePath` 示例接线 |
 
+## P6（已交付 — 生产体验）
+
+| 能力 | 状态 |
+|------|------|
+| **结构化 API 错误码** | ✅ `pkg/studio/errors.go` + Studio HTTP |
+| **错误码 UI i18n** | ✅ Observability Editor alerts |
+| **Save reload + 保留 subgraph** | ✅ 保存后 reload，保留当前画布 |
+| **Editor 多选 / 删边 / 拖线连边** | ✅ Shift 多选、Delete edge、port 拖线 |
+
 ## 相关文档
+
+- [next-milestones.md](./next-milestones.md)
 
 - [orchestration-parity.md](./orchestration-parity.md)
 - [observability-dashboard.md](./observability-dashboard.md)
