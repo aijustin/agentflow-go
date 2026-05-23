@@ -43,3 +43,21 @@ func TestRouteIf(t *testing.T) {
 		t.Fatalf("edges = %+v", wf.Edges)
 	}
 }
+
+func TestParallelGroupSugar(t *testing.T) {
+	wf := builder.NewWorkflow().
+		ParallelGroup("experts", "macro", "sector").
+		Build()
+	if len(wf.Nodes) != 1 || wf.Nodes[0].Kind != builder.NodeParallelGroup {
+		t.Fatalf("nodes = %+v", wf.Nodes)
+	}
+}
+
+func TestRouteIfNe(t *testing.T) {
+	wf := builder.NewWorkflow().
+		RouteIfNe("a", "b", builder.StepPath("flag", "output", "ok"), true).
+		Build()
+	if len(wf.Edges) != 1 || wf.Edges[0].Condition != "ne(steps.flag.output.ok, true)" {
+		t.Fatalf("edges = %+v", wf.Edges)
+	}
+}

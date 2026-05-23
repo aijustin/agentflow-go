@@ -59,6 +59,15 @@
 | `MapOver` + `Map*Branch` fan-out | ✅ |
 | `RouteIf` 条件边 | ✅ |
 
+## Studio P10 — Graph 调试增强（已完成）
+
+| 项 | 状态 |
+|----|------|
+| 运行中 Graph 实时高亮（SSE + steps 刷新） | ✅ |
+| Subgraph 钻取（双击 / Inspector 按钮） | ✅ |
+| Inspector 内嵌事件 payload 预览 | ✅ |
+| Compare 共享步骤输出 diff | ✅ |
+
 ## 相关文档
 
 - [studio-roadmap.md](./studio-roadmap.md)

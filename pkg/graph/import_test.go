@@ -83,6 +83,38 @@ func TestGenerateBuilderCode(t *testing.T) {
 	}
 }
 
+func TestGenerateBuilderCodeMapAndRouteIf(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "codegen-map",
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "items", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"list":["a"]}}`)},
+					{
+						ID:    "fanout",
+						Kind:  core.NodeMap,
+						Input: json.RawMessage(`{"items_path":"steps.items.list","branch":{"kind":"agent","ref":"analyst"},"on_error":"collect_errors"}`),
+					},
+					{ID: "status", Kind: core.NodeTransform},
+					{ID: "ready_branch", Kind: core.NodeTransform},
+				},
+				Edges: []core.WorkflowEdge{
+					{From: "items", To: "fanout"},
+					{From: "status", To: "ready_branch", Condition: `eq(steps.status.output.message, "ready")`},
+				},
+			},
+		},
+	}
+	code, err := GenerateBuilderCode(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsAll(code, "MapOver", "builder.StepPath", "MapAgentBranch", "MapOnError", "RouteIf") {
+		t.Fatalf("unexpected codegen: %s", code)
+	}
+}
+
 func containsAll(value string, parts ...string) bool {
 	for _, part := range parts {
 		if !contains(value, part) {

@@ -202,6 +202,32 @@ HTTP：
 - `POST /observability/api/studio/import-yaml` — body: `{"yaml":"...","layout_graph":{...}}`
 - `POST /v1/studio/import-yaml` — Production 同名路由
 
+## P8（已交付 — Builder Workflow DSL）
+
+| 能力 | 状态 |
+|------|------|
+| `StepPath` / `ConditionEq` 等 | ✅ |
+| `MapOver` + `Map*Branch` | ✅ |
+| `RouteIf` / `ParallelGroup` sugar | ✅ |
+| Codegen 输出 `MapOver`/`RouteIf` | ✅ |
+
+## P9（已交付 — Graph 调试体验）
+
+| 能力 | 状态 |
+|------|------|
+| 节点 Inspector + Timeline ↔ Graph `node_id` | ✅ |
+| Checkpoint scrub + revision diff + fork | ✅ |
+| Autonomous trace 面板 | ✅ |
+
+## P10（已交付 — Graph 调试增强）
+
+| 能力 | 状态 |
+|------|------|
+| 运行中 Graph 实时刷新 / 高亮 | ✅ |
+| Subgraph 钻取视图 | ✅ |
+| Inspector 事件 payload 预览 | ✅ |
+| Compare 步骤输出 diff | ✅ |
+
 ## 相关文档
 
 - [next-milestones.md](./next-milestones.md)

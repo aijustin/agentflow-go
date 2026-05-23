@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-22
+
 ### Added
 
 - Observability Graph **node inspector**: step output, related workflow events, Timeline ↔ Graph `node_id` linkage.
@@ -13,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Autonomous trace** panel under Graph for hybrid/autonomous LLM and tool events (P9.2).
 - Workflow events from agent/tool nodes include **`node_id`** in payload for Timeline ↔ Graph linkage (P9.2).
 - Builder workflow DSL: `StepPath`, `ConditionEq/Ne/Exists/Missing`, `MapOver`, `Map*Branch`, `RouteIf` (P8).
+- Studio **P10**: live Graph refresh during runs, subgraph drill-down, inspector event payloads, compare step output diff.
+- Builder DSL sugar: `ParallelGroup`, `ParallelTools`, `RouteIfNe/Exists/Missing`; codegen emits `MapOver`/`RouteIf` when possible.
+- Helm reference chart: production defaults (probes, resources, securityContext).
+- Cross-process run-state integration test.
 
 ## [0.2.0] - 2026-05-22
 

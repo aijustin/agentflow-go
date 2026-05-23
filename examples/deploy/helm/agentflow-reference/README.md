@@ -22,7 +22,12 @@ helm upgrade --install agentflow ./examples/deploy/helm/agentflow-reference
 | Key | Default | Description |
 |-----|---------|-------------|
 | `image.repository` | `your-registry/agentflow-tier-worker` | Worker image |
+| `image.tag` | `0.2.1` | Image tag (align with `agentflow.Version`) |
 | `postgres.secretName` | `agentflow-postgres` | DSN secret |
 | `tier.coldDir` | `/data/tier-cold` | Cold tier mount path |
+| `probes.readiness.path` | `/readyz` | Readiness probe path |
+| `probes.liveness.path` | `/healthz` | Liveness probe path |
+| `resources` | requests/limits | CPU/memory defaults for production |
+| `securityContext` | non-root | Container security context |
 
 See [../../README.md](../../README.md) for the full reference stack.

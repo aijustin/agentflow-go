@@ -1,11 +1,29 @@
 package graph
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
+
+var routeIfEqPattern = regexp.MustCompile(`^eq\((.+),\s*(.+)\)$`)
+
+type mapNodeInput struct {
+	ItemsPath string          `json:"items_path"`
+	Branch    mapNodeBranch   `json:"branch"`
+	OnError   string          `json:"on_error,omitempty"`
+	ItemField string          `json:"item_field,omitempty"`
+}
+
+type mapNodeBranch struct {
+	Kind  core.WorkflowNodeKind `json:"kind"`
+	Ref   string                `json:"ref,omitempty"`
+	Input json.RawMessage       `json:"input,omitempty"`
+}
 
 // GenerateBuilderCode renders a builder-style Go snippet for the scenario workflow.
 func GenerateBuilderCode(scenario core.Scenario) (string, error) {
@@ -58,7 +76,7 @@ func writeWorkflowBuilder(b *strings.Builder, wf core.Workflow) {
 		case core.NodeSubgraph:
 			fmt.Fprintf(b, ".\n\t\tNodeSubgraph(%q, %q)", node.ID, node.Ref)
 		case core.NodeMap:
-			fmt.Fprintf(b, ".\n\t\tNodeMap(%q, %s)", node.ID, rawJSONLiteral(node.Input))
+			writeMapNode(b, node)
 		case core.NodeLoop:
 			fmt.Fprintf(b, ".\n\t\tNodeLoop(%q, %s)", node.ID, rawJSONLiteral(node.Input))
 		case core.NodeParallelGroup:
@@ -70,13 +88,94 @@ func writeWorkflowBuilder(b *strings.Builder, wf core.Workflow) {
 		}
 	}
 	for _, edge := range wf.Edges {
-		if strings.TrimSpace(edge.Condition) != "" {
-			fmt.Fprintf(b, ".\n\t\tEdgeIf(%q, %q, %q)", edge.From, edge.To, edge.Condition)
-		} else {
-			fmt.Fprintf(b, ".\n\t\tEdge(%q, %q)", edge.From, edge.To)
-		}
+		writeEdge(b, edge)
 	}
 	b.WriteString(".\n\t\tBuild()")
+}
+
+func writeMapNode(b *strings.Builder, node core.WorkflowNode) {
+	var spec mapNodeInput
+	if err := json.Unmarshal(node.Input, &spec); err != nil || spec.ItemsPath == "" {
+		fmt.Fprintf(b, ".\n\t\tNodeMap(%q, %s)", node.ID, rawJSONLiteral(node.Input))
+		return
+	}
+	itemsPath, ok := formatStepPathExpr(spec.ItemsPath)
+	if !ok {
+		fmt.Fprintf(b, ".\n\t\tNodeMap(%q, %s)", node.ID, rawJSONLiteral(node.Input))
+		return
+	}
+	branch := formatMapBranch(spec.Branch)
+	var opts []string
+	if spec.OnError != "" {
+		opts = append(opts, fmt.Sprintf("builder.MapOnError(%q)", spec.OnError))
+	}
+	if spec.ItemField != "" {
+		opts = append(opts, fmt.Sprintf("builder.MapItemField(%q)", spec.ItemField))
+	}
+	if len(opts) == 0 {
+		fmt.Fprintf(b, ".\n\t\tMapOver(%q, %s, %s)", node.ID, itemsPath, branch)
+		return
+	}
+	fmt.Fprintf(b, ".\n\t\tMapOver(%q, %s, %s, %s)", node.ID, itemsPath, branch, strings.Join(opts, ", "))
+}
+
+func formatMapBranch(branch mapNodeBranch) string {
+	switch branch.Kind {
+	case core.NodeAgent:
+		return fmt.Sprintf("builder.MapAgentBranch(%q)", branch.Ref)
+	case core.NodeTool:
+		return fmt.Sprintf("builder.MapToolBranch(%q)", branch.Ref)
+	case core.NodeSubgraph:
+		return fmt.Sprintf("builder.MapSubgraphBranch(%q)", branch.Ref)
+	case core.NodeTransform:
+		return fmt.Sprintf("builder.MapTransformBranch(%s)", rawJSONLiteral(branch.Input))
+	default:
+		return fmt.Sprintf("builder.MapBranch{Kind: builder.NodeTransform, Input: %s}", rawJSONLiteral(branch.Input))
+	}
+}
+
+func writeEdge(b *strings.Builder, edge core.WorkflowEdge) {
+	condition := strings.TrimSpace(edge.Condition)
+	if condition == "" {
+		fmt.Fprintf(b, ".\n\t\tEdge(%q, %q)", edge.From, edge.To)
+		return
+	}
+	if path, value, ok := parseRouteIfEq(condition); ok {
+		fmt.Fprintf(b, ".\n\t\tRouteIf(%q, %q, %s, %s)", edge.From, edge.To, path, value)
+		return
+	}
+	fmt.Fprintf(b, ".\n\t\tEdgeIf(%q, %q, %q)", edge.From, edge.To, condition)
+}
+
+func parseRouteIfEq(condition string) (pathExpr, valueExpr string, ok bool) {
+	matches := routeIfEqPattern.FindStringSubmatch(condition)
+	if len(matches) != 3 {
+		return "", "", false
+	}
+	path := strings.TrimSpace(matches[1])
+	value := strings.TrimSpace(matches[2])
+	stepPath, ok := formatStepPathExpr(path)
+	if !ok {
+		return "", "", false
+	}
+	return stepPath, value, true
+}
+
+func formatStepPathExpr(path string) (string, bool) {
+	path = strings.TrimSpace(path)
+	if !strings.HasPrefix(path, "steps.") {
+		return strconv.Quote(path), false
+	}
+	rest := strings.TrimPrefix(path, "steps.")
+	parts := strings.Split(rest, ".")
+	if len(parts) == 0 || parts[0] == "" {
+		return strconv.Quote(path), false
+	}
+	args := make([]string, len(parts))
+	for i, part := range parts {
+		args[i] = strconv.Quote(part)
+	}
+	return "builder.StepPath(" + strings.Join(args, ", ") + ")", true
 }
 
 func sanitizeIdent(name string) string {

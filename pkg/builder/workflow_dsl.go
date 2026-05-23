@@ -90,3 +90,28 @@ func (w *WorkflowBuilder) MapOver(id, itemsPath string, branch MapBranch, opts .
 func (w *WorkflowBuilder) RouteIf(from, to, path string, value any) *WorkflowBuilder {
 	return w.EdgeIf(from, to, ConditionEq(path, value))
 }
+
+// RouteIfNe adds a conditional edge when ne(path, value).
+func (w *WorkflowBuilder) RouteIfNe(from, to, path string, value any) *WorkflowBuilder {
+	return w.EdgeIf(from, to, ConditionNe(path, value))
+}
+
+// RouteIfExists adds a conditional edge when exists(path).
+func (w *WorkflowBuilder) RouteIfExists(from, to, path string) *WorkflowBuilder {
+	return w.EdgeIf(from, to, ConditionExists(path))
+}
+
+// RouteIfMissing adds a conditional edge when missing(path).
+func (w *WorkflowBuilder) RouteIfMissing(from, to, path string) *WorkflowBuilder {
+	return w.EdgeIf(from, to, ConditionMissing(path))
+}
+
+// ParallelGroup adds a parallel_group node over agent refs.
+func (w *WorkflowBuilder) ParallelGroup(id string, refs ...string) *WorkflowBuilder {
+	return w.NodeParallelGroup(id, parallelGroupRefsInput(refs...))
+}
+
+// ParallelTools adds a parallel_group node over tool refs.
+func (w *WorkflowBuilder) ParallelTools(id, onError string, tools ...string) *WorkflowBuilder {
+	return w.NodeParallelGroup(id, parallelGroupToolsInput(onError, tools...))
+}

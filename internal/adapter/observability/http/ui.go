@@ -269,6 +269,15 @@ const indexHTML = `<!doctype html>
     .trace-item.tool { border-left: 3px solid var(--accent); }
     .trace-item.llm { border-left: 3px solid #2563eb; }
     .trace-item.failed { border-left: 3px solid var(--danger); }
+    .graph-breadcrumb { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .graph-breadcrumb button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 10px; }
+    .graph-breadcrumb button:hover { background: #f0f7f6; border-color: #b8ded7; }
+    .event-payload-item { margin-top: 8px; }
+    .event-payload-item pre { max-height: 160px; overflow: auto; font-size: 11px; }
+    .compare-step-diff { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0; }
+    .compare-step-diff pre { max-height: 180px; overflow: auto; font-size: 11px; }
+    .graph-node.running rect { stroke: #2563eb; stroke-width: 2.5; animation: pulse-node 1.2s ease-in-out infinite; }
+    @keyframes pulse-node { 0%,100% { opacity: 1; } 50% { opacity: 0.72; } }
     .editor-toolbar, .compare-toolbar, .thread-toolbar { display: flex; gap: 8px; padding: 0 12px 12px; flex-wrap: wrap; align-items: center; }
     .editor-toolbar select { min-width: 120px; }
     .graph-node.editing rect { stroke: #2563eb; }
@@ -477,6 +486,9 @@ const indexHTML = `<!doctype html>
         'detail.checkpoint': 'Checkpoint', 'detail.codegen': '代码生成', 'detail.yaml': '场景 YAML', 'detail.savePreview': '保存预览', 'detail.checkpointHistory': 'Checkpoint 历史', 'detail.stepsCount': '{n} 步',
         'run.events': '{n} 个事件', 'run.scenarioFallback': '场景', 'graph.subgraph': '子图：{name}', 'graph.mode': '{name}（{mode}）',
         'trace.title': 'Autonomous 追踪', 'trace.hybridPhase2': 'Hybrid Phase-2：workflow 节点外 LLM/Tool 调用', 'trace.empty': '暂无 autonomous 事件',
+        'graph.drillSubgraph': '钻取子图', 'graph.drillBack': '返回主图', 'graph.drillTitle': '{parent} → {name}',
+        'graph.drillHint': '双击 subgraph 节点可钻取内层图',
+        'compare.outputDiff': '共享步骤输出差异', 'compare.runA': 'Run A', 'compare.runB': 'Run B',
         'editor.workflowOption': '工作流：{name}', 'editor.subgraphOption': '子图：{name}',
         'prompt.subgraphName': '子图名称', 'prompt.edgeCondition': '边 condition（可选）', 'prompt.nodeId': '节点 ID', 'prompt.refOptional': 'Ref（可选）',
         'alert.subgraphExists': '子图已存在', 'alert.nodeExists': '节点已存在', 'alert.invalidJson': 'input 必须是合法 JSON',
@@ -537,6 +549,9 @@ const indexHTML = `<!doctype html>
         'detail.checkpoint': 'Checkpoint', 'detail.codegen': 'Codegen', 'detail.yaml': 'Scenario YAML', 'detail.savePreview': 'Save preview', 'detail.checkpointHistory': 'Checkpoint history', 'detail.stepsCount': '{n} steps',
         'run.events': '{n} events', 'run.scenarioFallback': 'scenario', 'graph.subgraph': 'subgraph: {name}', 'graph.mode': '{name} ({mode})',
         'trace.title': 'Autonomous trace', 'trace.hybridPhase2': 'Hybrid phase-2: LLM/tool calls outside workflow nodes', 'trace.empty': 'No autonomous events yet',
+        'graph.drillSubgraph': 'Drill into subgraph', 'graph.drillBack': 'Back to main graph', 'graph.drillTitle': '{parent} → {name}',
+        'graph.drillHint': 'Double-click a subgraph node to drill down',
+        'compare.outputDiff': 'Shared step output diff', 'compare.runA': 'Run A', 'compare.runB': 'Run B',
         'editor.workflowOption': 'workflow: {name}', 'editor.subgraphOption': 'subgraph: {name}',
         'prompt.subgraphName': 'Subgraph name', 'prompt.edgeCondition': 'Edge condition (optional)', 'prompt.nodeId': 'Node id', 'prompt.refOptional': 'Ref (optional)',
         'alert.subgraphExists': 'subgraph already exists', 'alert.nodeExists': 'node already exists', 'alert.invalidJson': 'input must be valid JSON',
@@ -562,7 +577,7 @@ const indexHTML = `<!doctype html>
       }
     };
     let locale = localStorage.getItem('obs-lang') || 'zh-CN';
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [], drillSubgraph: null };
     const t = (key, vars) => {
       let text = (I18N[locale] && I18N[locale][key]) || (I18N.en && I18N.en[key]) || key;
       if (vars) Object.keys(vars).forEach((name) => { text = text.split('{' + name + '}').join(String(vars[name])); });
@@ -681,9 +696,11 @@ const indexHTML = `<!doctype html>
       updateTimeTravelBar();
       renderDetails();
     }
-    async function loadSteps(runID) {
+    async function loadSteps(runID, options) {
+      options = options || {};
+      const prevSelected = state.selectedNode;
+      if (!options.preserveSelection) state.selectedNode = '';
       state.steps = null;
-      state.selectedNode = '';
       try {
         const res = await fetch('api/runs/' + encodeURIComponent(runID) + '/steps');
         if (!res.ok) return;
@@ -691,6 +708,7 @@ const indexHTML = `<!doctype html>
         state.resumeEnabled = true;
         state.hitlEnabled = true;
       } catch (_) {}
+      if (options.preserveSelection && prevSelected) state.selectedNode = prevSelected;
       renderGraph();
       updateTimeTravelBar();
       updateHitlBar();
@@ -893,6 +911,46 @@ const indexHTML = `<!doctype html>
       if (!state.steps || !state.steps.steps) return new Set();
       return new Set(state.steps.steps.map((step) => step.node_id));
     }
+    function graphStepKey(nodeID, scopePrefix) {
+      return scopePrefix ? scopePrefix + '::' + nodeID : nodeID;
+    }
+    function graphNodeDone(nodeID, done, scopePrefix) {
+      const key = graphStepKey(nodeID, scopePrefix);
+      return done.has(key) || (!scopePrefix && done.has(nodeID));
+    }
+    function graphNodeCurrent(nodeID, current, scopePrefix) {
+      const key = graphStepKey(nodeID, scopePrefix);
+      return current === key || graphHighlightNodeID(current) === key || (!scopePrefix && (current === nodeID || graphHighlightNodeID(current) === nodeID));
+    }
+    function formatEventPayloadPreview(record) {
+      const payload = (record && record.event && record.event.payload) || {};
+      if (!payload || typeof payload !== 'object') return '';
+      let text = '';
+      try { text = JSON.stringify(payload, null, 2); } catch (_) { text = String(payload); }
+      if (text.length > 480) text = text.slice(0, 480) + '\n…';
+      return text;
+    }
+    function formatCompareOutput(raw) {
+      if (!raw) return t('inspector.noStepOutput');
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return JSON.stringify(parsed, null, 2);
+      } catch (_) {
+        return String(raw);
+      }
+    }
+    function clearSubgraphDrill() {
+      state.drillSubgraph = null;
+      renderGraph();
+      renderDetails();
+    }
+    function drillIntoSubgraph(parentId, ref) {
+      if (!ref || !state.graph || !state.graph.workflows || !state.graph.workflows[ref]) return;
+      state.drillSubgraph = { parentId, ref };
+      state.selectedNode = '';
+      renderGraph();
+      renderDetails();
+    }
     function eventPayloadNodeID(record) {
       const payload = record && record.event && record.event.payload;
       if (!payload || typeof payload.node_id !== 'string') return '';
@@ -1045,8 +1103,16 @@ const indexHTML = `<!doctype html>
           html += '<button type="button" class="event-chip ' + eventKind(record.event.type) + (active ? ' active' : '') + '" data-id="' + record.id + '">' + escapeHTML(record.event.type) + ' #' + record.sequence + '</button>';
         });
         html += '</div>';
+        related.slice(0, 6).forEach((record) => {
+          const preview = formatEventPayloadPreview(record);
+          if (!preview) return;
+          html += '<div class="event-payload-item"><div class="meta">' + escapeHTML(record.event.type) + ' #' + record.sequence + '</div><pre>' + escapeHTML(preview) + '</pre></div>';
+        });
       } else {
         html += '<div class="meta">' + escapeHTML(t('inspector.noRelatedEvents')) + '</div>';
+      }
+      if (meta.kind === 'subgraph' && meta.ref && state.graph && state.graph.workflows && state.graph.workflows[meta.ref]) {
+        html += '<button type="button" class="secondary" id="drillSubgraphButton" style="margin-top:8px;">' + escapeHTML(t('graph.drillSubgraph')) + '</button>';
       }
       html += '</div></div>';
       return html;
@@ -1059,6 +1125,13 @@ const indexHTML = `<!doctype html>
           renderDetails();
         };
       });
+      const drillButton = document.getElementById('drillSubgraphButton');
+      if (drillButton) {
+        drillButton.onclick = () => {
+          const meta = state.nodeMeta[state.selectedNode] || {};
+          if (meta.kind === 'subgraph' && meta.ref) drillIntoSubgraph(state.selectedNode, meta.ref);
+        };
+      }
     }
     function bindCheckpointScrub() {
       document.querySelectorAll('.checkpoint-scrub-dot').forEach((dot) => {
@@ -1098,14 +1171,26 @@ const indexHTML = `<!doctype html>
       updateTimeTravelBar();
       renderDetails();
     }
-    function selectGraphNode(nodeID) {
-      state.selectedNode = nodeID || '';
+    function selectGraphNode(nodeID, scopePrefix) {
+      state.selectedNode = graphStepKey(nodeID || '', scopePrefix || '');
       state.selectedEvent = null;
       renderGraph();
       updateTimeTravelBar();
       renderDetails();
     }
-    function renderGraphView(container, view, title) {
+    function onGraphNodeDblClick(nodeID, scopePrefix) {
+      if (scopePrefix) return;
+      const meta = state.nodeMeta[nodeID] || {};
+      if (meta.kind === 'subgraph' && meta.ref) drillIntoSubgraph(nodeID, meta.ref);
+    }
+    function bindGraphNodes(container, scopePrefix) {
+      container.querySelectorAll('.graph-node').forEach((node) => {
+        node.onclick = () => selectGraphNode(node.dataset.node, scopePrefix || '');
+        node.ondblclick = (ev) => { ev.preventDefault(); onGraphNodeDblClick(node.dataset.node, scopePrefix || ''); };
+      });
+    }
+    function renderGraphView(container, view, title, scopePrefix) {
+      scopePrefix = scopePrefix || '';
       if (!view || !view.nodes || !view.nodes.length) {
         container.innerHTML = '<div class="empty">' + escapeHTML(t('empty.noGraph')) + '</div>';
         return;
@@ -1129,10 +1214,11 @@ const indexHTML = `<!doctype html>
       nodes.forEach((node) => {
         const pos = positions[node.id];
         const classes = ['graph-node'];
-        if (highlightID === node.id) classes.push('active');
-        if (done.has(node.id)) classes.push('done');
-        if (graphHighlightNodeID(current) === node.id) classes.push('current');
-        if (state.activeSubgraphs[node.id]) classes.push('subgraph-active');
+        const stepKey = graphStepKey(node.id, scopePrefix);
+        if (highlightID === stepKey || highlightID === node.id) classes.push('active');
+        if (graphNodeDone(node.id, done, scopePrefix)) classes.push('done');
+        if (graphNodeCurrent(node.id, current, scopePrefix)) classes.push('current');
+        if (state.activeSubgraphs[scopePrefix || node.id]) classes.push('subgraph-active');
         if (node.resumable === false) classes.push('not-resumable');
         html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
         html += '<rect width="120" height="48" rx="8"></rect>';
@@ -1142,7 +1228,7 @@ const indexHTML = `<!doctype html>
       });
       html += '</svg>';
       container.innerHTML = html;
-      container.querySelectorAll('.graph-node').forEach((node) => node.onclick = () => selectGraphNode(node.dataset.node));
+      bindGraphNodes(container, scopePrefix);
     }
     function renderGraph() {
       const container = $('graphView');
@@ -1151,21 +1237,38 @@ const indexHTML = `<!doctype html>
         return;
       }
       let html = '';
-      const root = document.createElement('div');
-      renderGraphView(root, state.graph.workflow, t('graph.mode', { name: state.graph.name, mode: state.graph.mode || 'mode' }));
-      html += root.innerHTML;
-      if (state.graph.workflows) {
-        Object.entries(state.graph.workflows).forEach(([name, view]) => {
+      if (state.drillSubgraph) {
+        const drill = state.drillSubgraph;
+        const inner = state.graph.workflows && state.graph.workflows[drill.ref];
+        html += '<div class="graph-breadcrumb"><button type="button" id="drillBackButton">' + escapeHTML(t('graph.drillBack')) + '</button>';
+        html += '<span class="meta">' + escapeHTML(t('graph.drillTitle', { parent: drill.parentId, name: drill.ref })) + '</span></div>';
+        if (inner) {
           const sub = document.createElement('div');
-          sub.className = 'graph-sub';
-          renderGraphView(sub, view, t('graph.subgraph', { name }));
-          html += sub.outerHTML;
-        });
+          renderGraphView(sub, inner, '', drill.parentId);
+          html += sub.innerHTML;
+        } else {
+          html += '<div class="empty">' + escapeHTML(t('empty.noGraph')) + '</div>';
+        }
+      } else {
+        const root = document.createElement('div');
+        renderGraphView(root, state.graph.workflow, t('graph.mode', { name: state.graph.name, mode: state.graph.mode || 'mode' }));
+        html += root.innerHTML;
+        html += '<div class="meta">' + escapeHTML(t('graph.drillHint')) + '</div>';
+        if (state.graph.workflows) {
+          Object.entries(state.graph.workflows).forEach(([name, view]) => {
+            const sub = document.createElement('div');
+            sub.className = 'graph-sub';
+            renderGraphView(sub, view, t('graph.subgraph', { name }));
+            html += sub.outerHTML;
+          });
+        }
       }
       html += renderAutonomousTrace();
       container.innerHTML = html;
-      container.querySelectorAll('.graph-node').forEach((node) => node.onclick = () => selectGraphNode(node.dataset.node));
+      bindGraphNodes(container, state.drillSubgraph ? state.drillSubgraph.parentId : '');
       bindAutonomousTrace();
+      const drillBack = document.getElementById('drillBackButton');
+      if (drillBack) drillBack.onclick = () => clearSubgraphDrill();
     }
     function editorWorkflow() {
       return editorView();
@@ -1570,10 +1673,20 @@ const indexHTML = `<!doctype html>
         return;
       }
       const diff = state.compareResult;
+      const shared = diff.shared_steps || [];
+      const changedSteps = shared.filter((step) => step && step.same === false);
       let html = '<div class="meta"><span>' + escapeHTML(t('compare.onlyA')) + ' ' + (diff.steps_only_a || []).join(', ') + '</span></div>';
       html += '<div class="meta"><span>' + escapeHTML(t('compare.onlyB')) + ' ' + (diff.steps_only_b || []).join(', ') + '</span></div>';
-      html += '<div class="meta"><span>' + escapeHTML(t('compare.shared')) + ' ' + (diff.shared_steps || []).length + '</span></div>';
-      const changed = new Set((diff.shared_steps || []).filter((step) => !step.same).map((step) => step.node_id));
+      html += '<div class="meta"><span>' + escapeHTML(t('compare.shared')) + ' ' + shared.length + '</span></div>';
+      if (changedSteps.length) {
+        html += '<div class="panel-title">' + escapeHTML(t('compare.outputDiff')) + ' (' + changedSteps.length + ')</div>';
+        changedSteps.forEach((step) => {
+          html += '<div class="compare-step-diff"><div class="title">' + escapeHTML(step.node_id) + '</div>';
+          html += '<div class="meta">' + escapeHTML(t('compare.runA')) + '</div><pre>' + escapeHTML(formatCompareOutput(step.output_a)) + '</pre>';
+          html += '<div class="meta">' + escapeHTML(t('compare.runB')) + '</div><pre>' + escapeHTML(formatCompareOutput(step.output_b)) + '</pre></div>';
+        });
+      }
+      const changed = new Set(changedSteps.map((step) => step.node_id));
       const onlyA = new Set(diff.steps_only_a || []);
       const onlyB = new Set(diff.steps_only_b || []);
       if (state.graph && state.graph.workflow) {
@@ -1757,10 +1870,14 @@ const indexHTML = `<!doctype html>
         if (state.events.some((item) => item.id === record.id)) return;
         state.events.push(record);
         renderEvents();
-        if (record.event.type.includes('Step') || record.event.type.includes('Subgraph')) {
-          loadSteps(state.selectedRun);
+        const type = record.event.type || '';
+        if (type.includes('Step') || type.includes('Subgraph') || type.includes('Run')) {
+          loadSteps(state.selectedRun, { preserveSelection: true });
         }
-        if (record.event.type.includes('Subgraph')) renderGraph();
+        if (type.includes('Subgraph') || type.includes('Step') || type.includes('LLM') || type.includes('Tool')) {
+          if (state.view === 'graph') renderGraph();
+          renderDetails();
+        }
       });
       state.stream.onerror = () => { closeStream(); setTimeout(() => state.live && openStream(), 2000); };
     }

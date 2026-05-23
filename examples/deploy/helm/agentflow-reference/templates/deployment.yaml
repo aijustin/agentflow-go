@@ -14,6 +14,10 @@ spec:
       labels:
         {{- include "agentflow-reference.selectorLabels" . | nindent 8 }}
     spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: tier-worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -31,17 +35,29 @@ spec:
               value: {{ .Values.tier.coldDir | quote }}
             - name: AGENT_HTTP_ADDR
               value: ":{{ .Values.service.port }}"
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           volumeMounts:
             - name: tier-cold
               mountPath: {{ .Values.tier.coldDir }}
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: {{ .Values.probes.readiness.path }}
               port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: {{ .Values.probes.liveness.path }}
               port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:

@@ -39,9 +39,10 @@ result, err := fw.Run(ctx, agentflow.RunRequest{...})
 |----|------|
 | subgraph / map / ListRunSteps / ResumeFromStep | ✅ 已落地 |
 | Declarative interrupt（`interrupt: true` post-step pause） | ✅ workflow 节点 + builder + Studio P7 |
+| Studio Graph 调试（P9–P10） | ✅ Inspector、checkpoint scrub、autonomous trace、subgraph 钻取 |
 | Phase 4 `agent_loop` 节点 | ⏸ 不做（用 `hybrid` + `autonomous`） |
 | LangGraph Store 语义对齐 | ⏸ 不做 |
-| Studio 级图编辑器 | ✅ P0–P7 已交付（Graph / Editor / Compare / Thread / YAML 导入导出 / interrupt 编辑 / i18n）；见 [studio-roadmap.md](./studio-roadmap.md) |
+| Studio 级图编辑器 | ✅ P0–P10 已交付；见 [studio-roadmap.md](./studio-roadmap.md) |
 
 ## 差异化（对外叙事）
 

@@ -383,10 +383,7 @@ func TestSubgraphAndMapWorkflowBuilder(t *testing.T) {
 
 	mapWF := builder.NewWorkflow().
 		NodeTransform("items", json.RawMessage(`{"set":{"list":["a","b"]}}`)).
-		NodeMap("fanout", builder.MapNodeInput("steps.items.list", builder.MapBranch{
-			Kind:  builder.NodeTransform,
-			Input: json.RawMessage(`{"set":{"tag":"mapped"}}`),
-		}, builder.MapOnError("collect_errors"))).
+		MapOver("fanout", builder.StepPath("items", "list"), builder.MapTransformBranch(json.RawMessage(`{"set":{"tag":"mapped"}}`)), builder.MapOnError("collect_errors")).
 		Edge("items", "fanout").
 		Build()
 	mapScenario := builder.New("map-demo").

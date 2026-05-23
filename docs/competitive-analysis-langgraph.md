@@ -166,8 +166,8 @@ LangGraph 无内置「三模式」；需 subgraph + conditional edges 组合。
 | 运行时 subgraph | ●●● | ●●● |
 | 动态 fan-out (Send) | ●● | ●●● |
 | Checkpoint | ●●● | ●●● |
-| Time travel UI | ●● | ●●● |
-| Graph 可视化（只读 Studio） | ●● | ●●● |
+| Time travel UI | ●●● | ●●● |
+| Graph 可视化（只读 Studio） | ●●● | ●●● |
 | Tier / Store 长期记忆 | ●●● | ●●● |
 | Agentic RAG 模板 | ●●● | ●●● |
 | HITL | ●●● | ●●● |

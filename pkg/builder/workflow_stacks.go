@@ -54,7 +54,7 @@ func mergeReviewFindingsInput() json.RawMessage {
 // catalog ID multi-expert-research.
 func MultiExpertResearchWorkflow(expertAgents ...string) core.Workflow {
 	return NewWorkflow().
-		NodeParallelGroup("experts", parallelGroupRefsInput(expertAgents...)).
+		ParallelGroup("experts", expertAgents...).
 		Build()
 }
 
@@ -101,8 +101,8 @@ func WorkflowEnhancementsWorkflow() core.Workflow {
 			Ref:   NameEchoTool,
 			Input: echoBranchInput(),
 		}).
-		NodeParallelGroup("experts", parallelGroupToolsInput(ParallelOnErrorCollectErrors, NameStatusTool, NameEchoTool)).
-		EdgeIf("status", "ready_branch", ConditionStatusReady).
+		ParallelTools("experts", ParallelOnErrorCollectErrors, NameStatusTool, NameEchoTool).
+		RouteIf("status", "ready_branch", StepPath("status", "output", "message"), "ready").
 		Build()
 }
 

@@ -84,6 +84,9 @@ routed := builder.NewWorkflow().
 | `MapOver(id, itemsPath, branch, opts...)` | LangGraph Send 风格 fan-out map 节点 |
 | `MapAgentBranch` / `MapToolBranch` / `MapSubgraphBranch` / `MapTransformBranch` | map 分支配置 |
 | `RouteIf(from, to, path, value)` | 条件边（内部 `ConditionEq`） |
+| `RouteIfNe/Exists/Missing` | `ne` / `exists` / `missing` 条件边 |
+| `ParallelGroup(id, refs...)` | 多 agent 并行组 |
+| `ParallelTools(id, onError, tools...)` | 多 tool 并行组 |
 
 ## Catalog 对照表
 
