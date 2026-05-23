@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/graph"
 )
 
@@ -15,6 +16,10 @@ type studioFramework struct {
 
 func (adapter *studioFramework) ListRunSteps(ctx context.Context, runID string) (any, error) {
 	return adapter.framework.ListRunSteps(ctx, runID)
+}
+
+func (adapter *studioFramework) ResumeRunHITL(ctx context.Context, runID string, decision core.Decision, amendment json.RawMessage, continueExecution bool) (any, error) {
+	return adapter.framework.ResumeRunByID(ctx, runID, decision, amendment, continueExecution)
 }
 
 func (adapter *studioFramework) ResumeFromStep(ctx context.Context, runID, nodeID string) (any, error) {

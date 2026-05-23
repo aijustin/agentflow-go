@@ -252,6 +252,23 @@ func ContextGovernance(agentName string, opts ...MinimalOption) core.Scenario {
 	return ab.Autonomous().Scenario()
 }
 
+// MinimalDeclarativeInterrupt builds the declarative interrupt demo for catalog ID declarative-interrupt.
+func MinimalDeclarativeInterrupt(opts ...MinimalOption) core.Scenario {
+	cfg := minimalConfig{
+		scenarioName: "declarative-interrupt",
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	b := New(cfg.scenarioName).
+		Description("Fixed workflow that pauses after prepare via interrupt: true, then continues after HITL approval.").
+		DefaultMockLLM().
+		Agent("assistant").DefaultLLM().Done()
+	return b.FixedWorkflow(DeclarativeInterruptWorkflow()).
+		Orchestration(HumanInLoop(true)).
+		Scenario()
+}
+
 // MinimalFixedWorkflowReview builds the fixed workflow review stack for catalog ID fixed-workflow-review.
 func MinimalFixedWorkflowReview(agentName string, opts ...MinimalOption) core.Scenario {
 	cfg := defaultMinimalConfig(agentName)

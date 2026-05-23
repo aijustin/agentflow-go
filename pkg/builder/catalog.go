@@ -17,6 +17,9 @@ func ExampleCatalog() []CatalogEntry {
 		{ID: "human-in-loop", Build: func() core.Scenario {
 			return MinimalHumanInLoop("assistant")
 		}},
+		{ID: "declarative-interrupt", Build: func() core.Scenario {
+			return MinimalDeclarativeInterrupt()
+		}},
 		{ID: "context-governance", Build: func() core.Scenario {
 			return ContextGovernance("assistant")
 		}},

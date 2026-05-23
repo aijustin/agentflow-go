@@ -125,11 +125,11 @@ orchestration:
 
 ---
 
-## Phase 4–5（已裁剪）
+## Phase 4–5（已裁剪 / 部分交付）
 
 - **`agent_loop`**：与 `hybrid` / `autonomous` 重叠，不单独做节点类型。
-- **Declarative interrupt**：保留 `human_gate` + tool pause；不做任意节点 `interrupt:` 字段。
-- **Studio / Store parity**：不在库范围内。
+- **Declarative interrupt**：✅ 任意 workflow 节点 `interrupt: true`，执行成功后 pause，经 `POST /v1/hitl/resume`（或 Observability UI）续跑；与 `human_gate`（pre-step）互补。
+- **Studio / Store parity**：Studio P0–P7 已交付；LangGraph Store 语义不在库范围内。
 
 ---
 

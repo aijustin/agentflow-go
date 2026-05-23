@@ -398,3 +398,29 @@ func TestSubgraphAndMapWorkflowBuilder(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWithInterruptMarksLastNode(t *testing.T) {
+	wf := builder.NewWorkflow().
+		NodeTransform("prepare", json.RawMessage(`{"set":{"ready":true}}`)).
+		WithInterrupt().
+		Build()
+	if len(wf.Nodes) != 1 || !wf.Nodes[0].Interrupt {
+		t.Fatalf("expected interrupt on prepare, got %+v", wf.Nodes)
+	}
+}
+
+func TestMinimalDeclarativeInterrupt(t *testing.T) {
+	got := builder.MinimalDeclarativeInterrupt()
+	if err := agentflow.ValidateScenario(got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Orchestration.Mode != builder.ModeFixedWorkflow {
+		t.Fatalf("mode=%q", got.Orchestration.Mode)
+	}
+	if len(got.Orchestration.Workflow.Nodes) != 2 {
+		t.Fatalf("nodes=%d", len(got.Orchestration.Workflow.Nodes))
+	}
+	if !got.Orchestration.Workflow.Nodes[0].Interrupt {
+		t.Fatalf("expected prepare interrupt, got %+v", got.Orchestration.Workflow.Nodes[0])
+	}
+}

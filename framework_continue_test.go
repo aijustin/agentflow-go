@@ -83,6 +83,44 @@ func TestFrameworkResumeAndContinueWorkflowHITL(t *testing.T) {
 	}
 }
 
+func TestFrameworkResumeRunByIDDeclarativeInterrupt(t *testing.T) {
+	fw, err := agentflow.New(
+		builder.MinimalDeclarativeInterrupt(),
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-interrupt", Prompt: "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused workflow, got %+v", result)
+	}
+	steps, err := fw.ListRunSteps(context.Background(), "run-interrupt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps.PendingHITL == nil || !steps.PendingHITL.Interrupt || steps.PendingHITL.NodeID != "prepare" {
+		t.Fatalf("unexpected pending hitl: %+v", steps.PendingHITL)
+	}
+	result, err = fw.ResumeRunByID(context.Background(), "run-interrupt", core.DecisionApprove, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected completed workflow, got %+v", result)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-interrupt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.StepOutputs["continue"]; !ok {
+		t.Fatalf("expected continue step output: %+v", snapshot.StepOutputs)
+	}
+}
+
 func TestFrameworkResumeAndContinueToolApprovalPause(t *testing.T) {
 	scenario := core.Scenario{
 		Name: "tool-pause",

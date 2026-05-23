@@ -38,6 +38,36 @@ func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decisio
 	return f.continueRun(ctx, runID)
 }
 
+// ResumeRunByID resumes a paused run by signing a HITL token from the current snapshot.
+// When continueExecution is true, execution continues until completion or the next pause.
+func (f *Framework) ResumeRunByID(ctx context.Context, runID string, decision core.Decision, amendment json.RawMessage, continueExecution bool) (RunResult, error) {
+	if f.tokenSigner == nil {
+		return RunResult{}, fmt.Errorf("agentflow: HITL token signer is not configured")
+	}
+	snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if snapshot.Status != runstate.RunStatusPaused {
+		return RunResult{}, fmt.Errorf("agentflow: run %q is not paused", runID)
+	}
+	token, err := f.tokenSigner.Sign(runstate.TokenPayload{RunID: snapshot.RunID, Version: snapshot.Version})
+	if err != nil {
+		return RunResult{}, err
+	}
+	if continueExecution {
+		return f.ResumeAndContinue(ctx, token, decision, amendment)
+	}
+	if err := f.gate.Resume(ctx, token, decision, amendment); err != nil {
+		return RunResult{}, err
+	}
+	loaded, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	return RunResult{RunID: runID, Status: loaded.Status}, nil
+}
+
 func (f *Framework) runIDFromToken(token string) (string, error) {
 	if f.tokenSigner == nil {
 		return "", fmt.Errorf("agentflow: token signer is not configured")

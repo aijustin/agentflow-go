@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/studio"
 )
 
@@ -19,6 +20,7 @@ type Config struct {
 	Hub            *obspkg.EventHub
 	AuthMiddleware func(nethttp.Handler) nethttp.Handler
 	Steps          StepsLister
+	HITLResume     RunHITLResumer
 	Graph          GraphExporter
 	Resume         StepResumer
 	History        CheckpointLister
@@ -37,6 +39,10 @@ type Config struct {
 
 type StepsLister interface {
 	ListRunSteps(ctx context.Context, runID string) (any, error)
+}
+
+type RunHITLResumer interface {
+	ResumeRunHITL(ctx context.Context, runID string, decision core.Decision, amendment json.RawMessage, continueExecution bool) (any, error)
 }
 
 type StepResumer interface {
@@ -99,6 +105,7 @@ type Handler struct {
 	store      obspkg.EventStore
 	hub        *obspkg.EventHub
 	steps      StepsLister
+	hitlResume RunHITLResumer
 	graph      GraphExporter
 	resume     StepResumer
 	history    CheckpointLister
@@ -125,6 +132,7 @@ func NewHandler(config Config) (*Handler, error) {
 		store:      config.Store,
 		hub:        config.Hub,
 		steps:      config.Steps,
+		hitlResume: config.HITLResume,
 		graph:      config.Graph,
 		resume:     config.Resume,
 		history:    config.History,
@@ -232,6 +240,8 @@ func (handler *Handler) handleRunResource(w nethttp.ResponseWriter, r *nethttp.R
 		handler.handleCheckpointVersion(w, r, runID, segments[1])
 	case len(segments) == 1 && segments[0] == "resume-from-checkpoint":
 		handler.handleResumeFromCheckpoint(w, r, runID)
+	case len(segments) == 1 && segments[0] == "hitl/resume":
+		handler.handleRunHITLResume(w, r, runID)
 	case len(segments) == 1 && segments[0] == "thread":
 		handler.handleRunThread(w, r, runID)
 	case len(segments) == 1 && segments[0] == "fork":
@@ -251,6 +261,35 @@ func (handler *Handler) handleSteps(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	result, err := handler.steps.ListRunSteps(r.Context(), runID)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleRunHITLResume(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.hitlResume == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("run HITL resume is not configured"))
+		return
+	}
+	var body struct {
+		Decision  core.Decision   `json:"decision"`
+		Amendment json.RawMessage `json:"amendment,omitempty"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("decode body: %w", err))
+		return
+	}
+	if !body.Decision.Valid() {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("valid decision is required"))
+		return
+	}
+	result, err := handler.hitlResume.ResumeRunHITL(r.Context(), runID, body.Decision, body.Amendment, true)
 	if err != nil {
 		writeError(w, nethttp.StatusBadRequest, err)
 		return

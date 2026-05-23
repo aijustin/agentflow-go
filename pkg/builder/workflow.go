@@ -108,6 +108,21 @@ func (w *WorkflowBuilder) DependsOn(deps ...string) *WorkflowBuilder {
 	return w
 }
 
+// WithInterrupt marks the most recently added node for post-step declarative pause.
+func (w *WorkflowBuilder) WithInterrupt() *WorkflowBuilder {
+	if len(w.wf.Nodes) == 0 {
+		return w
+	}
+	w.wf.Nodes[len(w.wf.Nodes)-1].Interrupt = true
+	return w
+}
+
+// InterruptNode returns node with Interrupt enabled.
+func InterruptNode(node core.WorkflowNode) core.WorkflowNode {
+	node.Interrupt = true
+	return node
+}
+
 // Build returns the workflow graph.
 func (w *WorkflowBuilder) Build() core.Workflow {
 	return w.wf

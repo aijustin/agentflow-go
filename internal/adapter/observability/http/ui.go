@@ -110,7 +110,15 @@ const indexHTML = `<!doctype html>
     .badge.completed { color: var(--ok); background: #e8f7ef; border-color: #bfe4cf; }
     .badge.failed { color: var(--danger); background: #fff0ed; border-color: #f0c4bb; }
     .badge.paused { color: var(--accent-2); background: #fff5e5; border-color: #efd4a8; }
-    .event {
+    .hitl-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-top: 1px solid var(--line);
+      background: #fffbeb;
+    }
+    .hitl-bar .meta { flex: 1; }
       display: grid;
       gap: 7px;
       padding: 12px 14px 12px 18px;
@@ -342,6 +350,11 @@ const indexHTML = `<!doctype html>
         </div>
         <div id="threadCanvas"><div class="empty" data-i18n="empty.selectRunForThread">请选择运行以查看分叉线程</div></div>
       </div>
+      <div class="hitl-bar" id="hitlBar" hidden>
+        <span class="meta" id="hitlBarLabel"></span>
+        <button class="primary" id="hitlApproveButton" data-i18n="hitl.approve">批准并继续</button>
+        <button id="hitlRejectButton" data-i18n="hitl.reject">拒绝</button>
+      </div>
       <div class="time-travel" id="timeTravelBar" hidden>
         <button class="primary" id="resumeStepButton" disabled data-i18n="timeTravel.resumeStep">从所选节点恢复</button>
         <button id="resumeCheckpointButton" disabled data-i18n="timeTravel.resumeCheckpoint">从 checkpoint 恢复</button>
@@ -380,6 +393,7 @@ const indexHTML = `<!doctype html>
         'thread.fork': '分叉当前运行', 'thread.refresh': '刷新线程', 'thread.thread': '线程', 'thread.forkOf': '分叉自', 'thread.root': '根',
         'timeTravel.resumeStep': '从所选节点恢复', 'timeTravel.resumeCheckpoint': '从 checkpoint 恢复', 'timeTravel.noNode': '未选择节点',
         'timeTravel.nodeLabel': '节点：{node}{hint}', 'timeTravel.notResumable': '此节点无法从步骤恢复',
+        'hitl.approve': '批准并继续', 'hitl.reject': '拒绝', 'hitl.pending': '等待审批：{node}（{kind}）', 'hitl.interrupt': 'declarative interrupt', 'hitl.humanGate': 'human gate',
         'detail.run': '运行', 'detail.scenario': '场景', 'detail.sequence': '序号', 'detail.occurred': '发生时间', 'detail.stored': '入库时间',
         'detail.version': '版本', 'detail.status': '状态', 'detail.steps': '步骤', 'detail.recorded': '记录时间', 'detail.current': '当前节点',
         'detail.checkpoint': 'Checkpoint', 'detail.codegen': '代码生成', 'detail.yaml': '场景 YAML', 'detail.savePreview': '保存预览', 'detail.checkpointHistory': 'Checkpoint 历史', 'detail.stepsCount': '{n} 步',
@@ -389,7 +403,7 @@ const indexHTML = `<!doctype html>
         'alert.subgraphExists': '子图已存在', 'alert.nodeExists': '节点已存在', 'alert.invalidJson': 'input 必须是合法 JSON',
         'alert.graphValid': '图校验通过', 'alert.invalidGraph': '图无效', 'alert.codegenFailed': '代码生成失败', 'alert.yamlFailed': 'YAML 导出失败', 'alert.importYamlFailed': 'YAML 导入失败',
         'alert.previewFailed': '预览失败', 'alert.saveFailed': '保存失败', 'alert.runFailed': 'Studio 运行失败', 'alert.compareFailed': '对比失败',
-        'alert.forkFailed': '分叉失败', 'alert.resumeFailed': '恢复失败', 'confirm.saveGraph': '将编辑后的图保存到宿主场景文件？',
+        'alert.forkFailed': '分叉失败', 'alert.resumeFailed': '恢复失败', 'alert.hitlFailed': 'HITL 审批失败', 'confirm.saveGraph': '将编辑后的图保存到宿主场景文件？',
         'confirm.revertGraph': '丢弃本地编辑并重新加载已加载的场景图？', 'alert.savedTo': '已保存到 {path}', 'alert.scenarioFile': '场景文件', 'alert.reloadFailed': '重新加载图失败',
         'errors.studio.save_path_missing': '未配置场景保存路径', 'errors.studio.graph_required': '缺少 graph 数据',
         'errors.graph.duplicate_node': '重复节点 {id}', 'errors.graph.invalid': '图无效', 'errors.studio.internal': '内部错误',
@@ -432,6 +446,7 @@ const indexHTML = `<!doctype html>
         'thread.fork': 'Fork current run', 'thread.refresh': 'Refresh thread', 'thread.thread': 'thread', 'thread.forkOf': 'fork of', 'thread.root': 'root',
         'timeTravel.resumeStep': 'Resume from selected node', 'timeTravel.resumeCheckpoint': 'Resume from checkpoint', 'timeTravel.noNode': 'No node selected',
         'timeTravel.nodeLabel': 'Node: {node}{hint}', 'timeTravel.notResumable': 'This node cannot be resumed from step',
+        'hitl.approve': 'Approve & continue', 'hitl.reject': 'Reject', 'hitl.pending': 'Awaiting approval: {node} ({kind})', 'hitl.interrupt': 'declarative interrupt', 'hitl.humanGate': 'human gate',
         'detail.run': 'Run', 'detail.scenario': 'Scenario', 'detail.sequence': 'Sequence', 'detail.occurred': 'Occurred', 'detail.stored': 'Stored',
         'detail.version': 'Version', 'detail.status': 'Status', 'detail.steps': 'Steps', 'detail.recorded': 'Recorded', 'detail.current': 'Current',
         'detail.checkpoint': 'Checkpoint', 'detail.codegen': 'Codegen', 'detail.yaml': 'Scenario YAML', 'detail.savePreview': 'Save preview', 'detail.checkpointHistory': 'Checkpoint history', 'detail.stepsCount': '{n} steps',
@@ -441,7 +456,7 @@ const indexHTML = `<!doctype html>
         'alert.subgraphExists': 'subgraph already exists', 'alert.nodeExists': 'node already exists', 'alert.invalidJson': 'input must be valid JSON',
         'alert.graphValid': 'Graph is valid', 'alert.invalidGraph': 'invalid graph', 'alert.codegenFailed': 'codegen failed', 'alert.yamlFailed': 'yaml export failed', 'alert.importYamlFailed': 'yaml import failed',
         'alert.previewFailed': 'preview failed', 'alert.saveFailed': 'save failed', 'alert.runFailed': 'studio run failed', 'alert.compareFailed': 'compare failed',
-        'alert.forkFailed': 'fork failed', 'alert.resumeFailed': 'resume failed', 'confirm.saveGraph': 'Save edited graph back to the host scenario file?',
+        'alert.forkFailed': 'fork failed', 'alert.resumeFailed': 'resume failed', 'alert.hitlFailed': 'HITL decision failed', 'confirm.saveGraph': 'Save edited graph back to the host scenario file?',
         'confirm.revertGraph': 'Discard local edits and reload the loaded scenario graph?', 'alert.savedTo': 'Saved to {path}', 'alert.scenarioFile': 'scenario file', 'alert.reloadFailed': 'Failed to reload graph',
         'errors.studio.save_path_missing': 'Studio save path is not configured', 'errors.studio.graph_required': 'Graph is required',
         'errors.graph.duplicate_node': 'Duplicate node {id}', 'errors.graph.invalid': 'Invalid graph', 'errors.studio.internal': 'Internal error',
@@ -461,7 +476,7 @@ const indexHTML = `<!doctype html>
       }
     };
     let locale = localStorage.getItem('obs-lang') || 'zh-CN';
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
     const t = (key, vars) => {
       let text = (I18N[locale] && I18N[locale][key]) || (I18N.en && I18N.en[key]) || key;
       if (vars) Object.keys(vars).forEach((name) => { text = text.split('{' + name + '}').join(String(vars[name])); });
@@ -588,9 +603,11 @@ const indexHTML = `<!doctype html>
         if (!res.ok) return;
         state.steps = await res.json();
         state.resumeEnabled = true;
+        state.hitlEnabled = true;
       } catch (_) {}
       renderGraph();
       updateTimeTravelBar();
+      updateHitlBar();
     }
     function resetEditorGraph(options) {
       options = options || {};
@@ -821,7 +838,7 @@ const indexHTML = `<!doctype html>
         html += '<g class="' + classes.join(' ') + '" data-node="' + escapeHTML(node.id) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
         html += '<rect width="120" height="48" rx="8"></rect>';
         html += '<text x="8" y="18" font-weight="700">' + escapeHTML(node.id) + '</text>';
-        html += '<text x="8" y="34" fill="#697586">' + escapeHTML(node.kind + (node.ref ? ':' + node.ref : '')) + '</text>';
+        html += '<text x="8" y="34" fill="#697586">' + escapeHTML(node.kind + (node.ref ? ':' + node.ref : '') + (node.interrupt ? ' ⏸' : '')) + '</text>';
         html += '</g>';
       });
       html += '</svg>';
@@ -1327,6 +1344,31 @@ const indexHTML = `<!doctype html>
       await selectRun(body.run_id);
       setView('thread');
     }
+    function updateHitlBar() {
+      const bar = $('hitlBar');
+      if (!bar) return;
+      const pending = state.steps && state.steps.pending_hitl;
+      const paused = state.steps && state.steps.status === 'paused';
+      const show = state.hitlEnabled && paused && pending;
+      bar.hidden = !show;
+      if (!show) return;
+      const nodeID = pending.node_id || (state.steps && state.steps.current_node_id) || '?';
+      const kind = pending.interrupt ? t('hitl.interrupt') : t('hitl.humanGate');
+      $('hitlBarLabel').textContent = t('hitl.pending', { node: nodeID, kind });
+    }
+    async function resumeRunHITL(decision) {
+      if (!state.selectedRun) return;
+      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/hitl/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      const body = await res.json();
+      if (!res.ok) { alert(formatApiError(body, 'alert.hitlFailed')); return; }
+      await loadSteps(state.selectedRun);
+      await loadRuns();
+      await selectRun(state.selectedRun);
+    }
     function updateTimeTravelBar() {
       const meta = state.nodeMeta[state.selectedNode] || {};
       const hint = meta.resume_hint || (meta.resumable === false ? t('timeTravel.notResumable') : '');
@@ -1544,6 +1586,8 @@ const indexHTML = `<!doctype html>
     $('refreshThreadButton').onclick = () => loadThread();
     $('resumeStepButton').onclick = () => resumeFromStep();
     $('resumeCheckpointButton').onclick = () => resumeFromCheckpoint();
+    $('hitlApproveButton').onclick = () => resumeRunHITL('approve');
+    $('hitlRejectButton').onclick = () => resumeRunHITL('reject');
     $('liveButton').onclick = () => {
       state.live = !state.live;
       updateLiveButton();

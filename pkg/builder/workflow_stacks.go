@@ -115,3 +115,23 @@ func FixedWorkflowReviewWorkflow(toolRef, agentRef string) core.Workflow {
 		Edge("inspect", "review").
 		Build()
 }
+
+func prepareReadyInput() json.RawMessage {
+	input, _ := json.Marshal(map[string]any{"set": map[string]any{"ready": true}})
+	return input
+}
+
+func continueAfterInterruptInput() json.RawMessage {
+	input, _ := json.Marshal(map[string]any{"set": map[string]any{"continued": true}})
+	return input
+}
+
+// DeclarativeInterruptWorkflow builds prepare → interrupt → continue for catalog ID declarative-interrupt.
+func DeclarativeInterruptWorkflow() core.Workflow {
+	return NewWorkflow().
+		NodeTransform("prepare", prepareReadyInput()).
+		WithInterrupt().
+		NodeTransform("continue", continueAfterInterruptInput()).
+		Edge("prepare", "continue").
+		Build()
+}

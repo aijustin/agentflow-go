@@ -19,6 +19,7 @@
 //	scenario := builder.SelfRAG("assistant")
 //	scenario := builder.HybridResearch("analyst")
 //	scenario := builder.MinimalHumanInLoop("assistant")
+//	scenario := builder.MinimalDeclarativeInterrupt()
 //	scenario := builder.MultiExpertResearch()
 //	scenario := builder.CodeReviewPipeline()
 //	scenario := builder.WorkflowEnhancements()

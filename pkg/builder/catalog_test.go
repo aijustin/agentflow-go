@@ -17,7 +17,7 @@ func TestExampleCatalogValidates(t *testing.T) {
 }
 
 func TestExampleCatalogCount(t *testing.T) {
-	if len(builder.ExampleCatalog()) != 18 {
-		t.Fatalf("catalog entries=%d want=18", len(builder.ExampleCatalog()))
+	if len(builder.ExampleCatalog()) != 19 {
+		t.Fatalf("catalog entries=%d want=19", len(builder.ExampleCatalog()))
 	}
 }

@@ -87,6 +87,7 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 	if config.Framework != nil {
 		adapter := &studioFramework{framework: config.Framework, savePath: config.StudioSavePath}
 		httpConfig.Steps = adapter
+		httpConfig.HITLResume = adapter
 		httpConfig.Graph = adapter
 		httpConfig.Resume = adapter
 		httpConfig.History = adapter

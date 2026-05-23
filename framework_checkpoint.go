@@ -24,7 +24,14 @@ type ListRunStepsResult struct {
 	Version       int64              `json:"version"`
 	Status        runstate.RunStatus `json:"status"`
 	CurrentNodeID string             `json:"current_node_id,omitempty"`
+	PendingHITL   *PendingHITLInfo   `json:"pending_hitl,omitempty"`
 	Steps         []RunStep          `json:"steps"`
+}
+
+// PendingHITLInfo describes a paused run awaiting HITL approval.
+type PendingHITLInfo struct {
+	NodeID    string `json:"node_id,omitempty"`
+	Interrupt bool   `json:"interrupt,omitempty"`
 }
 
 // ListRunCheckpointsResult summarizes append-only snapshot revisions for a run.
@@ -60,8 +67,25 @@ func (f *Framework) ListRunSteps(ctx context.Context, runID string) (ListRunStep
 		Version:       snapshot.Version,
 		Status:        snapshot.Status,
 		CurrentNodeID: snapshot.CurrentNodeID,
+		PendingHITL:   pendingHITLFromSnapshot(snapshot),
 		Steps:         steps,
 	}, nil
+}
+
+func pendingHITLFromSnapshot(snapshot runstate.RunSnapshot) *PendingHITLInfo {
+	if snapshot.Status != runstate.RunStatusPaused || snapshot.PendingGate == nil {
+		return nil
+	}
+	info := &PendingHITLInfo{NodeID: snapshot.CurrentNodeID}
+	if len(snapshot.PendingGate.Payload) > 0 {
+		var payload struct {
+			Interrupt bool `json:"interrupt"`
+		}
+		if err := json.Unmarshal(snapshot.PendingGate.Payload, &payload); err == nil {
+			info.Interrupt = payload.Interrupt
+		}
+	}
+	return info
 }
 
 // ResumeFromStep rewinds a workflow run to the given node, truncating that node
