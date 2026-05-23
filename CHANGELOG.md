@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- Public YAML scenario loaders: `LoadScenarioFile`, `LoadScenario`, `NewFromFile`. Use `pkg/builder` or `core.Scenario`; Studio import/export APIs remain.
+- `examples/go/validate -kind scenario` and `testutil.ScenarioWorkDir`.
+
+### Changed
+
+- Library version `0.2.0` — builder-first; YAML is Studio interchange only.
+- README YAML sections condensed; field details live in `docs/configuration-reference.md`.
+- `docs/superpowers/plans/*` marked as historical implementation records.
+
+### Fixed
+
+- `ImportStudioScenarioYAML` nil panic when `layout.Workflow` is omitted.
+
 ## [0.1.10] - 2026-05-22
 
 ### Added

@@ -195,21 +195,6 @@ func (r *toolRegistry) ResolveTool(ctx context.Context, tool core.Tool) (core.To
 // Option customizes Framework construction.
 type Option func(*options) error
 
-// LoadScenarioFile loads and validates a scenario YAML file.
-//
-// Deprecated: define scenarios in Go with pkg/builder or core.Scenario and call
-// New instead. YAML loading is scheduled for removal in a future major release.
-func LoadScenarioFile(path string) (core.Scenario, error) {
-	return configyaml.LoadFile(path)
-}
-
-// LoadScenario loads and validates a scenario YAML document.
-//
-// Deprecated: use programmatic core.Scenario construction instead.
-func LoadScenario(data []byte) (core.Scenario, error) {
-	return configyaml.Load(data)
-}
-
 // ValidateScenario validates a scenario built programmatically.
 func ValidateScenario(scenario core.Scenario) error {
 	return configyaml.Validate(scenario)
@@ -230,18 +215,6 @@ func BuildPlan(scenario core.Scenario) (Plan, error) {
 		LLMs:     plan.LLMs,
 		Memory:   plan.Memory,
 	}, nil
-}
-
-// NewFromFile loads a scenario YAML file and creates a Framework.
-//
-// Deprecated: use New with a builder or core.Scenario. See pkg/builder and
-// docs/product-direction.md.
-func NewFromFile(path string, opts ...Option) (*Framework, error) {
-	scenario, err := LoadScenarioFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return New(scenario, opts...)
 }
 
 // New creates a Framework for a validated scenario. By default it wires

@@ -52,7 +52,7 @@ Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHan
 | [event-trigger](examples/go/event-trigger/main.go) | Event-driven runs via `scenario.triggers` | `go run ./examples/go/event-trigger/main.go` |
 | [tier-memory](examples/go/tier-memory/main.go) | In-process tier memory minimal example | `go run ./examples/go/tier-memory/main.go` |
 | [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` async worker | See [examples/deploy/](examples/deploy/README.md) |
-| [validate](examples/go/validate/main.go) | Validate scenario YAML, wiring, builder stacks, or catalog manifests | `go run ./examples/go/validate -kind builder all` |
+| [validate](examples/go/validate/main.go) | Validate builder catalog stacks or tool/skill manifests | `go run ./examples/go/validate -kind builder all` |
 | [builder](examples/go/builder/main.go) | Build scenario with Go DSL and run in-process | `go run ./examples/go/builder/main.go` |
 
 Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.WiringOptions`. Builder reference: [docs/builder-reference.md](docs/builder-reference.md).
@@ -586,141 +586,16 @@ Debug resume response:
 
 Network-delivered tokens are HMAC signed. In production, always set `AGENT_TOKEN_SECRET` to a strong secret and use a persistent run-state repository.
 
-## YAML scenario format
+## YAML scenario format (Studio interchange)
 
-All scenario configuration lives under one `scenario:` root.
+> Define new scenarios in Go with [`pkg/builder`](docs/builder-reference.md). YAML is for **Studio import/export** and field reference only; public loaders `LoadScenarioFile` / `NewFromFile` / `LoadScenario` were removed.
 
-For editor completion, enum discovery, and CI validation, use the JSON Schema at [schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json). A full human-readable field reference is available in [docs/configuration-reference.md](docs/configuration-reference.md), orchestration execution flow and **mode/node selection guide** in [docs/orchestration-flow.md](docs/orchestration-flow.md), or load it in Go with `agentflow.ScenarioJSONSchema()`.
+- Field reference: [docs/configuration-reference.md](docs/configuration-reference.md)
+- JSON Schema: [schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json) (Go: `agentflow.ScenarioJSONSchema()`)
+- Orchestration flow: [docs/orchestration-flow.md](docs/orchestration-flow.md)
+- Studio: `Framework.ImportStudioScenarioYAML` · export via `GenerateStudioScenarioYAML` / `SaveStudioGraph`
 
-Example scenarios:
-
-| File | Highlights |
-| --- | --- |
-| `builder.MinimalAutonomous("assistant")` | Autonomous tool loop baseline |
-| `builder.MinimalFixedWorkflowReview("reviewer")` | Graph workflow with conditions and HITL |
-| `builder.MinimalHumanInLoop("assistant")` | HITL pause and resume |
-| `builder.MinimalTicketHandling("support")` | Ticket tool + triggers + event routing |
-| `builder.CodeReviewPipeline()` | Git tool + `parallel_group` workflow |
-| `builder.MultiExpertResearch()` | Hybrid mode + planning.execute |
-
-```yaml
-# yaml-language-server: $schema=schemas/agentflow.scenario.schema.json
-```
-
-```yaml
-scenario:
-  name: autonomous-echo
-  llms:
-    default:
-      provider: mock
-      model: test
-  memories:
-    session:
-      type: in_memory
-      scope: session
-  tools:
-    echo:
-      type: builtin.echo
-      approval: never
-      rate_cap: 5
-  agents:
-    assistant:
-      llm: default
-      memory: session
-      tools: [echo]
-      timeout: 30s
-      retry_limit: 1
-      output_schema:
-        type: object
-        properties:
-          answer:
-            type: string
-      instructions: "Answer the user clearly."
-  orchestration:
-    mode: autonomous
-    human_in_loop:
-      enabled: false
-  runtime:
-    timeout: 2m
-    max_steps: 8
-    max_retries: 1
-    step_output_threshold: 65536
-```
-
-### Top-level sections
-
-| Section | Purpose |
-| --- | --- |
-| `llms` | Named LLM profiles. Agents and tools can bind to different profiles. |
-| `memories` | Named memory backends and scopes. In-memory and file-backed repositories are available. |
-| `tools` | Tool declarations, side-effect metadata, approval policy, optional LLM override, and per-run `rate_cap`. |
-| `skills` | Declarative prompt/policy/workflow packages. Skills are not runtime actors and do not initialize tools; they expand into agent instructions, tool policies, and workflow subgraphs during scenario build. |
-| `agents` | Agent role, instructions, LLM binding, memory binding, tools, and skills. |
-| `orchestration` | Autonomous, fixed workflow, or hybrid HITL execution policy. |
-| `runtime` | Runtime limits, output thresholds, secrets, and operational settings. |
-
-### LLM profile and context governance
-
-Each LLM profile can define provider settings, output limits, thinking/reasoning options, provider-specific request fields, and a context-window policy:
-
-```yaml
-scenario:
-  llms:
-    default:
-      provider: openai-compatible
-      model: qwen/qwen3.6-35b-a3b
-      endpoint: http://127.0.0.1:1234/v1
-      api_key_env: AGENT_REALMODEL_API_KEY
-      context_window_tokens: 1400
-      max_output_tokens: 1024
-      temperature: 0
-      top_p: 0.8
-      thinking:
-        enabled: true
-        budget_tokens: 768
-      reasoning_effort: high
-      extra_body:
-        custom_provider_flag: true
-      context:
-        strategy: sliding_window_with_summary
-        max_input_tokens: 220
-        reserved_output_tokens: 1024
-        summary_tokens: 80
-        tool_result_max_tokens: 400
-        memory_recall_limit: 8
-        system_prompt_protection: true
-        compression:
-          enabled: true
-          trigger_ratio: 0.5
-```
-
-Supported context strategies are `none`, `sliding_window`, and `sliding_window_with_summary`. Before each LLM call, the runtime emits `ContextPrepared` with before/after token estimates, dropped message count, summary status, and active input budget. When `tool_result_max_tokens` is set, large tool observations are compacted before they are sent back into the next LLM turn while the full persisted step output remains available through run state/blob storage.
-
-For local Qwen reasoning models, keep `max_output_tokens` high enough for reasoning tokens because some OpenAI-compatible servers count reasoning output against `max_tokens`. The runtime treats an empty response with `finish_reason=length` as an error so misconfigured reasoning budgets do not look like successful empty answers.
-
-### Orchestration modes
-
-| Mode | Description |
-| --- | --- |
-| `autonomous` | LLM-driven planning/execution. The orchestrator owns tool dispatch and approval checks. |
-| `fixed_workflow` | Deterministic graph. Workflow nodes and edges are validated before execution. |
-| `hybrid` | Designed for combining workflow control with autonomous substeps and HITL gates. |
-
-### Human-in-the-loop
-
-Enable HITL by adding checkpoints:
-
-```yaml
-scenario:
-  orchestration:
-    mode: autonomous
-    human_in_loop:
-      enabled: true
-      checkpoints:
-        - before_final_answer
-```
-
-When a checkpoint opens, runtime persists a `RunSnapshot`, signs a token containing `(RunID, Version)`, and waits for a human decision.
+Example stacks (Go builder, not YAML files): see [builder-reference.md](docs/builder-reference.md). Validate all 19 catalog entries with `make validate-builder`.
 
 ## Library usage
 
@@ -734,7 +609,7 @@ Public packages:
 
 | Package | Purpose |
 | --- | --- |
-| root package | Framework facade: load YAML, validate, run, resume, handle events, wire options. |
+| root package | Framework facade: validate, run, resume, handle events, Studio interchange, and wire options. |
 | `pkg/async` | Job queue, lease, handler, and worker contracts for asynchronous execution. |
 | `pkg/eventrouter` | External event types and trigger-to-run routing for `scenario.triggers`. |
 | `pkg/audit` | Audit event model and sink contract for compliance records. |

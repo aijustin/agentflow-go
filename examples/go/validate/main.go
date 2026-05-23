@@ -8,11 +8,10 @@ import (
 
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/builder"
-	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 
 func main() {
-	kind := flag.String("kind", "builder", "manifest kind: builder, scenario (deprecated), tool, or skill")
+	kind := flag.String("kind", "builder", "manifest kind: builder, tool, or skill")
 	flag.Parse()
 	switch strings.ToLower(strings.TrimSpace(*kind)) {
 	case "tool":
@@ -27,33 +26,9 @@ func main() {
 		validateSkill(flag.Arg(0))
 	case "builder":
 		validateBuilder(flag.Args())
-	case "scenario":
-		if flag.NArg() < 1 {
-			log.Fatal("usage: validate -kind scenario <legacy.yaml>")
-		}
-		validateScenarioLegacy(flag.Arg(0))
 	default:
-		log.Fatal("usage: validate [-kind builder|scenario|tool|skill] [builder-id|all|legacy.yaml]")
+		log.Fatal("usage: validate [-kind builder|tool|skill] [builder-id|all|manifest.yaml]")
 	}
-}
-
-func validateScenarioLegacy(path string) {
-	scenario, err := agentflow.LoadScenarioFile(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	workDir, err := testutil.ScenarioWorkDir(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: workDir})
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agentflow.ValidateWiring(scenario, opts...); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("ok: legacy scenario %s\n", path)
 }
 
 func validateTool(path string) {

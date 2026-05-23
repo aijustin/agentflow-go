@@ -115,6 +115,6 @@ Apply [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/00
 
 See [README.md](../README.md) for the full list of extension packages (memory, runstate, knowledge, async, governance, identity, security, etc.).
 
-## Deprecated YAML loading
+## Studio YAML interchange
 
-`LoadScenarioFile` / `NewFromFile` remain available but are **deprecated**. New scenarios should use `pkg/builder`. See [product-direction.md](./product-direction.md).
+Scenario YAML is for Studio import/export only (`ImportStudioScenarioYAML`, `GenerateStudioScenarioYAML`). Define new scenarios with `pkg/builder`. See [product-direction.md](./product-direction.md) and [studio-roadmap.md](./studio-roadmap.md).

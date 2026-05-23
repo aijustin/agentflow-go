@@ -2,9 +2,6 @@
 // agentflow-go. Built scenarios should be validated with
 // agentflow.ValidateScenario before creating a Framework.
 //
-// YAML loading (LoadScenarioFile / NewFromFile) is deprecated; see
-// docs/product-direction.md.
-//
 // For the common mock/session/echo autonomous stack:
 //
 //	scenario := builder.MinimalAutonomous("assistant")

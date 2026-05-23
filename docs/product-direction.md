@@ -26,11 +26,12 @@ result, err := fw.Run(ctx, agentflow.RunRequest{...})
 
 ## YAML 状态
 
-`LoadScenarioFile` / `NewFromFile` **仍可用**，但已 **deprecated**：
+公共 YAML 加载 API（`LoadScenarioFile` / `LoadScenario` / `NewFromFile`）**已移除**（v0.2 起）。
 
-- 仅作迁移参考与 CI 对照，**不再新增 YAML 专属能力**
-- 新节点（subgraph、map 等）以 builder + `core.Scenario` 为准
-- 长期计划：下一大版本移除 YAML 加载器（`internal/adapter/config/yaml` 保留校验逻辑供 struct 使用）
+- 新场景：**仅** `pkg/builder` 或 `core.Scenario`
+- Studio：`ImportStudioScenarioYAML` / `GenerateStudioScenarioYAML` / `SaveStudioGraph` 仍使用内部 YAML 编解码
+- 校验：`agentflow.ValidateScenario(scenario)` 与 JSON Schema 仍可用于 struct 字段对照
+- `examples/go/validate` 仅支持 `-kind builder|tool|skill`
 
 ## 编排路线图（裁剪后）
 

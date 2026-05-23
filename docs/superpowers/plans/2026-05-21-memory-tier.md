@@ -1,5 +1,7 @@
 # Memory Tier 实施计划
 
+> **历史文档**：本计划为 2026-05 实施记录，勾选框反映当时进度，不再作为当前 backlog。产品方向见 [product-direction.md](../../product-direction.md)。
+
 设计规格：[2026-05-21-memory-tier-design.md](../specs/2026-05-21-memory-tier-design.md)
 
 ## Phase 1：契约与策略（M5 记忆子项）

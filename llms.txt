@@ -4,7 +4,7 @@ Go runtime library for Agents, Tools, Skills, LLM gateways, Memory, Run State, a
 
 ## Important files
 
-- `docs/product-direction.md`: code-first product direction (YAML deprecated).
+- `docs/product-direction.md`: code-first product direction.
 - `README.md`: primary documentation (Chinese, library-first).
 - `README.en.md`: English documentation.
 - `docs/manual.html`: standalone HTML integration manual (open in browser).
@@ -33,4 +33,4 @@ fw, err := agentflow.New(scenario, opts...)
 result, err := fw.Run(ctx, agentflow.RunRequest{...})
 ```
 
-Deprecated: `NewFromFile`, `LoadScenarioFile`, `LoadScenario`.
+Studio YAML interchange: `ImportStudioScenarioYAML`, `GenerateStudioScenarioYAML`.

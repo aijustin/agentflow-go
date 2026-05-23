@@ -3,6 +3,7 @@ package agentflow_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -174,12 +175,16 @@ func TestFrameworkSaveStudioGraph(t *testing.T) {
 	if result.Path != path || result.ScenarioName != "studio-save" {
 		t.Fatalf("unexpected save result: %+v", result)
 	}
-	reloaded, err := agentflow.LoadScenarioFile(path)
+	yamlBytes, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.Orchestration.Workflow == nil || len(reloaded.Orchestration.Workflow.Nodes) != 2 {
-		t.Fatalf("expected saved workflow with 2 nodes, got %+v", reloaded.Orchestration.Workflow)
+	imported, err := fw.ImportStudioScenarioYAML(context.Background(), yamlBytes, graph.ScenarioGraph{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Graph.Workflow.Nodes) != 2 {
+		t.Fatalf("expected saved workflow with 2 nodes, got %+v", imported.Graph.Workflow.Nodes)
 	}
 }
 

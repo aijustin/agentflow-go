@@ -1,5 +1,7 @@
 # 认证、可观测性与治理实施计划
 
+> **历史文档**：本计划为 2026-05 实施记录，勾选框反映当时进度，不再作为当前 backlog。产品方向见 [product-direction.md](../../product-direction.md)。
+
 > **给 agentic worker：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans，按任务逐步实施本计划。步骤使用复选框（`- [ ]`）语法跟踪。
 
 **目标：** 增加企业身份、授权、审计、可观测性和治理基础。

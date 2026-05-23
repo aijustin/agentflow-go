@@ -575,143 +575,25 @@ Webhook 事件在配置 `Framework` 时使用 `POST /v1/events`。详见 [docs/a
 
 网络传递的 Token 使用 HMAC 签名。生产环境必须设置强密钥，并使用持久化 RunState 仓库。
 
-## YAML 场景格式
+## YAML 场景格式（Studio 互操作）
 
-> **Deprecated**：新场景请用 [`pkg/builder`](docs/builder-reference.md) 在 Go 中定义。本节描述 YAML 字段与 schema，供 Studio 导入/导出、legacy 校验与迁移参考。详见 [product-direction.md](docs/product-direction.md)。
+> 新场景请用 [`pkg/builder`](docs/builder-reference.md) 在 Go 中定义。YAML 仅用于 **Studio 导入/导出** 与字段对照，不再提供 `LoadScenarioFile` / `NewFromFile` 等公共加载 API。
 
-所有场景配置都位于一个 `scenario:` 根节点下。
+- 字段参考：[docs/configuration-reference.md](docs/configuration-reference.md)
+- JSON Schema：[schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json)（Go：`agentflow.ScenarioJSONSchema()`）
+- 编排流程：[docs/orchestration-flow.md](docs/orchestration-flow.md)
+- Studio 导入：`Framework.ImportStudioScenarioYAML` · 导出：`GenerateStudioScenarioYAML` / `SaveStudioGraph`
 
-如需编辑器补全、枚举提示和 CI 校验，可使用 JSON Schema：[schemas/agentflow.scenario.schema.json](schemas/agentflow.scenario.schema.json)。完整字段参考见 [docs/configuration-reference.md](docs/configuration-reference.md)，编排执行流程与**模式/节点选型指南**见 [docs/orchestration-flow.md](docs/orchestration-flow.md)，Go 中可通过 `agentflow.ScenarioJSONSchema()` 加载同一份 schema。
+示例栈（Go builder，非 YAML 文件）：
 
-示例场景：
-
-| 文件 | 说明 |
+| Builder | 说明 |
 | --- | --- |
 | `builder.MinimalAutonomous("assistant")` | 自主工具循环基线 |
 | `builder.MinimalFixedWorkflowReview("reviewer")` | 图工作流 + 条件 + HITL |
-| `builder.MinimalHumanInLoop("assistant")` | HITL 暂停与恢复 |
-| `builder.MinimalTicketHandling("support")` | Ticket 工具 + triggers + 事件路由 |
-| `builder.CodeReviewPipeline()` | Git 工具 + `parallel_group` 工作流 |
-| `builder.MultiExpertResearch()` | Hybrid 模式 + planning.execute |
+| `builder.CodeReviewPipeline()` | Git 工具 + `parallel_group` |
+| `builder.MultiExpertResearch()` | Hybrid + planning |
 
-```yaml
-# yaml-language-server: $schema=schemas/agentflow.scenario.schema.json
-```
-
-```yaml
-scenario:
-  name: autonomous-echo
-  llms:
-    default:
-      provider: mock
-      model: test
-  memories:
-    session:
-      type: in_memory
-      scope: session
-  tools:
-    echo:
-      type: builtin.echo
-      approval: never
-      rate_cap: 5
-  agents:
-    assistant:
-      llm: default
-      memory: session
-      tools: [echo]
-      timeout: 30s
-      retry_limit: 1
-      output_schema:
-        type: object
-        properties:
-          answer:
-            type: string
-      instructions: "Answer the user clearly."
-  orchestration:
-    mode: autonomous
-    human_in_loop:
-      enabled: false
-  runtime:
-    timeout: 2m
-    max_steps: 8
-    max_retries: 1
-    step_output_threshold: 65536
-```
-
-### 顶层配置段
-
-| 配置段 | 作用 |
-| --- | --- |
-| `llms` | 命名 LLM Profile。Agent 和 Tool 可以绑定不同 Profile。 |
-| `memories` | 命名 Memory 后端和作用域。当前支持内存和文件持久化仓库。 |
-| `tools` | Tool 声明、副作用等级、审批策略、可选 LLM 覆盖和每次运行的 `rate_cap`。 |
-| `skills` | 声明式 prompt/policy/workflow 包。Skill 不是独立运行时 Actor，也不初始化工具；它会在场景构建阶段展开为 Agent 指令、工具策略和 workflow 子图。 |
-| `agents` | Agent 角色、指令、LLM 绑定、Memory 绑定、工具和技能。 |
-| `orchestration` | autonomous、fixed_workflow 或 hybrid 编排策略。 |
-| `runtime` | Runtime 限制、输出阈值、密钥和运行参数。 |
-
-### LLM Profile 与上下文治理
-
-每个 LLM Profile 可定义提供商参数、输出限制、thinking/reasoning 选项、提供商扩展字段和上下文窗口策略：
-
-```yaml
-scenario:
-  llms:
-    default:
-      provider: openai-compatible
-      model: qwen/qwen3.6-35b-a3b
-      endpoint: http://127.0.0.1:1234/v1
-      api_key_env: AGENT_REALMODEL_API_KEY
-      context_window_tokens: 1400
-      max_output_tokens: 1024
-      temperature: 0
-      top_p: 0.8
-      thinking:
-        enabled: true
-        budget_tokens: 768
-      reasoning_effort: high
-      extra_body:
-        custom_provider_flag: true
-      context:
-        strategy: sliding_window_with_summary
-        max_input_tokens: 220
-        reserved_output_tokens: 1024
-        summary_tokens: 80
-        tool_result_max_tokens: 400
-        memory_recall_limit: 8
-        system_prompt_protection: true
-        compression:
-          enabled: true
-          trigger_ratio: 0.5
-```
-
-支持的上下文策略包括 `none`、`sliding_window`、`sliding_window_with_summary`。每次 LLM 调用前，Runtime 会发出 `ContextPrepared` 事件，包含裁剪前后 token 估算、丢弃消息数、是否生成摘要和当前输入预算。
-
-对于本地 Qwen reasoning 模型，应将 `max_output_tokens` 设置得足够大，因为一些 OpenAI-compatible 服务会把 reasoning output 计入 `max_tokens`。如果响应为空且 `finish_reason=length`，Runtime 会返回错误，避免把错误配置误判成成功的空回答。
-
-### 编排模式
-
-| 模式 | 说明 |
-| --- | --- |
-| `autonomous` | LLM 驱动的规划/执行。Orchestrator 负责工具调度和审批检查。 |
-| `fixed_workflow` | 确定性图工作流。执行前校验节点和边。 |
-| `hybrid` | 为固定流程 + 自主子步骤 + HITL Gate 的组合场景预留。 |
-
-### Human-in-the-loop
-
-通过 checkpoints 启用 HITL：
-
-```yaml
-scenario:
-  orchestration:
-    mode: autonomous
-    human_in_loop:
-      enabled: true
-      checkpoints:
-        - before_final_answer
-```
-
-Checkpoint 打开时，Runtime 会持久化 `RunSnapshot`，签发包含 `(RunID, Version)` 的 Token，并等待人工决策。
+完整 catalog（19 条）：`make validate-builder`
 
 ## 库 API
 
@@ -725,7 +607,7 @@ import agentflow "github.com/aijustin/agentflow-go"
 
 | 包 | 作用 |
 | --- | --- |
-| root package | 框架门面：加载 YAML、校验、运行、恢复、事件处理、注入扩展。 |
+| root package | 框架门面：校验、运行、恢复、事件处理、Studio 互操作与扩展注入。 |
 | `pkg/async` | 异步执行所需的 Job Queue、Lease、Handler 和 Worker 契约。 |
 | `pkg/eventrouter` | 外部事件类型与 `scenario.triggers` 到 RunRequest 的路由。 |
 | `pkg/audit` | 合规记录所需的 Audit Event 模型和 Sink 契约。 |

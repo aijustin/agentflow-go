@@ -107,7 +107,7 @@ func (f *Framework) ImportStudioScenarioYAML(_ context.Context, yamlData []byte,
 		return ImportStudioResult{}, err
 	}
 	exported := graph.ExportScenario(scenario)
-	if len(layout.Workflow.Nodes) > 0 || len(layout.Workflows) > 0 {
+	if (layout.Workflow != nil && len(layout.Workflow.Nodes) > 0) || len(layout.Workflows) > 0 {
 		exported = graph.MergeLayout(layout, exported)
 	}
 	return ImportStudioResult{ScenarioName: scenario.Name, Graph: exported}, nil

@@ -45,15 +45,6 @@ func WiringOptions(scenario core.Scenario, config WiringConfig) ([]agentflow.Opt
 	return opts, nil
 }
 
-// ScenarioWorkDir returns the directory containing a scenario file, or the
-// current working directory when the path is empty.
-func ScenarioWorkDir(scenarioFile string) (string, error) {
-	if strings.TrimSpace(scenarioFile) == "" {
-		return os.Getwd()
-	}
-	return filepath.Abs(filepath.Dir(scenarioFile))
-}
-
 func demoToolExecutor(name string, tool core.Tool, workDir string, gitRoots []string) (core.ToolExecutor, error) {
 	switch strings.TrimSpace(tool.Type) {
 	case "builtin.echo", "builtin.repo_search":
