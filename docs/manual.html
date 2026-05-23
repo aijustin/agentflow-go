@@ -1271,8 +1271,9 @@ mux.Handle("/observability/",
           <li>POST /api/runs/{run_id}/resume-from-step</li>
           <li>GET /api/runs/{run_id}/checkpoints</li>
           <li>POST /api/runs/{run_id}/resume-from-checkpoint</li>
-          <li>Graph / Editor（节点 input JSON + subgraph 画布）/ Compare / Thread 标签页</li>
-          <li>POST /api/studio/validate · /api/studio/codegen · /api/studio/yaml · /api/studio/run · /api/studio/save</li>
+          <li>Graph / Editor（节点 input JSON、condition、depends_on、条件边、布局持久化、subgraph 画布）/ Compare / Thread 标签页</li>
+          <li>Editor：Preview save diff · Revert to loaded · Undo/Redo</li>
+          <li>POST /api/studio/validate · /api/studio/codegen · /api/studio/yaml · /api/studio/run · /api/studio/save（需 StudioSavePath）</li>
           <li>GET /api/compare · /api/runs/{id}/thread · POST /api/runs/{id}/fork</li>
           <li>生产 API：POST /v1/studio/… · GET/POST /v1/runs/{run_id}/…</li>
           <li>WithCheckpointHistory + http-worker 示例</li>
@@ -1295,7 +1296,8 @@ mux.Handle("/observability/",
             <p>完整路径与命令见 <a href="#examples">示例路径对照表</a>；复制 <code>examples/go/</code> 到你的服务即可。</p>
             <div class="code-block"><div class="code-title"><span>shell</span><button class="copy" type="button">复制</button></div><pre><code>go run ./examples/go/http-worker/main.go
 # Studio: http://127.0.0.1:7070/observability/
-# 端口可通过 AGENT_HTTP_ADDR 覆盖</code></pre></div>
+# 端口可通过 AGENT_HTTP_ADDR 覆盖
+# 保存路径：AGENT_STUDIO_SCENARIO_PATH 或默认 .studio/scenario.yaml</code></pre></div>
           </div>
           <div class="panel">
             <h4>发布检查</h4>

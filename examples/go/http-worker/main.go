@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	agentflow "github.com/aijustin/agentflow-go"
+	configyaml "github.com/aijustin/agentflow-go/internal/adapter/config/yaml"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/security"
@@ -81,21 +83,33 @@ func main() {
 	}
 	defer fw.Close(context.Background())
 
+	studioSavePath := envOr("AGENT_STUDIO_SCENARIO_PATH", filepath.Join(examplescenario.WorkDir, "examples", "go", "http-worker", ".studio", "scenario.yaml"))
+	if err := os.MkdirAll(filepath.Dir(studioSavePath), 0o700); err != nil {
+		log.Fatal(err)
+	}
+	if _, err := os.Stat(studioSavePath); os.IsNotExist(err) {
+		if err := configyaml.SaveFile(studioSavePath, scenario); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
 		Queue:          queue,
 		Policy:         security.NewDefaultRolePolicy(),
 		Framework:      fw,
 		Version:        agentflow.Version,
 		MetricsHandler: agentflow.PrometheusMetricsHandler(recorder),
+		StudioSavePath: studioSavePath,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
-		Store:     eventStore,
-		Hub:       eventHub,
-		Framework: fw,
+		Store:          eventStore,
+		Hub:            eventHub,
+		Framework:      fw,
+		StudioSavePath: studioSavePath,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -142,7 +156,7 @@ func main() {
 
 	server := &http.Server{Addr: addr, Handler: mux}
 	go func() {
-		fmt.Printf("HTTP server listening on %s (metrics at /metrics, studio at /observability/)\n", addr)
+		fmt.Printf("HTTP server listening on %s (metrics at /metrics, studio at /observability/, save path %s)\n", addr, studioSavePath)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("server stopped: %v", err)
 			cancel()

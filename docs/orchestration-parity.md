@@ -30,7 +30,7 @@
 | Store 长期记忆 | tier memory + CognitiveMemory | ⚠️ 模型不同，语义对齐中 |
 | Autonomous 作为图节点 | `agent_loop` 节点（图内 ReAct） | ⏸ 不做（用 `hybrid` + `autonomous`） |
 | 流式图事件 | EventSink step/llm/tool/subgraph 事件 | ✅ |
-| Studio 可视化 | Observability Graph View + scenario export + checkpoint 时间轴 | ⚠️ 只读 debug（见 [studio-roadmap.md](./studio-roadmap.md)） |
+| Studio 可视化 | Observability Graph / Time Travel / Editor / Compare / Thread（见 [studio-roadmap.md](./studio-roadmap.md)） | ✅ |
 
 图例：✅ 已有 · ⚠️ 部分 · 🔲 计划
 

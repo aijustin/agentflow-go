@@ -266,7 +266,7 @@ graph = builder.compile(checkpointer=checkpointer)
 | 差距 | 状态 |
 |------|------|
 | 运行时 subgraph | ✅ |
-| 动态 fan-out (`map` / Send) | 🔲 Phase 2 |
+| 动态 fan-out (`map` / Send) | ✅ Phase 2 |
 | Checkpoint 列表 / 定点恢复 | ✅ Phase 3（含历史链 + Studio UI） |
 | 图内 `agent_loop` | 🔲 Phase 4 |
 | Studio 可视化 | ✅ Graph / Time Travel / Editor / Compare / Thread（含 undo、YAML 导出、试运行） |

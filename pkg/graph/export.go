@@ -17,9 +17,16 @@ type ScenarioGraph struct {
 
 // GraphView describes one workflow DAG.
 type GraphView struct {
-	ID    string      `json:"id,omitempty"`
-	Nodes []GraphNode `json:"nodes"`
-	Edges []GraphEdge `json:"edges"`
+	ID     string                    `json:"id,omitempty"`
+	Nodes  []GraphNode               `json:"nodes"`
+	Edges  []GraphEdge               `json:"edges"`
+	Layout map[string]GraphPosition  `json:"layout,omitempty"`
+}
+
+// GraphPosition stores a Studio canvas coordinate for a node.
+type GraphPosition struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
 
 // GraphNode is a workflow node for visualization.
@@ -29,6 +36,7 @@ type GraphNode struct {
 	Ref        string          `json:"ref,omitempty"`
 	Input      json.RawMessage `json:"input,omitempty"`
 	Condition  string          `json:"condition,omitempty"`
+	DependsOn  []string        `json:"depends_on,omitempty"`
 	Resumable  bool            `json:"resumable"`
 	ResumeHint string          `json:"resume_hint,omitempty"`
 }
@@ -73,6 +81,7 @@ func exportWorkflow(id string, workflow core.Workflow) GraphView {
 			Ref:        node.Ref,
 			Input:      cloneJSON(node.Input),
 			Condition:  strings.TrimSpace(node.Condition),
+			DependsOn:  append([]string(nil), node.DependsOn...),
 			Resumable:  resumable,
 			ResumeHint: hint,
 		})

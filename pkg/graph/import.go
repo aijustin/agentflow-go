@@ -33,6 +33,7 @@ func ImportWorkflow(view GraphView) (core.Workflow, error) {
 			Ref:       strings.TrimSpace(node.Ref),
 			Input:     cloneJSON(node.Input),
 			Condition: strings.TrimSpace(node.Condition),
+			DependsOn: append([]string(nil), node.DependsOn...),
 		})
 	}
 	edges := make([]core.WorkflowEdge, 0, len(view.Edges))

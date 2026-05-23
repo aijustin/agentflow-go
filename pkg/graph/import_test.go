@@ -14,10 +14,10 @@ func TestImportWorkflowRoundTrip(t *testing.T) {
 			Mode: core.OrchestrationFixedWorkflow,
 			Workflow: &core.Workflow{
 				Nodes: []core.WorkflowNode{
-					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`), Condition: "steps.seed.output.ok", DependsOn: []string{"seed"}},
 					{ID: "b", Kind: core.NodeAgent, Ref: "reviewer"},
 				},
-				Edges: []core.WorkflowEdge{{From: "a", To: "b"}},
+				Edges: []core.WorkflowEdge{{From: "a", To: "b", Condition: "steps.a.output.ready"}},
 			},
 		},
 	}
@@ -31,6 +31,32 @@ func TestImportWorkflowRoundTrip(t *testing.T) {
 	}
 	if string(wf.Nodes[0].Input) != `{"set":{"x":1}}` {
 		t.Fatalf("input not preserved: %s", wf.Nodes[0].Input)
+	}
+	if wf.Nodes[0].Condition != "steps.seed.output.ok" || len(wf.Nodes[0].DependsOn) != 1 {
+		t.Fatalf("node metadata not preserved: %+v", wf.Nodes[0])
+	}
+	if wf.Edges[0].Condition != "steps.a.output.ready" {
+		t.Fatalf("edge condition not preserved: %+v", wf.Edges[0])
+	}
+}
+
+func TestGraphLayoutRoundTrip(t *testing.T) {
+	view := GraphView{
+		Nodes: []GraphNode{{ID: "a", Kind: "transform"}},
+		Layout: map[string]GraphPosition{
+			"a": {X: 120, Y: 48},
+		},
+	}
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded GraphView
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Layout["a"].X != 120 || decoded.Layout["a"].Y != 48 {
+		t.Fatalf("layout not preserved: %+v", decoded.Layout)
 	}
 }
 

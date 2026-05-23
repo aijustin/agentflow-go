@@ -163,6 +163,17 @@ Production HTTP：
 
 - `POST /v1/studio/validate|codegen|yaml|run|save`
 
+## P5（已交付 — Editor 打磨）
+
+| 能力 | 状态 |
+|------|------|
+| **condition / depends_on** 节点属性编辑 | ✅ Editor 属性面板 |
+| **条件边** 可视化 | ✅ 连边 prompt + 边属性面板 |
+| **布局持久化** | ✅ `GraphView.layout` 随 graph 保存 |
+| **Save diff 预览** | ✅ Preview save → Details 面板 |
+| **Revert to loaded** | ✅ 丢弃本地编辑 |
+| **http-worker 保存演示** | ✅ `StudioSavePath` 示例接线 |
+
 ## 相关文档
 
 - [orchestration-parity.md](./orchestration-parity.md)

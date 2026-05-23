@@ -162,7 +162,7 @@ Production routes (when `Framework` is wired via `NewProductionHTTPHandler`):
 - `GET /observability/api/runs/{run_id}/thread` — list fork/thread group runs.
 - `POST /observability/api/runs/{run_id}/fork` — copy run state to a new run ID.
 
-Open the dashboard and switch to the **Graph** tab for read-only graph debug, **Editor** for drag-and-drop topology edits (including per-node input JSON and subgraph canvas switching), **Compare** for multi-run diffs, and **Thread** for fork lineage. See [studio-roadmap.md](./studio-roadmap.md).
+Open the dashboard and switch to the **Graph** tab for read-only graph debug, **Editor** for drag-and-drop topology edits (per-node input JSON, `condition`, `depends_on`, conditional edges, canvas layout persisted in `GraphView.layout`, subgraph canvas switching, Preview save diff, and Revert to loaded), **Compare** for multi-run diffs, and **Thread** for fork lineage. See [studio-roadmap.md](./studio-roadmap.md).
 
 Protect the handler with the same middleware used for production APIs:
 

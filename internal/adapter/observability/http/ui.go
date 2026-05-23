@@ -195,6 +195,7 @@ const indexHTML = `<!doctype html>
     .graph-node.diff-a rect { stroke: #b45309; fill: #fff5e5; }
     .graph-node.diff-b rect { stroke: #2563eb; fill: #eff6ff; }
     .graph-node.diff-changed rect { stroke: #b42318; fill: #fff0ed; }
+    .graph-edge.active { stroke: #2563eb; stroke-width: 2.5; }
     .thread-item { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-bottom: 8px; cursor: pointer; }
     .thread-item.active { background: #f0f7f6; border-color: #b8ded7; }
     .editor-props { padding: 0 12px 12px; display: grid; gap: 8px; }
@@ -279,7 +280,9 @@ const indexHTML = `<!doctype html>
           <button id="deleteNodeButton">Delete</button>
           <button id="validateGraphButton">Validate</button>
           <button id="yamlGraphButton">Export YAML</button>
+          <button id="previewSaveButton">Preview save</button>
           <button id="saveGraphButton">Save scenario</button>
+          <button id="revertGraphButton">Revert to loaded</button>
           <button class="primary" id="codegenGraphButton">Export Go</button>
         </div>
         <div class="editor-palette" id="editorPalette">
@@ -300,8 +303,17 @@ const indexHTML = `<!doctype html>
         <div class="editor-props" id="editorProps" hidden>
           <div class="meta">Selected node properties</div>
           <input id="editorNodeRef" placeholder="ref (agent/tool/skill/subgraph)" />
+          <input id="editorNodeCondition" placeholder="node condition e.g. steps.a.output.ok" />
+          <input id="editorNodeDependsOn" placeholder="depends_on comma-separated e.g. prep,review" />
           <textarea id="editorNodeInput" placeholder='input JSON e.g. {"set":{"x":1}}'></textarea>
           <button id="saveNodePropsButton">Apply node properties</button>
+        </div>
+        <div class="editor-props" id="editorEdgeProps" hidden>
+          <div class="meta">Selected edge</div>
+          <input id="editorEdgeFrom" readonly />
+          <input id="editorEdgeTo" readonly />
+          <input id="editorEdgeCondition" placeholder="edge condition e.g. steps.flag.output.ok" />
+          <button id="saveEdgePropsButton">Apply edge properties</button>
         </div>
         <div id="editorCanvas"><div class="empty">Load graph to edit</div></div>
       </div>
@@ -332,7 +344,7 @@ const indexHTML = `<!doctype html>
     </section>
   </main>
   <script>
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorHistory: [], editorHistoryIndex: -1, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, graphEnabled: false, resumeEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [] };
     const $ = (id) => document.getElementById(id);
     const fmtTime = (value) => value ? new Date(value).toLocaleTimeString() : '-';
     const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -384,18 +396,47 @@ const indexHTML = `<!doctype html>
       state.editorPositions = {};
       state.editorConnectFrom = '';
       state.editorTarget = 'workflow';
+      state.selectedEdge = null;
       state.editorHistory = [];
       state.editorHistoryIndex = -1;
+      hydrateEditorLayout(state.editorGraph.workflow);
+      Object.values(state.editorGraph.workflows || {}).forEach((view) => hydrateEditorLayout(view));
       renderEditorTargetOptions();
       updateEditorHistoryButtons();
       pushEditorHistory();
     }
+    function hydrateEditorLayout(view) {
+      if (!view || !view.layout) return;
+      Object.entries(view.layout).forEach(([id, pos]) => {
+        state.editorPositions[id] = { x: Number(pos.x) || 0, y: Number(pos.y) || 0 };
+      });
+    }
+    function syncEditorLayout(view) {
+      if (!view) return;
+      const layout = {};
+      (view.nodes || []).forEach((node) => {
+        const pos = state.editorPositions[node.id];
+        if (pos) layout[node.id] = { x: pos.x, y: pos.y };
+      });
+      view.layout = Object.keys(layout).length ? layout : undefined;
+    }
+    function syncAllEditorLayouts() {
+      if (!state.editorGraph) return;
+      syncEditorLayout(state.editorGraph.workflow);
+      Object.values(state.editorGraph.workflows || {}).forEach((view) => syncEditorLayout(view));
+    }
+    function editorGraphPayload() {
+      syncAllEditorLayouts();
+      return state.editorGraph;
+    }
     function snapshotEditorState() {
+      syncAllEditorLayouts();
       return JSON.stringify({
         graph: state.editorGraph,
         positions: state.editorPositions,
         target: state.editorTarget,
         selectedNode: state.selectedNode,
+        selectedEdge: state.selectedEdge,
       });
     }
     function restoreEditorState(raw) {
@@ -404,6 +445,7 @@ const indexHTML = `<!doctype html>
       state.editorPositions = saved.positions || {};
       state.editorTarget = saved.target || 'workflow';
       state.selectedNode = saved.selectedNode || '';
+      state.selectedEdge = saved.selectedEdge || null;
       renderEditorTargetOptions();
       renderEditor();
     }
@@ -445,6 +487,15 @@ const indexHTML = `<!doctype html>
       select.innerHTML = options.map((item) =>
         '<option value="' + escapeHTML(item.value) + '"' + (item.value === state.editorTarget ? ' selected' : '') + '>' + escapeHTML(item.label) + '</option>'
       ).join('');
+    }
+    function switchEditorTarget() {
+      syncEditorLayout(editorView());
+      state.editorTarget = $('editorTargetSelect').value;
+      state.editorPositions = {};
+      state.selectedNode = '';
+      state.selectedEdge = null;
+      hydrateEditorLayout(editorView());
+      renderEditor();
     }
     function editorView() {
       if (!state.editorGraph) return null;
@@ -602,8 +653,16 @@ const indexHTML = `<!doctype html>
     }
     function renderEditorNodeProps() {
       const panel = $('editorProps');
+      const edgePanel = $('editorEdgeProps');
       const view = editorView();
-      if (!panel || !view || !state.selectedNode) {
+      if (edgePanel) edgePanel.hidden = !state.selectedEdge;
+      if (state.selectedEdge && edgePanel) {
+        $('editorEdgeFrom').value = state.selectedEdge.from;
+        $('editorEdgeTo').value = state.selectedEdge.to;
+        const edge = (view && view.edges || []).find((item) => item.from === state.selectedEdge.from && item.to === state.selectedEdge.to);
+        $('editorEdgeCondition').value = edge && edge.condition ? edge.condition : '';
+      }
+      if (!panel || !view || !state.selectedNode || state.selectedEdge) {
         if (panel) panel.hidden = true;
         return;
       }
@@ -611,6 +670,8 @@ const indexHTML = `<!doctype html>
       if (!node) { panel.hidden = true; return; }
       panel.hidden = false;
       $('editorNodeRef').value = node.ref || '';
+      $('editorNodeCondition').value = node.condition || '';
+      $('editorNodeDependsOn').value = (node.depends_on || []).join(', ');
       $('editorNodeInput').value = node.input ? (typeof node.input === 'string' ? node.input : JSON.stringify(node.input, null, 2)) : '';
     }
     function applyEditorNodeProps() {
@@ -620,6 +681,13 @@ const indexHTML = `<!doctype html>
       if (!node) return;
       pushEditorHistory();
       node.ref = $('editorNodeRef').value.trim();
+      node.condition = $('editorNodeCondition').value.trim();
+      const dependsRaw = $('editorNodeDependsOn').value.trim();
+      if (!dependsRaw) {
+        delete node.depends_on;
+      } else {
+        node.depends_on = dependsRaw.split(',').map((item) => item.trim()).filter(Boolean);
+      }
       const raw = $('editorNodeInput').value.trim();
       if (!raw) {
         delete node.input;
@@ -631,6 +699,16 @@ const indexHTML = `<!doctype html>
           return;
         }
       }
+      renderEditor();
+    }
+    function applyEditorEdgeProps() {
+      const view = editorView();
+      if (!view || !state.selectedEdge) return;
+      const edge = (view.edges || []).find((item) => item.from === state.selectedEdge.from && item.to === state.selectedEdge.to);
+      if (!edge) return;
+      pushEditorHistory();
+      const cond = $('editorEdgeCondition').value.trim();
+      if (cond) edge.condition = cond; else delete edge.condition;
       renderEditor();
     }
     function addEditorSubgraph() {
@@ -668,7 +746,13 @@ const indexHTML = `<!doctype html>
         const from = positions[edge.from];
         const to = positions[edge.to];
         if (!from || !to) return;
-        html += '<path class="graph-edge" marker-end="url(#arrow-editor)" d="M' + (from.x + 120) + ',' + (from.y + 24) + ' C' + (from.x + 150) + ',' + from.y + ' ' + (to.x - 20) + ',' + to.y + ' ' + to.x + ',' + (to.y + 24) + '"/>';
+        const selected = state.selectedEdge && state.selectedEdge.from === edge.from && state.selectedEdge.to === edge.to;
+        html += '<path class="graph-edge' + (selected ? ' active' : '') + '" data-from="' + escapeHTML(edge.from) + '" data-to="' + escapeHTML(edge.to) + '" marker-end="url(#arrow-editor)" d="M' + (from.x + 120) + ',' + (from.y + 24) + ' C' + (from.x + 150) + ',' + from.y + ' ' + (to.x - 20) + ',' + to.y + ' ' + to.x + ',' + (to.y + 24) + '"/>';
+        if (edge.condition) {
+          const mx = (from.x + to.x) / 2 + 60;
+          const my = (from.y + to.y) / 2 + 16;
+          html += '<text class="graph-edge-label" x="' + mx + '" y="' + my + '" font-size="10" fill="#64748b">' + escapeHTML(edge.condition) + '</text>';
+        }
       });
       nodes.forEach((node) => {
         const pos = positions[node.id];
@@ -682,6 +766,12 @@ const indexHTML = `<!doctype html>
       });
       html += '</svg>';
       canvas.innerHTML = html;
+      canvas.querySelectorAll('.graph-edge').forEach((edgeEl) => edgeEl.onclick = (event) => {
+        event.stopPropagation();
+        state.selectedNode = '';
+        state.selectedEdge = { from: edgeEl.dataset.from, to: edgeEl.dataset.to };
+        renderEditor();
+      });
       canvas.querySelectorAll('.graph-node').forEach((nodeEl) => {
         nodeEl.onmousedown = (event) => startEditorDrag(event, nodeEl);
         nodeEl.onclick = (event) => {
@@ -698,12 +788,16 @@ const indexHTML = `<!doctype html>
           view.edges = view.edges || [];
           if (!view.edges.some((edge) => edge.from === state.editorConnectFrom && edge.to === nodeID)) {
             pushEditorHistory();
-            view.edges.push({ from: state.editorConnectFrom, to: nodeID });
+            const cond = prompt('Edge condition (optional)', '') || '';
+            const edge = { from: state.editorConnectFrom, to: nodeID };
+            if (cond.trim()) edge.condition = cond.trim();
+            view.edges.push(edge);
           }
         }
         state.editorConnectFrom = '';
         $('connectModeButton').textContent = 'Connect';
       }
+      state.selectedEdge = null;
       state.selectedNode = nodeID;
       renderEditor();
     }
@@ -769,13 +863,13 @@ const indexHTML = `<!doctype html>
     }
     async function validateEditorGraph() {
       if (!state.editorGraph) return;
-      const res = await fetch('api/studio/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.editorGraph) });
+      const res = await fetch('api/studio/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
       alert(body.valid ? 'Graph is valid' : (body.error || 'invalid graph'));
     }
     async function codegenEditorGraph() {
       if (!state.editorGraph) return;
-      const res = await fetch('api/studio/codegen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.editorGraph) });
+      const res = await fetch('api/studio/codegen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
       if (!res.ok) { alert(body.error || 'codegen failed'); return; }
       state.selectedEvent = null;
@@ -785,7 +879,7 @@ const indexHTML = `<!doctype html>
     }
     async function yamlEditorGraph() {
       if (!state.editorGraph) return;
-      const res = await fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.editorGraph) });
+      const res = await fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
       if (!res.ok) { alert(body.error || 'yaml export failed'); return; }
       state.selectedEvent = null;
@@ -793,15 +887,54 @@ const indexHTML = `<!doctype html>
       $('detailType').textContent = 'Scenario YAML';
       $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
     }
+    function renderTextDiff(before, after) {
+      const left = (before || '').split('\n');
+      const right = (after || '').split('\n');
+      const max = Math.max(left.length, right.length);
+      const lines = [];
+      for (let i = 0; i < max; i++) {
+        const a = left[i] || '';
+        const b = right[i] || '';
+        if (a === b) lines.push('  ' + a);
+        else {
+          if (a) lines.push('- ' + a);
+          if (b) lines.push('+ ' + b);
+        }
+      }
+      return lines.join('\n');
+    }
+    async function previewSaveEditorGraph() {
+      if (!state.editorGraph || !state.graph) return;
+      const [baseRes, editRes] = await Promise.all([
+        fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.graph) }),
+        fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) }),
+      ]);
+      const baseBody = await baseRes.json();
+      const editBody = await editRes.json();
+      if (!baseRes.ok || !editRes.ok) {
+        alert((editBody.error || baseBody.error) || 'preview failed');
+        return;
+      }
+      state.selectedEvent = null;
+      state.selectedCheckpoint = null;
+      $('detailType').textContent = 'Save preview';
+      $('details').innerHTML = '<pre>' + escapeHTML(renderTextDiff(baseBody.code || '', editBody.code || '')) + '</pre>';
+    }
     async function saveEditorGraph() {
       if (!state.editorGraph) return;
       if (!confirm('Save edited graph back to the host scenario file?')) return;
-      const res = await fetch('api/studio/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.editorGraph) });
+      const res = await fetch('api/studio/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
       if (!res.ok) { alert(body.error || 'save failed'); return; }
       alert('Saved to ' + (body.path || 'scenario file'));
       await loadGraph();
       setView('editor');
+    }
+    function revertEditorGraph() {
+      if (!state.graph) return;
+      if (!confirm('Discard local edits and reload the loaded scenario graph?')) return;
+      resetEditorGraph();
+      renderEditor();
     }
     async function runEditorGraph() {
       if (!state.editorGraph) return;
@@ -809,7 +942,7 @@ const indexHTML = `<!doctype html>
       const res = await fetch('api/studio/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ graph: state.editorGraph, prompt: $('editorRunPrompt').value.trim() }),
+        body: JSON.stringify({ graph: editorGraphPayload(), prompt: $('editorRunPrompt').value.trim() }),
       });
       const body = await res.json();
       $('runEditorGraphButton').disabled = false;
@@ -1084,9 +1217,10 @@ const indexHTML = `<!doctype html>
     $('editorTab').onclick = () => setView('editor');
     $('compareTab').onclick = () => setView('compare');
     $('threadTab').onclick = () => setView('thread');
-    $('editorTargetSelect').onchange = () => { state.editorTarget = $('editorTargetSelect').value; state.selectedNode = ''; renderEditor(); };
+    $('editorTargetSelect').onchange = () => switchEditorTarget();
     $('addSubgraphButton').onclick = () => addEditorSubgraph();
     $('saveNodePropsButton').onclick = () => applyEditorNodeProps();
+    $('saveEdgePropsButton').onclick = () => applyEditorEdgeProps();
     $('addNodeButton').onclick = () => addEditorNode();
     $('deleteNodeButton').onclick = () => deleteEditorNode();
     $('connectModeButton').onclick = () => {
@@ -1095,7 +1229,9 @@ const indexHTML = `<!doctype html>
     };
     $('validateGraphButton').onclick = () => validateEditorGraph();
     $('yamlGraphButton').onclick = () => yamlEditorGraph();
+    $('previewSaveButton').onclick = () => previewSaveEditorGraph();
     $('saveGraphButton').onclick = () => saveEditorGraph();
+    $('revertGraphButton').onclick = () => revertEditorGraph();
     $('codegenGraphButton').onclick = () => codegenEditorGraph();
     $('runEditorGraphButton').onclick = () => runEditorGraph();
     $('undoEditorButton').onclick = () => undoEditor();
