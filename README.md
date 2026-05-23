@@ -715,7 +715,7 @@ api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerCo
   Framework: fw,
   Policy:    security.NewDefaultRolePolicy(),
   Audit:     auditSink,
-  Version:   "v0.1.0",
+  Version:   agentflow.Version,
 })
 ```
 
@@ -915,7 +915,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 已实现：
 
-- YAML loader 和 validator
+- `pkg/builder` Go DSL（19 条 catalog stack）、`ValidateScenario` 与 Studio YAML 互操作（导入/导出）
 - Autonomous runtime engine，包含自主执行前的可选 planning pass
 - 已接入根门面的 Fixed-workflow runner
 - In-memory Memory、RunStateRepository、BlobStore

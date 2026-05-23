@@ -717,7 +717,7 @@ api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerCo
   Framework: fw,
   Policy:    security.NewDefaultRolePolicy(),
   Audit:     auditSink,
-  Version:   "v0.1.0",
+  Version:   agentflow.Version,
 })
 ```
 
@@ -917,7 +917,7 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 Implemented:
 
-- YAML loader and validator
+- `pkg/builder` Go DSL (19 catalog stacks), `ValidateScenario`, and Studio YAML interchange (import/export)
 - Autonomous runtime engine with optional planning pass before governed execution
 - Fixed-workflow runner wired through the root facade
 - In-memory Memory, RunStateRepository, and BlobStore

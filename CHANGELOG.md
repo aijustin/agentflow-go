@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-22
+
 ### Removed
 
 - Public YAML scenario loaders: `LoadScenarioFile`, `LoadScenario`, `NewFromFile`. Use `pkg/builder` or `core.Scenario`; Studio import/export APIs remain.
@@ -13,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Library version `0.2.0` — builder-first; YAML is Studio interchange only.
+- **Breaking:** builder-first embed path; scenario YAML is Studio interchange only. Migration: replace `NewFromFile` / `LoadScenarioFile` with `builder.*` stacks and `agentflow.New(scenario, opts...)`. See [docs/library-integration.md](docs/library-integration.md#migrating-from-v01-yaml-loaders).
 - README YAML sections condensed; field details live in `docs/configuration-reference.md`.
 - `docs/superpowers/plans/*` marked as historical implementation records.
 

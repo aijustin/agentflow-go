@@ -181,7 +181,7 @@ api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerCo
     AuthMiddleware: apiKeyMiddleware,
     Policy:         security.NewDefaultRolePolicy(),
     Audit:          auditSink,
-    Version:        "v0.1.0",
+    Version:        agentflow.Version,
 })
 if err != nil {
     log.Fatal(err)

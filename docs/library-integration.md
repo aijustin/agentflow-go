@@ -115,6 +115,24 @@ Apply [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/00
 
 See [README.md](../README.md) for the full list of extension packages (memory, runstate, knowledge, async, governance, identity, security, etc.).
 
+## Migrating from v0.1 YAML loaders
+
+v0.2 removed `LoadScenarioFile`, `LoadScenario`, and `NewFromFile`.
+
+```go
+// Before (v0.1)
+fw, err := agentflow.NewFromFile("scenario.yaml", opts...)
+
+// After (v0.2)
+scenario := builder.MinimalAutonomous("assistant") // or your stack from pkg/builder
+if err := agentflow.ValidateScenario(scenario); err != nil { /* ... */ }
+fw, err := agentflow.New(scenario, opts...)
+```
+
+- Catalog stacks: [builder-reference.md](./builder-reference.md) · `make validate-builder`
+- Studio round-trip YAML: `ImportStudioScenarioYAML` / `GenerateStudioScenarioYAML` (not for new scenario authoring)
+- Legacy YAML files: translate to builder once, or import in Studio and export Go via `GenerateStudioBuilderCode`
+
 ## Studio YAML interchange
 
 Scenario YAML is for Studio import/export only (`ImportStudioScenarioYAML`, `GenerateStudioScenarioYAML`). Define new scenarios with `pkg/builder`. See [product-direction.md](./product-direction.md) and [studio-roadmap.md](./studio-roadmap.md).
