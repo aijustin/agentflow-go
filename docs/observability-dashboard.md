@@ -209,6 +209,33 @@ dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityH
 
 The UI reads `GET /observability/api/ui-config` for `trace_explore_url`.
 
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| Graph/Editor show “Framework not configured” | `ObservabilityHTTPHandlerConfig.Framework` is nil | Pass `Framework: fw` when creating the handler |
+| Graph empty for autonomous scenarios | No `fixed_workflow` topology (expected) | Use Timeline / Autonomous trace; design workflow in Editor if needed |
+| API calls hit `/api/*` instead of `/observability/api/*` | Observability mounted under a sub-path | Use trailing slash URL (`/observability/`) or upgrade to a build with `apiURL()` path helper |
+| Time Travel / Compare / Thread disabled | Same as Framework not configured | Wire Framework + checkpoint history for full Studio |
+
+Minimum wiring for **timeline-only** vs **full Studio**:
+
+```go
+// Timeline + SSE only
+agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+    Store: store,
+    Hub:   hub,
+})
+
+// Full Studio (graph, editor, time travel, compare, thread)
+agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+    Store:          store,
+    Hub:            hub,
+    Framework:      fw,
+    StudioSavePath: "/path/to/scenario.yaml",
+})
+```
+
 ## Data Safety
 
 The detail pane renders event payload JSON. Runtime events are intended to carry operational metadata, not secrets. Keep these rules in place:

@@ -36,6 +36,9 @@ func TestHandlerServesDashboardRunsAndEvents(t *testing.T) {
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "AgentFlow 可观测性") || !strings.Contains(page.Body.String(), "id=\"langSelect\"") {
 		t.Fatalf("dashboard page was not served: code=%d body=%q", page.Code, page.Body.String())
 	}
+	if !strings.Contains(page.Body.String(), "const apiURL") || !strings.Contains(page.Body.String(), "capabilityBanner") {
+		t.Fatalf("dashboard missing apiURL helper or capability banner")
+	}
 
 	runs := httptest.NewRecorder()
 	handler.ServeHTTP(runs, httptest.NewRequest(http.MethodGet, "/api/runs?limit=5", nil))

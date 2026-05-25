@@ -273,6 +273,16 @@ const indexHTML = `<!doctype html>
     .graph-breadcrumb { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
     .graph-breadcrumb button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 10px; }
     .graph-breadcrumb button:hover { background: #f0f7f6; border-color: #b8ded7; }
+    .capability-banner {
+      margin: 0;
+      padding: 10px 16px;
+      background: #fff7ed;
+      border-bottom: 1px solid #fed7aa;
+      color: #9a3412;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .capability-banner.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
     .event-payload-item { margin-top: 8px; }
     .event-payload-item pre { max-height: 160px; overflow: auto; font-size: 11px; }
     .compare-step-diff { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0; }
@@ -343,6 +353,7 @@ const indexHTML = `<!doctype html>
       <button class="primary" id="liveButton" data-i18n="action.liveOn">实时开</button>
     </div>
   </header>
+  <div id="capabilityBanner" class="capability-banner" hidden></div>
   <main>
     <section class="panel">
       <div class="panel-head"><div class="panel-title" data-i18n="panel.sessions">会话</div><span class="badge" id="runCount">0</span></div>
@@ -476,6 +487,10 @@ const indexHTML = `<!doctype html>
         'tab.timeline': '时间线', 'tab.graph': '图', 'tab.editor': '编辑器', 'tab.compare': '对比', 'tab.thread': '线程',
         'empty.noSessions': '暂无会话', 'empty.selectSession': '请选择会话', 'empty.noRun': '未选择运行', 'empty.selectEvent': '请选择事件', 'empty.empty': '空',
         'empty.noEvents': '暂无事件', 'empty.noGraph': '无工作流图',
+        'empty.autonomousNoWorkflow': '当前场景为 {mode} 模式，没有 fixed_workflow 拓扑。可在 Editor 标签设计工作流，或查看下方 Autonomous 追踪。',
+        'banner.frameworkRequired': 'Studio 图/Editor/Time Travel 需要 ObservabilityHTTPHandlerConfig.Framework；时间线与事件流仍可用。',
+        'banner.graphLoadFailed': '无法加载场景图（{status}）。请检查 Observability 挂载路径与 Framework 接线。',
+        'banner.autonomousMode': '当前为 autonomous 场景：Graph 无固定拓扑，Editor 可从空画布设计工作流；运行追踪见 Timeline / Autonomous trace。',
         'empty.graphRequiresFramework': '需要在 ObservabilityHTTPHandlerConfig.Framework 中接入 Framework 才能导出图',
         'empty.graphRequiresFrameworkShort': '需要接入 Framework 才能导出图',
         'empty.loadGraphToEdit': '加载图以开始编辑', 'empty.selectCompareRun': '请选择运行并选择对比目标', 'empty.chooseCompareTarget': '选择对比目标并点击「对比」',
@@ -507,6 +522,7 @@ const indexHTML = `<!doctype html>
         'graph.drillSubgraph': '钻取子图', 'graph.drillBack': '返回主图', 'graph.drillTitle': '{parent} → {name}',
         'graph.drillHint': '双击 subgraph 节点可钻取内层图',
         'editor.drillHint': '双击 subgraph 节点可钻取内层画布',
+        'editor.autonomousHint': 'autonomous 场景可在此从零设计工作流；添加节点后保存场景即可。',
         'compare.outputDiff': '共享步骤输出差异', 'compare.runA': 'Run A', 'compare.runB': 'Run B',
         'editor.workflowOption': '工作流：{name}', 'editor.subgraphOption': '子图：{name}',
         'prompt.subgraphName': '子图名称', 'prompt.edgeCondition': '边 condition（可选）', 'prompt.nodeId': '节点 ID', 'prompt.refOptional': 'Ref（可选）',
@@ -540,6 +556,10 @@ const indexHTML = `<!doctype html>
         'tab.timeline': 'Timeline', 'tab.graph': 'Graph', 'tab.editor': 'Editor', 'tab.compare': 'Compare', 'tab.thread': 'Thread',
         'empty.noSessions': 'No sessions', 'empty.selectSession': 'Select a session', 'empty.noRun': 'No run', 'empty.selectEvent': 'Select an event', 'empty.empty': 'Empty',
         'empty.noEvents': 'No events', 'empty.noGraph': 'No workflow graph',
+        'empty.autonomousNoWorkflow': 'Scenario mode is {mode}; there is no fixed_workflow topology. Design a workflow in Editor or use the Autonomous trace below.',
+        'banner.frameworkRequired': 'Studio graph/editor/time-travel requires ObservabilityHTTPHandlerConfig.Framework; timeline and events still work.',
+        'banner.graphLoadFailed': 'Failed to load scenario graph ({status}). Check observability mount path and Framework wiring.',
+        'banner.autonomousMode': 'Autonomous scenario: Graph has no fixed topology; start from an empty workflow in Editor; use Timeline / Autonomous trace for runs.',
         'empty.graphRequiresFramework': 'Graph export requires Framework wiring on ObservabilityHTTPHandlerConfig.Framework',
         'empty.graphRequiresFrameworkShort': 'Graph export requires Framework wiring',
         'empty.loadGraphToEdit': 'Load graph to edit', 'empty.selectCompareRun': 'Select a run and choose compare target', 'empty.chooseCompareTarget': 'Choose compare target and click Compare',
@@ -572,6 +592,7 @@ const indexHTML = `<!doctype html>
         'graph.drillSubgraph': 'Drill into subgraph', 'graph.drillBack': 'Back to main graph', 'graph.drillTitle': '{parent} → {name}',
         'graph.drillHint': 'Double-click a subgraph node to drill down',
         'editor.drillHint': 'Double-click a subgraph node to drill into its canvas',
+        'editor.autonomousHint': 'Autonomous scenarios can start from an empty workflow canvas here; add nodes and save the scenario.',
         'compare.outputDiff': 'Shared step output diff', 'compare.runA': 'Run A', 'compare.runB': 'Run B',
         'editor.workflowOption': 'workflow: {name}', 'editor.subgraphOption': 'subgraph: {name}',
         'prompt.subgraphName': 'Subgraph name', 'prompt.edgeCondition': 'Edge condition (optional)', 'prompt.nodeId': 'Node id', 'prompt.refOptional': 'Ref (optional)',
@@ -598,7 +619,7 @@ const indexHTML = `<!doctype html>
       }
     };
     let locale = localStorage.getItem('obs-lang') || 'zh-CN';
-    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorDrillSubgraph: null, editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [], drillSubgraph: null, editorPreviewRun: '', traceExploreURL: '' };
+    const state = { runs: [], events: [], selectedRun: '', selectedEvent: null, stream: null, live: true, view: 'timeline', graph: null, editorGraph: null, editorTarget: 'workflow', editorDrillSubgraph: null, editorPositions: {}, editorConnectFrom: '', editorDrag: null, editorEdgeDrag: null, editorHistory: [], editorHistoryIndex: -1, selectedEdge: null, selectedNodes: [], steps: null, checkpoints: null, selectedNode: '', selectedCheckpoint: null, checkpointSnapshot: null, checkpointPrevSnapshot: null, graphEnabled: false, graphLoadError: '', frameworkConfigured: false, resumeEnabled: false, hitlEnabled: false, checkpointEnabled: false, activeSubgraphs: {}, nodeMeta: {}, compareRunB: '', compareResult: null, threadRuns: [], drillSubgraph: null, editorPreviewRun: '', traceExploreURL: '' };
     const t = (key, vars) => {
       let text = (I18N[locale] && I18N[locale][key]) || (I18N.en && I18N.en[key]) || key;
       if (vars) Object.keys(vars).forEach((name) => { text = text.split('{' + name + '}').join(String(vars[name])); });
@@ -676,6 +697,13 @@ const indexHTML = `<!doctype html>
       if (state.view === 'thread') renderThread();
     }
     const $ = (id) => document.getElementById(id);
+    const apiURL = (path) => {
+      const suffix = String(path || '').replace(/^\//, '');
+      const base = window.location.pathname.endsWith('/')
+        ? window.location.pathname
+        : window.location.pathname + '/';
+      return base + 'api/' + suffix;
+    };
     const fmtTime = (value) => value ? new Date(value).toLocaleTimeString() : '-';
     const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const eventKind = (type) => {
@@ -688,28 +716,62 @@ const indexHTML = `<!doctype html>
     async function loadGraph(options) {
       options = options || {};
       try {
-        const res = await fetch('api/graph');
+        const res = await fetch(apiURL('graph'));
         if (!res.ok) {
+          state.graphEnabled = false;
+          state.frameworkConfigured = res.status !== 501 && res.status !== 404;
+          state.graphLoadError = String(res.status);
+          updateCapabilityBanner();
           if (options.alertOnError) alert(t('alert.reloadFailed'));
           return false;
         }
         state.graph = await res.json();
         state.graphEnabled = true;
+        state.frameworkConfigured = true;
+        state.graphLoadError = '';
         state.nodeMeta = buildNodeMeta(state.graph);
         resetEditorGraph({ preserveTarget: options.preserveTarget === true });
         $('timeTravelBar').hidden = false;
+        updateCapabilityBanner();
         if (state.view === 'graph') renderGraph();
         return true;
-      } catch (_) {
+      } catch (err) {
+        state.graphEnabled = false;
+        state.graphLoadError = 'network';
+        updateCapabilityBanner();
         if (options.alertOnError) alert(t('alert.reloadFailed'));
         return false;
       }
+    }
+    function updateCapabilityBanner() {
+      const el = $('capabilityBanner');
+      if (!el) return;
+      if (!state.graphEnabled) {
+        el.hidden = false;
+        el.className = 'capability-banner' + (state.graphLoadError === '501' || state.graphLoadError === '404' ? '' : ' error');
+        if (state.graphLoadError === '501' || state.graphLoadError === '404') {
+          el.textContent = t('banner.frameworkRequired');
+        } else if (state.graphLoadError) {
+          el.textContent = t('banner.graphLoadFailed', { status: state.graphLoadError });
+        } else {
+          el.textContent = t('banner.frameworkRequired');
+        }
+        return;
+      }
+      if (state.graph && state.graph.mode === 'autonomous' && !scenarioHasWorkflowTopology(state.graph)) {
+        el.hidden = false;
+        el.className = 'capability-banner';
+        el.textContent = t('banner.autonomousMode');
+        return;
+      }
+      el.hidden = true;
+      el.textContent = '';
     }
     async function loadCheckpoints(runID) {
       state.checkpoints = null;
       state.selectedCheckpoint = null;
       try {
-        const res = await fetch('api/runs/' + encodeURIComponent(runID) + '/checkpoints');
+        const res = await fetch(apiURL('runs/' + encodeURIComponent(runID) + '/checkpoints'));
         if (!res.ok) return;
         state.checkpoints = await res.json();
         state.checkpointEnabled = true;
@@ -723,7 +785,7 @@ const indexHTML = `<!doctype html>
       if (!options.preserveSelection) state.selectedNode = '';
       state.steps = null;
       try {
-        const res = await fetch('api/runs/' + encodeURIComponent(runID) + '/steps');
+        const res = await fetch(apiURL('runs/' + encodeURIComponent(runID) + '/steps'));
         if (!res.ok) return;
         state.steps = await res.json();
         state.resumeEnabled = true;
@@ -744,6 +806,9 @@ const indexHTML = `<!doctype html>
       const selectedNode = preserveTarget ? state.selectedNode : '';
       const selectedNodes = preserveTarget ? (state.selectedNodes || []) : [];
       state.editorGraph = JSON.parse(JSON.stringify(state.graph));
+      if (!state.editorGraph.workflow) {
+        state.editorGraph.workflow = { nodes: [], edges: [] };
+      }
       state.editorPositions = {};
       state.editorConnectFrom = '';
       state.editorTarget = target;
@@ -857,10 +922,25 @@ const indexHTML = `<!doctype html>
       hydrateEditorLayout(editorView());
       renderEditor();
     }
+    function workflowHasNodes(view) {
+      return !!(view && view.nodes && view.nodes.length);
+    }
+    function scenarioHasWorkflowTopology(graph) {
+      if (!graph) return false;
+      if (workflowHasNodes(graph.workflow)) return true;
+      return Object.values(graph.workflows || {}).some((view) => workflowHasNodes(view));
+    }
+    function ensureEditorWorkflowGraph() {
+      if (!state.editorGraph) return null;
+      if (!state.editorGraph.workflow) {
+        state.editorGraph.workflow = { nodes: [], edges: [] };
+      }
+      return state.editorGraph.workflow;
+    }
     function editorView() {
       if (!state.editorGraph) return null;
       if (state.editorTarget === 'workflow') {
-        return state.editorGraph.workflow || null;
+        return ensureEditorWorkflowGraph();
       }
       if (!state.editorGraph.workflows) state.editorGraph.workflows = {};
       if (!state.editorGraph.workflows[state.editorTarget]) {
@@ -1178,7 +1258,7 @@ const indexHTML = `<!doctype html>
     }
     async function loadUIConfig() {
       try {
-        const res = await fetch('api/ui-config');
+        const res = await fetch(apiURL('ui-config'));
         if (!res.ok) return;
         const body = await res.json();
         state.traceExploreURL = body.trace_explore_url || '';
@@ -1391,12 +1471,12 @@ const indexHTML = `<!doctype html>
       if (cp && cp.current_node_id) state.selectedNode = cp.current_node_id;
       if (cp && state.selectedRun && state.checkpointEnabled) {
         try {
-          const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/checkpoints/' + cp.version);
+          const res = await fetch(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/checkpoints/' + cp.version));
           if (res.ok) state.checkpointSnapshot = await res.json();
           const items = (state.checkpoints && state.checkpoints.checkpoints) || [];
           const idx = items.findIndex((item) => item.version === cp.version);
           if (idx > 0) {
-            const prevRes = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/checkpoints/' + items[idx - 1].version);
+            const prevRes = await fetch(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/checkpoints/' + items[idx - 1].version));
             if (prevRes.ok) state.checkpointPrevSnapshot = await prevRes.json();
           }
         } catch (_) {}
@@ -1484,12 +1564,25 @@ const indexHTML = `<!doctype html>
           html += '<div class="empty">' + escapeHTML(t('empty.noGraph')) + '</div>';
         }
       } else {
-        const root = document.createElement('div');
-        renderGraphView(root, state.graph.workflow, t('graph.mode', { name: state.graph.name, mode: state.graph.mode || 'mode' }));
-        html += root.innerHTML;
-        html += '<div class="meta">' + escapeHTML(t('graph.drillHint')) + '</div>';
-        if (state.graph.workflows) {
-          Object.entries(state.graph.workflows).forEach(([name, view]) => {
+        const wf = state.graph.workflow;
+        const hasMain = workflowHasNodes(wf);
+        const subs = Object.entries(state.graph.workflows || {}).filter(([, view]) => workflowHasNodes(view));
+        if (!hasMain && !subs.length) {
+          if ((state.graph.mode || '') === 'autonomous') {
+            html += '<div class="empty">' + escapeHTML(t('empty.autonomousNoWorkflow', { mode: state.graph.mode })) + '</div>';
+          } else {
+            html += '<div class="empty">' + escapeHTML(t('empty.noGraph')) + '</div>';
+          }
+        } else {
+          if (hasMain) {
+            const root = document.createElement('div');
+            renderGraphView(root, wf, t('graph.mode', { name: state.graph.name, mode: state.graph.mode || 'mode' }));
+            html += root.innerHTML;
+            if ((wf.nodes || []).some((node) => node.kind === 'subgraph' && node.ref)) {
+              html += '<div class="meta">' + escapeHTML(t('graph.drillHint')) + '</div>';
+            }
+          }
+          subs.forEach(([name, view]) => {
             const sub = document.createElement('div');
             sub.className = 'graph-sub';
             renderGraphView(sub, view, t('graph.subgraph', { name }));
@@ -1597,9 +1690,17 @@ const indexHTML = `<!doctype html>
     }
     function renderEditor() {
       const canvas = $('editorCanvas');
-      const view = editorWorkflow();
-      if (!state.graphEnabled || !view) {
+      if (!state.graphEnabled) {
         canvas.innerHTML = '<div class="empty">' + escapeHTML(t('empty.graphRequiresFrameworkShort')) + '</div>';
+        renderEditorNodeProps();
+        renderEditorRunStatus();
+        return;
+      }
+      const view = editorWorkflow();
+      if (!view) {
+        canvas.innerHTML = '<div class="empty">' + escapeHTML(t('empty.loadGraphToEdit')) + '</div>';
+        renderEditorNodeProps();
+        renderEditorRunStatus();
         return;
       }
       syncSubgraphOverlay();
@@ -1612,7 +1713,12 @@ const indexHTML = `<!doctype html>
         html += '<div class="graph-breadcrumb"><button type="button" id="editorDrillBackButton">' + escapeHTML(t('graph.drillBack')) + '</button>';
         html += '<span class="meta">' + escapeHTML(t('graph.drillTitle', { parent: drill.parentId, name: drill.ref })) + '</span></div>';
       } else if (state.editorTarget === 'workflow') {
-        html += '<div class="meta">' + escapeHTML(t('editor.drillHint')) + '</div>';
+        const exportedMain = state.graph && state.graph.workflow;
+        if ((state.graph && state.graph.mode === 'autonomous') && !workflowHasNodes(exportedMain)) {
+          html += '<div class="meta">' + escapeHTML(t('editor.autonomousHint')) + '</div>';
+        } else {
+          html += '<div class="meta">' + escapeHTML(t('editor.drillHint')) + '</div>';
+        }
       }
       html += '<svg class="graph-svg" id="editorSvg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '">';
       html += '<defs><marker id="arrow-editor" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>';
@@ -1800,13 +1906,13 @@ const indexHTML = `<!doctype html>
     }
     async function validateEditorGraph() {
       if (!state.editorGraph) return;
-      const res = await fetch('api/studio/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
+      const res = await fetch(apiURL('studio/validate'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
       alert(body.valid ? t('alert.graphValid') : (body.error_code && I18N[locale]['errors.' + body.error_code] ? t('errors.' + body.error_code) : (body.error || t('alert.invalidGraph'))));
     }
     async function codegenEditorGraph() {
       if (!state.editorGraph) return;
-      const res = await fetch('api/studio/codegen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
+      const res = await fetch(apiURL('studio/codegen'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
       if (!res.ok) { alert(formatApiError(body, 'alert.codegenFailed')); return; }
       state.selectedEvent = null;
@@ -1815,7 +1921,7 @@ const indexHTML = `<!doctype html>
       $('details').innerHTML = '<pre>' + escapeHTML(body.code || '') + '</pre>';
     }
     async function importEditorYaml(yamlText) {
-      const res = await fetch('api/studio/import-yaml', {
+      const res = await fetch(apiURL('studio/import-yaml'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ yaml: yamlText, layout_graph: editorGraphPayload() }),
@@ -1831,7 +1937,7 @@ const indexHTML = `<!doctype html>
     }
     async function yamlEditorGraph() {
       if (!state.editorGraph) return;
-      const res = await fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
+      const res = await fetch(apiURL('studio/yaml'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
       if (!res.ok) { alert(formatApiError(body, 'alert.yamlFailed')); return; }
       state.selectedEvent = null;
@@ -1858,8 +1964,8 @@ const indexHTML = `<!doctype html>
     async function previewSaveEditorGraph() {
       if (!state.editorGraph || !state.graph) return;
       const [baseRes, editRes] = await Promise.all([
-        fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.graph) }),
-        fetch('api/studio/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) }),
+        fetch(apiURL('studio/yaml'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.graph) }),
+        fetch(apiURL('studio/yaml'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) }),
       ]);
       const baseBody = await baseRes.json();
       const editBody = await editRes.json();
@@ -1875,7 +1981,7 @@ const indexHTML = `<!doctype html>
     async function saveEditorGraph() {
       if (!state.editorGraph) return;
       if (!confirm(t('confirm.saveGraph'))) return;
-      const res = await fetch('api/studio/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
+      const res = await fetch(apiURL('studio/save'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editorGraphPayload()) });
       const body = await res.json();
       if (!res.ok) { alert(formatApiError(body, 'alert.saveFailed')); return; }
       alert(t('alert.savedTo', { path: body.path || t('alert.scenarioFile') }));
@@ -1899,7 +2005,7 @@ const indexHTML = `<!doctype html>
     async function runEditorGraph() {
       if (!state.editorGraph) return;
       $('runEditorGraphButton').disabled = true;
-      const res = await fetch('api/studio/run', {
+      const res = await fetch(apiURL('studio/run'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ graph: editorGraphPayload(), prompt: $('editorRunPrompt').value.trim() }),
@@ -1923,7 +2029,7 @@ const indexHTML = `<!doctype html>
     async function compareRuns() {
       if (!state.selectedRun) return;
       state.compareRunB = $('compareRunB').value;
-      const res = await fetch('api/compare?run_a=' + encodeURIComponent(state.selectedRun) + '&run_b=' + encodeURIComponent(state.compareRunB));
+      const res = await fetch(apiURL('compare?run_a=' + encodeURIComponent(state.selectedRun) + '&run_b=' + encodeURIComponent(state.compareRunB)));
       const body = await res.json();
       if (!res.ok) { alert(formatApiError(body, 'alert.compareFailed')); return; }
       state.compareResult = body;
@@ -1986,7 +2092,7 @@ const indexHTML = `<!doctype html>
         $('threadCanvas').innerHTML = '<div class="empty">' + escapeHTML(t('empty.selectRun')) + '</div>';
         return;
       }
-      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/thread');
+      const res = await fetch(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/thread'));
       const body = await res.json();
       if (!res.ok) { $('threadCanvas').innerHTML = '<div class="empty">' + escapeHTML(formatApiError(body, 'empty.threadUnavailable')) + '</div>'; return; }
       state.threadRuns = body.runs || [];
@@ -2004,7 +2110,7 @@ const indexHTML = `<!doctype html>
     }
     async function forkCurrentRun() {
       if (!state.selectedRun) return;
-      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/fork', {
+      const res = await fetch(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/fork'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
       });
       const body = await res.json();
@@ -2027,7 +2133,7 @@ const indexHTML = `<!doctype html>
     }
     async function resumeRunHITL(decision) {
       if (!state.selectedRun) return;
-      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/hitl/resume', {
+      const res = await fetch(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/hitl/resume'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision }),
@@ -2051,7 +2157,7 @@ const indexHTML = `<!doctype html>
     }
     async function forkFromCheckpoint() {
       if (!state.selectedRun || !state.selectedCheckpoint) return;
-      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/fork', {
+      const res = await fetch(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/fork'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: state.selectedCheckpoint.version }),
@@ -2065,7 +2171,7 @@ const indexHTML = `<!doctype html>
     async function resumeFromCheckpoint() {
       if (!state.selectedRun || !state.selectedCheckpoint) return;
       $('resumeCheckpointButton').disabled = true;
-      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/resume-from-checkpoint', {
+      const res = await fetch(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/resume-from-checkpoint'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: state.selectedCheckpoint.version }),
@@ -2085,7 +2191,7 @@ const indexHTML = `<!doctype html>
     async function resumeFromStep() {
       if (!state.selectedRun || !state.selectedNode) return;
       $('resumeStepButton').disabled = true;
-      const res = await fetch('api/runs/' + encodeURIComponent(state.selectedRun) + '/resume-from-step', {
+      const res = await fetch(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/resume-from-step'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ node_id: state.selectedNode }),
@@ -2103,7 +2209,7 @@ const indexHTML = `<!doctype html>
     }
     async function loadRuns() {
       const status = $('statusFilter').value;
-      const res = await fetch('api/runs?limit=100' + (status ? '&status=' + encodeURIComponent(status) : ''));
+      const res = await fetch(apiURL('runs?limit=100' + (status ? '&status=' + encodeURIComponent(status) : '')));
       const body = await res.json();
       state.runs = body.runs || [];
       renderRuns();
@@ -2113,7 +2219,7 @@ const indexHTML = `<!doctype html>
       state.selectedRun = runID;
       state.selectedEvent = null;
       closeStream();
-      const res = await fetch('api/runs/' + encodeURIComponent(runID) + '/events?limit=500');
+      const res = await fetch(apiURL('runs/' + encodeURIComponent(runID) + '/events?limit=500'));
       const body = await res.json();
       state.events = body.events || [];
       await loadSteps(runID);
@@ -2127,7 +2233,7 @@ const indexHTML = `<!doctype html>
     function openStream() {
       if (!state.selectedRun || state.stream) return;
       const last = state.events.length ? state.events[state.events.length - 1].sequence : 0;
-      state.stream = new EventSource('api/runs/' + encodeURIComponent(state.selectedRun) + '/stream?after_sequence=' + last);
+      state.stream = new EventSource(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/stream?after_sequence=' + last));
       state.stream.addEventListener('runtime_event', (message) => {
         const record = JSON.parse(message.data);
         if (state.events.some((item) => item.id === record.id)) return;
@@ -2329,7 +2435,16 @@ const indexHTML = `<!doctype html>
       }
     });
     applyStaticI18n();
-    loadUIConfig().then(() => loadGraph()).then(() => loadRuns());
+    async function bootstrap() {
+      try {
+        await loadUIConfig();
+      } catch (_) {}
+      try {
+        await loadGraph();
+      } catch (_) {}
+      await loadRuns();
+    }
+    bootstrap();
     setInterval(() => { if (state.live) loadRuns(); }, 3000);
   </script>
 </body>
