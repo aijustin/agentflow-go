@@ -17,11 +17,11 @@ func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, e
 		return err
 	}
 	if r.History != nil && snapshot != nil {
-		loaded, err := r.Inner.Load(ctx, snapshot.RunID)
-		if err != nil {
-			return err
-		}
-		return r.History.Append(ctx, loaded)
+		// Append the snapshot we just persisted. Inner.Save stamps timestamps
+		// and the new version onto the pointer in place, so this records the
+		// exact version written here and avoids a re-Load that a concurrent
+		// writer could advance past.
+		return r.History.Append(ctx, *snapshot)
 	}
 	return nil
 }

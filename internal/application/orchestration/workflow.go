@@ -195,6 +195,12 @@ func (r *WorkflowRunner) run(ctx context.Context, scenario core.Scenario, runID 
 }
 
 func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, runID string, nodes map[string]core.WorkflowNode, ids []string) error {
+	// A cancelable batch context lets a pause stop sibling nodes that have not
+	// started yet, so we never run side effects after the run is logically
+	// paused. Hard failures keep their existing semantics (siblings run to
+	// completion); only a pause cancels the batch.
+	batchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var wg sync.WaitGroup
 	errs := make(chan error, len(ids))
 	for _, id := range ids {
@@ -202,7 +208,10 @@ func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, r
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			enabled, err := r.conditionEnabled(ctx, runID, node.Condition)
+			if batchCtx.Err() != nil {
+				return
+			}
+			enabled, err := r.conditionEnabled(batchCtx, runID, node.Condition)
 			if err != nil {
 				r.emitJSON(ctx, core.EventStepFailed, scenario.Name, runID, map[string]any{"node_id": node.ID, "error": err.Error()})
 				errs <- err
@@ -213,9 +222,10 @@ func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, r
 				return
 			}
 			r.emitJSON(ctx, core.EventStepStarted, scenario.Name, runID, map[string]any{"node_id": node.ID})
-			if err := r.runNodeWithRetry(ctx, scenario, node, runID); err != nil {
+			if err := r.runNodeWithRetry(batchCtx, scenario, node, runID); err != nil {
 				var paused WorkflowPausedError
 				if errors.As(err, &paused) {
+					cancel()
 					errs <- err
 					return
 				}
@@ -228,10 +238,21 @@ func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, r
 	}
 	wg.Wait()
 	close(errs)
+	// Prefer a pause error over any other so HITL halts propagate correctly.
+	var firstErr error
 	for err := range errs {
-		return err
+		if err == nil {
+			continue
+		}
+		var paused WorkflowPausedError
+		if errors.As(err, &paused) {
+			return err
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
-	return nil
+	return firstErr
 }
 
 func (r *WorkflowRunner) runNodeWithRetry(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
@@ -245,6 +266,10 @@ func (r *WorkflowRunner) runNodeWithRetry(ctx context.Context, scenario core.Sce
 			return err
 		}
 		if err := r.runNode(ctx, scenario, node, runID); err != nil {
+			var paused WorkflowPausedError
+			if errors.As(err, &paused) {
+				return err
+			}
 			lastErr = err
 			continue
 		}

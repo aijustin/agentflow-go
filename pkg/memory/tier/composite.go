@@ -18,14 +18,38 @@ func (c *CompositeStore) Put(ctx context.Context, ns memory.Namespace, record Re
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if record.ID != "" {
-		_ = c.Delete(ctx, ns, record.ID)
-	}
 	store, err := c.storeFor(record.Tier)
 	if err != nil {
 		return err
 	}
-	return store.Put(ctx, ns, record)
+	// Write to the destination tier first so a failed Put never loses the
+	// record, then remove any stale copies from the other tiers.
+	if err := store.Put(ctx, ns, record); err != nil {
+		return err
+	}
+	if record.ID == "" {
+		return nil
+	}
+	return c.deleteFromOtherTiers(ctx, ns, record.ID, record.Tier)
+}
+
+// deleteFromOtherTiers removes a record from every tier except keep, ignoring
+// not-found and returning the first real error encountered.
+func (c *CompositeStore) deleteFromOtherTiers(ctx context.Context, ns memory.Namespace, id string, keep Level) error {
+	var lastErr error
+	for _, level := range []Level{LevelHot, LevelWarm, LevelCold} {
+		if level == keep {
+			continue
+		}
+		store, err := c.storeFor(level)
+		if err != nil {
+			continue
+		}
+		if err := store.Delete(ctx, ns, id); err != nil && !errors.Is(err, memory.ErrNotFound) {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 func (c *CompositeStore) Get(ctx context.Context, ns memory.Namespace, id string) (Record, error) {

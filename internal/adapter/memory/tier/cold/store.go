@@ -54,25 +54,61 @@ func (s *Store) Put(ctx context.Context, ns memory.Namespace, record tier.Record
 	if err := gz.Close(); err != nil {
 		return fmt.Errorf("cold tier store: close gzip record %q: %w", record.ID, err)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	path := s.path(ns, record.ID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+	if err := writeFileSync(tmp, buf.Bytes(), 0o600); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
+	syncDir(filepath.Dir(path))
 	return nil
+}
+
+// writeFileSync writes data to path and fsyncs the file before closing so the
+// contents are durable before the caller renames it into place.
+func writeFileSync(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// syncDir best-effort fsyncs a directory so a rename survives a crash. Errors
+// are ignored because some filesystems/platforms do not support directory
+// fsync; the file contents are already durable via writeFileSync above.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 func (s *Store) Get(ctx context.Context, ns memory.Namespace, id string) (tier.Record, error) {
 	if err := ctx.Err(); err != nil {
 		return tier.Record{}, err
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	data, err := os.ReadFile(s.path(ns, id))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -147,6 +183,8 @@ func (s *Store) Delete(ctx context.Context, ns memory.Namespace, id string) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	path := s.path(ns, id)
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
@@ -164,6 +202,8 @@ func (s *Store) Count(ctx context.Context, ns memory.Namespace, level tier.Level
 	if level != tier.LevelCold {
 		return 0, nil
 	}
+	// Must not take s.mu here: List already acquires the read lock and
+	// sync.RWMutex is not reentrant.
 	records, err := s.List(ctx, ns, tier.LevelCold, 0)
 	if err != nil {
 		return 0, err

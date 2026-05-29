@@ -78,13 +78,25 @@ func (s *Store) Put(ctx context.Context, ns memory.Namespace, record tier.Record
 	defer s.mu.Unlock()
 	index, err := s.loadIndexLocked(ns)
 	if err != nil {
+		// The blob we just wrote is unreferenced; drop it so it does not leak.
+		_ = s.blobs.Delete(ctx, ref)
 		return err
 	}
-	if previous, ok := index.Records[record.ID]; ok && previous.ID != "" && previous.ID != ref.ID {
+	previous, hadPrevious := index.Records[record.ID]
+	index.Records[record.ID] = ref
+	// Persist the index pointing at the new blob BEFORE deleting the old one.
+	// If the save fails we remove the new orphan and keep the previous blob, so
+	// a failed write never loses the record.
+	if err := s.saveIndexLocked(ns, index); err != nil {
+		_ = s.blobs.Delete(ctx, ref)
+		return err
+	}
+	if hadPrevious && previous.ID != "" && previous.ID != ref.ID {
+		// Old blob is now unreferenced; a failed delete only leaves an orphan
+		// for GC, so it must not fail the Put.
 		_ = s.blobs.Delete(ctx, previous)
 	}
-	index.Records[record.ID] = ref
-	return s.saveIndexLocked(ns, index)
+	return nil
 }
 
 func (s *Store) Get(ctx context.Context, ns memory.Namespace, id string) (tier.Record, error) {
@@ -168,12 +180,13 @@ func (s *Store) Delete(ctx context.Context, ns memory.Namespace, id string) erro
 		return memory.ErrNotFound
 	}
 	delete(index.Records, id)
+	// Remove the reference first so we never leave the index pointing at a
+	// deleted blob. A subsequent blob delete failure only leaves an orphan that
+	// GC reclaims, so it must not fail the logical delete.
 	if err := s.saveIndexLocked(ns, index); err != nil {
 		return err
 	}
-	if err := s.blobs.Delete(ctx, ref); err != nil {
-		return err
-	}
+	_ = s.blobs.Delete(ctx, ref)
 	return nil
 }
 
@@ -226,14 +239,46 @@ func (s *Store) saveIndexLocked(ns memory.Namespace, index namespaceIndex) error
 	}
 	path := s.indexPath(ns)
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	if err := writeFileSync(tmp, raw, 0o600); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
+	syncDir(filepath.Dir(path))
 	return nil
+}
+
+// writeFileSync writes data to path and fsyncs the file before closing so the
+// index contents are durable before the caller renames it into place.
+func writeFileSync(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// syncDir best-effort fsyncs a directory so a rename survives a crash. Errors
+// are ignored because some filesystems/platforms do not support directory
+// fsync; the file contents are already durable via writeFileSync above.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 func safeFilename(value string) string {

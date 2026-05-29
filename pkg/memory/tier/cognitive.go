@@ -2,6 +2,7 @@ package tier
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -80,6 +81,11 @@ func NewDualWriteManager(inner Manager, index memory.CognitiveMemory) Manager {
 	return &dualWriteManager{inner: inner, index: index}
 }
 
+// Remember writes to the durable tier store (the source of truth) first, then
+// mirrors a searchable entry into the cognitive index. The two backends are not
+// transactional: if the mirror fails, the tier write is preserved and the error
+// is wrapped so callers can tell the primary write succeeded. Remember is
+// idempotent per record ID, so retrying converges the index without duplicates.
 func (m *dualWriteManager) Remember(ctx context.Context, ns memory.Namespace, record Record) error {
 	if err := m.inner.Remember(ctx, ns, record); err != nil {
 		return err
@@ -89,7 +95,10 @@ func (m *dualWriteManager) Remember(ctx context.Context, ns memory.Namespace, re
 	}
 	searchable := record.CognitiveRecord
 	searchable.Content = memory.SearchableContent(extractSearchable(record))
-	return m.index.Remember(ctx, ns, searchable)
+	if err := m.index.Remember(ctx, ns, searchable); err != nil {
+		return fmt.Errorf("tier: record %q persisted but cognitive index mirror failed (retry to converge): %w", record.ID, err)
+	}
+	return nil
 }
 
 func (m *dualWriteManager) Recall(ctx context.Context, ns memory.Namespace, query string, budget RecallBudget) ([]Record, error) {

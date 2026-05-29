@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
@@ -193,6 +194,54 @@ func TestGatewayStreamChat(t *testing.T) {
 	}
 	if got != "hello" || !done {
 		t.Fatalf("unexpected stream: got=%q done=%v", got, done)
+	}
+}
+
+// TestGatewayStreamChatCancelStopsGoroutine verifies that cancelling the
+// context unblocks and tears down the streaming goroutine (and its response
+// body) even when the consumer abandons the channel mid-stream.
+func TestGatewayStreamChatCancelStopsGoroutine(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for i := 0; i < 2; i++ {
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		// Hold the stream open so the gateway goroutine must rely on context
+		// cancellation (not EOF) to exit.
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := gateway.StreamChat(ctx, "default", llm.ChatRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := <-ch; !ok {
+		t.Fatal("expected at least one chunk before cancel")
+	}
+	cancel()
+
+	closed := make(chan struct{})
+	go func() {
+		for range ch {
+		}
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream goroutine leaked: channel not closed after context cancel")
 	}
 }
 

@@ -69,6 +69,14 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 			return
 		}
 		if err := run(groupCtx); err != nil {
+			// A pause must always halt the whole group, even under
+			// collect_errors: it is not a failure to be aggregated.
+			var paused WorkflowPausedError
+			if errors.As(err, &paused) {
+				cancel()
+				errs <- err
+				return
+			}
 			if collectErrors {
 				mu.Lock()
 				collected = append(collected, err.Error())

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -255,12 +256,7 @@ func errorsAsRunPaused(err error, target *RunPausedError) bool {
 	if err == nil {
 		return false
 	}
-	paused, ok := err.(RunPausedError)
-	if !ok {
-		return false
-	}
-	*target = paused
-	return true
+	return errors.As(err, target)
 }
 
 func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, messages []llm.Message, toolCounts map[string]int) (*RunPausedError, error) {

@@ -238,6 +238,10 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 	}
 	raw, err := e.structuredAnswer(ctx, req)
 	if err != nil {
+		var paused RunPausedError
+		if errorsAsRunPaused(err, &paused) {
+			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
+		}
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
@@ -276,25 +280,38 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		defer close(out)
 		defer streamCancel()
 		defer cancel()
+		// send forwards a chunk unless the caller cancelled the context. On
+		// cancellation the deferred streamCancel/cancel tear down the upstream
+		// gateway stream, so neither this goroutine nor the source leaks.
+		send := func(c llm.ChatChunk) bool {
+			select {
+			case out <- c:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 		var b strings.Builder
 		for chunk := range source {
 			if chunk.Content != "" {
 				b.WriteString(chunk.Content)
 			}
-			out <- chunk
+			if !send(chunk) {
+				return
+			}
 			if chunk.Error != "" {
 				e.markRunFailed(ctx, req.RunID, errors.New(chunk.Error))
 				return
 			}
 			if chunk.Done {
 				if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, b.String()); err != nil {
-					out <- llm.ChatChunk{Done: true, Error: err.Error()}
+					send(llm.ChatChunk{Done: true, Error: err.Error()})
 				}
 				return
 			}
 		}
 		if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, b.String()); err != nil {
-			out <- llm.ChatChunk{Done: true, Error: err.Error()}
+			send(llm.ChatChunk{Done: true, Error: err.Error()})
 		}
 	}()
 	return out, nil
@@ -332,6 +349,10 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	}
 	output, err := e.answer(ctx, req)
 	if err != nil {
+		var paused RunPausedError
+		if errorsAsRunPaused(err, &paused) {
+			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
+		}
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}

@@ -105,6 +105,16 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()
+		// send blocks until the consumer reads or the context is cancelled, so
+		// an abandoned stream cannot leak this goroutine or the response body.
+		send := func(c llm.ChatChunk) bool {
+			select {
+			case ch <- c:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 		scanner := bufio.NewScanner(resp.Body)
 		sentDone := false
 		for scanner.Scan() {
@@ -118,24 +128,26 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
 				if !sentDone {
-					ch <- llm.ChatChunk{Done: true}
+					send(llm.ChatChunk{Done: true})
 				}
 				return
 			}
 			chunk, err := decodeStreamChunk([]byte(data))
 			if err != nil {
-				ch <- llm.ChatChunk{Done: true, Error: err.Error()}
+				send(llm.ChatChunk{Done: true, Error: err.Error()})
 				return
 			}
 			if chunk.Content != "" || chunk.Done || chunk.Usage.TotalTokens > 0 {
-				ch <- chunk
+				if !send(chunk) {
+					return
+				}
 				if chunk.Done {
 					return
 				}
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			ch <- llm.ChatChunk{Done: true, Error: err.Error()}
+			send(llm.ChatChunk{Done: true, Error: err.Error()})
 		}
 	}()
 	return ch, nil

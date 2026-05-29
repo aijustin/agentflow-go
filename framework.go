@@ -70,50 +70,51 @@ type Framework struct {
 	runs              runstate.Repository
 	checkpointHistory runstate.CheckpointHistory
 	blobs             runstate.BlobStore
-	events      core.EventSink
-	gate        core.HumanGate
-	tokenSigner *runstate.TokenSigner
-	llm         llm.Gateway
-	tools       *toolRegistry
-	memory      map[string]memory.Repository
-	policy      security.Policy
-	audit       audit.Sink
-	toolGov     governance.ToolPolicy
-	redactor    governance.OutputRedactor
-	recorder    observability.Recorder
-	tracer      observability.Tracer
-	logger      log.Logger
-	closers     []func(context.Context) error
+	events            core.EventSink
+	gate              core.HumanGate
+	tokenSigner       *runstate.TokenSigner
+	llm               llm.Gateway
+	tools             *toolRegistry
+	memory            map[string]memory.Repository
+	policy            security.Policy
+	audit             audit.Sink
+	toolGov           governance.ToolPolicy
+	redactor          governance.OutputRedactor
+	recorder          observability.Recorder
+	tracer            observability.Tracer
+	logger            log.Logger
+	closers           []func(context.Context) error
 }
 
 type options struct {
-	llm               llm.Gateway
-	runs              runstate.Repository
-	checkpointHistory runstate.CheckpointHistory
-	blobs             runstate.BlobStore
-	events      core.EventSink
-	gate        core.HumanGate
-	tools       map[string]core.ToolExecutor
-	resolver    core.ToolResolver
-	memory      map[string]memory.Repository
-	tierMemory  map[string]tier.Manager
-	tierStores  map[string]tier.Store
+	llm                 llm.Gateway
+	runs                runstate.Repository
+	checkpointHistory   runstate.CheckpointHistory
+	blobs               runstate.BlobStore
+	events              core.EventSink
+	gate                core.HumanGate
+	tools               map[string]core.ToolExecutor
+	resolver            core.ToolResolver
+	memory              map[string]memory.Repository
+	tierMemory          map[string]tier.Manager
+	tierStores          map[string]tier.Store
+	tierStorePolicies   map[string]tier.Policy
 	tierColdIndexers    map[string]tier.ColdSummaryIndexer
 	tierColdSummarizers map[string]tier.ContentSummarizer
-	cognitive   map[string]memory.CognitiveMemory
-	jobQueue    async.Queue
-	tokenSecret []byte
-	tokenTTL    time.Duration
-	tokenWriter io.Writer
-	policy      security.Policy
-	audit       audit.Sink
-	toolGov     governance.ToolPolicy
-	redactor    governance.OutputRedactor
-	recorder    observability.Recorder
-	tracer      observability.Tracer
-	logger      log.Logger
-	requireLLM  bool
-	closers     []func(context.Context) error
+	cognitive           map[string]memory.CognitiveMemory
+	jobQueue            async.Queue
+	tokenSecret         []byte
+	tokenTTL            time.Duration
+	tokenWriter         io.Writer
+	policy              security.Policy
+	audit               audit.Sink
+	toolGov             governance.ToolPolicy
+	redactor            governance.OutputRedactor
+	recorder            observability.Recorder
+	tracer              observability.Tracer
+	logger              log.Logger
+	requireLLM          bool
+	closers             []func(context.Context) error
 }
 
 type toolRegistry struct {
@@ -291,8 +292,12 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 			store = tierinmem.NewStore()
 		}
 		settings, _ := tier.SettingsFromCore(ref.Tiers)
+		policy := settings.Policy()
+		if override, ok := cfg.tierStorePolicies[name]; ok {
+			policy = override
+		}
 		coldSummary := tierColdSummaryBackend(settings.ColdSummary, cfg.tierColdIndexers[name], tierColdSummarizer(&cfg, name, settings.ColdSummary))
-		manager := tier.NewManagerWithWeights(store, settings.Policy(), tierMigrationObserver(scenario, cfg.recorder, cfg.events), settings.Weights(), coldSummary)
+		manager := tier.NewManagerWithWeights(store, policy, tierMigrationObserver(scenario, cfg.recorder, cfg.events), settings.Weights(), coldSummary)
 		cognitive := cfg.cognitive[name]
 		if cognitive == nil {
 			if cfg.cognitive == nil {
@@ -339,20 +344,20 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		runs:              cfg.runs,
 		checkpointHistory: cfg.checkpointHistory,
 		blobs:             cfg.blobs,
-		events:      cfg.events,
-		gate:        cfg.gate,
-		tokenSigner: tokenSigner,
-		llm:         cfg.llm,
-		tools:       tools,
-		memory:      cfg.memory,
-		policy:      cfg.policy,
-		audit:       cfg.audit,
-		toolGov:     cfg.toolGov,
-		redactor:    cfg.redactor,
-		recorder:    cfg.recorder,
-		tracer:      cfg.tracer,
-		logger:      cfg.logger,
-		closers:     append([]func(context.Context) error(nil), cfg.closers...),
+		events:            cfg.events,
+		gate:              cfg.gate,
+		tokenSigner:       tokenSigner,
+		llm:               cfg.llm,
+		tools:             tools,
+		memory:            cfg.memory,
+		policy:            cfg.policy,
+		audit:             cfg.audit,
+		toolGov:           cfg.toolGov,
+		redactor:          cfg.redactor,
+		recorder:          cfg.recorder,
+		tracer:            cfg.tracer,
+		logger:            cfg.logger,
+		closers:           append([]func(context.Context) error(nil), cfg.closers...),
 	}, nil
 }
 
@@ -570,7 +575,9 @@ func WithTierMemory(name string, manager tier.Manager) Option {
 	}
 }
 
-// WithTierStore wires a tier store and builds a default manager from policy.
+// WithTierStore wires a tier store and the policy used to build its default
+// manager. The supplied policy overrides the policy derived from the scenario
+// memory tier settings for this memory name.
 func WithTierStore(name string, store tier.Store, policy tier.Policy) Option {
 	return func(o *options) error {
 		if name == "" {
@@ -582,7 +589,11 @@ func WithTierStore(name string, store tier.Store, policy tier.Policy) Option {
 		if o.tierStores == nil {
 			o.tierStores = make(map[string]tier.Store)
 		}
+		if o.tierStorePolicies == nil {
+			o.tierStorePolicies = make(map[string]tier.Policy)
+		}
 		o.tierStores[name] = store
+		o.tierStorePolicies[name] = policy
 		return nil
 	}
 }

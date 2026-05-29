@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **HITL pause correctness**: workflow node retries, `parallel_group`/`map` `collect_errors`, and parallel batches no longer swallow or re-run a `WorkflowPausedError`; `RunHybrid`/`RunStructured` map pauses to a paused result instead of marking the run failed; `errorsAsRunPaused` now uses `errors.As` so wrapped pauses are detected.
+- **Hybrid context**: caller-supplied `Context` is merged with hydrated workflow step outputs instead of dropping the workflow results.
+- **Tiered memory durability**: `CompositeStore.Put` writes the destination tier before removing stale copies (no data loss on failed migration); cold file store now locks `Put`/`Get`/`Delete` consistently; file/blob/cold/blob-cold stores fsync data and the parent directory before/after atomic rename; `blobcold.Put` persists the index before deleting the previous blob.
+- **`WithTierStore` policy** is now applied to the derived tier manager (previously ignored).
+- **Checkpoint history**: recording repository appends the snapshot it just saved instead of re-loading (avoids version skew under concurrency).
+- **Streaming lifecycle**: OpenAI/Anthropic gateways and the runtime stream forwarder send through a context-aware `select`, so an abandoned stream no longer leaks the goroutine or the HTTP response body.
+- **Dual-write memory**: tier (source of truth) is written before the cognitive index mirror, and a mirror failure is wrapped to signal partial success for retry.
+
 ## [0.2.2] - 2026-05-22
 
 ### Added

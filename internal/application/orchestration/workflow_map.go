@@ -3,6 +3,7 @@ package orchestration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -108,6 +109,14 @@ func (r *WorkflowRunner) runMapNode(ctx context.Context, scenario core.Scenario,
 				return
 			}
 			if err := r.runNodeWithRetry(groupCtx, scenario, child, runID); err != nil {
+				// A pause must always halt the whole map, even under
+				// collect_errors: it is not a failure to be aggregated.
+				var paused WorkflowPausedError
+				if errors.As(err, &paused) {
+					cancel()
+					errs <- err
+					return
+				}
 				if collectErrors {
 					mu.Lock()
 					collected = append(collected, err.Error())
