@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -19,6 +20,12 @@ type defaultManager struct {
 	observer    MigrationObserver
 	weights     memory.RecallWeights
 	coldSummary ColdSummaryBackend
+
+	// reconcileLocks serializes Reconcile per namespace so concurrent
+	// reconciliation passes do not make tier-cap decisions from each other's
+	// stale level counts.
+	reconcileMu    sync.Mutex
+	reconcileLocks map[string]*sync.Mutex
 }
 
 // NewManager constructs a tier Manager backed by store and policy.
@@ -35,12 +42,29 @@ func NewManagerWithWeights(store Store, policy Policy, observer MigrationObserve
 		coldSummary = NoopColdSummaryBackend{}
 	}
 	return &defaultManager{
-		store:       store,
-		policy:      policy,
-		observer:    observer,
-		weights:     weights.Normalize(),
-		coldSummary: coldSummary,
+		store:          store,
+		policy:         policy,
+		observer:       observer,
+		weights:        weights.Normalize(),
+		coldSummary:    coldSummary,
+		reconcileLocks: make(map[string]*sync.Mutex),
 	}
+}
+
+// reconcileLock returns the per-namespace mutex used to serialize Reconcile.
+func (m *defaultManager) reconcileLock(ns memory.Namespace) *sync.Mutex {
+	key := ns.KeyPrefix()
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
+	if m.reconcileLocks == nil {
+		m.reconcileLocks = make(map[string]*sync.Mutex)
+	}
+	lock, ok := m.reconcileLocks[key]
+	if !ok {
+		lock = &sync.Mutex{}
+		m.reconcileLocks[key] = lock
+	}
+	return lock
 }
 
 func (m *defaultManager) Remember(ctx context.Context, ns memory.Namespace, record Record) error {
@@ -151,6 +175,9 @@ func (m *defaultManager) Reconcile(ctx context.Context, ns memory.Namespace, now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	lock := m.reconcileLock(ns)
+	lock.Lock()
+	defer lock.Unlock()
 	var report MigrationReport
 	for _, level := range []Level{LevelHot, LevelWarm, LevelCold} {
 		records, err := m.store.List(ctx, ns, level, 0)
@@ -223,6 +250,30 @@ func (m *defaultManager) applyTargetTier(ctx context.Context, ns memory.Namespac
 		m.observer.Demoted(ctx, ns, record.ID, from, target)
 	}
 	return nil
+}
+
+// ListAll returns every record stored for ns across all tiers, de-duplicated by
+// ID (a record briefly visible in two tiers during migration is returned once,
+// preferring the highest tier). It backs RebuildIndex.
+func (m *defaultManager) ListAll(ctx context.Context, ns memory.Namespace) ([]Record, error) {
+	seen := make(map[string]struct{})
+	out := make([]Record, 0)
+	for _, level := range []Level{LevelHot, LevelWarm, LevelCold} {
+		records, err := m.store.List(ctx, ns, level, 0)
+		if err != nil {
+			return nil, err
+		}
+		for _, record := range records {
+			if record.ID != "" {
+				if _, dup := seen[record.ID]; dup {
+					continue
+				}
+				seen[record.ID] = struct{}{}
+			}
+			out = append(out, record)
+		}
+	}
+	return out, nil
 }
 
 func (m *defaultManager) levelCounts(ctx context.Context, ns memory.Namespace) (map[Level]int, error) {

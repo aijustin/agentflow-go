@@ -62,6 +62,18 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 				produced[bareID] = ref.Inline
 				continue
 			}
+			if ref.Blob != nil && r.blobs != nil {
+				// Hydrate externalized child output so the aggregated subgraph
+				// result carries the real value, not an opaque marker that
+				// downstream nodes cannot read. The parent saveStepOutput
+				// re-thresholds and re-externalizes the aggregate if it is large.
+				raw, err := r.blobs.Get(ctx, *ref.Blob)
+				if err != nil {
+					return fmt.Errorf("orchestration: subgraph %q hydrate step %q: %w", node.ID, bareID, err)
+				}
+				produced[bareID] = raw
+				continue
+			}
 			produced[bareID] = json.RawMessage(`{"external":true}`)
 		}
 	}

@@ -80,6 +80,20 @@ type Manager interface {
 	Reconcile(ctx context.Context, ns memory.Namespace, now time.Time) (MigrationReport, error)
 }
 
+// RecordEnumerator is an optional Manager capability that lists every stored
+// record in a namespace across all tiers. It backs index rebuild/reconciliation.
+type RecordEnumerator interface {
+	ListAll(ctx context.Context, ns memory.Namespace) ([]Record, error)
+}
+
+// IndexRebuilder is an optional Manager capability that re-mirrors the durable
+// tier records into a secondary index (e.g. a cognitive search index), used to
+// converge the index after a transient mirror failure. It returns the number of
+// records re-mirrored.
+type IndexRebuilder interface {
+	RebuildIndex(ctx context.Context, ns memory.Namespace) (int, error)
+}
+
 // MigrationReport summarizes tier migrations from a reconcile pass.
 type MigrationReport struct {
 	Promoted int `json:"promoted"`

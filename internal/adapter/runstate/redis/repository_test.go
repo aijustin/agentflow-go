@@ -67,6 +67,58 @@ func TestRepositorySavesLoadsAndDeletesSnapshots(t *testing.T) {
 	}
 }
 
+// TestRepositoryReusesPooledConnections proves that sequential operations
+// reuse a warm connection from the idle pool instead of dialing (and
+// re-authenticating) on every call.
+func TestRepositoryReusesPooledConnections(t *testing.T) {
+	ctx := context.Background()
+	server := newFakeRedis(t)
+	repo, err := NewRepository(Config{Addr: server.addr, KeyPrefix: "agentflow:test:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := runstate.RunSnapshot{RunID: "run-1", ScenarioName: "scenario", Status: runstate.RunStatusRunning}
+	if err := repo.Save(ctx, &snapshot, 0); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := repo.Load(ctx, "run-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := server.acceptedConns(); got != 1 {
+		t.Fatalf("expected a single pooled connection, server accepted %d", got)
+	}
+}
+
+// TestRepositoryRecoversFromClosedPooledConnection verifies that a pooled
+// connection closed by the server is detected and replaced rather than
+// surfacing a spurious error to the caller.
+func TestRepositoryRecoversFromClosedPooledConnection(t *testing.T) {
+	ctx := context.Background()
+	server := newFakeRedis(t)
+	repo, err := NewRepository(Config{Addr: server.addr, KeyPrefix: "agentflow:test:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := runstate.RunSnapshot{RunID: "run-1", ScenarioName: "scenario", Status: runstate.RunStatusRunning}
+	if err := repo.Save(ctx, &snapshot, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Forcibly close the idle connection to simulate a server-side idle
+	// timeout, then confirm the next op transparently dials a fresh one.
+	repo.mu.Lock()
+	idle := repo.idle
+	repo.idle = nil
+	repo.mu.Unlock()
+	for _, c := range idle {
+		c.close()
+	}
+	if _, err := repo.Load(ctx, "run-1"); err != nil {
+		t.Fatalf("expected recovery from closed pooled connection, got %v", err)
+	}
+}
+
 func TestRepositoryRejectsStaleSnapshots(t *testing.T) {
 	ctx := context.Background()
 	server := newFakeRedis(t)
@@ -97,6 +149,13 @@ type fakeRedis struct {
 	addr     string
 	mu       sync.Mutex
 	values   map[string]map[string]string
+	accepted int
+}
+
+func (server *fakeRedis) acceptedConns() int {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	return server.accepted
 }
 
 func newFakeRedis(t *testing.T) *fakeRedis {
@@ -117,6 +176,9 @@ func (server *fakeRedis) serve() {
 		if err != nil {
 			return
 		}
+		server.mu.Lock()
+		server.accepted++
+		server.mu.Unlock()
 		go server.handle(conn)
 	}
 }

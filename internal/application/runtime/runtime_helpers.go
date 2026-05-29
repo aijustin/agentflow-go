@@ -139,23 +139,35 @@ func (e *Engine) saveStepOutput(ctx context.Context, runID, key string, value an
 	if e.runs == nil {
 		return nil
 	}
-	snapshot, err := e.runs.Load(ctx, runID)
-	if err != nil {
-		return err
-	}
-	if snapshot.StepOutputs == nil {
-		snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
-	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	ref, err := e.stepOutputRef(ctx, runID, key, raw)
-	if err != nil {
-		return err
+	// Retry on stale snapshot so concurrent writers to the same run (tool
+	// outputs, plan updates) do not lose this step output via optimistic
+	// concurrency conflicts, matching the orchestration saveStepOutput.
+	for attempt := 0; attempt < 5; attempt++ {
+		snapshot, err := e.runs.Load(ctx, runID)
+		if err != nil {
+			return err
+		}
+		if snapshot.StepOutputs == nil {
+			snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
+		}
+		ref, err := e.stepOutputRef(ctx, runID, key, raw)
+		if err != nil {
+			return err
+		}
+		snapshot.StepOutputs[key] = ref
+		err = e.runs.Save(ctx, &snapshot, snapshot.Version)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, runstate.ErrStaleSnapshot) {
+			return err
+		}
 	}
-	snapshot.StepOutputs[key] = ref
-	return e.runs.Save(ctx, &snapshot, snapshot.Version)
+	return fmt.Errorf("runtime: failed to save step %q output after stale snapshot retries", key)
 }
 
 func firstPositive(values ...int) int {

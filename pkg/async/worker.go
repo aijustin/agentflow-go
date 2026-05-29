@@ -156,9 +156,26 @@ func (worker *Worker) handleLeasedJob(ctx context.Context, lease Lease) error {
 				return nil
 			}
 		}
-		return worker.queue.Fail(ctx, lease, err)
+		// If the worker context itself is gone (shutdown), release the lease on
+		// a detached context so the job does not stay leased until expiry; a
+		// cancelled context would otherwise make Fail a no-op for many queues.
+		failCtx, cancel := terminalContext(ctx)
+		defer cancel()
+		return worker.queue.Fail(failCtx, lease, err)
 	}
-	return worker.queue.Complete(ctx, lease)
+	completeCtx, cancel := terminalContext(ctx)
+	defer cancel()
+	return worker.queue.Complete(completeCtx, lease)
+}
+
+// terminalContext returns ctx unchanged while it is still live, or a short-lived
+// detached context when ctx is already cancelled, so terminal queue updates
+// (Complete/Fail) can still be persisted during shutdown.
+func terminalContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx.Err() == nil {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
 func (worker *Worker) watchJobCancellation(ctx context.Context, jobID string, cancel context.CancelFunc) func() {

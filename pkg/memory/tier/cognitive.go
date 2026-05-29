@@ -109,6 +109,41 @@ func (m *dualWriteManager) Reconcile(ctx context.Context, ns memory.Namespace, n
 	return m.inner.Reconcile(ctx, ns, now)
 }
 
+// ListAll exposes the underlying tier records so RebuildIndex (and external
+// callers) can enumerate the source of truth. It returns an error if the inner
+// manager does not support enumeration.
+func (m *dualWriteManager) ListAll(ctx context.Context, ns memory.Namespace) ([]Record, error) {
+	enum, ok := m.inner.(RecordEnumerator)
+	if !ok {
+		return nil, fmt.Errorf("tier: inner manager %T does not support record enumeration", m.inner)
+	}
+	return enum.ListAll(ctx, ns)
+}
+
+// RebuildIndex re-mirrors every tier record in ns into the cognitive index,
+// converging it after a transient mirror failure or an index rebuild. It is
+// idempotent (Remember is keyed by record ID) and returns the number of records
+// re-mirrored. A nil index is a no-op.
+func (m *dualWriteManager) RebuildIndex(ctx context.Context, ns memory.Namespace) (int, error) {
+	if m.index == nil {
+		return 0, nil
+	}
+	records, err := m.ListAll(ctx, ns)
+	if err != nil {
+		return 0, err
+	}
+	mirrored := 0
+	for _, record := range records {
+		searchable := record.CognitiveRecord
+		searchable.Content = memory.SearchableContent(extractSearchable(record))
+		if err := m.index.Remember(ctx, ns, searchable); err != nil {
+			return mirrored, fmt.Errorf("tier: rebuild index for record %q: %w", record.ID, err)
+		}
+		mirrored++
+	}
+	return mirrored, nil
+}
+
 func extractSearchable(record Record) string {
 	if text := record.Metadata["searchable"]; text != "" {
 		return text

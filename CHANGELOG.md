@@ -15,6 +15,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Checkpoint history**: recording repository appends the snapshot it just saved instead of re-loading (avoids version skew under concurrency).
 - **Streaming lifecycle**: OpenAI/Anthropic gateways and the runtime stream forwarder send through a context-aware `select`, so an abandoned stream no longer leaks the goroutine or the HTTP response body.
 - **Dual-write memory**: tier (source of truth) is written before the cognitive index mirror, and a mirror failure is wrapped to signal partial success for retry.
+- **Orphan blob GC race**: `PurgeOrphanBlobs` now lists blobs before snapshots and re-checks references immediately before deletion, so a blob written concurrently with its referencing snapshot is never deleted while live.
+- **Runtime step-output durability**: `Engine.saveStepOutput` retries on a stale snapshot (matching the orchestration path) so concurrent writers to the same run no longer lose a step output to an optimistic-concurrency conflict.
+- **Tier reconcile concurrency**: `Reconcile` is serialized per namespace so overlapping passes no longer make tier-capacity decisions from each other's stale level counts.
+- **Async worker shutdown**: a leased job whose worker context is cancelled now releases its lease via a detached context instead of leaving the job leased until expiry.
+- **Subgraph aggregation**: externalized (blob-stored) child step outputs are hydrated back into the aggregated subgraph result instead of being replaced by an opaque `{"external":true}` marker that downstream nodes could not read.
+
+### Added
+
+- **Redis run-state connection pooling**: the Redis repository keeps a bounded pool of authenticated connections (configurable via `MaxIdleConns`, default 8), performing the `AUTH`/`SELECT` handshake once per connection and validating liveness before reuse; added `Close()` to drain idle connections on shutdown.
+- **Cognitive index rebuild**: tier managers expose `RecordEnumerator.ListAll` and `IndexRebuilder.RebuildIndex`, so a cognitive search index that fell behind after a transient mirror failure can be reconciled from the source-of-truth tier store.
 
 ## [0.2.2] - 2026-05-22
 

@@ -10,6 +10,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -43,12 +44,32 @@ type Config struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	DialContext  DialContextFunc
+	// MaxIdleConns bounds the number of authenticated connections kept warm
+	// for reuse. Defaults to defaultMaxIdleConns. Set to a negative value to
+	// disable pooling (dial a fresh connection per operation).
+	MaxIdleConns int
 }
 
+const defaultMaxIdleConns = 8
+
+// pooledConn is an authenticated connection (AUTH/SELECT already applied) kept
+// warm for reuse so callers avoid a dial + handshake on every operation.
+type pooledConn struct {
+	conn   net.Conn
+	reader *bufio.Reader
+}
+
+func (c *pooledConn) close() { _ = c.conn.Close() }
+
 type Repository struct {
-	config Config
-	prefix string
-	dial   DialContextFunc
+	config  Config
+	prefix  string
+	dial    DialContextFunc
+	maxIdle int
+
+	mu     sync.Mutex
+	idle   []*pooledConn
+	closed bool
 }
 
 func NewRepository(config Config) (*Repository, error) {
@@ -67,7 +88,29 @@ func NewRepository(config Config) (*Repository, error) {
 	if prefix == "" {
 		prefix = defaultKeyPrefix
 	}
-	return &Repository{config: config, prefix: prefix, dial: dial}, nil
+	maxIdle := config.MaxIdleConns
+	if maxIdle == 0 {
+		maxIdle = defaultMaxIdleConns
+	}
+	if maxIdle < 0 {
+		maxIdle = 0
+	}
+	return &Repository{config: config, prefix: prefix, dial: dial, maxIdle: maxIdle}, nil
+}
+
+// Close releases all idle pooled connections. After Close the repository keeps
+// working by dialing fresh connections; it exists so callers can promptly free
+// sockets during shutdown.
+func (r *Repository) Close() error {
+	r.mu.Lock()
+	conns := r.idle
+	r.idle = nil
+	r.closed = true
+	r.mu.Unlock()
+	for _, c := range conns {
+		c.close()
+	}
+	return nil
 }
 
 func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
@@ -199,26 +242,109 @@ func (r *Repository) key(runID string) string {
 }
 
 func (r *Repository) do(ctx context.Context, args ...string) (respValue, error) {
+	if err := ctx.Err(); err != nil {
+		return respValue{}, err
+	}
+	conn, err := r.acquire(ctx)
+	if err != nil {
+		return respValue{}, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.conn.SetDeadline(deadline)
+	}
+	value, err := r.roundTrip(conn.conn, conn.reader, args...)
+	if err != nil {
+		// The command result is uncertain on error, so the connection is
+		// discarded rather than reused. We never retry here: the CAS EVAL is
+		// not idempotent and a reused connection is liveness-checked before
+		// use, so a retry could double-apply a write.
+		conn.close()
+		return value, err
+	}
+	r.release(conn)
+	return value, nil
+}
+
+// acquire returns a healthy authenticated connection, reusing a warm idle one
+// when available and otherwise dialing and handshaking a fresh connection.
+func (r *Repository) acquire(ctx context.Context) (*pooledConn, error) {
+	for {
+		r.mu.Lock()
+		n := len(r.idle)
+		if n == 0 {
+			r.mu.Unlock()
+			break
+		}
+		conn := r.idle[n-1]
+		r.idle = r.idle[:n-1]
+		r.mu.Unlock()
+		if connHealthy(conn.conn) {
+			return conn, nil
+		}
+		conn.close()
+	}
+	return r.newConn(ctx)
+}
+
+// newConn dials a connection and performs the AUTH/SELECT handshake once, so
+// pooled reuse does not repeat the handshake on every operation.
+func (r *Repository) newConn(ctx context.Context) (*pooledConn, error) {
 	conn, err := r.dial(ctx, "tcp", r.config.Addr)
 	if err != nil {
-		return respValue{}, fmt.Errorf("redis runstate: dial: %w", err)
+		return nil, fmt.Errorf("redis runstate: dial: %w", err)
 	}
-	defer conn.Close()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-	reader := bufio.NewReader(conn)
+	pc := &pooledConn{conn: conn, reader: bufio.NewReader(conn)}
 	if r.config.Password != "" {
-		if _, err := r.roundTrip(conn, reader, "AUTH", r.config.Password); err != nil {
-			return respValue{}, err
+		if _, err := r.roundTrip(pc.conn, pc.reader, "AUTH", r.config.Password); err != nil {
+			pc.close()
+			return nil, err
 		}
 	}
 	if r.config.DB > 0 {
-		if _, err := r.roundTrip(conn, reader, "SELECT", strconv.Itoa(r.config.DB)); err != nil {
-			return respValue{}, err
+		if _, err := r.roundTrip(pc.conn, pc.reader, "SELECT", strconv.Itoa(r.config.DB)); err != nil {
+			pc.close()
+			return nil, err
 		}
 	}
-	return r.roundTrip(conn, reader, args...)
+	return pc, nil
+}
+
+// release returns a connection to the idle pool, clearing any per-operation
+// deadline first, or closes it when the pool is full or already closed.
+func (r *Repository) release(conn *pooledConn) {
+	_ = conn.conn.SetDeadline(time.Time{})
+	r.mu.Lock()
+	if r.closed || len(r.idle) >= r.maxIdle {
+		r.mu.Unlock()
+		conn.close()
+		return
+	}
+	r.idle = append(r.idle, conn)
+	r.mu.Unlock()
+}
+
+// connHealthy reports whether an idle connection is still usable. It performs a
+// brief non-blocking read: a timeout means the peer is alive with no pending
+// data (healthy), while EOF/error or unexpected bytes mean the connection is
+// dead or out of sync and must be discarded.
+func connHealthy(conn net.Conn) bool {
+	if err := conn.SetReadDeadline(time.Now().Add(time.Millisecond)); err != nil {
+		return false
+	}
+	var b [1]byte
+	_, err := conn.Read(b[:])
+	_ = conn.SetReadDeadline(time.Time{})
+	if err == nil {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	return false
 }
 
 func (r *Repository) roundTrip(conn net.Conn, reader *bufio.Reader, args ...string) (respValue, error) {
