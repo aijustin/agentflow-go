@@ -24,6 +24,12 @@ type mapBranch struct {
 	Input json.RawMessage       `json:"input,omitempty"`
 }
 
+// defaultMapConcurrency bounds how many map branches run concurrently when the
+// scenario does not set an explicit max_parallel. It prevents a large runtime
+// items array from fanning out into an unbounded number of goroutines and
+// concurrent LLM/tool calls, while preserving parallel-by-default behavior.
+const defaultMapConcurrency = 16
+
 func (r *WorkflowRunner) runMapNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
 	var spec mapSpec
 	if len(node.Input) == 0 {
@@ -73,10 +79,29 @@ func (r *WorkflowRunner) runMapNode(ctx context.Context, scenario core.Scenario,
 	var mu sync.Mutex
 	var collected []string
 
+	limit := firstPositive(scenario.Orchestration.MaxParallel, scenario.Runtime.MaxParallel)
+	if limit <= 0 {
+		limit = defaultMapConcurrency
+	}
+	if limit > len(items) {
+		limit = len(items)
+	}
+	sem := make(chan struct{}, limit)
+
+scheduleLoop:
 	for index, item := range items {
+		// Acquire a slot before launching so the number of live branch
+		// goroutines never exceeds limit. Acquiring also stops scheduling new
+		// work once the group is cancelled (e.g. a pause or hard failure).
+		select {
+		case sem <- struct{}{}:
+		case <-groupCtx.Done():
+			break scheduleLoop
+		}
 		wg.Add(1)
 		go func(index int, item any) {
 			defer wg.Done()
+			defer func() { <-sem }()
 			childInput, err := buildMapBranchInput(spec.Branch, item, itemField)
 			if err != nil {
 				if collectErrors {
@@ -176,10 +201,23 @@ func (r *WorkflowRunner) runMapNode(ctx context.Context, scenario core.Scenario,
 
 	wg.Wait()
 	close(errs)
+	// Prefer a pause error over any other so HITL halts propagate correctly,
+	// regardless of the order branches finished in.
+	var firstErr error
 	for err := range errs {
-		if err != nil {
+		if err == nil {
+			continue
+		}
+		var paused WorkflowPausedError
+		if errors.As(err, &paused) {
 			return err
 		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return firstErr
 	}
 	result := map[string]any{"members": outputs}
 	if len(collected) > 0 {

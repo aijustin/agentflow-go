@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -142,6 +143,35 @@ func TestStoreListsAndDeletesBlobs(t *testing.T) {
 	}
 }
 
+func TestStoreListPaginates(t *testing.T) {
+	ctx := context.Background()
+	server := newFakeS3(t)
+	server.pageSize = 2
+	store, err := NewStore(Config{
+		Endpoint:        server.URL,
+		Bucket:          "agentflow-blobs",
+		Region:          "us-east-1",
+		AccessKeyID:     "test-access",
+		SecretAccessKey: "test-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = 7
+	for i := 0; i < total; i++ {
+		if _, err := store.Put(ctx, []byte{byte('a' + i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs, err := store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != total {
+		t.Fatalf("expected %d refs across pages, got %d", total, len(refs))
+	}
+}
+
 func TestNewStoreValidatesConfig(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -169,6 +199,7 @@ type fakeS3 struct {
 	mu             sync.Mutex
 	objects        map[string][]byte
 	signedRequests int
+	pageSize       int
 }
 
 func newFakeS3(t *testing.T) *fakeS3 {
@@ -235,8 +266,29 @@ func (s *fakeS3) writeListResponse(w http.ResponseWriter, r *http.Request) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	result := listBucketResult{Contents: make([]listObject, len(keys))}
-	for i, key := range keys {
+
+	start := 0
+	if token := r.URL.Query().Get("continuation-token"); token != "" {
+		if v, err := strconv.Atoi(token); err == nil {
+			start = v
+		}
+	}
+	end := len(keys)
+	truncated := false
+	nextToken := ""
+	if s.pageSize > 0 && start+s.pageSize < len(keys) {
+		end = start + s.pageSize
+		truncated = true
+		nextToken = strconv.Itoa(end)
+	}
+	page := keys[start:end]
+
+	result := listBucketResult{
+		Contents:              make([]listObject, len(page)),
+		IsTruncated:           truncated,
+		NextContinuationToken: nextToken,
+	}
+	for i, key := range page {
 		result.Contents[i] = listObject{Key: key, Size: int64(len(s.objects["/agentflow-blobs/"+key]))}
 	}
 	w.Header().Set("Content-Type", "application/xml")

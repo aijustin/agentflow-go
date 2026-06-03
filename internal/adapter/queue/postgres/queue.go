@@ -305,18 +305,19 @@ func (q *Queue) ListJobs(ctx context.Context, filter asyncpkg.JobFilter) ([]asyn
 	}
 	query += ` ORDER BY created_at ASC`
 	if filter.Limit > 0 {
-		if len(args) == 0 {
-			query += fmt.Sprintf(` LIMIT %d`, filter.Limit)
-		} else {
-			query += fmt.Sprintf(` LIMIT %d`, filter.Limit)
-		}
+		query += fmt.Sprintf(` LIMIT $%d`, len(args)+1)
+		args = append(args, filter.Limit)
 	}
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]asyncpkg.Job, 0)
+	capHint := 0
+	if filter.Limit > 0 {
+		capHint = filter.Limit
+	}
+	out := make([]asyncpkg.Job, 0, capHint)
 	for rows.Next() {
 		job, err := q.scanJob(rows)
 		if err != nil {

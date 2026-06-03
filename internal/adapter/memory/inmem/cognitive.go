@@ -2,7 +2,6 @@ package inmem
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -77,5 +76,3 @@ func AppendCognitiveFromMessages(repo memory.CognitiveMemory, ctx context.Contex
 		Categories: []string{role},
 	})
 }
-
-var _ = json.RawMessage(nil)

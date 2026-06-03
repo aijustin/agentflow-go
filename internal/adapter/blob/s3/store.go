@@ -162,38 +162,50 @@ func (s *Store) List(ctx context.Context) ([]runstate.BlobRef, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	requestURL := s.listURL()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	payloadHash := sha256Hex(nil)
-	if err := s.sign(req, payloadHash, time.Now().UTC()); err != nil {
-		return nil, err
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("s3 blob: list: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, responseError("list", "", resp)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("s3 blob: read list response: %w", err)
-	}
-	var result listBucketResult
-	if err := xml.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("s3 blob: decode list response: %w", err)
-	}
-	out := make([]runstate.BlobRef, 0, len(result.Contents))
-	for _, item := range result.Contents {
-		id, ok := s.blobIDFromObjectKey(item.Key)
-		if !ok {
-			continue
+	out := make([]runstate.BlobRef, 0)
+	continuationToken := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		out = append(out, runstate.BlobRef{ID: id, Size: item.Size, Sha256: id})
+		requestURL := s.listURL(continuationToken)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		payloadHash := sha256Hex(nil)
+		if err := s.sign(req, payloadHash, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("s3 blob: list: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			err := responseError("list", "", resp)
+			resp.Body.Close()
+			return nil, err
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("s3 blob: read list response: %w", err)
+		}
+		var result listBucketResult
+		if err := xml.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("s3 blob: decode list response: %w", err)
+		}
+		for _, item := range result.Contents {
+			id, ok := s.blobIDFromObjectKey(item.Key)
+			if !ok {
+				continue
+			}
+			out = append(out, runstate.BlobRef{ID: id, Size: item.Size, Sha256: id})
+		}
+		if !result.IsTruncated || strings.TrimSpace(result.NextContinuationToken) == "" {
+			break
+		}
+		continuationToken = result.NextContinuationToken
 	}
 	return out, nil
 }
@@ -238,13 +250,16 @@ func (s *Store) objectURL(id string) url.URL {
 	return u
 }
 
-func (s *Store) listURL() url.URL {
+func (s *Store) listURL(continuationToken string) url.URL {
 	u := *s.endpoint
 	u.Path = path.Join(u.Path, s.bucket)
 	query := url.Values{}
 	query.Set("list-type", "2")
 	if s.prefix != "" {
 		query.Set("prefix", s.prefix+"/")
+	}
+	if continuationToken != "" {
+		query.Set("continuation-token", continuationToken)
 	}
 	u.RawQuery = query.Encode()
 	return u
@@ -269,7 +284,9 @@ func (s *Store) blobIDFromObjectKey(key string) (string, bool) {
 }
 
 type listBucketResult struct {
-	Contents []listObject `xml:"Contents"`
+	Contents              []listObject `xml:"Contents"`
+	IsTruncated           bool         `xml:"IsTruncated"`
+	NextContinuationToken string       `xml:"NextContinuationToken"`
 }
 
 type listObject struct {

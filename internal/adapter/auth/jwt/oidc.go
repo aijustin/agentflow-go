@@ -51,7 +51,7 @@ func NewOIDCAuthenticator(config OIDCConfig) (*OIDCAuthenticator, error) {
 	}
 	client := config.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	now := config.Now
 	if now == nil {

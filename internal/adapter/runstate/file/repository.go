@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aijustin/agentflow-go/internal/fsatomic"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -59,7 +60,7 @@ func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, e
 	if err != nil {
 		return err
 	}
-	return writeAtomic(r.path(snapshot.RunID), data, 0o600)
+	return fsatomic.WriteFile(r.path(snapshot.RunID), data, 0o600)
 }
 
 func (r *Repository) Load(ctx context.Context, runID string) (runstate.RunSnapshot, error) {
@@ -97,7 +98,11 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 		}
 		return nil, err
 	}
-	var out []runstate.RunSnapshot
+	limit := len(entries)
+	if filter.Limit > 0 && filter.Limit < limit {
+		limit = filter.Limit
+	}
+	out := make([]runstate.RunSnapshot, 0, limit)
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -154,48 +159,4 @@ func (r *Repository) loadLocked(runID string) (runstate.RunSnapshot, error) {
 func (r *Repository) path(runID string) string {
 	name := base64.RawURLEncoding.EncodeToString([]byte(runID)) + ".json"
 	return filepath.Join(r.dir, name)
-}
-
-func writeAtomic(path string, data []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	syncDir(filepath.Dir(path))
-	return nil
-}
-
-// syncDir best-effort fsyncs a directory so a rename survives a crash. Errors
-// are ignored because some filesystems/platforms do not support directory
-// fsync; the file contents are already durable via the tmp file Sync above.
-func syncDir(dir string) {
-	d, err := os.Open(dir)
-	if err != nil {
-		return
-	}
-	_ = d.Sync()
-	_ = d.Close()
 }

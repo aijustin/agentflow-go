@@ -221,7 +221,7 @@ func (queue *Queue) ListJobs(ctx context.Context, filter asyncpkg.JobFilter) ([]
 	}
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
-	out := make([]asyncpkg.Job, 0)
+	out := make([]asyncpkg.Job, 0, len(queue.order))
 	for _, jobID := range queue.order {
 		job := queue.jobs[jobID]
 		if filter.State != "" && job.State != filter.State {

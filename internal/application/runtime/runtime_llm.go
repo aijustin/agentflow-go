@@ -26,7 +26,7 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	messages, stats := e.prepareContext(agent, profile, req, history)
+	messages, stats := e.prepareContext(ctx, agent, profile, req, history)
 	if e.planningEnabled() {
 		var err error
 		messages, err = e.injectAutonomousPlan(ctx, req.RunID, agent, profile, req, messages)
@@ -215,7 +215,7 @@ func (e *Engine) structuredAnswer(ctx context.Context, req RunRequest) (json.Raw
 	if err != nil {
 		return nil, err
 	}
-	messages, stats := e.prepareContext(agent, profile, req, history)
+	messages, stats := e.prepareContext(ctx, agent, profile, req, history)
 	e.emitJSON(ctx, core.EventContextPrepared, req.RunID, stats)
 	baseReq := llm.ChatRequest{
 		Messages:        messages,
@@ -257,7 +257,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		cancel()
 		return nil, core.Agent{}, nil, err
 	}
-	messages, stats := e.prepareContext(agent, profile, req, history)
+	messages, stats := e.prepareContext(ctx, agent, profile, req, history)
 	if e.planningEnabled() {
 		messages, err = e.injectAutonomousPlan(ctx, req.RunID, agent, profile, req, messages)
 		if err != nil {
@@ -326,7 +326,7 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 		if profile.Context.StaleToolTurns > 0 {
 			messages = evictStaleToolMessages(messages, profile.Context.StaleToolTurns)
 		}
-		prepared, stats := e.prepareMessages(messages, profile)
+		prepared, stats := e.prepareMessages(ctx, messages, profile)
 		e.emitJSON(ctx, core.EventContextPrepared, runID, stats)
 		toolReq := llm.ToolCallRequest{
 			ChatRequest: llm.ChatRequest{

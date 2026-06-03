@@ -50,16 +50,35 @@ func WithTableName(name string) Option {
 	}
 }
 
+// maxUpsertRows caps the number of rows per multi-row INSERT so the total
+// number of bind parameters (upsertColumns per row) stays well under the
+// PostgreSQL limit of 65535.
+const maxUpsertRows = 500
+
+const upsertColumns = 5
+
+type upsertRow struct {
+	namespace string
+	id        string
+	content   string
+	metadata  []byte
+	vector    string
+}
+
 func (s *Store) Upsert(ctx context.Context, documents []knowledge.DocumentEmbedding) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	query := fmt.Sprintf(`INSERT INTO %s (namespace, document_id, content, metadata_json, embedding)
-VALUES ($1, $2, $3, $4, $5::vector)
-ON CONFLICT (namespace, document_id) DO UPDATE SET
-	content = EXCLUDED.content,
-	metadata_json = EXCLUDED.metadata_json,
-	embedding = EXCLUDED.embedding`, s.table)
+	if len(documents) == 0 {
+		return nil
+	}
+
+	// Validate and encode every document before touching the database so the
+	// whole batch fails atomically on bad input. De-duplicate on
+	// (namespace, document_id) keeping the last occurrence, because a single
+	// multi-row INSERT ... ON CONFLICT cannot affect the same row twice.
+	rows := make([]upsertRow, 0, len(documents))
+	indexByKey := make(map[string]int, len(documents))
 	for _, document := range documents {
 		if strings.TrimSpace(document.Document.ID) == "" {
 			return fmt.Errorf("postgres vector store: document id is required")
@@ -75,11 +94,65 @@ ON CONFLICT (namespace, document_id) DO UPDATE SET
 		if string(metadata) == "null" {
 			metadata = []byte(`{}`)
 		}
-		if _, err := s.db.ExecContext(ctx, query, document.Document.Namespace, document.Document.ID, document.Document.Content, metadata, vector); err != nil {
-			return fmt.Errorf("postgres vector store: upsert %q: %w", document.Document.ID, err)
+		row := upsertRow{
+			namespace: document.Document.Namespace,
+			id:        document.Document.ID,
+			content:   document.Document.Content,
+			metadata:  metadata,
+			vector:    vector,
+		}
+		key := row.namespace + "\x00" + row.id
+		if idx, ok := indexByKey[key]; ok {
+			rows[idx] = row
+			continue
+		}
+		indexByKey[key] = len(rows)
+		rows = append(rows, row)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("postgres vector store: begin upsert: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for start := 0; start < len(rows); start += maxUpsertRows {
+		end := start + maxUpsertRows
+		if end > len(rows) {
+			end = len(rows)
+		}
+		query, args := s.buildUpsertQuery(rows[start:end])
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return fmt.Errorf("postgres vector store: upsert batch: %w", err)
 		}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("postgres vector store: commit upsert: %w", err)
+	}
 	return nil
+}
+
+func (s *Store) buildUpsertQuery(rows []upsertRow) (string, []any) {
+	var builder strings.Builder
+	builder.WriteString("INSERT INTO ")
+	builder.WriteString(s.table)
+	builder.WriteString(" (namespace, document_id, content, metadata_json, embedding)\nVALUES ")
+	args := make([]any, 0, len(rows)*upsertColumns)
+	for i, row := range rows {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
+		base := i * upsertColumns
+		fmt.Fprintf(&builder, "($%d, $%d, $%d, $%d, $%d::vector)", base+1, base+2, base+3, base+4, base+5)
+		args = append(args, row.namespace, row.id, row.content, row.metadata, row.vector)
+	}
+	builder.WriteString(`
+ON CONFLICT (namespace, document_id) DO UPDATE SET
+	content = EXCLUDED.content,
+	metadata_json = EXCLUDED.metadata_json,
+	embedding = EXCLUDED.embedding`)
+	return builder.String(), args
 }
 
 func (s *Store) Query(ctx context.Context, query knowledge.Query) ([]knowledge.SearchResult, error) {

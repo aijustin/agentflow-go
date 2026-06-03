@@ -3,12 +3,11 @@ package yaml
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/aijustin/agentflow-go/internal/fsatomic"
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
@@ -31,27 +30,7 @@ func SaveFile(path string, scenario core.Scenario) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".scenario-*.yaml")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return fsatomic.WriteFile(path, data, 0o600)
 }
 
 // DocumentFromCore converts a core scenario into the legacy YAML document shape.

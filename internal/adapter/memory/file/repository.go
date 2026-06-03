@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/aijustin/agentflow-go/internal/fsatomic"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 )
 
@@ -46,7 +47,7 @@ func (r *Repository) Set(ctx context.Context, ns memory.Namespace, key string, v
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return writeAtomic(r.path(ns, key), value, 0o600)
+	return fsatomic.WriteFile(r.path(ns, key), value, 0o600)
 }
 
 func (r *Repository) Append(ctx context.Context, ns memory.Namespace, key string, value json.RawMessage) error {
@@ -69,7 +70,7 @@ func (r *Repository) Append(ctx context.Context, ns memory.Namespace, key string
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, data, 0o600)
+	return fsatomic.WriteFile(path, data, 0o600)
 }
 
 func (r *Repository) Delete(ctx context.Context, ns memory.Namespace, key string) error {
@@ -104,28 +105,4 @@ func clone(value []byte) []byte {
 	out := make([]byte, len(value))
 	copy(out, value)
 	return out
-}
-
-func writeAtomic(path string, data []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }

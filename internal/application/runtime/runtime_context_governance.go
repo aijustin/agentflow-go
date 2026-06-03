@@ -10,7 +10,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
 
-func (e *Engine) contextManager(policy contextwindow.Policy) *contextwindow.Manager {
+func (e *Engine) contextManager(ctx context.Context, policy contextwindow.Policy) *contextwindow.Manager {
 	normalized := policy.Normalize()
 	if normalized.SummaryMode != "llm" || e.llm == nil {
 		return contextwindow.New(normalized)
@@ -30,7 +30,7 @@ func (e *Engine) contextManager(policy contextwindow.Policy) *contextwindow.Mana
 		if profile == "" {
 			return contextwindowSummaryFallback(messages, budget)
 		}
-		resp, err := e.llm.Chat(context.Background(), profile, llm.ChatRequest{
+		resp, err := e.llm.Chat(ctx, profile, llm.ChatRequest{
 			Messages: []llm.Message{
 				{Role: llm.RoleSystem, Content: fmt.Sprintf("Summarize the following conversation in at most %d tokens worth of text.", budget)},
 				{Role: llm.RoleUser, Content: b.String()},

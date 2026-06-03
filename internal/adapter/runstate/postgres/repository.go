@@ -181,6 +181,15 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 			where += fmt.Sprintf(" AND COALESCE(NULLIF(thread_id, ''), run_id) = $%d", len(args))
 		}
 	}
+	if filter.TenantID != "" {
+		args = append(args, filter.TenantID)
+		clause := fmt.Sprintf("snapshot_json->>'tenant_id' = $%d", len(args))
+		if where == "" {
+			where = " WHERE " + clause
+		} else {
+			where += " AND " + clause
+		}
+	}
 	limit := ""
 	if filter.Limit > 0 {
 		args = append(args, filter.Limit)
@@ -201,9 +210,6 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 		var snap runstate.RunSnapshot
 		if err := json.Unmarshal(data, &snap); err != nil {
 			return nil, fmt.Errorf("postgres runstate: decode snapshot: %w", err)
-		}
-		if filter.TenantID != "" && snap.TenantID != filter.TenantID {
-			continue
 		}
 		out = append(out, snap)
 	}

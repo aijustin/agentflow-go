@@ -54,6 +54,54 @@ func TestStoreUpsertQueryAndDelete(t *testing.T) {
 	}
 }
 
+func TestStoreUpsertDeduplicatesBatch(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	docs := []knowledge.DocumentEmbedding{
+		{Document: knowledge.Document{ID: "doc-1", Namespace: "tenant-a", Content: "first"}, Vector: []float32{0.1, 0.2}},
+		{Document: knowledge.Document{ID: "doc-2", Namespace: "tenant-a", Content: "other"}, Vector: []float32{0.3, 0.4}},
+		{Document: knowledge.Document{ID: "doc-1", Namespace: "tenant-a", Content: "last"}, Vector: []float32{0.5, 0.6}},
+	}
+	if err := store.Upsert(ctx, docs); err != nil {
+		t.Fatalf("upsert with duplicate keys should not error: %v", err)
+	}
+	results, err := store.Query(ctx, knowledge.Query{Namespace: "tenant-a", Vector: []float32{0.1, 0.2}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 distinct documents after dedup, got %d: %+v", len(results), results)
+	}
+	for _, result := range results {
+		if result.Document.ID == "doc-1" && result.Document.Content != "last" {
+			t.Fatalf("expected last occurrence to win for doc-1, got content %q", result.Document.Content)
+		}
+	}
+}
+
+func TestStoreUpsertChunksLargeBatch(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	const total = maxUpsertRows + 50
+	docs := make([]knowledge.DocumentEmbedding, total)
+	for i := range docs {
+		docs[i] = knowledge.DocumentEmbedding{
+			Document: knowledge.Document{ID: fmt.Sprintf("doc-%d", i), Namespace: "tenant-a", Content: "c"},
+			Vector:   []float32{0.1, 0.2},
+		}
+	}
+	if err := store.Upsert(ctx, docs); err != nil {
+		t.Fatalf("chunked upsert failed: %v", err)
+	}
+	results, err := store.Query(ctx, knowledge.Query{Namespace: "tenant-a", Vector: []float32{0.1, 0.2}, Limit: total + 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != total {
+		t.Fatalf("expected %d documents persisted across chunks, got %d", total, len(results))
+	}
+}
+
 func TestNewStoreValidatesInputs(t *testing.T) {
 	if _, err := NewStore(nil); err == nil {
 		t.Fatal("expected nil db error")
@@ -129,8 +177,13 @@ func (c *testConn) Prepare(string) (driver.Stmt, error) {
 }
 func (c *testConn) Close() error { return nil }
 func (c *testConn) Begin() (driver.Tx, error) {
-	return nil, errors.New("transactions are not supported")
+	return noopTx{}, nil
 }
+
+type noopTx struct{}
+
+func (noopTx) Commit() error   { return nil }
+func (noopTx) Rollback() error { return nil }
 
 func (c *testConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if err := ctx.Err(); err != nil {
@@ -168,11 +221,24 @@ func (c *testConn) QueryContext(ctx context.Context, query string, args []driver
 }
 
 func (c *testConn) upsert(args []driver.NamedValue) (driver.Result, error) {
-	row := testRow{namespace: args[0].Value.(string), id: args[1].Value.(string), content: args[2].Value.(string), metadata: bytesValue(args[3].Value), vector: args[4].Value.(string)}
+	if len(args) == 0 || len(args)%5 != 0 {
+		return nil, fmt.Errorf("unexpected upsert argument count: %d", len(args))
+	}
 	c.state.mu.Lock()
-	c.state.rows[row.namespace+"/"+row.id] = row
-	c.state.mu.Unlock()
-	return driver.RowsAffected(1), nil
+	defer c.state.mu.Unlock()
+	count := 0
+	for base := 0; base < len(args); base += 5 {
+		row := testRow{
+			namespace: args[base].Value.(string),
+			id:        args[base+1].Value.(string),
+			content:   args[base+2].Value.(string),
+			metadata:  bytesValue(args[base+3].Value),
+			vector:    args[base+4].Value.(string),
+		}
+		c.state.rows[row.namespace+"/"+row.id] = row
+		count++
+	}
+	return driver.RowsAffected(count), nil
 }
 
 func (c *testConn) delete(args []driver.NamedValue) (driver.Result, error) {

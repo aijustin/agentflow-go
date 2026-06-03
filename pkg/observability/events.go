@@ -161,8 +161,7 @@ func (hub *EventHub) Subscribe(ctx context.Context, filter EventSubscriptionFilt
 	hub.subscribers[id] = eventSubscriber{filter: filter, events: events}
 	hub.mu.Unlock()
 	var once sync.Once
-	done := make(chan struct{})
-	cancel := func() {
+	cleanup := func() {
 		once.Do(func() {
 			hub.mu.Lock()
 			if subscriber, ok := hub.subscribers[id]; ok {
@@ -170,16 +169,16 @@ func (hub *EventHub) Subscribe(ctx context.Context, filter EventSubscriptionFilt
 				close(subscriber.events)
 			}
 			hub.mu.Unlock()
-			close(done)
 		})
 	}
-	go func() {
-		select {
-		case <-ctx.Done():
-			cancel()
-		case <-done:
-		}
-	}()
+	// AfterFunc runs cleanup when ctx is cancelled without dedicating a
+	// goroutine per subscription. An explicit Cancel stops the registration and
+	// runs cleanup directly; once guarantees it happens at most once.
+	stop := context.AfterFunc(ctx, cleanup)
+	cancel := func() {
+		stop()
+		cleanup()
+	}
 	return EventSubscription{Events: events, Cancel: cancel}
 }
 

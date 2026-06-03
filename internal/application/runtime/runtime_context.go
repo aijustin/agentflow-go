@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 
@@ -46,7 +47,7 @@ func truncateForTokenBudget(content string, maxTokens int) string {
 	return string(runes[:limit]) + "..."
 }
 
-func (e *Engine) prepareContext(agent core.Agent, profile core.LLMProfileRef, req RunRequest, history []llm.Message) ([]llm.Message, contextwindow.Stats) {
+func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile core.LLMProfileRef, req RunRequest, history []llm.Message) ([]llm.Message, contextwindow.Stats) {
 	raw := []contextwindow.Message{
 		{Role: contextwindow.RoleSystem, Content: agent.Instructions},
 	}
@@ -69,10 +70,10 @@ func (e *Engine) prepareContext(agent core.Agent, profile core.LLMProfileRef, re
 		})
 	}
 	raw = append(raw, contextwindow.Message{Role: contextwindow.RoleUser, Content: req.Prompt})
-	return e.prepareRawMessages(raw, profile)
+	return e.prepareRawMessages(ctx, raw, profile)
 }
 
-func (e *Engine) prepareMessages(messages []llm.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
+func (e *Engine) prepareMessages(ctx context.Context, messages []llm.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
 	raw := make([]contextwindow.Message, 0, len(messages))
 	for i, msg := range messages {
 		metadata := cloneMetadata(msg.Metadata)
@@ -85,7 +86,7 @@ func (e *Engine) prepareMessages(messages []llm.Message, profile core.LLMProfile
 			Metadata:   metadata,
 		})
 	}
-	prepared, stats := e.prepareRawMessages(raw, profile)
+	prepared, stats := e.prepareRawMessages(ctx, raw, profile)
 	for i := range prepared {
 		sourceIndex, ok := prepared[i].Metadata["source_index"]
 		if ok {
@@ -98,7 +99,7 @@ func (e *Engine) prepareMessages(messages []llm.Message, profile core.LLMProfile
 	return prepared, stats
 }
 
-func (e *Engine) prepareRawMessages(raw []contextwindow.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
+func (e *Engine) prepareRawMessages(ctx context.Context, raw []contextwindow.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
 	policy := profile.Context
 	if policy.ContextWindowTokens == 0 {
 		policy.ContextWindowTokens = profile.ContextWindowTokens
@@ -106,7 +107,7 @@ func (e *Engine) prepareRawMessages(raw []contextwindow.Message, profile core.LL
 	if policy.ReservedOutputTokens == 0 {
 		policy.ReservedOutputTokens = profile.MaxOutputTokens
 	}
-	result := e.contextManager(policy).Prepare(raw)
+	result := e.contextManager(ctx, policy).Prepare(raw)
 	messages := make([]llm.Message, 0, len(result.Messages))
 	for _, msg := range result.Messages {
 		messages = append(messages, llm.Message{

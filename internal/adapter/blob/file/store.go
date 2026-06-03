@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aijustin/agentflow-go/internal/fsatomic"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -30,7 +31,7 @@ func (s *Store) Put(ctx context.Context, data []byte) (runstate.BlobRef, error) 
 	sum := sha256.Sum256(data)
 	id := hex.EncodeToString(sum[:])
 	path := filepath.Join(s.dir, id+".blob")
-	if err := writeAtomic(path, data, 0o600); err != nil {
+	if err := fsatomic.WriteFile(path, data, 0o600); err != nil {
 		return runstate.BlobRef{}, err
 	}
 	return runstate.BlobRef{ID: id, Size: int64(len(data)), Sha256: id}, nil
@@ -39,6 +40,9 @@ func (s *Store) Put(ctx context.Context, data []byte) (runstate.BlobRef, error) 
 func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if ref.ID == "" {
+		return nil, fmt.Errorf("blob file: id is required")
 	}
 	data, err := os.ReadFile(filepath.Join(s.dir, ref.ID+".blob"))
 	if err != nil {
@@ -66,17 +70,20 @@ func (s *Store) List(ctx context.Context) ([]runstate.BlobRef, error) {
 		}
 		return nil, err
 	}
-	out := make([]runstate.BlobRef, 0)
+	out := make([]runstate.BlobRef, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".blob" {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".blob")
-		data, err := os.ReadFile(filepath.Join(s.dir, entry.Name()))
+		// The file name is the content's sha256 (see Put), so listing does not
+		// need to read every blob body just to derive its ref; the size comes
+		// from the directory entry's metadata. Get still verifies the hash.
+		info, err := entry.Info()
 		if err != nil {
-			return out, err
+			return nil, fmt.Errorf("blob file: stat %s: %w", entry.Name(), err)
 		}
-		out = append(out, runstate.NewBlobRef(id, data))
+		out = append(out, runstate.BlobRef{ID: id, Size: info.Size(), Sha256: id})
 	}
 	return out, nil
 }
@@ -93,48 +100,4 @@ func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
 		return err
 	}
 	return nil
-}
-
-func writeAtomic(path string, data []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	syncDir(filepath.Dir(path))
-	return nil
-}
-
-// syncDir best-effort fsyncs a directory so a rename survives a crash. Errors
-// are ignored because some filesystems/platforms do not support directory
-// fsync; the file contents are already durable via the tmp file Sync above.
-func syncDir(dir string) {
-	d, err := os.Open(dir)
-	if err != nil {
-		return
-	}
-	_ = d.Sync()
-	_ = d.Close()
 }
