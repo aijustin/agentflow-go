@@ -42,6 +42,7 @@
 
 ## 参考
 
+- [competitive-positioning.md](./competitive-positioning.md)（竞争力与市场定位、固定工作流是否主流）
 - [competitive-analysis-langgraph.md](./competitive-analysis-langgraph.md)
 - [orchestration-flow.md](./orchestration-flow.md)
 - [knowledge-rag.md](./knowledge-rag.md)
