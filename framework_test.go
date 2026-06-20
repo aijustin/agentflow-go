@@ -502,6 +502,60 @@ func TestFrameworkHybridHydratesWorkflowContext(t *testing.T) {
 	}
 }
 
+func TestFrameworkHybridResumeWithNullInputContext(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "hybrid-null-input",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationHybrid,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "approve", Kind: core.NodeHumanGate},
+					{ID: "done", Kind: core.NodeTransform, DependsOn: []string{"approve"}, Input: json.RawMessage(`{"set":{"ok":true}}`)},
+				},
+			},
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithLLMGateway(fakeGateway{content: "hybrid answer"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{
+		RunID:   "run-hybrid-null",
+		Agent:   "assistant",
+		Prompt:  "review",
+		Context: json.RawMessage("null"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused workflow, got %+v", result)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-hybrid-null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(snapshot.Variables["input"]); got != "null" {
+		t.Fatalf("expected persisted null input, got %q", snapshot.Variables["input"])
+	}
+	result, err = fw.ResumeAndContinue(context.Background(), result.Token, core.DecisionApprove, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || result.Output != "hybrid answer" {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+}
+
 func TestFrameworkRunStructuredAfterFixedWorkflow(t *testing.T) {
 	scenario := core.Scenario{
 		Name: "structured-workflow",

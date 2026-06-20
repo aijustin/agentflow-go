@@ -48,6 +48,26 @@ func TestMergeWorkflowContextNonObjectInput(t *testing.T) {
 	}
 }
 
+func TestMergeWorkflowContextNullInput(t *testing.T) {
+	user := json.RawMessage(`null`)
+	hydrated := json.RawMessage(`{"steps":{"n1":{"text":"done"}}}`)
+
+	merged, err := mergeWorkflowContext(user, hydrated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &got); err != nil {
+		t.Fatalf("merged is not a JSON object: %v", err)
+	}
+	if string(got["input"]) != "null" {
+		t.Fatalf("null input not nested under input: %s", got["input"])
+	}
+	if _, ok := got["steps"]; !ok {
+		t.Fatalf("workflow steps not merged: %s", merged)
+	}
+}
+
 func TestMergeWorkflowContextPreservesUserSteps(t *testing.T) {
 	user := json.RawMessage(`{"steps":{"user":"keep"}}`)
 	hydrated := json.RawMessage(`{"steps":{"n1":{"text":"done"}}}`)

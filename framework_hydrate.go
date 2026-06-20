@@ -1,6 +1,7 @@
 package agentflow
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,7 +17,7 @@ func (f *Framework) hydrateRunRequest(ctx context.Context, req RunRequest, snaps
 	if err != nil {
 		return req, fmt.Errorf("agentflow: hydrate workflow context: %w", err)
 	}
-	if len(req.Context) == 0 {
+	if isEmptyOrNullJSON(req.Context) {
 		req.Context = raw
 		return req, nil
 	}
@@ -48,7 +49,7 @@ func mergeWorkflowContext(userContext, hydrated json.RawMessage) (json.RawMessag
 		return userContext, nil
 	}
 	var userObj map[string]json.RawMessage
-	if err := json.Unmarshal(userContext, &userObj); err != nil {
+	if err := json.Unmarshal(userContext, &userObj); err != nil || userObj == nil {
 		userObj = map[string]json.RawMessage{"input": userContext}
 	}
 	if _, exists := userObj["steps"]; exists {
@@ -64,4 +65,11 @@ func completedHybridResult(snapshot runstate.RunSnapshot) (RunResult, bool) {
 		return RunResult{}, false
 	}
 	return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusCompleted, Output: "hybrid run already completed"}, true
+}
+
+func isEmptyOrNullJSON(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
