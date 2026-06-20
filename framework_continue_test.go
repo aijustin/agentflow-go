@@ -188,6 +188,153 @@ func (g *toolPauseGateway) Chat(_ context.Context, _ string, _ llm.ChatRequest) 
 
 func (g *toolPauseGateway) Supports(_ string, _ llm.Capability) bool { return true }
 
+func TestFrameworkResumeAndContinueHybridWorkflowHITL(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "hybrid-workflow-hitl",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationHybrid,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "approve", Kind: core.NodeHumanGate},
+					{ID: "done", Kind: core.NodeTransform, DependsOn: []string{"approve"}, Input: json.RawMessage(`{"set":{"ok":true}}`)},
+				},
+			},
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithLLMGateway(fakeGateway{content: "hybrid answer"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-hybrid-wf", Agent: "assistant", Prompt: "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused workflow, got %+v", result)
+	}
+	result, err = fw.ResumeAndContinue(context.Background(), result.Token, core.DecisionApprove, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || result.Output != "hybrid answer" {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-hybrid-wf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.StepOutputs["done"]; !ok {
+		t.Fatalf("expected transform step output: %+v", snapshot.StepOutputs)
+	}
+	if snapshot.Variables == nil {
+		t.Fatal("expected execution phase variable")
+	}
+	if got := string(snapshot.Variables["execution_phase"]); got != `"autonomous"` {
+		t.Fatalf("expected autonomous phase, got %s", got)
+	}
+}
+
+func TestFrameworkResumeAndContinueHybridBeforeFinalHITL(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "hybrid-before-final",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationHybrid,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "prep", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"ready":true}}`)},
+				},
+			},
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true, Checkpoints: []string{"before_final_answer"}},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithLLMGateway(fakeGateway{content: "final hybrid answer"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-hybrid-final", Agent: "assistant", Prompt: "summarize"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected before_final pause, got %+v", result)
+	}
+	result, err = fw.ResumeAndContinue(context.Background(), result.Token, core.DecisionApprove, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || result.Output != "final hybrid answer" {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+}
+
+func TestFrameworkResumeAndContinueHybridToolApprovalPause(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "hybrid-tool-pause",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalPause},
+		},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default", Tools: []string{"echo"}},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationHybrid,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "prep", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"ready":true}}`)},
+				},
+			},
+		},
+	}
+	gateway := &toolPauseGateway{}
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"message":"hi"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "hybrid tool done"}},
+	})
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-hybrid-tool", Agent: "assistant", Prompt: "call echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused tool approval, got %+v", result)
+	}
+	result, err = fw.ResumeAndContinue(context.Background(), result.Token, core.DecisionApprove, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || result.Output != "hybrid tool done" {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+}
+
 func TestFrameworkResumeAndContinueReject(t *testing.T) {
 	var tokenOut bytes.Buffer
 	fw, err := agentflow.New(

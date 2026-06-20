@@ -17,6 +17,9 @@ const (
 	executionPhaseVar        = "execution_phase"
 	executionPhaseWorkflow   = "workflow"
 	executionPhaseAutonomous = "autonomous"
+	checkpointKindVar        = "checkpoint_kind"
+	checkpointKindBeforeFinalAnswer = "before_final_answer"
+	checkpointKindToolApproval      = "tool_approval"
 )
 
 // ResumeAndContinue resumes a paused run and continues execution until the next
@@ -95,6 +98,10 @@ func (f *Framework) continueRun(ctx context.Context, runID string) (RunResult, e
 }
 
 func (f *Framework) continueWorkflowRun(ctx context.Context, runID string) (RunResult, error) {
+	return f.finishWorkflowRun(ctx, runID, true)
+}
+
+func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCompleted bool) (RunResult, error) {
 	runner := f.newWorkflowRunner()
 	if err := runner.Resume(ctx, f.scenario, runID); err != nil {
 		var paused orchestration.WorkflowPausedError
@@ -108,6 +115,9 @@ func (f *Framework) continueWorkflowRun(ctx context.Context, runID string) (RunR
 	if err != nil {
 		return RunResult{}, err
 	}
+	if !markCompleted {
+		return RunResult{RunID: runID, Status: loaded.Status}, nil
+	}
 	loaded.Status = runstate.RunStatusCompleted
 	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return RunResult{}, err
@@ -120,9 +130,15 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 	if result, ok := completedHybridResult(snapshot); ok {
 		return result, nil
 	}
+	if variableJSONString(snapshot.Variables, executionPhaseVar) == executionPhaseAutonomous {
+		switch variableJSONString(snapshot.Variables, checkpointKindVar) {
+		case checkpointKindBeforeFinalAnswer, checkpointKindToolApproval:
+			return f.engine.ContinueAfterCheckpoint(ctx, runID)
+		}
+	}
 	var err error
 	if variableJSONString(snapshot.Variables, executionPhaseVar) != executionPhaseAutonomous {
-		result, err := f.continueWorkflowRun(ctx, runID)
+		result, err := f.finishWorkflowRun(ctx, runID, false)
 		if err != nil || result.Status == runstate.RunStatusPaused {
 			return result, err
 		}
@@ -134,6 +150,7 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 			snapshot.Variables = make(map[string]json.RawMessage)
 		}
 		snapshot.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseAutonomous))
+		snapshot.Status = runstate.RunStatusRunning
 		if err := f.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
 			return RunResult{}, err
 		}

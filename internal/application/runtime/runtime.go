@@ -347,6 +347,40 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	if loaded.Status == runstate.RunStatusCancelled {
 		return RunResult{}, ErrRunCancelled
 	}
+	agent, agentErr := e.resolveAgent(req.Agent)
+	if agentErr != nil {
+		return RunResult{}, agentErr
+	}
+	if e.shouldPauseBeforeFinal() && !e.isCheckpointResumed(loaded) {
+		if e.gate == nil {
+			return RunResult{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
+		}
+		checkpointVars := map[string]json.RawMessage{
+			checkpointPromptVar:  json.RawMessage(fmt.Sprintf("%q", req.Prompt)),
+			checkpointAgentVar:   json.RawMessage(fmt.Sprintf("%q", agent.Name)),
+			checkpointContextVar: req.Context,
+			checkpointKindVar:    json.RawMessage(`"before_final_answer"`),
+		}
+		if saveErr := e.saveCheckpointVariables(ctx, &loaded, checkpointVars); saveErr != nil {
+			return RunResult{}, saveErr
+		}
+		loaded, loadErr := e.runs.Load(ctx, req.RunID)
+		if loadErr != nil {
+			return RunResult{}, loadErr
+		}
+		state := core.CheckpointState{
+			RunID:   req.RunID,
+			Version: loaded.Version,
+			NodeID:  "before_final_answer",
+			Payload: []byte(fmt.Sprintf(`{"prompt":%q,"agent":%q}`, req.Prompt, agent.Name)),
+		}
+		token, err := e.gate.Pause(ctx, state)
+		if err != nil {
+			return RunResult{}, err
+		}
+		e.emit(ctx, core.EventRunPaused, req.RunID, state.Payload)
+		return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil
+	}
 	output, err := e.answer(ctx, req)
 	if err != nil {
 		var paused RunPausedError

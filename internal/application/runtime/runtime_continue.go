@@ -227,6 +227,18 @@ func (e *Engine) markCheckpointResumed(ctx context.Context, snapshot *runstate.R
 	return e.runs.Save(ctx, snapshot, snapshot.Version)
 }
 
+func (e *Engine) isCheckpointResumed(snapshot runstate.RunSnapshot) bool {
+	raw, ok := snapshot.Variables[checkpointResumedVar]
+	if !ok || len(raw) == 0 {
+		return false
+	}
+	var resumed bool
+	if err := json.Unmarshal(raw, &resumed); err != nil {
+		return false
+	}
+	return resumed
+}
+
 func (e *Engine) saveCheckpointVariables(ctx context.Context, snapshot *runstate.RunSnapshot, values map[string]json.RawMessage) error {
 	if snapshot.Variables == nil {
 		snapshot.Variables = make(map[string]json.RawMessage)

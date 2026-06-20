@@ -708,6 +708,36 @@ func TestEngineRunHybridRejectsCompletedRun(t *testing.T) {
 	}
 }
 
+func TestEngineRunHybridPausesBeforeFinalAnswer(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gate := &capturingGate{repo: repo}
+	engine, err := NewEngine(baseScenario(true), Dependencies{Runs: repo, HumanGate: gate, LLM: &capturingGateway{response: "ok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID:        "run-hybrid-hitl",
+		ScenarioName: "scenario",
+		Status:       runstate.RunStatusRunning,
+		Variables: map[string]json.RawMessage{
+			"input": json.RawMessage(`{}`),
+		},
+		StepOutputs: make(map[string]runstate.StepOutputRef),
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.RunHybrid(context.Background(), RunRequest{RunID: "run-hybrid-hitl", Agent: "assistant", Prompt: "approve me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused || result.Token != "token" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if gate.state.NodeID != "before_final_answer" {
+		t.Fatalf("unexpected checkpoint state: %+v", gate.state)
+	}
+}
+
 func TestEngineStreamCompletesRunAndWritesMemory(t *testing.T) {
 	ctx := context.Background()
 	repo := runstateinmem.NewRepository()
