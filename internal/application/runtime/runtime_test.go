@@ -799,6 +799,42 @@ func TestEngineRunStructuredContinuesExistingRun(t *testing.T) {
 	}
 }
 
+func TestEngineBeginRunRejectsPausedRun(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapStructuredOutput, llm.CapStream)
+	scenario := baseScenario(false)
+	agent := scenario.Agents["assistant"]
+	agent.Policy.OutputSchema = json.RawMessage(`{"type":"object"}`)
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID:        "run-paused",
+		ScenarioName: scenario.Name,
+		Status:       runstate.RunStatusPaused,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.RunStructured(context.Background(), RunRequest{RunID: "run-paused", Agent: "assistant", Prompt: "json"})
+	if !errors.Is(err, ErrRunPaused) {
+		t.Fatalf("expected ErrRunPaused from RunStructured, got %v", err)
+	}
+	_, err = engine.Stream(context.Background(), RunRequest{RunID: "run-paused", Agent: "assistant", Prompt: "stream"})
+	if !errors.Is(err, ErrRunPaused) {
+		t.Fatalf("expected ErrRunPaused from Stream, got %v", err)
+	}
+	loaded, err := repo.Load(context.Background(), "run-paused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusPaused {
+		t.Fatalf("paused run should remain paused, got %+v", loaded)
+	}
+}
+
 func TestEngineRunHybridRejectsCompletedRun(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: &capturingGateway{response: "ok"}})
@@ -813,6 +849,37 @@ func TestEngineRunHybridRejectsCompletedRun(t *testing.T) {
 	_, err = engine.RunHybrid(context.Background(), RunRequest{RunID: "run-done", Agent: "assistant", Prompt: "again"})
 	if !errors.Is(err, ErrRunAlreadyCompleted) {
 		t.Fatalf("expected ErrRunAlreadyCompleted, got %v", err)
+	}
+}
+
+func TestEngineRunHybridRejectsPausedAndFailedRuns(t *testing.T) {
+	tests := []struct {
+		name   string
+		status runstate.RunStatus
+		want   error
+	}{
+		{name: "paused", status: runstate.RunStatusPaused, want: ErrRunPaused},
+		{name: "failed", status: runstate.RunStatusFailed, want: ErrRunFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := runstateinmem.NewRepository()
+			engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: &capturingGateway{response: "ok"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+				RunID:        "run-" + tt.name,
+				ScenarioName: "scenario",
+				Status:       tt.status,
+			}, 0); err != nil {
+				t.Fatal(err)
+			}
+			_, err = engine.RunHybrid(context.Background(), RunRequest{RunID: "run-" + tt.name, Agent: "assistant", Prompt: "again"})
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -893,6 +960,36 @@ func TestEngineStreamCompletesRunAndWritesMemory(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "streamed") {
 		t.Fatalf("stream output not written to memory: %s", raw)
+	}
+}
+
+func TestEngineStreamCancelMarksRunCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	repo := runstateinmem.NewRepository()
+	gateway := &blockingStreamGateway{started: make(chan struct{})}
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := engine.Stream(ctx, RunRequest{RunID: "run-stream-cancel", Agent: "assistant", Prompt: "stream"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-gateway.started:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not start")
+	}
+	cancel()
+	for range ch {
+	}
+	loaded, err := repo.Load(context.Background(), "run-stream-cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusCancelled {
+		t.Fatalf("expected cancelled stream run, got %+v", loaded)
 	}
 }
 
@@ -1136,6 +1233,28 @@ func (blockingGateway) Supports(string, llm.Capability) bool {
 func (blockingGateway) Chat(ctx context.Context, _ string, _ llm.ChatRequest) (llm.ChatResponse, error) {
 	<-ctx.Done()
 	return llm.ChatResponse{}, ctx.Err()
+}
+
+type blockingStreamGateway struct {
+	started chan struct{}
+}
+
+func (blockingStreamGateway) Supports(_ string, cap llm.Capability) bool {
+	return cap == llm.CapChat || cap == llm.CapStream
+}
+
+func (g *blockingStreamGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatResponse, error) {
+	return llm.ChatResponse{}, errors.New("chat should not be called")
+}
+
+func (g *blockingStreamGateway) StreamChat(ctx context.Context, _ string, _ llm.ChatRequest) (<-chan llm.ChatChunk, error) {
+	ch := make(chan llm.ChatChunk)
+	go func() {
+		close(g.started)
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
 }
 
 type retryGateway struct {

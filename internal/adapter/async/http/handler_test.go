@@ -11,9 +11,11 @@ import (
 
 	auditinmem "github.com/aijustin/agentflow-go/internal/adapter/audit/inmem"
 	queueinmem "github.com/aijustin/agentflow-go/internal/adapter/queue/inmem"
+	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/identity"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
@@ -102,6 +104,47 @@ func TestHandlerSubmitsReadsAndCancelsRunJobs(t *testing.T) {
 	}
 	if !hasAuditEvent(audits.Events(), audit.EventRunSubmitted) || !hasAuditEvent(audits.Events(), audit.EventRunCancelled) {
 		t.Fatalf("expected submit and cancel audit events, got %+v", audits.Events())
+	}
+}
+
+func TestHandlerCancelUpdatesRunState(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	runs := runstateinmem.NewRepository()
+	if _, err := queue.Enqueue(context.Background(), asyncpkg.Job{ID: "run-1", RunID: "run-1", Type: asyncpkg.RunJobType}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runs.Save(context.Background(), &runstate.RunSnapshot{
+		RunID:        "run-1",
+		ScenarioName: "scenario",
+		Status:       runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(HandlerConfig{
+		Queue:    queue,
+		RunState: runs,
+		Policy:   security.NewDefaultRolePolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID:    "svc-1",
+		Type:  identity.PrincipalService,
+		Scope: identity.Scope{TenantID: "tenant-1"},
+		Roles: []identity.Role{identity.RoleService},
+	})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/runs/run-1/cancel", nil).WithContext(ctx))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected cancel response: %d %s", rec.Code, rec.Body.String())
+	}
+	snapshot, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusCancelled {
+		t.Fatalf("expected cancelled run snapshot, got %+v", snapshot)
 	}
 }
 

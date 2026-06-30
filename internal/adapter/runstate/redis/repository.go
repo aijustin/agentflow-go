@@ -131,6 +131,9 @@ func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, e
 		}
 		previous = &prev
 	}
+	if err := runstate.ValidateStatusTransition(ctx, previous, snapshot.Status); err != nil {
+		return err
+	}
 	runstate.StampSnapshot(snapshot, previous, time.Now().UTC())
 	next := snapshot.Version
 	if next <= expectedVersion {

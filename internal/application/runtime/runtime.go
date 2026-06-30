@@ -361,6 +361,11 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 				b.WriteString(chunk.Content)
 			}
 			if !send(chunk) {
+				if err := ctx.Err(); errors.Is(err, context.DeadlineExceeded) {
+					e.markRunFailed(ctx, req.RunID, err)
+				} else {
+					e.markRunCancelled(ctx, req.RunID)
+				}
 				return
 			}
 			if chunk.Error != "" {
@@ -373,6 +378,14 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 				}
 				return
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				e.markRunFailed(ctx, req.RunID, err)
+			} else {
+				e.markRunCancelled(ctx, req.RunID)
+			}
+			return
 		}
 		if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, b.String()); err != nil {
 			send(llm.ChatChunk{Done: true, Error: err.Error()})
@@ -410,6 +423,12 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	}
 	if loaded.Status == runstate.RunStatusCancelled {
 		return RunResult{}, ErrRunCancelled
+	}
+	if loaded.Status == runstate.RunStatusPaused {
+		return RunResult{}, ErrRunPaused
+	}
+	if loaded.Status == runstate.RunStatusFailed {
+		return RunResult{}, ErrRunFailed
 	}
 	agent, agentErr := e.resolveAgent(req.Agent)
 	if agentErr != nil {

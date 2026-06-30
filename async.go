@@ -20,6 +20,7 @@ import (
 
 type AsyncRunHTTPHandlerConfig struct {
 	Queue        asyncpkg.Queue
+	RunState     runstate.Repository
 	Policy       security.Policy
 	Audit        audit.Sink
 	IDGenerator  func() string
@@ -52,6 +53,7 @@ func NewPostgresJobQueue(db *sql.DB, tableName ...string) (asyncpkg.Queue, error
 func NewAsyncRunHTTPHandler(config AsyncRunHTTPHandlerConfig) (http.Handler, error) {
 	return asynchttp.NewHandler(asynchttp.HandlerConfig{
 		Queue:        config.Queue,
+		RunState:     config.RunState,
 		Policy:       config.Policy,
 		Audit:        config.Audit,
 		IDGenerator:  config.IDGenerator,

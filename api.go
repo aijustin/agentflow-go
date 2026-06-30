@@ -39,6 +39,7 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 		Version:        config.Version,
 	}
 	if config.Framework != nil {
+		apiConfig.RunState = config.Framework.RunStateRepository()
 		eventsHandler, err := NewWebhookHTTPHandler(WebhookHTTPHandlerConfig{
 			Framework:    config.Framework,
 			MaxBodyBytes: config.MaxBodyBytes,
@@ -70,9 +71,9 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 		apiConfig.StudioHandler = studioHandler
 		retentionHandler, err := NewRetentionHTTPHandler(RetentionHTTPHandlerConfig{
 			Framework:    config.Framework,
-			Policy:         config.Policy,
-			Audit:          config.Audit,
-			MaxBodyBytes:   config.MaxBodyBytes,
+			Policy:       config.Policy,
+			Audit:        config.Audit,
+			MaxBodyBytes: config.MaxBodyBytes,
 		})
 		if err != nil {
 			return nil, err

@@ -46,6 +46,9 @@ func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, e
 		prev := current
 		previous = &prev
 	}
+	if err := runstate.ValidateStatusTransition(ctx, previous, snapshot.Status); err != nil {
+		return err
+	}
 	runstate.StampSnapshot(snapshot, previous, time.Now().UTC())
 	r.snapshots[snapshot.RunID] = cloneSnapshot(*snapshot)
 	return nil

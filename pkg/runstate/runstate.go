@@ -22,6 +22,8 @@ var (
 
 type RunStatus string
 
+type statusTransitionOverrideKey struct{}
+
 const (
 	RunStatusRunning   RunStatus = "running"
 	RunStatusPaused    RunStatus = "paused"
@@ -55,6 +57,34 @@ func (s RunStatus) CanTransitionTo(next RunStatus) bool {
 	}
 }
 
+// ContextWithStatusTransitionOverride allows explicit restore/rerun paths to
+// reopen terminal snapshots while ordinary saves still enforce transitions.
+func ContextWithStatusTransitionOverride(ctx context.Context) context.Context {
+	return context.WithValue(ctx, statusTransitionOverrideKey{}, true)
+}
+
+// StatusTransitionOverrideFromContext reports whether transition checks should
+// allow an otherwise invalid status change for this save operation.
+func StatusTransitionOverrideFromContext(ctx context.Context) bool {
+	allowed, _ := ctx.Value(statusTransitionOverrideKey{}).(bool)
+	return allowed
+}
+
+// ValidateStatusTransition rejects status changes that do not follow the run
+// lifecycle, unless ctx carries an explicit restore/rerun override.
+func ValidateStatusTransition(ctx context.Context, previous *RunSnapshot, next RunStatus) error {
+	if previous == nil || previous.Status == next {
+		return nil
+	}
+	if StatusTransitionOverrideFromContext(ctx) {
+		return nil
+	}
+	if !previous.Status.CanTransitionTo(next) {
+		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, previous.Status, next)
+	}
+	return nil
+}
+
 type BlobRef struct {
 	ID     string `json:"id"`
 	Size   int64  `json:"size"`
@@ -67,20 +97,20 @@ type StepOutputRef struct {
 }
 
 type RunSnapshot struct {
-	RunID         string                     `json:"run_id"`
-	Version       int64                      `json:"version"`
-	ScenarioName  string                     `json:"scenario_name"`
-	TenantID      string                     `json:"tenant_id,omitempty"`
-	CurrentNodeID string                     `json:"current_node_id,omitempty"`
-	Status        RunStatus                  `json:"status"`
-	Variables     map[string]json.RawMessage `json:"variables,omitempty"`
-	StepOutputs   map[string]StepOutputRef   `json:"step_outputs,omitempty"`
+	RunID           string                     `json:"run_id"`
+	Version         int64                      `json:"version"`
+	ScenarioName    string                     `json:"scenario_name"`
+	TenantID        string                     `json:"tenant_id,omitempty"`
+	CurrentNodeID   string                     `json:"current_node_id,omitempty"`
+	Status          RunStatus                  `json:"status"`
+	Variables       map[string]json.RawMessage `json:"variables,omitempty"`
+	StepOutputs     map[string]StepOutputRef   `json:"step_outputs,omitempty"`
 	PendingGate     *core.CheckpointState      `json:"pending_gate,omitempty"`
 	ParentRunID     string                     `json:"parent_run_id,omitempty"`
 	ForkFromVersion int64                      `json:"fork_from_version,omitempty"`
 	ThreadID        string                     `json:"thread_id,omitempty"`
 	CreatedAt       time.Time                  `json:"created_at,omitempty"`
-	UpdatedAt     time.Time                  `json:"updated_at,omitempty"`
+	UpdatedAt       time.Time                  `json:"updated_at,omitempty"`
 }
 
 func (s RunSnapshot) Validate() error {

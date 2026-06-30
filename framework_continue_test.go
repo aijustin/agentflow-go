@@ -10,6 +10,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	llmmock "github.com/aijustin/agentflow-go/pkg/llm/mock"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -80,6 +81,61 @@ func TestFrameworkResumeAndContinueWorkflowHITL(t *testing.T) {
 	}
 	if _, ok := snapshot.StepOutputs["done"]; !ok {
 		t.Fatalf("expected transform step output: %+v", snapshot.StepOutputs)
+	}
+}
+
+func TestFrameworkWorkflowAgentNodePropagatesToolApprovalPause(t *testing.T) {
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{
+			ID:    "call-1",
+			Name:  "echo",
+			Input: json.RawMessage(`{"message":"needs approval"}`),
+		}},
+	})
+	scenario := core.Scenario{
+		Name: "workflow-agent-tool-pause",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalPause, SideEffect: core.SideEffectWrite},
+		},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default", Tools: []string{"echo"}, Policy: core.AgentPolicy{MaxSteps: 2}},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{{ID: "work", Kind: core.NodeAgent, Ref: "assistant"}},
+			},
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-agent-tool-pause", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused || result.Token == "" {
+		t.Fatalf("expected paused workflow agent node, got %+v", result)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-agent-tool-pause")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusPaused {
+		t.Fatalf("tool approval pause should not be marked failed: %+v", snapshot)
+	}
+	if snapshot.PendingGate == nil || snapshot.PendingGate.NodeID != "tool_approval" {
+		t.Fatalf("expected tool approval pending gate, got %+v", snapshot.PendingGate)
 	}
 }
 

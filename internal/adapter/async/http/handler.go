@@ -16,6 +16,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/identity"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
@@ -23,6 +24,7 @@ const DefaultMaxBodyBytes = int64(1 << 20)
 
 type HandlerConfig struct {
 	Queue        asyncpkg.Queue
+	RunState     runstate.Repository
 	Policy       security.Policy
 	Audit        audit.Sink
 	IDGenerator  func() string
@@ -32,6 +34,7 @@ type HandlerConfig struct {
 
 type Handler struct {
 	queue        asyncpkg.Queue
+	runs         runstate.Repository
 	policy       security.Policy
 	audit        audit.Sink
 	idGenerator  func() string
@@ -93,7 +96,15 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	if maxBodyBytes <= 0 {
 		maxBodyBytes = DefaultMaxBodyBytes
 	}
-	return &Handler{queue: config.Queue, policy: config.Policy, audit: config.Audit, idGenerator: idGenerator, now: now, maxBodyBytes: maxBodyBytes}, nil
+	return &Handler{
+		queue:        config.Queue,
+		runs:         config.RunState,
+		policy:       config.Policy,
+		audit:        config.Audit,
+		idGenerator:  idGenerator,
+		now:          now,
+		maxBodyBytes: maxBodyBytes,
+	}, nil
 }
 
 func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -385,6 +396,10 @@ func (handler *Handler) handleCancel(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeQueueError(w, err)
 		return
 	}
+	if err := handler.cancelRunState(r.Context(), runID); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusConflict)
+		return
+	}
 	job, err := handler.queue.Load(r.Context(), runID)
 	if err != nil {
 		writeQueueError(w, err)
@@ -392,6 +407,30 @@ func (handler *Handler) handleCancel(w nethttp.ResponseWriter, r *nethttp.Reques
 	}
 	handler.recordAudit(r.Context(), audit.Event{Type: audit.EventRunCancelled, Principal: principal, Action: security.ActionRunCancel, Resource: resource, RunID: runID, Outcome: string(job.State)})
 	writeJSON(w, nethttp.StatusOK, JobResponse{Job: job})
+}
+
+func (handler *Handler) cancelRunState(ctx context.Context, runID string) error {
+	if handler.runs == nil {
+		return nil
+	}
+	snapshot, err := runstate.LoadAuthorized(ctx, handler.runs, runID)
+	if err != nil {
+		if errors.Is(err, runstate.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	switch snapshot.Status {
+	case runstate.RunStatusCancelled:
+		return nil
+	case runstate.RunStatusCompleted, runstate.RunStatusFailed:
+		return nil
+	}
+	if !snapshot.Status.CanTransitionTo(runstate.RunStatusCancelled) {
+		return runstate.ErrInvalidTransition
+	}
+	snapshot.Status = runstate.RunStatusCancelled
+	return handler.runs.Save(ctx, &snapshot, snapshot.Version)
 }
 
 func (handler *Handler) authorize(w nethttp.ResponseWriter, r *nethttp.Request, action security.Action, resource security.Resource) (identity.Principal, bool) {

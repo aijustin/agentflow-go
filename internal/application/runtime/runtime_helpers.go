@@ -21,6 +21,8 @@ import (
 
 var (
 	ErrRunAlreadyCompleted = errors.New("runtime: run already completed")
+	ErrRunPaused           = errors.New("runtime: run is paused")
+	ErrRunFailed           = errors.New("runtime: run has failed")
 	ErrRunCancelled        = errors.New("runtime: run is cancelled")
 )
 
@@ -51,6 +53,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 	}
 	existing, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err == nil {
+		wasCompleted := existing.Status == runstate.RunStatusCompleted
 		switch existing.Status {
 		case runstate.RunStatusCompleted:
 			if _, hasFinal := existing.StepOutputs["final"]; hasFinal {
@@ -58,9 +61,17 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 			}
 		case runstate.RunStatusCancelled:
 			return false, ErrRunCancelled
+		case runstate.RunStatusPaused:
+			return false, ErrRunPaused
+		case runstate.RunStatusFailed:
+			return false, ErrRunFailed
 		}
 		existing.Status = runstate.RunStatusRunning
-		if err := e.runs.Save(ctx, &existing, existing.Version); err != nil {
+		saveCtx := ctx
+		if wasCompleted {
+			saveCtx = runstate.ContextWithStatusTransitionOverride(ctx)
+		}
+		if err := e.runs.Save(saveCtx, &existing, existing.Version); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -240,12 +251,39 @@ func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
 	if snapshot, err := e.runs.Load(persistCtx, runID); err == nil {
+		if snapshot.Status == runstate.RunStatusCancelled {
+			e.emit(persistCtx, core.EventRunCancelled, runID, nil)
+			return
+		}
+		if snapshot.Status != runstate.RunStatusFailed && !snapshot.Status.CanTransitionTo(runstate.RunStatusFailed) {
+			e.logWarn(persistCtx, "runtime: refusing invalid failure status transition", "run_id", runID, "status", snapshot.Status)
+			return
+		}
 		snapshot.Status = runstate.RunStatusFailed
 		if saveErr := e.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
 			e.logWarn(persistCtx, "runtime: failed to persist run failure status", "run_id", runID, "save_error", saveErr)
 		}
 	}
 	e.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))
+}
+
+func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
+	persistCtx, cancel := persistenceContext(ctx)
+	defer cancel()
+	if snapshot, err := e.runs.Load(persistCtx, runID); err == nil {
+		if snapshot.Status != runstate.RunStatusCancelled {
+			if !snapshot.Status.CanTransitionTo(runstate.RunStatusCancelled) {
+				e.logWarn(persistCtx, "runtime: refusing invalid cancellation status transition", "run_id", runID, "status", snapshot.Status)
+				return
+			}
+			snapshot.Status = runstate.RunStatusCancelled
+			if saveErr := e.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
+				e.logWarn(persistCtx, "runtime: failed to persist run cancellation status", "run_id", runID, "save_error", saveErr)
+				return
+			}
+		}
+	}
+	e.emit(persistCtx, core.EventRunCancelled, runID, nil)
 }
 
 func (e *Engine) stepOutputRef(ctx context.Context, runID, key string, raw json.RawMessage) (runstate.StepOutputRef, error) {

@@ -142,7 +142,23 @@ type workflowAgentRunner struct {
 }
 
 func (r workflowAgentRunner) Run(ctx context.Context, input core.AgentInput) (core.AgentOutput, error) {
-	return r.engine.RunAgent(ctx, r.name, input)
+	output, err := r.engine.RunAgent(ctx, r.name, input)
+	if err == nil {
+		return output, nil
+	}
+	var paused appexec.RunPausedError
+	if errors.As(err, &paused) {
+		nodeID := core.WorkflowNodeFromContext(ctx)
+		if nodeID == "" {
+			nodeID = paused.Kind
+		}
+		return core.AgentOutput{}, orchestration.WorkflowPausedError{
+			RunID:  paused.RunID,
+			NodeID: nodeID,
+			Token:  paused.Token,
+		}
+	}
+	return core.AgentOutput{}, err
 }
 
 func newToolRegistry(eager map[string]core.ToolExecutor, resolver core.ToolResolver) *toolRegistry {

@@ -9,24 +9,26 @@ import (
 	asynchttp "github.com/aijustin/agentflow-go/internal/adapter/async/http"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
 type HandlerConfig struct {
-	Queue          asyncpkg.Queue
-	Policy         security.Policy
-	Audit          audit.Sink
-	AuthMiddleware func(nethttp.Handler) nethttp.Handler
-	MetricsHandler nethttp.Handler
-	IDGenerator    func() string
-	Now            func() time.Time
-	MaxBodyBytes   int64
-	Version        string
-	EventsHandler      nethttp.Handler
-	HITLHandler        nethttp.Handler
-	CheckpointHandler  nethttp.Handler
-	StudioHandler      nethttp.Handler
-	RetentionHandler   nethttp.Handler
+	Queue             asyncpkg.Queue
+	RunState          runstate.Repository
+	Policy            security.Policy
+	Audit             audit.Sink
+	AuthMiddleware    func(nethttp.Handler) nethttp.Handler
+	MetricsHandler    nethttp.Handler
+	IDGenerator       func() string
+	Now               func() time.Time
+	MaxBodyBytes      int64
+	Version           string
+	EventsHandler     nethttp.Handler
+	HITLHandler       nethttp.Handler
+	CheckpointHandler nethttp.Handler
+	StudioHandler     nethttp.Handler
+	RetentionHandler  nethttp.Handler
 }
 
 type Handler struct {
@@ -40,6 +42,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	}
 	runHandler, err := asynchttp.NewHandler(asynchttp.HandlerConfig{
 		Queue:        config.Queue,
+		RunState:     config.RunState,
 		Policy:       config.Policy,
 		Audit:        config.Audit,
 		IDGenerator:  config.IDGenerator,
