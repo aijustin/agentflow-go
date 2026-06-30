@@ -90,10 +90,33 @@ func evictStaleToolMessages(messages []llm.Message, keepTurns int) []llm.Message
 		return messages
 	}
 	dropUntil := toolIndices[len(toolIndices)-keepTurns]
+	// Track the tool_call IDs whose result messages are being evicted so the
+	// matching assistant tool_calls can be removed too. Leaving an assistant
+	// tool_call without its tool response breaks providers that require every
+	// tool_call_id to be answered.
+	dropped := make(map[string]struct{})
+	for index, msg := range messages {
+		if msg.Role == llm.RoleTool && index < dropUntil && msg.ToolCallID != "" {
+			dropped[msg.ToolCallID] = struct{}{}
+		}
+	}
 	out := make([]llm.Message, 0, len(messages))
 	for index, msg := range messages {
 		if msg.Role == llm.RoleTool && index < dropUntil {
 			continue
+		}
+		if len(msg.ToolCalls) > 0 && len(dropped) > 0 {
+			kept := make([]llm.ToolCall, 0, len(msg.ToolCalls))
+			for _, call := range msg.ToolCalls {
+				if _, gone := dropped[call.ID]; gone {
+					continue
+				}
+				kept = append(kept, call)
+			}
+			if len(kept) == 0 && strings.TrimSpace(msg.Content) == "" {
+				continue
+			}
+			msg.ToolCalls = kept
 		}
 		out = append(out, msg)
 	}

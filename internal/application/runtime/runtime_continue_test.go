@@ -94,3 +94,88 @@ func TestEnginePlanningExecuteTracksPlanSteps(t *testing.T) {
 		t.Fatalf("expected completed plan step, got %+v", state)
 	}
 }
+
+func TestEngineContinueAfterMultiToolApprovalPause(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{
+			{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"first"}`)},
+			{ID: "call-2", Name: "risky", Input: json.RawMessage(`{"query":"second"}`)},
+			{ID: "call-3", Name: "echo", Input: json.RawMessage(`{"query":"third"}`)},
+		},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Tools["risky"] = core.Tool{
+		Name:        "risky",
+		Type:        "builtin.echo",
+		Description: "Risky echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Approval:    core.ApprovalPause,
+		SideEffect:  core.SideEffectWrite,
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Tools = []string{"echo", "risky"}
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"echo": echoTool{}, "risky": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-multi", Agent: "assistant", Prompt: "go"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	snapshot, err := repo.Load(context.Background(), "run-multi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending []llm.ToolCall
+	if raw := snapshot.Variables[checkpointToolCallsVar]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &pending); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(pending) != 2 || pending[0].ID != "call-2" || pending[1].ID != "call-3" {
+		t.Fatalf("expected remaining tool calls persisted, got %+v", pending)
+	}
+	if _, ok := snapshot.StepOutputs["tool.call-1"]; !ok {
+		t.Fatal("expected first tool call to execute before pause")
+	}
+	token := paused.Token
+	if token == "" {
+		t.Fatal("expected pause token")
+	}
+	if err := gate.Resume(context.Background(), token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-multi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "done" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+	snapshot, err = repo.Load(context.Background(), "run-multi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"call-1", "call-2", "call-3"} {
+		if _, ok := snapshot.StepOutputs["tool."+id]; !ok {
+			t.Fatalf("expected tool output for %s, got %+v", id, snapshot.StepOutputs)
+		}
+	}
+}

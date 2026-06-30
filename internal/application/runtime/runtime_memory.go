@@ -21,11 +21,22 @@ import (
 )
 
 type memoryMessage struct {
-	Role       string    `json:"role"`
-	Content    string    `json:"content,omitempty"`
-	Tool       string    `json:"tool,omitempty"`
-	ToolCallID string    `json:"tool_call_id,omitempty"`
-	Time       time.Time `json:"time"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content,omitempty"`
+	ToolCalls  []llm.ToolCall `json:"tool_calls,omitempty"`
+	Tool       string         `json:"tool,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Time       time.Time      `json:"time"`
+}
+
+func memoryMessageFromLLM(msg llm.Message) memoryMessage {
+	return memoryMessage{
+		Role:       string(msg.Role),
+		Content:    msg.Content,
+		ToolCalls:  append([]llm.ToolCall(nil), msg.ToolCalls...),
+		Tool:       msg.Name,
+		ToolCallID: msg.ToolCallID,
+	}
 }
 
 func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent, query string) ([]llm.Message, error) {
@@ -58,6 +69,7 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent,
 			messages = append(messages, llm.Message{
 				Role:       llm.Role(msg.Role),
 				Content:    msg.Content,
+				ToolCalls:  append([]llm.ToolCall(nil), msg.ToolCalls...),
 				Name:       msg.Tool,
 				ToolCallID: msg.ToolCallID,
 				Metadata: map[string]string{
@@ -136,6 +148,7 @@ func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Ag
 			messages = append(messages, llm.Message{
 				Role:       llm.Role(msg.Role),
 				Content:    msg.Content,
+				ToolCalls:  append([]llm.ToolCall(nil), msg.ToolCalls...),
 				Name:       msg.Tool,
 				ToolCallID: msg.ToolCallID,
 				Metadata: map[string]string{

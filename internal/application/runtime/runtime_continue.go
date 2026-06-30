@@ -18,7 +18,7 @@ const (
 	checkpointAgentVar      = "checkpoint_agent"
 	checkpointContextVar    = "checkpoint_context"
 	checkpointResumedVar    = "checkpoint_resumed"
-	checkpointToolCallVar   = "checkpoint_tool_call"
+	checkpointToolCallsVar  = "checkpoint_tool_calls"
 	checkpointMessagesVar   = "checkpoint_messages"
 	checkpointToolCountsVar = "checkpoint_tool_counts"
 )
@@ -82,10 +82,10 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	if err != nil {
 		return RunResult{}, err
 	}
-	var toolCall llm.ToolCall
-	if raw := snapshot.Variables[checkpointToolCallVar]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &toolCall); err != nil {
-			return RunResult{}, fmt.Errorf("runtime: decode checkpoint tool call: %w", err)
+	var pending []llm.ToolCall
+	if raw := snapshot.Variables[checkpointToolCallsVar]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &pending); err != nil {
+			return RunResult{}, fmt.Errorf("runtime: decode checkpoint tool calls: %w", err)
 		}
 	}
 	var messages []llm.Message
@@ -98,6 +98,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	if raw := snapshot.Variables[checkpointToolCountsVar]; len(raw) > 0 {
 		_ = json.Unmarshal(raw, &toolCounts)
 	}
+	prompt := variableString(snapshot.Variables, checkpointPromptVar)
 	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
 		return RunResult{}, err
 	}
@@ -106,7 +107,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	if !ok || !e.llm.Supports(agent.LLM, llm.CapToolCall) {
 		return RunResult{}, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM)
 	}
-	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, toolCall, toolCounts, caller)
+	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, toolCounts, caller, prompt)
 	if err != nil {
 		var paused RunPausedError
 		if errorsAsRunPaused(err, &paused) {
@@ -118,9 +119,13 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	return e.completeRun(ctx, snapshot.RunID, output)
 }
 
-func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller) (string, error) {
-	if pending.Name != "" {
-		result, err := e.executeApprovedTool(ctx, runID, agent, pending, toolCounts)
+func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string) (string, error) {
+	if len(pending) > 0 {
+		// pending[0] is the tool call the human just approved; execute it
+		// directly. The remaining calls from the same assistant turn still go
+		// through the normal approval/dispatch path and may pause again.
+		approved := pending[0]
+		result, err := e.executeApprovedTool(ctx, runID, agent, approved, toolCounts)
 		if err != nil {
 			return "", err
 		}
@@ -132,9 +137,13 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		messages = append(messages, llm.Message{
 			Role:       llm.RoleTool,
 			Content:    string(raw),
-			Name:       pending.Name,
-			ToolCallID: pending.ID,
+			Name:       approved.Name,
+			ToolCallID: approved.ID,
 		})
+		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, pending[1:], messages, toolCounts, prompt)
+		if err != nil {
+			return "", err
+		}
 	}
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
 	toolSpecs := e.toolSpecs(agent)
@@ -147,7 +156,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		ReasoningEffort: profile.ReasoningEffort,
 		ExtraBody:       profile.ExtraBody,
 	}
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0)
 }
 
 func (e *Engine) executeApprovedTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, toolCounts map[string]int) (core.ToolResult, error) {
@@ -271,7 +280,11 @@ func errorsAsRunPaused(err error, target *RunPausedError) bool {
 	return errors.As(err, target)
 }
 
-func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, messages []llm.Message, toolCounts map[string]int) (*RunPausedError, error) {
+func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string) (*RunPausedError, error) {
+	if len(pending) == 0 {
+		return nil, nil
+	}
+	call := pending[0]
 	tool, ok := e.scenario.Tools[call.Name]
 	if !ok || !approvalPauseRequired(tool) {
 		return nil, nil
@@ -283,7 +296,10 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err != nil {
 		return nil, err
 	}
-	toolCallRaw, err := json.Marshal(call)
+	// Persist every still-pending call from this assistant turn (the one
+	// awaiting approval plus any that follow it) so resume executes all of
+	// them and never leaves orphaned tool_call IDs without a tool response.
+	toolCallsRaw, err := json.Marshal(pending)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +314,8 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	vars := map[string]json.RawMessage{
 		checkpointKindVar:       json.RawMessage(`"tool_approval"`),
 		checkpointAgentVar:      json.RawMessage(fmt.Sprintf("%q", agent.Name)),
-		checkpointToolCallVar:   toolCallRaw,
+		checkpointPromptVar:     json.RawMessage(fmt.Sprintf("%q", prompt)),
+		checkpointToolCallsVar:  toolCallsRaw,
 		checkpointMessagesVar:   messagesRaw,
 		checkpointToolCountsVar: countsRaw,
 	}

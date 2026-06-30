@@ -100,11 +100,15 @@ func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return err
 	}
-	if err := e.writeMemory(ctx, runID, agent, []memoryMessage{
-		{Role: string(llm.RoleUser), Content: prompt},
-		{Role: string(llm.RoleAssistant), Content: output},
-	}); err != nil {
-		return err
+	// Tool loops persist user/assistant/tool messages incrementally inside
+	// answerWithTools; only plain chat streams need a final memory write here.
+	if len(agent.Tools) == 0 && len(agent.SubAgents) == 0 {
+		if err := e.writeMemory(ctx, runID, agent, []memoryMessage{
+			{Role: string(llm.RoleUser), Content: prompt},
+			{Role: string(llm.RoleAssistant), Content: output},
+		}); err != nil {
+			return err
+		}
 	}
 	e.emit(ctx, core.EventRunCompleted, runID, loaded.StepOutputs["final"].Inline)
 	return nil

@@ -219,6 +219,62 @@ func TestEngineRunAutonomousToolLoopExecutesTool(t *testing.T) {
 	}
 }
 
+func TestEngineRunAutonomousToolLoopPersistsMemoryInOrder(t *testing.T) {
+	ctx := context.Background()
+	memRepo := memoryinmem.NewRepository()
+	ns := memory.Namespace{SessionID: "tool-session:assistant", Agent: "assistant", Scope: memory.ScopeSession}
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"hello"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "final answer"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "tool-session"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:   runstateinmem.NewRepository(),
+		LLM:    gateway,
+		Memory: map[string]memory.Repository{"session": memRepo},
+		Tools:  mapToolRegistry{"echo": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(ctx, RunRequest{RunID: "run-1", Agent: "assistant", Prompt: "use echo"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := memRepo.Get(ctx, ns, "messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored []memoryMessage
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 4 {
+		t.Fatalf("expected user, assistant tool_calls, tool, final assistant; got %+v", stored)
+	}
+	if stored[0].Role != string(llm.RoleUser) || stored[0].Content != "use echo" {
+		t.Fatalf("unexpected user memory: %+v", stored[0])
+	}
+	if stored[1].Role != string(llm.RoleAssistant) || len(stored[1].ToolCalls) != 1 || stored[1].ToolCalls[0].ID != "call-1" {
+		t.Fatalf("expected assistant tool_calls persisted, got %+v", stored[1])
+	}
+	if stored[2].Role != string(llm.RoleTool) || stored[2].ToolCallID != "call-1" {
+		t.Fatalf("unexpected tool memory: %+v", stored[2])
+	}
+	if stored[3].Role != string(llm.RoleAssistant) || stored[3].Content != "final answer" {
+		t.Fatalf("unexpected final assistant memory: %+v", stored[3])
+	}
+}
+
 func TestEngineRunAutonomousPlanningInjectsPlanIntoToolLoop(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
