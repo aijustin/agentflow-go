@@ -395,7 +395,10 @@ func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core
 		} else if paused != nil {
 			return messages, *paused
 		}
-		result := e.dispatchTool(ctx, runID, agent, toolCall, toolCounts, true)
+		result, err := e.dispatchTool(ctx, runID, agent, toolCall, toolCounts, true)
+		if err != nil {
+			return messages, err
+		}
 		toolMem = append(toolMem, memoryMessageFromToolResult(toolCall, result))
 		contextResult := compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
 		raw, err := json.Marshal(contextResult)

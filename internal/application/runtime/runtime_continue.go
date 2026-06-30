@@ -21,6 +21,7 @@ const (
 	checkpointToolCallsVar  = "checkpoint_tool_calls"
 	checkpointMessagesVar   = "checkpoint_messages"
 	checkpointToolCountsVar = "checkpoint_tool_counts"
+	checkpointOutputModeVar = "checkpoint_output_mode"
 )
 
 // RunPausedError indicates the run paused and requires human approval before continuing.
@@ -63,6 +64,14 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 	}
 	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
 		return RunResult{}, err
+	}
+	if variableString(snapshot.Variables, checkpointOutputModeVar) == "structured" {
+		raw, err := e.structuredAnswer(ctx, req)
+		if err != nil {
+			e.markRunFailed(ctx, req.RunID, err)
+			return RunResult{}, err
+		}
+		return e.completeStructuredRun(ctx, req.RunID, raw)
 	}
 	output, err := e.answer(ctx, req)
 	if err != nil {
@@ -126,7 +135,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		// directly. The remaining calls from the same assistant turn still go
 		// through the normal approval/dispatch path and may pause again.
 		approved := pending[0]
-		result, err := e.executeApprovedTool(ctx, runID, agent, approved, toolCounts)
+		result, err := e.dispatchApprovedTool(ctx, runID, agent, approved, toolCounts)
 		if err != nil {
 			return "", err
 		}
@@ -141,6 +150,9 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 			Name:       approved.Name,
 			ToolCallID: approved.ID,
 		})
+		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
+			_ = e.markPlanStepDone(ctx, runID, approved.Name)
+		}
 		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false)
 		if err != nil {
 			return "", err
@@ -163,46 +175,6 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		ExtraBody:       profile.ExtraBody,
 	}
 	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0)
-}
-
-func (e *Engine) executeApprovedTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, toolCounts map[string]int) (core.ToolResult, error) {
-	toolCounts[call.Name]++
-	result, err := e.executeToolAfterApproval(ctx, runID, agent, call)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil && result.Error == "" {
-		result.Error = "persist tool output: " + err.Error()
-	}
-	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})
-	if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute {
-		_ = e.markPlanStepDone(ctx, runID, call.Name)
-	}
-	return result, nil
-}
-
-func (e *Engine) executeToolAfterApproval(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall) (core.ToolResult, error) {
-	if subAgentName, ok := e.delegateTarget(agent, call.Name); ok {
-		return e.dispatchSubAgent(ctx, runID, agent, subAgentName, call), nil
-	}
-	tool, ok := e.scenario.Tools[call.Name]
-	if !ok {
-		return core.ToolResult{Tool: call.Name, Error: "tool is not declared in scenario"}, nil
-	}
-	if tool.Name == "" {
-		tool.Name = call.Name
-	}
-	if e.tools == nil {
-		return core.ToolResult{Tool: call.Name, Error: "tool executor registry is not configured"}, nil
-	}
-	executor, ok, err := e.tools.ResolveTool(ctx, tool)
-	if err != nil {
-		return core.ToolResult{Tool: call.Name, Error: "resolve tool executor: " + err.Error()}, nil
-	}
-	if !ok {
-		return core.ToolResult{Tool: call.Name, Error: "tool executor is not registered"}, nil
-	}
-	return e.executeToolWithRetry(ctx, runID, agent, call, executor)
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {

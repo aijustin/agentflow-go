@@ -9,7 +9,9 @@ import (
 	"github.com/aijustin/agentflow-go/internal/adapter/llm/mock"
 	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
+	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -53,6 +55,60 @@ func TestEngineContinueAfterBeforeFinalAnswer(t *testing.T) {
 	}
 	if result.Output != "final" || result.Status != runstate.RunStatusCompleted {
 		t.Fatalf("unexpected continue result: %+v", result)
+	}
+}
+
+func TestEngineContinueAfterStructuredBeforeFinalAnswer(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapStructuredOutput)
+	gateway.QueueStructured("default", json.RawMessage(`{"answer":"final"}`))
+	scenario := core.Scenario{
+		Name: "structured-hitl",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {
+				Name: "assistant",
+				LLM:  "default",
+				Policy: core.AgentPolicy{
+					OutputSchema: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`),
+				},
+			},
+		},
+		Orchestration: core.Orchestration{
+			Mode:        core.OrchestrationAutonomous,
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true, Checkpoints: []string{"before_final_answer"}},
+		},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway, HumanGate: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.RunStructured(context.Background(), RunRequest{RunID: "run-structured-hitl", Agent: "assistant", Prompt: "hello"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-structured-hitl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || string(result.StructuredOutput) != `{"answer":"final"}` {
+		t.Fatalf("unexpected structured continue result: %+v", result)
+	}
+	snapshot, err := repo.Load(context.Background(), "run-structured-hitl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(snapshot.StepOutputs["final"].Inline) != `{"answer":"final"}` {
+		t.Fatalf("structured final output not persisted raw: %+v", snapshot.StepOutputs["final"])
 	}
 }
 
@@ -179,6 +235,74 @@ func TestEngineContinueAfterMultiToolApprovalPause(t *testing.T) {
 		if _, ok := snapshot.StepOutputs["tool."+id]; !ok {
 			t.Fatalf("expected tool output for %s, got %+v", id, snapshot.StepOutputs)
 		}
+	}
+}
+
+func TestEngineContinueAfterToolApprovalUsesGovernanceAndAudit(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "risky", Input: json.RawMessage(`{"query":"approve"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Tools["risky"] = core.Tool{
+		Name:        "risky",
+		Type:        "builtin.echo",
+		Description: "Risky echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Approval:    core.ApprovalPause,
+		SideEffect:  core.SideEffectWrite,
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Tools = []string{"risky"}
+	scenario.Agents["assistant"] = agent
+	governanceCalls := 0
+	audits := &captureAudit{}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"risky": echoTool{}},
+		ToolPolicy: governance.ToolPolicyFunc(func(ctx context.Context, invocation governance.ToolInvocation) error {
+			governanceCalls++
+			if invocation.Tool != "risky" || invocation.SideEffect != core.SideEffectWrite {
+				t.Fatalf("unexpected governance invocation: %+v", invocation)
+			}
+			return nil
+		}),
+		Audit: audits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-approved-governance", Agent: "assistant", Prompt: "go"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-approved-governance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "done" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+	if governanceCalls != 1 {
+		t.Fatalf("expected approved tool to pass governance once, got %d", governanceCalls)
+	}
+	if !audits.has(audit.EventToolInvoked) {
+		t.Fatalf("expected approved tool invocation audit, got %+v", audits.events)
 	}
 }
 

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,72 +17,87 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
-func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int, skipMemory bool) core.ToolResult {
+type toolDispatchOptions struct {
+	skipMemory bool
+	approved   bool
+}
+
+func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int, skipMemory bool) (core.ToolResult, error) {
+	return e.dispatchToolWithOptions(ctx, runID, agent, call, callCounts, toolDispatchOptions{skipMemory: skipMemory})
+}
+
+func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int) (core.ToolResult, error) {
+	return e.dispatchToolWithOptions(ctx, runID, agent, call, callCounts, toolDispatchOptions{skipMemory: true, approved: true})
+}
+
+func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int, options toolDispatchOptions) (core.ToolResult, error) {
 	if subAgentName, ok := e.delegateTarget(agent, call.Name); ok {
 		resource := toolResource(agent, call, nil)
 		if err := e.authorizeTool(ctx, runID, resource); err != nil {
 			result := core.ToolResult{Tool: call.Name, Error: "tool invocation unauthorized"}
 			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
-			return result
+			return result, nil
 		}
 		return e.dispatchSubAgent(ctx, runID, agent, subAgentName, call)
 	}
 	if !agentAllowsTool(agent, call.Name) {
 		result := core.ToolResult{Tool: call.Name, Error: "tool is not in agent whitelist"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result
+		return result, nil
 	}
 	tool, ok := e.scenario.Tools[call.Name]
 	if !ok {
 		result := core.ToolResult{Tool: call.Name, Error: "tool is not declared in scenario"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result
+		return result, nil
 	}
 	if tool.Name == "" {
 		tool.Name = call.Name
 	}
-	if reason := approvalDenialReason(tool); reason != "" {
-		result := core.ToolResult{Tool: call.Name, Error: reason}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
-		return result
+	if !options.approved {
+		if reason := approvalDenialReason(tool); reason != "" {
+			result := core.ToolResult{Tool: call.Name, Error: reason}
+			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
+			return result, nil
+		}
 	}
-	if tool.Approval == core.ApprovalPause && e.gate == nil {
+	if tool.Approval == core.ApprovalPause && e.gate == nil && !options.approved {
 		result := core.ToolResult{Tool: call.Name, Error: "tool requires human gate for pause approval"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result
+		return result, nil
 	}
 	if tool.RateCap > 0 && callCounts[call.Name] >= tool.RateCap {
 		result := core.ToolResult{Tool: call.Name, Error: fmt.Sprintf("tool rate cap exceeded: %d call(s) per run", tool.RateCap)}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result
+		return result, nil
 	}
 	if e.tools == nil {
 		result := core.ToolResult{Tool: call.Name, Error: "tool executor registry is not configured"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result
+		return result, nil
 	}
 	resource := toolResource(agent, call, &tool)
 	if err := e.authorizeTool(ctx, runID, resource); err != nil {
 		result := core.ToolResult{Tool: call.Name, Error: "tool invocation unauthorized"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
-		return result
+		return result, nil
 	}
 	if err := e.authorizeGovernanceTool(ctx, runID, agent, tool, call, callCounts); err != nil {
 		result := core.ToolResult{Tool: call.Name, Error: "tool invocation blocked by governance"}
 		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
-		return result
+		return result, nil
 	}
 	executor, ok, err := e.tools.ResolveTool(ctx, tool)
 	if err != nil {
 		result := core.ToolResult{Tool: call.Name, Error: "resolve tool executor: " + err.Error()}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result
+		return result, nil
 	}
 	if !ok {
 		result := core.ToolResult{Tool: call.Name, Error: "tool executor is not registered"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result
+		return result, nil
 	}
 	callCounts[call.Name]++
 	result, err := e.executeToolWithRetry(ctx, runID, agent, call, executor)
@@ -93,10 +109,10 @@ func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agen
 	}
 	e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})
-	if !skipMemory {
+	if !options.skipMemory {
 		_ = e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromToolResult(call, result)})
 	}
-	return result
+	return result, nil
 }
 
 func (e *Engine) authorizeGovernanceTool(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, callCounts map[string]int) error {
@@ -167,7 +183,7 @@ func toolOutcome(result core.ToolResult) string {
 	return "success"
 }
 
-func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core.Agent, subAgentName string, call llm.ToolCall) core.ToolResult {
+func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core.Agent, subAgentName string, call llm.ToolCall) (core.ToolResult, error) {
 	var input struct {
 		Prompt  string          `json:"prompt"`
 		Context json.RawMessage `json:"context"`
@@ -176,18 +192,22 @@ func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core
 		if err := json.Unmarshal(call.Input, &input); err != nil {
 			result := core.ToolResult{Tool: call.Name, Error: "invalid delegation input: " + err.Error()}
 			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "reason": result.Error})
-			return result
+			return result, nil
 		}
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
 		result := core.ToolResult{Tool: call.Name, Error: "delegation prompt is required"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "reason": result.Error})
-		return result
+		return result, nil
 	}
 	e.emitJSON(ctx, core.EventToolCalled, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "sub_agent": subAgentName, "tool_call_id": call.ID})
 	output, err := e.answer(ctx, RunRequest{RunID: runID, Agent: subAgentName, Prompt: input.Prompt, Context: input.Context})
 	result := core.ToolResult{Tool: call.Name}
 	if err != nil {
+		var paused RunPausedError
+		if errors.As(err, &paused) {
+			return core.ToolResult{}, err
+		}
 		result.Error = err.Error()
 	} else {
 		raw, marshalErr := json.Marshal(core.AgentOutput{RunID: runID, Text: output})
@@ -201,7 +221,7 @@ func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core
 		result.Error = "persist delegated output: " + err.Error()
 	}
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "sub_agent": subAgentName, "tool_call_id": call.ID, "error": result.Error})
-	return result
+	return result, nil
 }
 
 func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, executor core.ToolExecutor) (core.ToolResult, error) {

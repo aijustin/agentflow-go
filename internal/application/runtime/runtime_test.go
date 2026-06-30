@@ -176,6 +176,58 @@ func TestEngineRunReadsAndWritesMemory(t *testing.T) {
 	}
 }
 
+func TestEngineRunPreservesRecalledToolCalls(t *testing.T) {
+	ctx := context.Background()
+	memRepo := memoryinmem.NewRepository()
+	ns := memory.Namespace{SessionID: "tool-recall-session:assistant", Agent: "assistant", Scope: memory.ScopeSession}
+	stored := []memoryMessage{
+		{Role: string(llm.RoleUser), Content: "earlier question"},
+		{Role: string(llm.RoleAssistant), ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"old"}`)}}},
+		{Role: string(llm.RoleTool), Tool: "echo", ToolCallID: "call-1", Content: `{"ok":true}`},
+	}
+	for _, msg := range stored {
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := memRepo.Append(ctx, ns, "messages", raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gateway := &capturingGateway{response: "new answer"}
+	scenario := baseScenario(false)
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "tool-recall-session"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:   runstateinmem.NewRepository(),
+		LLM:    gateway,
+		Memory: map[string]memory.Repository{"session": memRepo},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(ctx, RunRequest{RunID: "run-tool-recall", Agent: "assistant", Prompt: "new question"}); err != nil {
+		t.Fatal(err)
+	}
+	foundAssistantToolCalls := false
+	foundToolMessage := false
+	for _, msg := range gateway.req.Messages {
+		if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) == 1 && msg.ToolCalls[0].ID == "call-1" {
+			foundAssistantToolCalls = true
+		}
+		if msg.Role == llm.RoleTool && msg.ToolCallID == "call-1" {
+			foundToolMessage = true
+		}
+	}
+	if !foundAssistantToolCalls || !foundToolMessage {
+		t.Fatalf("expected recalled assistant/tool pair, got %+v", gateway.req.Messages)
+	}
+}
+
 func TestEngineRunAutonomousToolLoopExecutesTool(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
@@ -844,6 +896,25 @@ func TestEngineStreamCompletesRunAndWritesMemory(t *testing.T) {
 	}
 }
 
+func TestEngineStreamRejectsBeforeFinalCheckpoint(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	engine, err := NewEngine(baseScenario(true), Dependencies{Runs: repo, LLM: &capturingGateway{response: "ok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.Stream(context.Background(), RunRequest{RunID: "run-stream-hitl", Agent: "assistant", Prompt: "stream"})
+	if err == nil || !strings.Contains(err.Error(), "streaming does not support before_final_answer") {
+		t.Fatalf("expected unsupported checkpoint error, got %v", err)
+	}
+	loaded, err := repo.Load(context.Background(), "run-stream-hitl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusFailed {
+		t.Fatalf("expected failed snapshot, got %+v", loaded)
+	}
+}
+
 func TestEngineStreamSupportsAutonomousToolLoop(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
@@ -951,14 +1022,68 @@ func TestEngineRunDelegatesToSubAgent(t *testing.T) {
 	}
 }
 
+func TestEngineRunPropagatesSubAgentToolPause(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{
+			ID:    "delegate-1",
+			Name:  delegateToolName("researcher"),
+			Input: json.RawMessage(`{"prompt":"research this"}`),
+		}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{
+			ID:    "sub-call-1",
+			Name:  "echo",
+			Input: json.RawMessage(`{"query":"needs approval"}`),
+		}},
+	})
+	scenario := toolScenario(core.ApprovalPause, core.SideEffectWrite, 4)
+	supervisor := scenario.Agents["assistant"]
+	supervisor.Tools = nil
+	supervisor.SubAgents = []string{"researcher"}
+	scenario.Agents["assistant"] = supervisor
+	scenario.Agents["researcher"] = core.Agent{Name: "researcher", LLM: "default", Tools: []string{"echo"}}
+	gate := &capturingGate{repo: repo}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"echo": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Run(context.Background(), RunRequest{RunID: "run-sub-pause", Agent: "assistant", Prompt: "delegate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused || result.Token == "" {
+		t.Fatalf("expected delegated sub-agent pause to propagate, got %+v", result)
+	}
+	if gate.state.NodeID != "tool_approval" {
+		t.Fatalf("expected tool approval checkpoint, got %+v", gate.state)
+	}
+}
+
 func TestEngineRunReturnsAgentError(t *testing.T) {
-	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: runstateinmem.NewRepository(), LLM: llmmock.NewGateway()})
+	repo := runstateinmem.NewRepository()
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: llmmock.NewGateway()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = engine.Run(context.Background(), RunRequest{RunID: "run-1", Agent: "missing", Prompt: "hello"})
 	if err == nil {
 		t.Fatal("expected missing agent error")
+	}
+	loaded, loadErr := repo.Load(context.Background(), "run-1")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if loaded.Status != runstate.RunStatusFailed {
+		t.Fatalf("expected failed snapshot, got %+v", loaded)
 	}
 }
 

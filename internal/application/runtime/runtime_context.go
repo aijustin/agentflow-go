@@ -51,13 +51,15 @@ func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile c
 	raw := []contextwindow.Message{
 		{Role: contextwindow.RoleSystem, Content: agent.Instructions},
 	}
-	for _, msg := range history {
+	for i, msg := range history {
+		metadata := cloneMetadata(msg.Metadata)
+		metadata["source_index"] = strconv.Itoa(i)
 		raw = append(raw, contextwindow.Message{
 			Role:       contextwindow.Role(msg.Role),
 			Content:    msg.Content,
 			Name:       msg.Name,
 			ToolCallID: msg.ToolCallID,
-			Metadata:   msg.Metadata,
+			Metadata:   metadata,
 		})
 	}
 	if len(req.Context) > 0 && string(req.Context) != "null" {
@@ -69,8 +71,11 @@ func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile c
 			},
 		})
 	}
-	raw = append(raw, contextwindow.Message{Role: contextwindow.RoleUser, Content: req.Prompt})
-	return e.prepareRawMessages(ctx, raw, profile)
+	if req.Prompt != "" {
+		raw = append(raw, contextwindow.Message{Role: contextwindow.RoleUser, Content: req.Prompt})
+	}
+	prepared, stats := e.prepareRawMessages(ctx, raw, profile)
+	return restorePreparedToolCalls(prepared, history), stats
 }
 
 func (e *Engine) prepareMessages(ctx context.Context, messages []llm.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
@@ -87,16 +92,22 @@ func (e *Engine) prepareMessages(ctx context.Context, messages []llm.Message, pr
 		})
 	}
 	prepared, stats := e.prepareRawMessages(ctx, raw, profile)
+	return restorePreparedToolCalls(prepared, messages), stats
+}
+
+func restorePreparedToolCalls(prepared []llm.Message, source []llm.Message) []llm.Message {
 	for i := range prepared {
 		sourceIndex, ok := prepared[i].Metadata["source_index"]
 		if ok {
 			delete(prepared[i].Metadata, "source_index")
 		}
-		if index, err := strconv.Atoi(sourceIndex); ok && err == nil && index >= 0 && index < len(messages) {
-			prepared[i].ToolCalls = messages[index].ToolCalls
+		index, err := strconv.Atoi(sourceIndex)
+		if !ok || err != nil || index < 0 || index >= len(source) {
+			continue
 		}
+		prepared[i].ToolCalls = append([]llm.ToolCall(nil), source[index].ToolCalls...)
 	}
-	return prepared, stats
+	return prepared
 }
 
 func (e *Engine) prepareRawMessages(ctx context.Context, raw []contextwindow.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
