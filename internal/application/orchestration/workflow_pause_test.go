@@ -109,3 +109,48 @@ func TestWorkflowRunnerMapCollectErrorsPropagatesPause(t *testing.T) {
 		t.Fatalf("map node must not complete while a branch is paused: %+v", snapshot.StepOutputs)
 	}
 }
+
+func TestWorkflowRunnerParallelGroupPrefersPauseOverError(t *testing.T) {
+	runs := newWorkflowRun(t)
+	runner := NewWorkflowRunner(nil, runs, nil, WithAgentRegistry(mixedAgentRegistry{}))
+	scenario := core.Scenario{
+		Name: "scenario",
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{{
+				ID:    "group",
+				Kind:  core.NodeParallelGroup,
+				Input: json.RawMessage(`{"refs":["pauser","failing"]}`),
+			}}},
+		},
+	}
+	err := runner.Run(context.Background(), scenario, "run-1")
+	var paused WorkflowPausedError
+	if !errors.As(err, &paused) {
+		t.Fatalf("expected WorkflowPausedError, got %v", err)
+	}
+}
+
+type mixedAgentRegistry struct{}
+
+func (mixedAgentRegistry) Agent(name string) (core.AgentRunner, bool) {
+	if name == "pauser" {
+		return pausingAgent{}, true
+	}
+	if name == "failing" {
+		return failingAgent{}, true
+	}
+	return nil, false
+}
+
+type pausingAgent struct{}
+
+func (pausingAgent) Run(_ context.Context, input core.AgentInput) (core.AgentOutput, error) {
+	return core.AgentOutput{}, WorkflowPausedError{RunID: input.RunID, NodeID: "pauser", Token: "tok"}
+}
+
+type failingAgent struct{}
+
+func (failingAgent) Run(context.Context, core.AgentInput) (core.AgentOutput, error) {
+	return core.AgentOutput{}, errors.New("agent failed")
+}

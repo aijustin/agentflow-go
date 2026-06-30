@@ -120,6 +120,7 @@ func (f *Framework) applyWorkflowAmendment(ctx context.Context, runID string) er
 	if snapshot.Variables == nil {
 		snapshot.Variables = make(map[string]json.RawMessage)
 	}
+	snapshot.Variables["workflow_amendment"] = json.RawMessage(fmt.Sprintf("%q", amendment))
 	prior := variableJSONString(snapshot.Variables, resumePromptVar)
 	if prior == "" {
 		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", amendment))

@@ -888,6 +888,10 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 		if result.Status == runstate.RunStatusPaused {
 			return result, nil
 		}
+		req, err = f.hydrateRunRequestForRunID(ctx, req)
+		if err != nil {
+			return RunResult{}, err
+		}
 		return f.engine.RunStructured(ctx, req)
 	case core.OrchestrationHybrid:
 		req, paused, err := f.prepareHybridAutonomousRun(ctx, req)
@@ -910,6 +914,10 @@ func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.Chat
 		}
 		if result.Status == runstate.RunStatusPaused {
 			return nil, fmt.Errorf("agentflow: workflow paused at token %q", result.Token)
+		}
+		req, err = f.hydrateRunRequestForRunID(ctx, req)
+		if err != nil {
+			return nil, err
 		}
 		return f.engine.Stream(ctx, req)
 	case core.OrchestrationHybrid:

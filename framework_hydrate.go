@@ -36,6 +36,14 @@ func (f *Framework) hydrateRunRequest(ctx context.Context, req RunRequest, snaps
 // (falling back to "workflow_steps" if the caller already set "steps"). When
 // the caller context is not an object (array/scalar/string), it is nested under
 // "input" alongside the workflow steps.
+func (f *Framework) hydrateRunRequestForRunID(ctx context.Context, req RunRequest) (RunRequest, error) {
+	snapshot, err := runstate.LoadAuthorized(ctx, f.runs, req.RunID)
+	if err != nil {
+		return req, err
+	}
+	return f.hydrateRunRequest(ctx, req, snapshot)
+}
+
 func mergeWorkflowContext(userContext, hydrated json.RawMessage) (json.RawMessage, error) {
 	if len(hydrated) == 0 {
 		return userContext, nil

@@ -2,6 +2,7 @@ package inmem
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -144,6 +145,32 @@ func (queue *Queue) Complete(ctx context.Context, lease asyncpkg.Lease) error {
 	return nil
 }
 
+func (queue *Queue) Pause(ctx context.Context, lease asyncpkg.Lease, result asyncpkg.PauseResult) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := lease.Validate(); err != nil {
+		return err
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	job, err := queue.leasedJob(lease)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	job.State = asyncpkg.JobPaused
+	job.LastError = string(raw)
+	job.LeaseWorkerID = ""
+	job.LeaseExpiresAt = time.Time{}
+	job.UpdatedAt = queue.now()
+	queue.jobs[job.ID] = job
+	return nil
+}
+
 func (queue *Queue) Fail(ctx context.Context, lease asyncpkg.Lease, cause error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -183,7 +210,7 @@ func (queue *Queue) Cancel(ctx context.Context, jobID string) error {
 	if !exists {
 		return asyncpkg.ErrJobNotFound
 	}
-	if job.State == asyncpkg.JobCompleted || job.State == asyncpkg.JobDeadLetter {
+	if job.State == asyncpkg.JobCompleted || job.State == asyncpkg.JobDeadLetter || job.State == asyncpkg.JobPaused {
 		return nil
 	}
 	job.State = asyncpkg.JobCancelled

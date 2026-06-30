@@ -110,18 +110,22 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 		wg.Add(1)
 		go func(index int, agentName string) {
 			childID := fmt.Sprintf("%s.agent.%s.%d", node.ID, agentName, index)
+			memberKey := "agent:" + agentName
+			if index > 0 {
+				memberKey = fmt.Sprintf("%s:%d", memberKey, index)
+			}
 			if raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID); err == nil && ok {
 				var value any
 				if err := json.Unmarshal(raw, &value); err == nil {
 					mu.Lock()
-					outputs[agentName] = value
+					outputs[memberKey] = value
 					mu.Unlock()
 					wg.Done()
 					return
 				}
 			}
 			child := core.WorkflowNode{ID: childID, Kind: core.NodeAgent, Ref: agentName}
-			runMember(agentName, func(runCtx context.Context) error {
+			runMember(memberKey, func(runCtx context.Context) error {
 				return r.runAgentNode(withParallelChild(runCtx), scenario, child, runID)
 			}, func() (any, error) {
 				raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
@@ -178,10 +182,21 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	}
 	wg.Wait()
 	close(errs)
+	var firstErr error
 	for err := range errs {
-		if err != nil {
+		if err == nil {
+			continue
+		}
+		var paused WorkflowPausedError
+		if errors.As(err, &paused) {
 			return err
 		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return firstErr
 	}
 	result := map[string]any{"members": outputs}
 	if len(collected) > 0 {

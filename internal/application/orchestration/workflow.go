@@ -391,8 +391,14 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 	if err != nil {
 		return err
 	}
+	agentInput := core.AgentInput{RunID: runID, Context: input}
+	if r.runs != nil {
+		if snapshot, loadErr := runstate.LoadAuthorized(ctx, r.runs, runID); loadErr == nil {
+			agentInput = applyWorkflowAmendmentToAgentInput(snapshot, runID, input)
+		}
+	}
 	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
-	output, err := agent.Run(ctx, core.AgentInput{RunID: runID, Context: input})
+	output, err := agent.Run(ctx, agentInput)
 	if err != nil {
 		return err
 	}

@@ -156,6 +156,12 @@ func (worker *Worker) handleLeasedJob(ctx context.Context, lease Lease) error {
 				return nil
 			}
 		}
+		var paused RunPausedError
+		if errors.As(err, &paused) {
+			pauseCtx, cancel := terminalContext(ctx)
+			defer cancel()
+			return worker.queue.Pause(pauseCtx, lease, PauseResult{RunID: paused.RunID, Token: paused.Token})
+		}
 		// If the worker context itself is gone (shutdown), release the lease on
 		// a detached context so the job does not stay leased until expiry; a
 		// cancelled context would otherwise make Fail a no-op for many queues.

@@ -67,6 +67,43 @@ func TestWorkflowRunnerParallelGroup(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunnerParallelGroupDuplicateAgentRefs(t *testing.T) {
+	runs := newWorkflowRun(t)
+	runner := NewWorkflowRunner(nil, runs, nil, WithAgentRegistry(stubAgentRegistry{
+		agents: map[string]stubAgent{
+			"macro": {name: "macro", output: "first"},
+		},
+	}))
+	scenario := core.Scenario{
+		Name: "experts",
+		Orchestration: core.Orchestration{
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{{
+					ID:    "experts",
+					Kind:  core.NodeParallelGroup,
+					Input: json.RawMessage(`{"refs":["macro","macro"]}`),
+				}},
+			},
+		},
+	}
+	if err := runner.Run(context.Background(), scenario, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := snapshot.StepOutputs["experts"]
+	var output map[string]any
+	if err := json.Unmarshal(ref.Inline, &output); err != nil {
+		t.Fatal(err)
+	}
+	members := output["members"].(map[string]any)
+	if members["agent:macro"] == nil || members["agent:macro:1"] == nil {
+		t.Fatalf("expected distinct member keys for duplicate refs, got %+v", members)
+	}
+}
+
 func TestWorkflowRunnerLoopUntilCondition(t *testing.T) {
 	runs := newWorkflowRun(t)
 	runner := NewWorkflowRunner(nil, runs, nil)

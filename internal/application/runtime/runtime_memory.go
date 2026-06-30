@@ -241,6 +241,12 @@ func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Ag
 	e.recorder.ObserveHistogram(ctx, observability.MetricMemoryRecallLatencySeconds, time.Since(start).Seconds(),
 		observability.Attribute{Key: "memory", Value: agent.Memory},
 	)
+	if profile, ok := e.scenario.LLMs[agent.LLM]; ok {
+		limit := profile.Context.Normalize().MemoryRecallLimit
+		if limit > 0 && len(messages) > limit {
+			messages = messages[len(messages)-limit:]
+		}
+	}
 	return messages, nil
 }
 
@@ -396,7 +402,7 @@ func (e *Engine) redactMemoryMessage(ctx context.Context, runID string, msg memo
 	}
 	var out memoryMessage
 	if err := json.Unmarshal(redacted, &out); err != nil {
-		return msg.Content, nil
+		return "", fmt.Errorf("runtime: decode redacted memory message: %w", err)
 	}
 	return out.Content, nil
 }

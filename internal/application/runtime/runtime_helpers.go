@@ -87,6 +87,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 		}
 		if err := e.saveSnapshotWithRetry(saveCtx, req.RunID, func(snapshot *runstate.RunSnapshot) error {
 			snapshot.Status = runstate.RunStatusRunning
+			saveResumeMetadata(snapshot, *req)
 			return nil
 		}); err != nil {
 			return false, err
@@ -101,11 +102,12 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 		ScenarioName: e.scenario.Name,
 		Status:       runstate.RunStatusRunning,
 		Variables: map[string]json.RawMessage{
-			"input":          req.Context,
-			runStartedAtVar:  json.RawMessage(fmt.Sprintf("%q", time.Now().UTC().Format(time.RFC3339Nano))),
+			"input":         req.Context,
+			runStartedAtVar: json.RawMessage(fmt.Sprintf("%q", time.Now().UTC().Format(time.RFC3339Nano))),
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
+	saveResumeMetadata(&snapshot, *req)
 	runstate.StampTenant(ctx, &snapshot)
 	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
 		if errors.Is(err, runstate.ErrStaleSnapshot) {
@@ -245,7 +247,23 @@ func shouldRetry(ctx context.Context, err error) bool {
 	return false
 }
 
-const runStartedAtVar = "run_started_at"
+const (
+	runStartedAtVar = "run_started_at"
+	resumePromptVar = "resume_prompt"
+	resumeAgentVar  = "resume_agent"
+)
+
+func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
+	if snapshot.Variables == nil {
+		snapshot.Variables = make(map[string]json.RawMessage)
+	}
+	if req.Prompt != "" {
+		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", req.Prompt))
+	}
+	if req.Agent != "" {
+		snapshot.Variables[resumeAgentVar] = json.RawMessage(fmt.Sprintf("%q", req.Agent))
+	}
+}
 
 func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) error {
 	for attempt := 0; attempt < 5; attempt++ {

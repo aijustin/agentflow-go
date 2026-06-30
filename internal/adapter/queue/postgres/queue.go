@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -179,6 +180,27 @@ WHERE id = $3 AND state = $4 AND lease_worker_id = $5 AND attempts = $6`, q.tabl
 		return fmt.Errorf("postgres queue: complete job %q: %w", lease.JobID, err)
 	}
 	return requireAffected(result)
+}
+
+func (q *Queue) Pause(ctx context.Context, lease asyncpkg.Lease, result asyncpkg.PauseResult) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := lease.Validate(); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`UPDATE %s
+SET state = $1, last_error = $2, lease_worker_id = NULL, lease_expires_at = NULL, updated_at = $3
+WHERE id = $4 AND state = $5 AND lease_worker_id = $6 AND attempts = $7`, q.table)
+	res, err := q.db.ExecContext(ctx, query, string(asyncpkg.JobPaused), string(raw), q.now().UTC(), lease.JobID, string(asyncpkg.JobRunning), lease.WorkerID, int64(lease.Attempt))
+	if err != nil {
+		return fmt.Errorf("postgres queue: pause job %q: %w", lease.JobID, err)
+	}
+	return requireAffected(res)
 }
 
 func (q *Queue) Fail(ctx context.Context, lease asyncpkg.Lease, cause error) error {

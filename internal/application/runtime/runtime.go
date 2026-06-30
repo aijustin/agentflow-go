@@ -289,7 +289,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		defer cancel()
 		sentTerminal := false
 		sendTerminal := func(c llm.ChatChunk) {
-			if sentTerminal {
+			if sentTerminal && c.Error == "" {
 				return
 			}
 			sentTerminal = true

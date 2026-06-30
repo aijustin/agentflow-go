@@ -2,6 +2,7 @@ package async
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -66,6 +67,25 @@ func (q *testQueue) Complete(_ context.Context, lease Lease) error {
 		return err
 	}
 	job.State = JobCompleted
+	job.LeaseWorkerID = ""
+	job.LeaseExpiresAt = time.Time{}
+	q.jobs[job.ID] = job
+	return nil
+}
+
+func (q *testQueue) Pause(_ context.Context, lease Lease, result PauseResult) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	job, err := q.leasedJob(lease)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	job.State = JobPaused
+	job.LastError = string(raw)
 	job.LeaseWorkerID = ""
 	job.LeaseExpiresAt = time.Time{}
 	q.jobs[job.ID] = job

@@ -19,6 +19,7 @@ const (
 	JobQueued     JobState = "queued"
 	JobRunning    JobState = "running"
 	JobCompleted  JobState = "completed"
+	JobPaused     JobState = "paused"
 	JobFailed     JobState = "failed"
 	JobCancelled  JobState = "cancelled"
 	JobDeadLetter JobState = "dead_letter"
@@ -69,6 +70,7 @@ type Queue interface {
 	Lease(ctx context.Context, workerID string, ttl time.Duration) (Lease, bool, error)
 	Load(ctx context.Context, jobID string) (Job, error)
 	Complete(ctx context.Context, lease Lease) error
+	Pause(ctx context.Context, lease Lease, result PauseResult) error
 	Fail(ctx context.Context, lease Lease, cause error) error
 	Cancel(ctx context.Context, jobID string) error
 }

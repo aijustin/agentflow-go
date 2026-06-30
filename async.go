@@ -102,13 +102,19 @@ func (handler *frameworkJobHandler) handleRun(ctx context.Context, job asyncpkg.
 	if err != nil {
 		return err
 	}
-	_, err = handler.framework.Run(ctx, RunRequest{
+	result, err := handler.framework.Run(ctx, RunRequest{
 		RunID:   payload.RunID,
 		Agent:   payload.Agent,
 		Prompt:  payload.Prompt,
 		Context: payload.Context,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if result.Status == runstate.RunStatusPaused {
+		return asyncpkg.RunPausedError{RunID: result.RunID, Token: result.Token}
+	}
+	return nil
 }
 
 func (handler *frameworkJobHandler) handleEvent(ctx context.Context, job asyncpkg.Job) error {
@@ -127,7 +133,7 @@ func (handler *frameworkJobHandler) handleEvent(ctx context.Context, job asyncpk
 		return err
 	}
 	if result.Status == runstate.RunStatusPaused {
-		return nil
+		return asyncpkg.RunPausedError{RunID: result.RunID, Token: result.Token}
 	}
 	return nil
 }
