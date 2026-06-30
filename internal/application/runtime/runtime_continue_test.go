@@ -7,9 +7,11 @@ import (
 
 	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
 	"github.com/aijustin/agentflow-go/internal/adapter/llm/mock"
+	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -177,5 +179,94 @@ func TestEngineContinueAfterMultiToolApprovalPause(t *testing.T) {
 		if _, ok := snapshot.StepOutputs["tool."+id]; !ok {
 			t.Fatalf("expected tool output for %s, got %+v", id, snapshot.StepOutputs)
 		}
+	}
+}
+
+func TestEngineToolLoopMemoryUnchangedWhilePaused(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	memRepo := memoryinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{
+			{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"first"}`)},
+			{ID: "call-2", Name: "risky", Input: json.RawMessage(`{"query":"second"}`)},
+		},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Tools["risky"] = core.Tool{
+		Name:        "risky",
+		Type:        "builtin.echo",
+		Description: "Risky echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Approval:    core.ApprovalPause,
+		SideEffect:  core.SideEffectWrite,
+	}
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "pause-session"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	agent.Tools = []string{"echo", "risky"}
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Memory:    map[string]memory.Repository{"session": memRepo},
+		Tools:     mapToolRegistry{"echo": echoTool{}, "risky": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns := memory.Namespace{SessionID: "pause-session:assistant", Agent: "assistant", Scope: memory.ScopeSession}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-pause-mem", Agent: "assistant", Prompt: "go"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	raw, err := memRepo.Get(context.Background(), ns, "messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored []memoryMessage
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].Role != string(llm.RoleUser) {
+		t.Fatalf("expected only user message in memory while paused, got %+v", stored)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-pause-mem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "done" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+	raw, err = memRepo.Get(context.Background(), ns, "messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 5 {
+		t.Fatalf("expected user, assistant tool_calls, two tools, final assistant; got %+v", stored)
+	}
+	if stored[1].Role != string(llm.RoleAssistant) || len(stored[1].ToolCalls) != 2 {
+		t.Fatalf("expected completed assistant turn in memory, got %+v", stored[1])
+	}
+	if stored[4].Role != string(llm.RoleAssistant) || stored[4].Content != "done" {
+		t.Fatalf("expected final assistant answer, got %+v", stored[4])
 	}
 }

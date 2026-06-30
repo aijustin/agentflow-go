@@ -360,11 +360,8 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 			}
 			return resp.Message.Content, nil
 		}
-		if err := e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromLLM(assistant)}); err != nil {
-			return "", err
-		}
 		var dispatchErr error
-		messages, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, resp.ToolCalls, messages, toolCounts, prompt)
+		messages, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts, prompt, true)
 		if dispatchErr != nil {
 			return "", dispatchErr
 		}
@@ -385,8 +382,12 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 // each call it checks whether human approval is required; if so it persists the
 // remaining calls (including the one awaiting approval) and returns a pause so
 // resume continues exactly where it left off. Tool result messages are appended
-// in order, keeping every tool_call_id paired with a tool response.
-func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string) ([]llm.Message, error) {
+// in order, keeping every tool_call_id paired with a tool response. When
+// persistTurnMemory is true and every call in the batch completes, the
+// assistant turn and tool results are written to memory together so a mid-turn
+// pause never leaves partial assistant/tool_call pairings in memory.
+func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, turnAssistant llm.Message, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, persistTurnMemory bool) ([]llm.Message, error) {
+	toolMem := make([]memoryMessage, 0, len(calls))
 	for index := range calls {
 		toolCall := calls[index]
 		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, toolCounts, prompt); err != nil {
@@ -394,7 +395,8 @@ func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core
 		} else if paused != nil {
 			return messages, *paused
 		}
-		result := e.dispatchTool(ctx, runID, agent, toolCall, toolCounts)
+		result := e.dispatchTool(ctx, runID, agent, toolCall, toolCounts, true)
+		toolMem = append(toolMem, memoryMessageFromToolResult(toolCall, result))
 		contextResult := compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
 		raw, err := json.Marshal(contextResult)
 		if err != nil {
@@ -408,6 +410,11 @@ func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core
 		})
 		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
 			_ = e.markPlanStepDone(ctx, runID, toolCall.Name)
+		}
+	}
+	if persistTurnMemory {
+		if err := e.persistToolTurnMemory(ctx, runID, agent, turnAssistant, toolMem); err != nil {
+			return messages, err
 		}
 	}
 	return messages, nil

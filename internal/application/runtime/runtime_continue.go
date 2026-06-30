@@ -121,6 +121,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 
 func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string) (string, error) {
 	if len(pending) > 0 {
+		turnStart := lastAssistantWithToolCallsIndex(messages)
 		// pending[0] is the tool call the human just approved; execute it
 		// directly. The remaining calls from the same assistant turn still go
 		// through the normal approval/dispatch path and may pause again.
@@ -140,9 +141,14 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 			Name:       approved.Name,
 			ToolCallID: approved.ID,
 		})
-		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, pending[1:], messages, toolCounts, prompt)
+		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false)
 		if err != nil {
 			return "", err
+		}
+		if turnStart >= 0 {
+			if err := e.persistToolTurnFromStepOutputs(ctx, runID, agent, messages[turnStart]); err != nil {
+				return "", err
+			}
 		}
 	}
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
@@ -169,12 +175,6 @@ func (e *Engine) executeApprovedTool(ctx context.Context, runID string, agent co
 		result.Error = "persist tool output: " + err.Error()
 	}
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})
-	_ = e.writeMemory(ctx, runID, agent, []memoryMessage{{
-		Role:       string(llm.RoleTool),
-		Content:    string(mustMarshal(result)),
-		Tool:       call.Name,
-		ToolCallID: call.ID,
-	}})
 	if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute {
 		_ = e.markPlanStepDone(ctx, runID, call.Name)
 	}

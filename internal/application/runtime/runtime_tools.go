@@ -16,7 +16,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
-func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int) core.ToolResult {
+func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int, skipMemory bool) core.ToolResult {
 	if subAgentName, ok := e.delegateTarget(agent, call.Name); ok {
 		resource := toolResource(agent, call, nil)
 		if err := e.authorizeTool(ctx, runID, resource); err != nil {
@@ -93,12 +93,9 @@ func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agen
 	}
 	e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})
-	_ = e.writeMemory(ctx, runID, agent, []memoryMessage{{
-		Role:       string(llm.RoleTool),
-		Content:    string(mustMarshal(result)),
-		Tool:       call.Name,
-		ToolCallID: call.ID,
-	}})
+	if !skipMemory {
+		_ = e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromToolResult(call, result)})
+	}
 	return result
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 	"github.com/aijustin/agentflow-go/pkg/observability"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
@@ -37,6 +38,84 @@ func memoryMessageFromLLM(msg llm.Message) memoryMessage {
 		Tool:       msg.Name,
 		ToolCallID: msg.ToolCallID,
 	}
+}
+
+func memoryMessageFromToolResult(call llm.ToolCall, result core.ToolResult) memoryMessage {
+	return memoryMessage{
+		Role:       string(llm.RoleTool),
+		Content:    string(mustMarshal(result)),
+		Tool:       call.Name,
+		ToolCallID: call.ID,
+	}
+}
+
+func lastAssistantWithToolCallsIndex(messages []llm.Message) int {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == llm.RoleAssistant && len(messages[index].ToolCalls) > 0 {
+			return index
+		}
+	}
+	return -1
+}
+
+func (e *Engine) persistToolTurnMemory(ctx context.Context, runID string, agent core.Agent, assistant llm.Message, tools []memoryMessage) error {
+	if len(assistant.ToolCalls) == 0 && len(tools) == 0 {
+		return nil
+	}
+	batch := make([]memoryMessage, 0, 1+len(tools))
+	batch = append(batch, memoryMessageFromLLM(assistant))
+	batch = append(batch, tools...)
+	return e.writeMemory(ctx, runID, agent, batch)
+}
+
+func (e *Engine) persistToolTurnFromStepOutputs(ctx context.Context, runID string, agent core.Agent, assistant llm.Message) error {
+	if len(assistant.ToolCalls) == 0 {
+		return nil
+	}
+	snapshot, err := e.runs.Load(ctx, runID)
+	if err != nil {
+		return err
+	}
+	tools := make([]memoryMessage, 0, len(assistant.ToolCalls))
+	for _, call := range assistant.ToolCalls {
+		raw, ok, err := e.stepOutputBytes(ctx, snapshot, "tool."+call.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		var result core.ToolResult
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return fmt.Errorf("runtime: decode tool output %q: %w", call.ID, err)
+		}
+		tools = append(tools, memoryMessageFromToolResult(call, result))
+	}
+	if len(tools) == 0 {
+		return nil
+	}
+	return e.persistToolTurnMemory(ctx, runID, agent, assistant, tools)
+}
+
+func (e *Engine) stepOutputBytes(ctx context.Context, snapshot runstate.RunSnapshot, key string) (json.RawMessage, bool, error) {
+	if snapshot.StepOutputs == nil {
+		return nil, false, nil
+	}
+	ref, ok := snapshot.StepOutputs[key]
+	if !ok {
+		return nil, false, nil
+	}
+	if len(ref.Inline) > 0 {
+		return ref.Inline, true, nil
+	}
+	if ref.Blob == nil || e.blobs == nil {
+		return nil, false, nil
+	}
+	raw, err := e.blobs.Get(ctx, *ref.Blob)
+	if err != nil {
+		return nil, false, err
+	}
+	return raw, true, nil
 }
 
 func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent, query string) ([]llm.Message, error) {
