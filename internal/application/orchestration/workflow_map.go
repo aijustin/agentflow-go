@@ -90,6 +90,26 @@ func (r *WorkflowRunner) runMapNode(ctx context.Context, scenario core.Scenario,
 
 scheduleLoop:
 	for index, item := range items {
+		childID := fmt.Sprintf("%s.%s.%s.%d", node.ID, spec.Branch.Kind, spec.Branch.Ref, index)
+		if spec.Branch.Kind == core.NodeTransform {
+			childID = fmt.Sprintf("%s.transform.%d", node.ID, index)
+		}
+		if spec.Branch.Kind == core.NodeSubgraph {
+			childID = fmt.Sprintf("%s.subgraph.%s.%d", node.ID, spec.Branch.Ref, index)
+		}
+		memberKey := fmt.Sprintf("%d", index)
+		if raw, ok, err := r.stepOutputRaw(ctx, runID, childID); err != nil {
+			return err
+		} else if ok {
+			var value any
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return fmt.Errorf("orchestration: map node %q decode cached output for index %d: %w", node.ID, index, err)
+			}
+			mu.Lock()
+			outputs[memberKey] = value
+			mu.Unlock()
+			continue
+		}
 		// Acquire a slot before launching so the number of live branch
 		// goroutines never exceeds limit. Acquiring also stops scheduling new
 		// work once the group is cancelled (e.g. a pause or hard failure).
@@ -115,25 +135,18 @@ scheduleLoop:
 				errs <- fmt.Errorf("orchestration: map node %q branch input: %w", node.ID, err)
 				return
 			}
-			childID := fmt.Sprintf("%s.%s.%s.%d", node.ID, spec.Branch.Kind, spec.Branch.Ref, index)
-			if spec.Branch.Kind == core.NodeTransform {
-				childID = fmt.Sprintf("%s.transform.%d", node.ID, index)
-			}
-			if spec.Branch.Kind == core.NodeSubgraph {
-				childID = fmt.Sprintf("%s.subgraph.%s.%d", node.ID, spec.Branch.Ref, index)
-			}
 			child := core.WorkflowNode{
 				ID:    childID,
 				Kind:  spec.Branch.Kind,
 				Ref:   spec.Branch.Ref,
 				Input: childInput,
 			}
-			memberKey := fmt.Sprintf("%d", index)
 
 			if err := groupCtx.Err(); err != nil {
 				return
 			}
-			if err := r.runNodeWithRetry(groupCtx, scenario, child, runID); err != nil {
+			branchCtx := withParallelChild(groupCtx)
+			if err := r.runNodeWithRetry(branchCtx, scenario, child, runID); err != nil {
 				// A pause must always halt the whole map, even under
 				// collect_errors: it is not a failure to be aggregated.
 				var paused WorkflowPausedError
@@ -153,7 +166,7 @@ scheduleLoop:
 				errs <- err
 				return
 			}
-			raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
+			raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
 			if err != nil {
 				if collectErrors {
 					mu.Lock()

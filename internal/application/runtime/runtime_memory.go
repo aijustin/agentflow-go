@@ -72,7 +72,7 @@ func (e *Engine) persistToolTurnFromStepOutputs(ctx context.Context, runID strin
 	if len(assistant.ToolCalls) == 0 {
 		return nil
 	}
-	snapshot, err := e.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return err
 	}

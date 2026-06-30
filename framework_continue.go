@@ -98,7 +98,36 @@ func (f *Framework) continueRun(ctx context.Context, runID string) (RunResult, e
 }
 
 func (f *Framework) continueWorkflowRun(ctx context.Context, runID string) (RunResult, error) {
+	if err := f.applyWorkflowAmendment(ctx, runID); err != nil {
+		return RunResult{}, err
+	}
 	return f.finishWorkflowRun(ctx, runID, true)
+}
+
+func (f *Framework) applyWorkflowAmendment(ctx context.Context, runID string) error {
+	snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	if err != nil {
+		return err
+	}
+	raw, ok := snapshot.Variables["human_amendment"]
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	amendment := variableJSONString(snapshot.Variables, "human_amendment")
+	if amendment == "" {
+		return nil
+	}
+	if snapshot.Variables == nil {
+		snapshot.Variables = make(map[string]json.RawMessage)
+	}
+	prior := variableJSONString(snapshot.Variables, resumePromptVar)
+	if prior == "" {
+		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", amendment))
+	} else {
+		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", prior+"\n\nHuman feedback: "+amendment))
+	}
+	delete(snapshot.Variables, "human_amendment")
+	return f.runs.Save(ctx, &snapshot, snapshot.Version)
 }
 
 func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCompleted bool) (RunResult, error) {
@@ -189,15 +218,19 @@ func (f *Framework) newWorkflowRunner() *orchestration.WorkflowRunner {
 	)
 }
 
-func saveRunResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
+func saveRunResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest, resolvedAgent string) {
 	if snapshot.Variables == nil {
 		snapshot.Variables = make(map[string]json.RawMessage)
 	}
 	if req.Prompt != "" {
 		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", req.Prompt))
 	}
-	if req.Agent != "" {
-		snapshot.Variables[resumeAgentVar] = json.RawMessage(fmt.Sprintf("%q", req.Agent))
+	agentName := req.Agent
+	if agentName == "" {
+		agentName = resolvedAgent
+	}
+	if agentName != "" {
+		snapshot.Variables[resumeAgentVar] = json.RawMessage(fmt.Sprintf("%q", agentName))
 	}
 }
 

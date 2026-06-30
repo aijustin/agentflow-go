@@ -5,7 +5,8 @@ import "context"
 type workflowContextKey struct{}
 
 type workflowExecScope struct {
-	stepPrefix string
+	stepPrefix    string
+	parallelChild bool
 }
 
 func withStepPrefix(ctx context.Context, prefix string) context.Context {
@@ -25,6 +26,20 @@ func stepPrefixFrom(ctx context.Context) string {
 		return ""
 	}
 	return scope.stepPrefix
+}
+
+func withParallelChild(ctx context.Context) context.Context {
+	scope, ok := ctx.Value(workflowContextKey{}).(workflowExecScope)
+	if !ok {
+		scope = workflowExecScope{}
+	}
+	scope.parallelChild = true
+	return context.WithValue(ctx, workflowContextKey{}, scope)
+}
+
+func skipCurrentNodeUpdate(ctx context.Context) bool {
+	scope, ok := ctx.Value(workflowContextKey{}).(workflowExecScope)
+	return ok && scope.parallelChild
 }
 
 func storageNodeID(ctx context.Context, nodeID string) string {

@@ -764,7 +764,8 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
-	saveRunResumeMetadata(&snapshot, req)
+	resolvedAgent, _ := f.engine.ResolveAgentName(req.Agent)
+	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
 	runstate.StampTenant(ctx, &snapshot)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
 		return RunResult{}, err
@@ -826,7 +827,8 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
-	saveRunResumeMetadata(&snapshot, req)
+	resolvedAgent, _ := f.engine.ResolveAgentName(req.Agent)
+	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
 	runstate.StampTenant(ctx, &snapshot)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
 		return req, RunResult{}, err
@@ -879,8 +881,12 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResult, error) {
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		if _, err := f.runWorkflow(ctx, req); err != nil {
+		result, err := f.runWorkflow(ctx, req)
+		if err != nil {
 			return RunResult{}, err
+		}
+		if result.Status == runstate.RunStatusPaused {
+			return result, nil
 		}
 		return f.engine.RunStructured(ctx, req)
 	case core.OrchestrationHybrid:
@@ -898,8 +904,12 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		if _, err := f.runWorkflow(ctx, req); err != nil {
+		result, err := f.runWorkflow(ctx, req)
+		if err != nil {
 			return nil, err
+		}
+		if result.Status == runstate.RunStatusPaused {
+			return nil, fmt.Errorf("agentflow: workflow paused at token %q", result.Token)
 		}
 		return f.engine.Stream(ctx, req)
 	case core.OrchestrationHybrid:

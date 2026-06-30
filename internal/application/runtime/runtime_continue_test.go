@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
@@ -392,5 +393,88 @@ func TestEngineToolLoopMemoryUnchangedWhilePaused(t *testing.T) {
 	}
 	if stored[4].Role != string(llm.RoleAssistant) || stored[4].Content != "done" {
 		t.Fatalf("expected final assistant answer, got %+v", stored[4])
+	}
+}
+
+func TestEngineContinueAppliesHumanAmendment(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := &capturingGateway{response: "amended"}
+	scenario := core.Scenario{
+		Name: "hitl-amend",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode:        core.OrchestrationAutonomous,
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true, Checkpoints: []string{"before_final_answer"}},
+		},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway, HumanGate: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-amend", Agent: "assistant", Prompt: "hello"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, json.RawMessage(`"please revise"`)); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-amend")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "amended" {
+		t.Fatalf("expected amended output, got %q", result.Output)
+	}
+	found := false
+	for _, msg := range gateway.req.Messages {
+		if msg.Role == llm.RoleUser && strings.Contains(msg.Content, "please revise") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected amendment in llm messages, got %+v", gateway.req.Messages)
+	}
+}
+
+func TestEngineContinueToolApprovalRejectsCorruptToolCounts(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	scenario := core.Scenario{
+		Name: "corrupt-counts",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default", Tools: []string{"echo"}},
+		},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalPause},
+		},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: mock.NewGateway()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := runstate.RunSnapshot{
+		RunID:        "run-corrupt",
+		ScenarioName: scenario.Name,
+		Status:       runstate.RunStatusRunning,
+		Variables: map[string]json.RawMessage{
+			checkpointKindVar:       json.RawMessage(`"tool_approval"`),
+			checkpointAgentVar:      json.RawMessage(`"assistant"`),
+			checkpointToolCountsVar: json.RawMessage(`not-json`),
+		},
+	}
+	if err := repo.Save(context.Background(), &snapshot, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.ContinueAfterCheckpoint(context.Background(), "run-corrupt")
+	if err == nil || !strings.Contains(err.Error(), "decode checkpoint tool counts") {
+		t.Fatalf("expected decode error, got %v", err)
 	}
 }

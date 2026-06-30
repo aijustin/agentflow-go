@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -56,7 +57,7 @@ func parsePlanSteps(rawPlan []byte, maxSteps int) []planExecutionStep {
 }
 
 func (e *Engine) markPlanStepDone(ctx context.Context, runID, toolName string) error {
-	snapshot, err := e.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return err
 	}
@@ -90,7 +91,7 @@ func (e *Engine) markPlanStepDone(ctx context.Context, runID, toolName string) e
 		return err
 	}
 	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err = e.runs.Load(ctx, runID)
+		snapshot, err = runstate.LoadAuthorized(ctx, e.runs, runID)
 		if err != nil {
 			return err
 		}
@@ -99,7 +100,7 @@ func (e *Engine) markPlanStepDone(ctx context.Context, runID, toolName string) e
 		}
 		snapshot.StepOutputs["plan"] = runstate.StepOutputRef{Inline: raw}
 		if err := e.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
-			if err == runstate.ErrStaleSnapshot {
+			if errors.Is(err, runstate.ErrStaleSnapshot) {
 				continue
 			}
 			return err

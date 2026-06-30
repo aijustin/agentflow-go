@@ -2,6 +2,7 @@ package agentflow_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -45,6 +47,30 @@ func TestFrameworkRunEnforcesTenantIsolation(t *testing.T) {
 	_, err = runstate.LoadAuthorized(tenantB, fw.RunStateRepository(), result.RunID)
 	if !errors.Is(err, runstate.ErrTenantMismatch) {
 		t.Fatalf("expected tenant mismatch on load, got %v", err)
+	}
+}
+
+func TestFrameworkJobHandlerRejectsInvalidPrincipal(t *testing.T) {
+	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(asyncpkg.RunPayload{
+		RunID:     "run-bad-principal",
+		Agent:     "assistant",
+		Prompt:    "hello",
+		Principal: identity.Principal{ID: "user-1", Type: identity.PrincipalUser},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = handler.HandleJob(context.Background(), asyncpkg.Job{ID: "job-bad", Type: asyncpkg.RunJobType, RunID: "run-bad-principal", Payload: payload})
+	if err == nil || !strings.Contains(err.Error(), "invalid async job principal") {
+		t.Fatalf("expected invalid principal error, got %v", err)
 	}
 }
 

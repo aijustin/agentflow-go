@@ -312,10 +312,10 @@ func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.A
 	toolSpecs := e.toolSpecs(agent)
 	messages := append([]llm.Message(nil), req.Messages...)
 	toolCounts := make(map[string]int)
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0, 0)
 }
 
-func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int) (string, error) {
+func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int, stepsConsumedBase int) (string, error) {
 	if hint := e.planningToolHint(ctx, runID); hint != "" {
 		messages = appendPlanningHint(messages, hint)
 	}
@@ -361,7 +361,7 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 			return resp.Message.Content, nil
 		}
 		var dispatchErr error
-		messages, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts, prompt, true)
+		messages, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts, prompt, true, stepsConsumedBase+step+1)
 		if dispatchErr != nil {
 			return "", dispatchErr
 		}
@@ -372,10 +372,10 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 			return "", err
 		}
 		if len(replanned) > len(messages) {
-			return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts, maxSteps, prompt, replanAttempts+1)
+			return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts, maxSteps, prompt, replanAttempts+1, stepsConsumedBase)
 		}
 	}
-	return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", maxSteps)
+	return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", stepsConsumedBase+maxSteps)
 }
 
 // dispatchToolCalls executes an assistant turn's tool calls in order. Before
@@ -386,11 +386,11 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 // persistTurnMemory is true and every call in the batch completes, the
 // assistant turn and tool results are written to memory together so a mid-turn
 // pause never leaves partial assistant/tool_call pairings in memory.
-func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, turnAssistant llm.Message, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, persistTurnMemory bool) ([]llm.Message, error) {
+func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, turnAssistant llm.Message, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, persistTurnMemory bool, stepsConsumed int) ([]llm.Message, error) {
 	toolMem := make([]memoryMessage, 0, len(calls))
 	for index := range calls {
 		toolCall := calls[index]
-		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, toolCounts, prompt); err != nil {
+		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, toolCounts, prompt, stepsConsumed); err != nil {
 			return messages, err
 		} else if paused != nil {
 			return messages, *paused

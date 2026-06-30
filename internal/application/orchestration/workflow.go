@@ -471,7 +471,9 @@ func (r *WorkflowRunner) saveStepOutput(ctx context.Context, scenario core.Scena
 		if snapshot.StepOutputs == nil {
 			snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
 		}
-		snapshot.CurrentNodeID = nodeID
+		if !skipCurrentNodeUpdate(ctx) {
+			snapshot.CurrentNodeID = nodeID
+		}
 		ref, err := r.stepOutputRef(ctx, runID, nodeID, scenario.Runtime.StepOutputThreshold, raw)
 		if err != nil {
 			return err

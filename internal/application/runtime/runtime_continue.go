@@ -13,15 +13,17 @@ import (
 )
 
 const (
-	checkpointKindVar       = "checkpoint_kind"
-	checkpointPromptVar     = "checkpoint_prompt"
-	checkpointAgentVar      = "checkpoint_agent"
-	checkpointContextVar    = "checkpoint_context"
-	checkpointResumedVar    = "checkpoint_resumed"
-	checkpointToolCallsVar  = "checkpoint_tool_calls"
-	checkpointMessagesVar   = "checkpoint_messages"
-	checkpointToolCountsVar = "checkpoint_tool_counts"
-	checkpointOutputModeVar = "checkpoint_output_mode"
+	checkpointKindVar            = "checkpoint_kind"
+	checkpointPromptVar          = "checkpoint_prompt"
+	checkpointAgentVar           = "checkpoint_agent"
+	checkpointContextVar         = "checkpoint_context"
+	checkpointResumedVar         = "checkpoint_resumed"
+	checkpointToolCallsVar       = "checkpoint_tool_calls"
+	checkpointMessagesVar        = "checkpoint_messages"
+	checkpointToolCountsVar      = "checkpoint_tool_counts"
+	checkpointOutputModeVar      = "checkpoint_output_mode"
+	checkpointStepsConsumedVar   = "checkpoint_steps_consumed"
+	humanAmendmentVar            = "human_amendment"
 )
 
 // RunPausedError indicates the run paused and requires human approval before continuing.
@@ -56,10 +58,11 @@ func (e *Engine) ContinueAfterCheckpoint(ctx context.Context, runID string) (Run
 }
 
 func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstate.RunSnapshot) (RunResult, error) {
+	prompt := applyHumanAmendment(snapshot.Variables, variableString(snapshot.Variables, checkpointPromptVar))
 	req := RunRequest{
 		RunID:   snapshot.RunID,
 		Agent:   variableString(snapshot.Variables, checkpointAgentVar),
-		Prompt:  variableString(snapshot.Variables, checkpointPromptVar),
+		Prompt:  prompt,
 		Context: snapshot.Variables[checkpointContextVar],
 	}
 	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
@@ -105,9 +108,12 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	}
 	toolCounts := map[string]int{}
 	if raw := snapshot.Variables[checkpointToolCountsVar]; len(raw) > 0 {
-		_ = json.Unmarshal(raw, &toolCounts)
+		if err := json.Unmarshal(raw, &toolCounts); err != nil {
+			return RunResult{}, fmt.Errorf("runtime: decode checkpoint tool counts: %w", err)
+		}
 	}
-	prompt := variableString(snapshot.Variables, checkpointPromptVar)
+	prompt := applyHumanAmendment(snapshot.Variables, variableString(snapshot.Variables, checkpointPromptVar))
+	messages = injectHumanAmendmentMessages(messages, snapshot.Variables)
 	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
 		return RunResult{}, err
 	}
@@ -116,7 +122,8 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	if !ok || !e.llm.Supports(agent.LLM, llm.CapToolCall) {
 		return RunResult{}, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM)
 	}
-	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, toolCounts, caller, prompt)
+	stepsConsumed := checkpointStepsConsumed(snapshot.Variables)
+	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, toolCounts, caller, prompt, stepsConsumed)
 	if err != nil {
 		var paused RunPausedError
 		if errorsAsRunPaused(err, &paused) {
@@ -128,7 +135,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	return e.completeRun(ctx, snapshot.RunID, output)
 }
 
-func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string) (string, error) {
+func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string, stepsConsumed int) (string, error) {
 	if len(pending) > 0 {
 		turnStart := lastAssistantWithToolCallsIndex(messages)
 		// pending[0] is the tool call the human just approved; execute it
@@ -153,7 +160,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
 			_ = e.markPlanStepDone(ctx, runID, approved.Name)
 		}
-		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false)
+		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false, stepsConsumed)
 		if err != nil {
 			return "", err
 		}
@@ -164,6 +171,10 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		}
 	}
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
+	remainingSteps := maxSteps - stepsConsumed
+	if remainingSteps <= 0 {
+		return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", maxSteps)
+	}
 	toolSpecs := e.toolSpecs(agent)
 	baseReq := llm.ChatRequest{
 		Messages:        messages,
@@ -174,7 +185,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		ReasoningEffort: profile.ReasoningEffort,
 		ExtraBody:       profile.ExtraBody,
 	}
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, remainingSteps, prompt, 0, stepsConsumed)
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {
@@ -200,34 +211,69 @@ func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResu
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
 
-func (e *Engine) markCheckpointResumed(ctx context.Context, snapshot *runstate.RunSnapshot) error {
-	if snapshot.Variables == nil {
-		snapshot.Variables = make(map[string]json.RawMessage)
+func applyHumanAmendment(vars map[string]json.RawMessage, prompt string) string {
+	if vars == nil {
+		return prompt
 	}
-	snapshot.Variables[checkpointResumedVar] = json.RawMessage(`true`)
-	return e.runs.Save(ctx, snapshot, snapshot.Version)
-}
-
-func (e *Engine) isCheckpointResumed(snapshot runstate.RunSnapshot) bool {
-	raw, ok := snapshot.Variables[checkpointResumedVar]
+	raw, ok := vars[humanAmendmentVar]
 	if !ok || len(raw) == 0 {
-		return false
+		return prompt
 	}
-	var resumed bool
-	if err := json.Unmarshal(raw, &resumed); err != nil {
-		return false
+	amendment := decodeAmendmentText(raw)
+	if amendment == "" {
+		return prompt
 	}
-	return resumed
+	if strings.TrimSpace(prompt) == "" {
+		return amendment
+	}
+	return prompt + "\n\nHuman feedback: " + amendment
 }
 
-func (e *Engine) saveCheckpointVariables(ctx context.Context, snapshot *runstate.RunSnapshot, values map[string]json.RawMessage) error {
-	if snapshot.Variables == nil {
-		snapshot.Variables = make(map[string]json.RawMessage)
+func injectHumanAmendmentMessages(messages []llm.Message, vars map[string]json.RawMessage) []llm.Message {
+	if vars == nil {
+		return messages
 	}
-	for key, value := range values {
-		snapshot.Variables[key] = value
+	raw, ok := vars[humanAmendmentVar]
+	if !ok || len(raw) == 0 {
+		return messages
 	}
-	return e.runs.Save(ctx, snapshot, snapshot.Version)
+	amendment := decodeAmendmentText(raw)
+	if amendment == "" {
+		return messages
+	}
+	out := append([]llm.Message(nil), messages...)
+	out = append(out, llm.Message{Role: llm.RoleUser, Content: "Human feedback: " + amendment})
+	return out
+}
+
+func decodeAmendmentText(raw json.RawMessage) string {
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return strings.TrimSpace(value)
+}
+
+func clearHumanAmendment(snapshot *runstate.RunSnapshot) {
+	if snapshot == nil || snapshot.Variables == nil {
+		return
+	}
+	delete(snapshot.Variables, humanAmendmentVar)
+}
+
+func checkpointStepsConsumed(vars map[string]json.RawMessage) int {
+	if vars == nil {
+		return 0
+	}
+	raw, ok := vars[checkpointStepsConsumedVar]
+	if !ok || len(raw) == 0 {
+		return 0
+	}
+	var consumed int
+	if err := json.Unmarshal(raw, &consumed); err != nil {
+		return 0
+	}
+	return consumed
 }
 
 func variableString(vars map[string]json.RawMessage, key string) string {
@@ -245,6 +291,18 @@ func variableString(vars map[string]json.RawMessage, key string) string {
 	return value
 }
 
+func (e *Engine) isCheckpointResumed(snapshot runstate.RunSnapshot) bool {
+	raw, ok := snapshot.Variables[checkpointResumedVar]
+	if !ok || len(raw) == 0 {
+		return false
+	}
+	var resumed bool
+	if err := json.Unmarshal(raw, &resumed); err != nil {
+		return false
+	}
+	return resumed
+}
+
 func errorsAsRunPaused(err error, target *RunPausedError) bool {
 	if err == nil {
 		return false
@@ -252,7 +310,7 @@ func errorsAsRunPaused(err error, target *RunPausedError) bool {
 	return errors.As(err, target)
 }
 
-func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string) (*RunPausedError, error) {
+func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, stepsConsumed int) (*RunPausedError, error) {
 	if len(pending) == 0 {
 		return nil, nil
 	}
@@ -284,12 +342,13 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		return nil, err
 	}
 	vars := map[string]json.RawMessage{
-		checkpointKindVar:       json.RawMessage(`"tool_approval"`),
-		checkpointAgentVar:      json.RawMessage(fmt.Sprintf("%q", agent.Name)),
-		checkpointPromptVar:     json.RawMessage(fmt.Sprintf("%q", prompt)),
-		checkpointToolCallsVar:  toolCallsRaw,
-		checkpointMessagesVar:   messagesRaw,
-		checkpointToolCountsVar: countsRaw,
+		checkpointKindVar:            json.RawMessage(`"tool_approval"`),
+		checkpointAgentVar:           json.RawMessage(fmt.Sprintf("%q", agent.Name)),
+		checkpointPromptVar:          json.RawMessage(fmt.Sprintf("%q", prompt)),
+		checkpointToolCallsVar:       toolCallsRaw,
+		checkpointMessagesVar:        messagesRaw,
+		checkpointToolCountsVar:      countsRaw,
+		checkpointStepsConsumedVar:     json.RawMessage(fmt.Sprintf("%d", stepsConsumed)),
 	}
 	if err := e.saveCheckpointVariables(ctx, &snapshot, vars); err != nil {
 		return nil, err

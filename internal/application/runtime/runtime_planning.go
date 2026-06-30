@@ -8,6 +8,7 @@ import (
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func planAllowedTools(e *Engine, agent core.Agent) map[string]struct{} {
@@ -29,7 +30,7 @@ func (e *Engine) planningToolHint(ctx context.Context, runID string) string {
 	if !e.scenario.Orchestration.Planning.Enabled || !e.scenario.Orchestration.Planning.Execute {
 		return ""
 	}
-	snapshot, err := e.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return ""
 	}
@@ -54,7 +55,7 @@ func (e *Engine) planningToolHint(ctx context.Context, runID string) string {
 }
 
 func (e *Engine) planningComplete(ctx context.Context, runID string) bool {
-	snapshot, err := e.runs.Load(ctx, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return true
 	}

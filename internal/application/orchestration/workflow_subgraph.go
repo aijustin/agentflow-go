@@ -39,7 +39,19 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 		MaxParallel: scenario.Orchestration.MaxParallel,
 	}
 	subCtx := withStepPrefix(ctx, prefix)
-	if err := r.run(subCtx, subScenario, runID, nil); err != nil {
+	alreadyDone := make(map[string]bool)
+	if r.runs != nil {
+		snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
+		if err != nil {
+			return err
+		}
+		for id := range snapshot.StepOutputs {
+			if strings.HasPrefix(id, prefix) {
+				alreadyDone[bareNodeID(id, prefix)] = true
+			}
+		}
+	}
+	if err := r.run(subCtx, subScenario, runID, alreadyDone); err != nil {
 		return err
 	}
 	produced := make(map[string]json.RawMessage)

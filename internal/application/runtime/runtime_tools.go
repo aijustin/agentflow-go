@@ -38,6 +38,12 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
 			return result, nil
 		}
+		delegateTool := core.Tool{Name: call.Name, SideEffect: core.SideEffectRead}
+		if err := e.authorizeGovernanceTool(ctx, runID, agent, delegateTool, call, callCounts); err != nil {
+			result := core.ToolResult{Tool: call.Name, Error: "tool invocation blocked by governance"}
+			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
+			return result, nil
+		}
 		return e.dispatchSubAgent(ctx, runID, agent, subAgentName, call)
 	}
 	if !agentAllowsTool(agent, call.Name) {

@@ -129,9 +129,6 @@ type RunResult struct {
 func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
 	defer cancel()
-	if req.RunID == "" {
-		req.RunID = generateRunID()
-	}
 	ctx, runSpan := e.startSpan(ctx, observability.SpanRun,
 		observability.Attribute{Key: "run_id", Value: req.RunID},
 		observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
@@ -139,20 +136,9 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	defer runSpan.End()
 
 	runStart := time.Now()
-	snapshot := runstate.RunSnapshot{
-		RunID:        req.RunID,
-		ScenarioName: e.scenario.Name,
-		Status:       runstate.RunStatusRunning,
-		Variables: map[string]json.RawMessage{
-			"input": req.Context,
-		},
-		StepOutputs: make(map[string]runstate.StepOutputRef),
-	}
-	runstate.StampTenant(ctx, &snapshot)
-	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
+	if _, err := e.beginRun(ctx, &req); err != nil {
 		return RunResult{}, err
 	}
-	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	failRun := func(err error) (RunResult, error) {
 		runSpan.RecordError(err)
 		e.markRunFailed(ctx, req.RunID, err)
@@ -166,36 +152,16 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if agentErr != nil {
 		return failRun(agentErr)
 	}
-	checkpointVars := map[string]json.RawMessage{
-		checkpointPromptVar:  json.RawMessage(fmt.Sprintf("%q", req.Prompt)),
-		checkpointAgentVar:   json.RawMessage(fmt.Sprintf("%q", agent.Name)),
-		checkpointContextVar: req.Context,
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
+	if err != nil {
+		return failRun(err)
 	}
-	if e.shouldPauseBeforeFinal() {
-		if e.gate == nil {
-			return failRun(fmt.Errorf("runtime: human gate required for configured checkpoint"))
-		}
-		checkpointVars[checkpointKindVar] = json.RawMessage(`"before_final_answer"`)
-		if saveErr := e.saveCheckpointVariables(ctx, &snapshot, checkpointVars); saveErr != nil {
-			return failRun(saveErr)
-		}
-		loaded, loadErr := e.runs.Load(ctx, req.RunID)
-		if loadErr != nil {
-			return failRun(loadErr)
-		}
-		snapshot = loaded
-		state := core.CheckpointState{
-			RunID:   req.RunID,
-			Version: snapshot.Version,
-			NodeID:  "before_final_answer",
-			Payload: []byte(fmt.Sprintf(`{"prompt":%q,"agent":%q}`, req.Prompt, agent.Name)),
-		}
-		token, err := e.gate.Pause(ctx, state)
+	if e.shouldPauseBeforeFinal() && !e.isCheckpointResumed(snapshot) {
+		result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &snapshot, checkpointPauseOptions{})
 		if err != nil {
 			return failRun(err)
 		}
-		e.emit(ctx, core.EventRunPaused, req.RunID, state.Payload)
-		return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil
+		return result, nil
 	}
 
 	output, err := e.answer(ctx, req)
@@ -256,35 +222,12 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 			return RunResult{}, err
 		}
 		if !e.isCheckpointResumed(snapshot) {
-			checkpointVars := map[string]json.RawMessage{
-				checkpointPromptVar:     json.RawMessage(fmt.Sprintf("%q", req.Prompt)),
-				checkpointAgentVar:      json.RawMessage(fmt.Sprintf("%q", agent.Name)),
-				checkpointContextVar:    req.Context,
-				checkpointKindVar:       json.RawMessage(`"before_final_answer"`),
-				checkpointOutputModeVar: json.RawMessage(`"structured"`),
-			}
-			if saveErr := e.saveCheckpointVariables(ctx, &snapshot, checkpointVars); saveErr != nil {
-				e.markRunFailed(ctx, req.RunID, saveErr)
-				return RunResult{}, saveErr
-			}
-			loaded, loadErr := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
-			if loadErr != nil {
-				e.markRunFailed(ctx, req.RunID, loadErr)
-				return RunResult{}, loadErr
-			}
-			state := core.CheckpointState{
-				RunID:   req.RunID,
-				Version: loaded.Version,
-				NodeID:  "before_final_answer",
-				Payload: []byte(fmt.Sprintf(`{"prompt":%q,"agent":%q}`, req.Prompt, agent.Name)),
-			}
-			token, err := e.gate.Pause(ctx, state)
+			result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &snapshot, checkpointPauseOptions{outputMode: "structured"})
 			if err != nil {
 				e.markRunFailed(ctx, req.RunID, err)
 				return RunResult{}, err
 			}
-			e.emit(ctx, core.EventRunPaused, req.RunID, state.Payload)
-			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil
+			return result, nil
 		}
 	}
 	raw, err := e.structuredAnswer(ctx, req)
@@ -339,15 +282,31 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		cancel()
 		return nil, err
 	}
-	out := make(chan llm.ChatChunk)
+	out := make(chan llm.ChatChunk, 1)
 	go func() {
 		defer close(out)
 		defer streamCancel()
 		defer cancel()
-		// send forwards a chunk unless the caller cancelled the context. On
-		// cancellation the deferred streamCancel/cancel tear down the upstream
-		// gateway stream, so neither this goroutine nor the source leaks.
+		sentTerminal := false
+		sendTerminal := func(c llm.ChatChunk) {
+			if sentTerminal {
+				return
+			}
+			sentTerminal = true
+			c.Done = true
+			select {
+			case out <- c:
+			case <-ctx.Done():
+			}
+		}
 		send := func(c llm.ChatChunk) bool {
+			if sentTerminal {
+				return false
+			}
+			if c.Done {
+				sendTerminal(c)
+				return true
+			}
 			select {
 			case out <- c:
 				return true
@@ -374,7 +333,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 			}
 			if chunk.Done {
 				if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, b.String()); err != nil {
-					send(llm.ChatChunk{Done: true, Error: err.Error()})
+					sendTerminal(llm.ChatChunk{Error: err.Error()})
 				}
 				return
 			}
@@ -388,7 +347,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 			return
 		}
 		if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, b.String()); err != nil {
-			send(llm.ChatChunk{Done: true, Error: err.Error()})
+			sendTerminal(llm.ChatChunk{Error: err.Error()})
 		}
 	}()
 	return out, nil
@@ -430,6 +389,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	if loaded.Status == runstate.RunStatusFailed {
 		return RunResult{}, ErrRunFailed
 	}
+	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	agent, agentErr := e.resolveAgent(req.Agent)
 	if agentErr != nil {
 		return RunResult{}, agentErr
@@ -438,31 +398,11 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		if e.gate == nil {
 			return RunResult{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
 		}
-		checkpointVars := map[string]json.RawMessage{
-			checkpointPromptVar:  json.RawMessage(fmt.Sprintf("%q", req.Prompt)),
-			checkpointAgentVar:   json.RawMessage(fmt.Sprintf("%q", agent.Name)),
-			checkpointContextVar: req.Context,
-			checkpointKindVar:    json.RawMessage(`"before_final_answer"`),
-		}
-		if saveErr := e.saveCheckpointVariables(ctx, &loaded, checkpointVars); saveErr != nil {
-			return RunResult{}, saveErr
-		}
-		loaded, loadErr := e.runs.Load(ctx, req.RunID)
-		if loadErr != nil {
-			return RunResult{}, loadErr
-		}
-		state := core.CheckpointState{
-			RunID:   req.RunID,
-			Version: loaded.Version,
-			NodeID:  "before_final_answer",
-			Payload: []byte(fmt.Sprintf(`{"prompt":%q,"agent":%q}`, req.Prompt, agent.Name)),
-		}
-		token, err := e.gate.Pause(ctx, state)
+		result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &loaded, checkpointPauseOptions{})
 		if err != nil {
 			return RunResult{}, err
 		}
-		e.emit(ctx, core.EventRunPaused, req.RunID, state.Payload)
-		return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil
+		return result, nil
 	}
 	output, err := e.answer(ctx, req)
 	if err != nil {

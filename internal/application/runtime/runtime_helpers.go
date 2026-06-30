@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -31,13 +32,26 @@ func (e *Engine) maxAttempts(agent core.Agent) int {
 	return retries + 1
 }
 
+func (e *Engine) ResolveAgentName(name string) (string, error) {
+	agent, err := e.resolveAgent(name)
+	if err != nil {
+		return "", err
+	}
+	return agent.Name, nil
+}
+
 func (e *Engine) resolveAgent(name string) (core.Agent, error) {
 	agentName := name
 	if agentName == "" {
+		names := make([]string, 0, len(e.scenario.Agents))
 		for candidate := range e.scenario.Agents {
-			agentName = candidate
-			break
+			names = append(names, candidate)
 		}
+		if len(names) == 0 {
+			return core.Agent{}, fmt.Errorf("runtime: no agents configured")
+		}
+		slices.Sort(names)
+		agentName = names[0]
 	}
 	agent, ok := e.scenario.Agents[agentName]
 	if !ok {
@@ -71,7 +85,10 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 		if wasCompleted {
 			saveCtx = runstate.ContextWithStatusTransitionOverride(ctx)
 		}
-		if err := e.runs.Save(saveCtx, &existing, existing.Version); err != nil {
+		if err := e.saveSnapshotWithRetry(saveCtx, req.RunID, func(snapshot *runstate.RunSnapshot) error {
+			snapshot.Status = runstate.RunStatusRunning
+			return nil
+		}); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -84,12 +101,16 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 		ScenarioName: e.scenario.Name,
 		Status:       runstate.RunStatusRunning,
 		Variables: map[string]json.RawMessage{
-			"input": req.Context,
+			"input":          req.Context,
+			runStartedAtVar:  json.RawMessage(fmt.Sprintf("%q", time.Now().UTC().Format(time.RFC3339Nano))),
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
 	runstate.StampTenant(ctx, &snapshot)
 	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
+		if errors.Is(err, runstate.ErrStaleSnapshot) {
+			return false, ErrRunAlreadyCompleted
+		}
 		return false, err
 	}
 	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
@@ -97,7 +118,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 }
 
 func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core.Agent, prompt string, output string) error {
-	loaded, err := e.runs.Load(ctx, runID)
+	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return err
 	}
@@ -119,6 +140,12 @@ func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core
 			{Role: string(llm.RoleAssistant), Content: output},
 		}); err != nil {
 			return err
+		}
+	}
+	if startedAt := variableString(loaded.Variables, runStartedAtVar); startedAt != "" {
+		if runStart, parseErr := time.Parse(time.RFC3339Nano, startedAt); parseErr == nil {
+			e.recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, time.Since(runStart).Seconds(),
+				observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 		}
 	}
 	e.emit(ctx, core.EventRunCompleted, runID, loaded.StepOutputs["final"].Inline)
@@ -162,7 +189,7 @@ func (e *Engine) saveStepOutput(ctx context.Context, runID, key string, value an
 	// outputs, plan updates) do not lose this step output via optimistic
 	// concurrency conflicts, matching the orchestration saveStepOutput.
 	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err := e.runs.Load(ctx, runID)
+		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 		if err != nil {
 			return err
 		}
@@ -215,7 +242,31 @@ func shouldRetry(ctx context.Context, err error) bool {
 	if errors.As(err, &classified) {
 		return classified.Retryable()
 	}
-	return true
+	return false
+}
+
+const runStartedAtVar = "run_started_at"
+
+func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) error {
+	for attempt := 0; attempt < 5; attempt++ {
+		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		if err != nil {
+			return err
+		}
+		if mutate != nil {
+			if err := mutate(&snapshot); err != nil {
+				return err
+			}
+		}
+		if err := e.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+			if errors.Is(err, runstate.ErrStaleSnapshot) {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return fmt.Errorf("runtime: failed to save snapshot %q after stale retries", runID)
 }
 
 func retryDelay(ctx context.Context, attempt int) error {
@@ -250,7 +301,7 @@ func persistenceContext(ctx context.Context) (context.Context, context.CancelFun
 func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
-	if snapshot, err := e.runs.Load(persistCtx, runID); err == nil {
+	if snapshot, err := runstate.LoadAuthorized(persistCtx, e.runs, runID); err == nil {
 		if snapshot.Status == runstate.RunStatusCancelled {
 			e.emit(persistCtx, core.EventRunCancelled, runID, nil)
 			return
@@ -270,7 +321,7 @@ func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
-	if snapshot, err := e.runs.Load(persistCtx, runID); err == nil {
+	if snapshot, err := runstate.LoadAuthorized(persistCtx, e.runs, runID); err == nil {
 		if snapshot.Status != runstate.RunStatusCancelled {
 			if !snapshot.Status.CanTransitionTo(runstate.RunStatusCancelled) {
 				e.logWarn(persistCtx, "runtime: refusing invalid cancellation status transition", "run_id", runID, "status", snapshot.Status)

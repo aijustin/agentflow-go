@@ -1273,9 +1273,21 @@ func (g *retryGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatR
 		if g.err != nil {
 			return llm.ChatResponse{}, g.err
 		}
-		return llm.ChatResponse{}, errors.New("temporary llm failure")
+		return llm.ChatResponse{}, transientRetryError{message: "temporary llm failure"}
 	}
 	return llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "retried"}}, nil
+}
+
+type transientRetryError struct {
+	message string
+}
+
+func (err transientRetryError) Error() string {
+	return err.message
+}
+
+func (err transientRetryError) Retryable() bool {
+	return true
 }
 
 type permanentRetryError struct {
@@ -1352,7 +1364,7 @@ func (t *flakyTool) Execute(ctx context.Context, call core.ToolCall) (core.ToolR
 	}
 	t.calls++
 	if t.calls == 1 {
-		return core.ToolResult{}, errors.New("temporary tool failure")
+		return core.ToolResult{}, transientRetryError{message: "temporary tool failure"}
 	}
 	return core.ToolResult{Tool: call.Tool, Output: call.Input}, nil
 }

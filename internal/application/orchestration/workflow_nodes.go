@@ -110,11 +110,21 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 		wg.Add(1)
 		go func(index int, agentName string) {
 			childID := fmt.Sprintf("%s.agent.%s.%d", node.ID, agentName, index)
+			if raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID); err == nil && ok {
+				var value any
+				if err := json.Unmarshal(raw, &value); err == nil {
+					mu.Lock()
+					outputs[agentName] = value
+					mu.Unlock()
+					wg.Done()
+					return
+				}
+			}
 			child := core.WorkflowNode{ID: childID, Kind: core.NodeAgent, Ref: agentName}
 			runMember(agentName, func(runCtx context.Context) error {
-				return r.runAgentNode(runCtx, scenario, child, runID)
+				return r.runAgentNode(withParallelChild(runCtx), scenario, child, runID)
 			}, func() (any, error) {
-				raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
+				raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
 				if err != nil {
 					return nil, err
 				}
@@ -133,15 +143,25 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 		wg.Add(1)
 		go func(index int, toolName string) {
 			childID := fmt.Sprintf("%s.tool.%s.%d", node.ID, toolName, index)
-			child := core.WorkflowNode{ID: childID, Kind: core.NodeTool, Ref: toolName}
 			memberKey := "tool:" + toolName
 			if index > 0 {
 				memberKey = fmt.Sprintf("%s:%d", memberKey, index)
 			}
+			if raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID); err == nil && ok {
+				var value any
+				if err := json.Unmarshal(raw, &value); err == nil {
+					mu.Lock()
+					outputs[memberKey] = value
+					mu.Unlock()
+					wg.Done()
+					return
+				}
+			}
+			child := core.WorkflowNode{ID: childID, Kind: core.NodeTool, Ref: toolName}
 			runMember(memberKey, func(runCtx context.Context) error {
-				return r.runToolNode(runCtx, scenario, child, runID)
+				return r.runToolNode(withParallelChild(runCtx), scenario, child, runID)
 			}, func() (any, error) {
-				raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
+				raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
 				if err != nil {
 					return nil, err
 				}

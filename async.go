@@ -98,8 +98,11 @@ func (handler *frameworkJobHandler) handleRun(ctx context.Context, job asyncpkg.
 	if payload.RunID == "" {
 		payload.RunID = job.ID
 	}
-	ctx = withJobPrincipal(ctx, payload.Principal)
-	_, err := handler.framework.Run(ctx, RunRequest{
+	ctx, err := withJobPrincipal(ctx, payload.Principal)
+	if err != nil {
+		return err
+	}
+	_, err = handler.framework.Run(ctx, RunRequest{
 		RunID:   payload.RunID,
 		Agent:   payload.Agent,
 		Prompt:  payload.Prompt,
@@ -115,7 +118,10 @@ func (handler *frameworkJobHandler) handleEvent(ctx context.Context, job asyncpk
 			return fmt.Errorf("agentflow: decode event job payload: %w", err)
 		}
 	}
-	ctx = withJobPrincipal(ctx, payload.Principal)
+	ctx, err := withJobPrincipal(ctx, payload.Principal)
+	if err != nil {
+		return err
+	}
 	result, err := handler.framework.HandleEvent(ctx, payload.Event())
 	if err != nil {
 		return err
@@ -136,8 +142,11 @@ func (handler *frameworkJobHandler) handleResumeContinue(ctx context.Context, jo
 	if payload.Token == "" || !payload.Decision.Valid() {
 		return fmt.Errorf("agentflow: resume.continue job requires token and valid decision")
 	}
-	ctx = withJobPrincipal(ctx, payload.Principal)
-	_, err := handler.framework.ResumeAndContinue(ctx, payload.Token, payload.Decision, payload.Amendment)
+	ctx, err := withJobPrincipal(ctx, payload.Principal)
+	if err != nil {
+		return err
+	}
+	_, err = handler.framework.ResumeAndContinue(ctx, payload.Token, payload.Decision, payload.Amendment)
 	return err
 }
 
@@ -151,7 +160,10 @@ func (handler *frameworkJobHandler) handleMemoryReconcile(ctx context.Context, j
 	if payload.MemoryName == "" || payload.Agent == "" {
 		return fmt.Errorf("agentflow: memory.reconcile job requires memory_name and agent")
 	}
-	ctx = withJobPrincipal(ctx, payload.Principal)
+	ctx, err := withJobPrincipal(ctx, payload.Principal)
+	if err != nil {
+		return err
+	}
 	runID := payload.RunID
 	if runID == "" {
 		runID = job.RunID
@@ -159,9 +171,12 @@ func (handler *frameworkJobHandler) handleMemoryReconcile(ctx context.Context, j
 	return handler.framework.engine.ReconcileTierMemory(ctx, runID, payload.MemoryName, payload.Agent)
 }
 
-func withJobPrincipal(ctx context.Context, principal identity.Principal) context.Context {
-	if err := principal.Validate(); err != nil {
-		return ctx
+func withJobPrincipal(ctx context.Context, principal identity.Principal) (context.Context, error) {
+	if principal.ID == "" && principal.Type == "" && principal.Scope.TenantID == "" {
+		return ctx, nil
 	}
-	return identity.WithPrincipal(ctx, principal)
+	if err := principal.Validate(); err != nil {
+		return ctx, fmt.Errorf("agentflow: invalid async job principal: %w", err)
+	}
+	return identity.WithPrincipal(ctx, principal), nil
 }
