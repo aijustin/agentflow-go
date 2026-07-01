@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/observability"
@@ -372,7 +373,9 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if !ok {
 		return fmt.Errorf("orchestration: tool %q not found", node.Ref)
 	}
-	result, err := executor.Execute(ctx, core.ToolCall{RunID: runID, Tool: node.Ref, Input: input})
+	result, err := safecall.Invoke("orchestration: tool execute", func() (core.ToolResult, error) {
+		return executor.Execute(ctx, core.ToolCall{RunID: runID, Tool: node.Ref, Input: input})
+	})
 	if err != nil {
 		return err
 	}
@@ -398,7 +401,9 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 		}
 	}
 	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
-	output, err := agent.Run(ctx, agentInput)
+	output, err := safecall.Invoke("orchestration: agent run", func() (core.AgentOutput, error) {
+		return agent.Run(ctx, agentInput)
+	})
 	if err != nil {
 		return err
 	}

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
@@ -274,8 +275,18 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		ch := make(chan llm.ChatChunk, 1)
 		go func() {
 			defer close(ch)
+			defer func() {
+				if r := recover(); r != nil {
+					ch <- llm.ChatChunk{Done: true, Error: fmt.Sprintf("runtime: panic recovered: %v", r)}
+				}
+			}()
 			output, err := e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt)
 			if err != nil {
+				var paused RunPausedError
+				if errorsAsRunPaused(err, &paused) {
+					ch <- llm.ChatChunk{Done: true, Paused: true, PauseToken: paused.Token, PauseKind: paused.Kind}
+					return
+				}
 				ch <- llm.ChatChunk{Done: true, Error: err.Error()}
 				return
 			}
@@ -432,7 +443,9 @@ func (e *Engine) chatWithRetry(ctx context.Context, runID string, agent core.Age
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
 		e.emitJSON(callCtx, core.EventLLMCalled, runID, map[string]any{"profile": agent.LLM, "tools": false, "attempt": attempt})
-		resp, err := e.llm.Chat(callCtx, agent.LLM, req)
+		resp, err := safecall.Invoke("runtime: llm chat", func() (llm.ChatResponse, error) {
+			return e.llm.Chat(callCtx, agent.LLM, req)
+		})
 		cancel()
 		if err == nil {
 			e.emitJSON(ctx, core.EventLLMReturned, runID, map[string]any{"profile": agent.LLM, "finish_reason": resp.FinishReason, "attempt": attempt})
@@ -458,7 +471,9 @@ func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
 		e.emitJSON(callCtx, core.EventLLMCalled, runID, map[string]any{"profile": agent.LLM, "tools": true, "step": step, "attempt": attempt})
-		resp, err := caller.ChatWithTools(callCtx, agent.LLM, req)
+		resp, err := safecall.Invoke("runtime: llm chat with tools", func() (llm.ToolCallResponse, error) {
+			return caller.ChatWithTools(callCtx, agent.LLM, req)
+		})
 		cancel()
 		if err == nil {
 			e.emitJSON(ctx, core.EventLLMReturned, runID, map[string]any{"profile": agent.LLM, "finish_reason": resp.FinishReason, "tool_calls": len(resp.ToolCalls), "step": step, "attempt": attempt})
@@ -484,7 +499,9 @@ func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent co
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
 		e.emitJSON(callCtx, core.EventLLMCalled, runID, map[string]any{"profile": agent.LLM, "structured": true, "attempt": attempt})
-		raw, err := outputter.StructuredChat(callCtx, agent.LLM, schema, req)
+		raw, err := safecall.Invoke("runtime: llm structured chat", func() (json.RawMessage, error) {
+			return outputter.StructuredChat(callCtx, agent.LLM, schema, req)
+		})
 		cancel()
 		if err == nil {
 			e.emitJSON(ctx, core.EventLLMReturned, runID, map[string]any{"profile": agent.LLM, "structured": true, "attempt": attempt})

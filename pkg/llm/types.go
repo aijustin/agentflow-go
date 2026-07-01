@@ -97,10 +97,13 @@ type ChatResponse struct {
 }
 
 type ChatChunk struct {
-	Content string     `json:"content,omitempty"`
-	Done    bool       `json:"done,omitempty"`
-	Error   string     `json:"error,omitempty"`
-	Usage   TokenUsage `json:"usage,omitempty"`
+	Content    string     `json:"content,omitempty"`
+	Done       bool       `json:"done,omitempty"`
+	Error      string     `json:"error,omitempty"`
+	Usage      TokenUsage `json:"usage,omitempty"`
+	Paused     bool       `json:"paused,omitempty"`
+	PauseToken string     `json:"pause_token,omitempty"`
+	PauseKind  string     `json:"pause_kind,omitempty"`
 }
 
 type TokenUsage struct {

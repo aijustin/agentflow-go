@@ -327,6 +327,9 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 				}
 				return
 			}
+			if chunk.Paused {
+				return
+			}
 			if chunk.Error != "" {
 				e.markRunFailed(ctx, req.RunID, errors.New(chunk.Error))
 				return

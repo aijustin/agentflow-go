@@ -1070,6 +1070,94 @@ func TestEngineStreamSupportsAutonomousToolLoop(t *testing.T) {
 	}
 }
 
+func TestEngineStreamPausesOnToolApproval(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall, llm.CapStream)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"needs approval"}`)}},
+	})
+	scenario := toolScenario(core.ApprovalPause, core.SideEffectWrite, 4)
+	gate := &capturingGate{repo: repo}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"echo": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := engine.Stream(context.Background(), RunRequest{RunID: "run-stream-pause", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pausedChunk llm.ChatChunk
+	for chunk := range ch {
+		if chunk.Paused {
+			pausedChunk = chunk
+		}
+		if chunk.Error != "" {
+			t.Fatalf("unexpected stream error: %s", chunk.Error)
+		}
+	}
+	if !pausedChunk.Paused || pausedChunk.PauseToken != "token" || pausedChunk.PauseKind != "tool_approval" {
+		t.Fatalf("unexpected pause chunk %+v", pausedChunk)
+	}
+	loaded, err := repo.Load(context.Background(), "run-stream-pause")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused snapshot, got %+v", loaded)
+	}
+}
+
+func TestEngineRunRecoversToolPanic(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"boom"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "recovered from panic"}},
+	})
+	engine, err := NewEngine(toolScenario(core.ApprovalNever, core.SideEffectRead, 4), Dependencies{
+		Runs:  repo,
+		LLM:   gateway,
+		Tools: mapToolRegistry{"echo": panicTool{message: "tool exploded"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Run(context.Background(), RunRequest{RunID: "run-panic", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "recovered from panic" {
+		t.Fatalf("unexpected output %q", result.Output)
+	}
+	loaded, err := repo.Load(context.Background(), "run-panic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected completed run after panic recovery, got %+v", loaded)
+	}
+	ref, ok := loaded.StepOutputs["tool.call-1"]
+	if !ok {
+		t.Fatalf("expected tool output persisted: %+v", loaded.StepOutputs)
+	}
+	var toolResult core.ToolResult
+	if err := json.Unmarshal(ref.Inline, &toolResult); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(toolResult.Error, "panic recovered") {
+		t.Fatalf("expected panic error in tool result, got %+v", toolResult)
+	}
+}
+
 func TestEngineRunDelegatesToSubAgent(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
@@ -1346,6 +1434,14 @@ func (echoTool) Execute(ctx context.Context, call core.ToolCall) (core.ToolResul
 		return core.ToolResult{}, err
 	}
 	return core.ToolResult{Tool: call.Tool, Output: call.Input}, nil
+}
+
+type panicTool struct {
+	message string
+}
+
+func (t panicTool) Execute(context.Context, core.ToolCall) (core.ToolResult, error) {
+	panic(t.message)
 }
 
 type failingTool struct{}

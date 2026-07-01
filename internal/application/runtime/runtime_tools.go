@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
@@ -245,7 +246,9 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 			observability.Attribute{Key: "tool", Value: call.Name},
 			observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
 		)
-		result, err := executor.Execute(toolCtx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, Input: call.Input})
+		result, err := safecall.Invoke("runtime: tool execute", func() (core.ToolResult, error) {
+			return executor.Execute(toolCtx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, Input: call.Input})
+		})
 		if err == nil {
 			toolSpan.End()
 			e.recorder.ObserveHistogram(ctx, observability.MetricToolDurationSeconds, time.Since(start).Seconds(),
