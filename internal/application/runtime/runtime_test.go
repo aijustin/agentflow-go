@@ -1207,7 +1207,14 @@ func TestEngineRunDelegatesToSubAgent(t *testing.T) {
 	}
 }
 
-func TestEngineRunPropagatesSubAgentToolPause(t *testing.T) {
+// TestEngineRunFailsDelegatedSubAgentToolPause verifies that a tool call
+// requiring human approval inside a delegated sub-agent does NOT pause the
+// whole run. Delegated sub-agents share the parent's run snapshot, so
+// letting the pause escape would overwrite the parent tool loop's own
+// checkpoint state (see dispatchSubAgent/maybePauseToolCall); instead the
+// delegation must fail cleanly with a tool error and let the parent's tool
+// loop continue.
+func TestEngineRunFailsDelegatedSubAgentToolPause(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
 	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
@@ -1224,6 +1231,9 @@ func TestEngineRunPropagatesSubAgentToolPause(t *testing.T) {
 			Name:  "echo",
 			Input: json.RawMessage(`{"query":"needs approval"}`),
 		}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "delegation failed, answering directly"}},
 	})
 	scenario := toolScenario(core.ApprovalPause, core.SideEffectWrite, 4)
 	supervisor := scenario.Agents["assistant"]
@@ -1245,11 +1255,26 @@ func TestEngineRunPropagatesSubAgentToolPause(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != runstate.RunStatusPaused || result.Token == "" {
-		t.Fatalf("expected delegated sub-agent pause to propagate, got %+v", result)
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected delegated pause to fail the delegation instead of pausing the run, got %+v", result)
 	}
-	if gate.state.NodeID != "tool_approval" {
-		t.Fatalf("expected tool approval checkpoint, got %+v", gate.state)
+	if gate.state.NodeID != "" {
+		t.Fatalf("expected no checkpoint to be created for a delegated pause, got %+v", gate.state)
+	}
+	loaded, err := repo.Load(context.Background(), "run-sub-pause")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, ok := loaded.StepOutputs["agent.researcher.delegate-1"]
+	if !ok {
+		t.Fatalf("expected delegation output to be persisted: %+v", loaded.StepOutputs)
+	}
+	var delegationResult core.ToolResult
+	if err := json.Unmarshal(ref.Inline, &delegationResult); err != nil {
+		t.Fatalf("decode delegation output: %v", err)
+	}
+	if !strings.Contains(delegationResult.Error, "not supported for delegated sub-agent calls") {
+		t.Fatalf("expected delegation error about unsupported pause, got %+v", delegationResult)
 	}
 }
 

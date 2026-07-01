@@ -11,7 +11,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
-func planAllowedTools(e *Engine, agent core.Agent) map[string]struct{} {
+func planAllowedTools(ctx context.Context, e *Engine, runID string, agent core.Agent) map[string]struct{} {
 	if !e.scenario.Orchestration.Planning.Enabled || !e.scenario.Orchestration.Planning.Execute {
 		return nil
 	}
@@ -19,10 +19,19 @@ func planAllowedTools(e *Engine, agent core.Agent) map[string]struct{} {
 	if !profile.Context.ToolSchemaPruning {
 		return nil
 	}
-	allowed := make(map[string]struct{})
-	for _, name := range agent.Tools {
-		allowed[name] = struct{}{}
+	// Restrict the exposed schema to just the tool named by the next
+	// pending plan step (mirrors planningToolHint's own read of the
+	// persisted plan). Without this, pruning always fell back to "every
+	// tool the agent has" - identical to no pruning - because it never
+	// looked at plan progress at all. If the plan cannot be read or the
+	// next step names no specific tool, do not prune: allowing the full
+	// set is always safe, whereas guessing wrong would block a legitimate
+	// call.
+	nextTool := nextPlannedToolName(ctx, e, runID)
+	if nextTool == "" {
+		return nil
 	}
+	allowed := map[string]struct{}{nextTool: {}}
 	// Sub-agent delegation is exposed to the LLM as a synthetic tool spec
 	// (see toolSpecs), not as an entry in agent.Tools, so it must be added
 	// here explicitly. Otherwise schema pruning would strip every
@@ -32,6 +41,31 @@ func planAllowedTools(e *Engine, agent core.Agent) map[string]struct{} {
 		allowed[delegateToolName(name)] = struct{}{}
 	}
 	return allowed
+}
+
+// nextPlannedToolName returns the tool name of the first pending step in
+// the persisted plan, or "" if there is no persisted plan, it cannot be
+// read, or that step does not name a specific tool.
+func nextPlannedToolName(ctx context.Context, e *Engine, runID string) string {
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	if err != nil {
+		return ""
+	}
+	ref, ok := snapshot.StepOutputs["plan"]
+	if !ok || len(ref.Inline) == 0 {
+		return ""
+	}
+	var state planExecutionState
+	if err := json.Unmarshal(ref.Inline, &state); err != nil {
+		return ""
+	}
+	for _, step := range state.Steps {
+		if step.Status != "pending" {
+			continue
+		}
+		return step.Tool
+	}
+	return ""
 }
 
 func (e *Engine) planningToolHint(ctx context.Context, runID string) string {

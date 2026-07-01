@@ -72,7 +72,7 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 	if variableString(snapshot.Variables, checkpointOutputModeVar) == "structured" {
 		raw, err := e.structuredAnswer(ctx, req)
 		if err != nil {
-			e.markRunFailed(ctx, req.RunID, err)
+			e.markRunFailedOrCancelled(ctx, req.RunID, err)
 			return RunResult{}, err
 		}
 		return e.completeStructuredRun(ctx, req.RunID, raw)
@@ -83,7 +83,7 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		e.markRunFailed(ctx, req.RunID, err)
+		e.markRunFailedOrCancelled(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
 	return e.completeRun(ctx, req.RunID, output)
@@ -133,7 +133,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		e.markRunFailed(ctx, snapshot.RunID, err)
+		e.markRunFailedOrCancelled(ctx, snapshot.RunID, err)
 		return RunResult{}, err
 	}
 	return e.completeRun(ctx, snapshot.RunID, output)
@@ -177,7 +177,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		}
 	}
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
-	toolSpecs := e.toolSpecs(agent)
+	toolSpecs := e.toolSpecs(ctx, runID, agent)
 	baseReq := llm.ChatRequest{
 		Messages:        messages,
 		Temperature:     profile.Temperature,
@@ -202,6 +202,9 @@ func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResu
 	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return RunResult{}, err
+	}
+	if loaded.Status != runstate.RunStatusRunning {
+		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", runID, loaded.Status)
 	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
@@ -336,9 +339,22 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if e.gate == nil {
 		return nil, nil
 	}
+	if delegationDepthFromContext(ctx) > 0 {
+		// A delegated sub-agent shares the parent's run snapshot; pausing
+		// here would overwrite the parent tool loop's own checkpoint state
+		// (see dispatchSubAgent). Fail the tool call instead so the
+		// delegation returns a clear error and the parent loop continues.
+		return nil, fmt.Errorf("runtime: tool %q requires human approval, which is not supported for delegated sub-agent calls", call.Name)
+	}
 	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return nil, err
+	}
+	if snapshot.Status != runstate.RunStatusRunning {
+		// Another writer already moved this run to a terminal or paused
+		// state (e.g. cancellation, or a concurrent completion); do not
+		// pause a run that is no longer actively Running.
+		return nil, fmt.Errorf("runtime: cannot pause run %q in status %s", runID, snapshot.Status)
 	}
 	// Persist every still-pending call from this assistant turn (the one
 	// awaiting approval plus any that follow it) so resume executes all of

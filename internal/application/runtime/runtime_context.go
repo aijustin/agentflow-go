@@ -162,7 +162,7 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, raw []con
 	return messages, result.Stats
 }
 
-func (e *Engine) toolSpecs(agent core.Agent) []llm.ToolSpec {
+func (e *Engine) toolSpecs(ctx context.Context, runID string, agent core.Agent) []llm.ToolSpec {
 	specs := make([]llm.ToolSpec, 0, len(agent.Tools)+len(agent.SubAgents))
 	for _, name := range agent.Tools {
 		tool, ok := e.scenario.Tools[name]
@@ -195,5 +195,5 @@ func (e *Engine) toolSpecs(agent core.Agent) []llm.ToolSpec {
 	// list above is assembled; planAllowedTools includes delegate tool
 	// names precisely so this doesn't strip an agent's ability to
 	// delegate while planning-driven schema pruning is active.
-	return pruneToolSpecs(specs, planAllowedTools(e, agent))
+	return pruneToolSpecs(specs, planAllowedTools(ctx, e, runID, agent))
 }

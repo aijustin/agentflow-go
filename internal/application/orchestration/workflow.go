@@ -209,10 +209,17 @@ func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, r
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if batchCtx.Err() != nil {
+			// Every node in this batch runs concurrently with its
+			// siblings, so none of them may update snapshot.CurrentNodeID
+			// via saveStepOutput: a sibling that finishes after another
+			// node in the batch has already paused (see the pause/cancel
+			// handling below) would otherwise overwrite the paused node's
+			// CurrentNodeID and break resume's "already done" detection.
+			nodeCtx := withSkipCurrentNode(batchCtx)
+			if nodeCtx.Err() != nil {
 				return
 			}
-			enabled, err := r.conditionEnabled(batchCtx, runID, node.Condition)
+			enabled, err := r.conditionEnabled(nodeCtx, runID, node.Condition)
 			if err != nil {
 				r.emitJSON(ctx, core.EventStepFailed, scenario.Name, runID, map[string]any{"node_id": node.ID, "error": err.Error()})
 				errs <- err
@@ -223,7 +230,7 @@ func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, r
 				return
 			}
 			r.emitJSON(ctx, core.EventStepStarted, scenario.Name, runID, map[string]any{"node_id": node.ID})
-			if err := r.runNodeWithRetry(batchCtx, scenario, node, runID); err != nil {
+			if err := r.runNodeWithRetry(nodeCtx, scenario, node, runID); err != nil {
 				var paused WorkflowPausedError
 				if errors.As(err, &paused) {
 					cancel()
@@ -290,7 +297,7 @@ func (r *WorkflowRunner) runNodeWithRetry(ctx context.Context, scenario core.Sce
 			continue
 		}
 		if node.Interrupt {
-			return r.pauseForInterrupt(ctx, node, runID)
+			return r.pauseForInterrupt(ctx, scenario, node, runID)
 		}
 		return nil
 	}
@@ -306,7 +313,7 @@ func (r *WorkflowRunner) runNode(ctx context.Context, scenario core.Scenario, no
 	case core.NodeTransform:
 		return r.runTransformNode(ctx, scenario, node, runID)
 	case core.NodeHumanGate:
-		return r.runHumanGateNode(ctx, node, runID)
+		return r.runHumanGateNode(ctx, scenario, node, runID)
 	case core.NodeParallelGroup:
 		return r.runParallelGroupNode(ctx, scenario, node, runID)
 	case core.NodeLoop:
@@ -410,15 +417,10 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 		return err
 	}
 	agentInput := core.AgentInput{RunID: runID, Context: input}
+	var amendmentApplied bool
 	if r.runs != nil {
 		if snapshot, loadErr := runstate.LoadAuthorized(ctx, r.runs, runID); loadErr == nil {
-			var applied bool
-			agentInput, applied = applyWorkflowAmendmentToAgentInput(snapshot, runID, input)
-			if applied {
-				if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
-					return err
-				}
-			}
+			agentInput, amendmentApplied = applyWorkflowAmendmentToAgentInput(snapshot, runID, input)
 		}
 	}
 	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
@@ -428,10 +430,18 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 	if err != nil {
 		return err
 	}
+	// Only clear the amendment once the agent call has actually succeeded:
+	// clearing it beforehand would silently drop the human feedback if
+	// runNodeWithRetry has to retry this node after a failure.
+	if amendmentApplied {
+		if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
+			return err
+		}
+	}
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, output)
 }
 
-func (r *WorkflowRunner) runHumanGateNode(ctx context.Context, node core.WorkflowNode, runID string) error {
+func (r *WorkflowRunner) runHumanGateNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
 	if r.gate == nil {
 		return fmt.Errorf("orchestration: human gate is required")
 	}
@@ -453,11 +463,11 @@ func (r *WorkflowRunner) runHumanGateNode(ctx context.Context, node core.Workflo
 	if err != nil {
 		return err
 	}
-	r.emitJSON(ctx, core.EventRunPaused, "", runID, map[string]any{"node_id": node.ID})
+	r.emitJSON(ctx, core.EventRunPaused, scenario.Name, runID, map[string]any{"node_id": node.ID})
 	return WorkflowPausedError{RunID: runID, NodeID: node.ID, Token: token}
 }
 
-func (r *WorkflowRunner) pauseForInterrupt(ctx context.Context, node core.WorkflowNode, runID string) error {
+func (r *WorkflowRunner) pauseForInterrupt(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
 	if r.gate == nil {
 		return fmt.Errorf("orchestration: human gate is required for interrupt on node %q", node.ID)
 	}
@@ -485,7 +495,7 @@ func (r *WorkflowRunner) pauseForInterrupt(ctx context.Context, node core.Workfl
 	if err != nil {
 		return err
 	}
-	r.emitJSON(ctx, core.EventRunPaused, "", runID, map[string]any{"node_id": node.ID, "interrupt": true})
+	r.emitJSON(ctx, core.EventRunPaused, scenario.Name, runID, map[string]any{"node_id": node.ID, "interrupt": true})
 	return WorkflowPausedError{RunID: runID, NodeID: node.ID, Token: token}
 }
 

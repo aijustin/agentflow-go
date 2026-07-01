@@ -863,17 +863,23 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 }
 
 func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause error) {
-	if snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID); err == nil {
+	// Persist the failure with a context stripped of the caller's own
+	// cancellation/deadline: cause is frequently the caller's context being
+	// cancelled or timing out, and using that same context here would make
+	// this bookkeeping save fail too, leaving the run stuck as Running.
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if snapshot, err := runstate.LoadAuthorized(persistCtx, f.runs, runID); err == nil {
 		snapshot.Status = runstate.RunStatusFailed
-		if saveErr := f.runs.Save(ctx, &snapshot, snapshot.Version); saveErr != nil {
+		if saveErr := f.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
 			if f.logger != nil {
-				f.logger.Warn(ctx, "agentflow: failed to persist workflow failure status", "run_id", runID, "save_error", saveErr)
+				f.logger.Warn(persistCtx, "agentflow: failed to persist workflow failure status", "run_id", runID, "save_error", saveErr)
 			}
-			f.emit(ctx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q,"save_error":%q}`, cause.Error(), saveErr.Error())))
+			f.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q,"save_error":%q}`, cause.Error(), saveErr.Error())))
 			return
 		}
 	}
-	f.emit(ctx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))
+	f.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))
 }
 
 // RunStructured executes an agent using its configured output_schema and a
@@ -913,7 +919,7 @@ func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.Chat
 			return nil, err
 		}
 		if result.Status == runstate.RunStatusPaused {
-			return nil, fmt.Errorf("agentflow: workflow paused at token %q", result.Token)
+			return pausedChunkChannel(result.Token, "workflow"), nil
 		}
 		req, err = f.hydrateRunRequestForRunID(ctx, req)
 		if err != nil {
@@ -926,12 +932,25 @@ func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.Chat
 			return nil, err
 		}
 		if paused.Status == runstate.RunStatusPaused {
-			return nil, fmt.Errorf("agentflow: workflow paused at token %q", paused.Token)
+			return pausedChunkChannel(paused.Token, "workflow"), nil
 		}
 		return f.engine.Stream(ctx, req)
 	default:
 		return f.engine.Stream(ctx, req)
 	}
+}
+
+// pausedChunkChannel reports a workflow/hybrid pause the same way
+// engine.Stream already reports a tool-approval pause: as a single terminal
+// chunk carrying the pause token and kind, instead of an error. An error
+// forces callers to string-parse the pause token out of an error message
+// with no structured way to resume, unlike Run/RunStructured which return a
+// RunResult{Status: Paused, Token: ...}.
+func pausedChunkChannel(token, kind string) <-chan llm.ChatChunk {
+	ch := make(chan llm.ChatChunk, 1)
+	ch <- llm.ChatChunk{Done: true, Paused: true, PauseToken: token, PauseKind: kind}
+	close(ch)
+	return ch
 }
 
 // Resume resumes a paused run through the configured human gate.

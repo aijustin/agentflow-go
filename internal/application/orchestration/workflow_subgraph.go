@@ -27,17 +27,6 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 		"node_id":      node.ID,
 		"subgraph_ref": node.Ref,
 	})
-	var before map[string]struct{}
-	if r.runs != nil {
-		snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
-		if err != nil {
-			return err
-		}
-		before = make(map[string]struct{}, len(snapshot.StepOutputs))
-		for id := range snapshot.StepOutputs {
-			before[id] = struct{}{}
-		}
-	}
 	subScenario := scenario
 	subScenario.Orchestration = core.Orchestration{
 		Mode:        core.OrchestrationFixedWorkflow,
@@ -80,12 +69,12 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 		if err != nil {
 			return err
 		}
+		// Aggregate every child output currently in the snapshot, not just
+		// ones produced by this call: a resume after a pause must still
+		// surface child outputs that were produced before the pause, or
+		// downstream nodes reading steps.<subgraph>.steps.<child> would see
+		// them go missing.
 		for id, ref := range snapshot.StepOutputs {
-			if before != nil {
-				if _, existed := before[id]; existed {
-					continue
-				}
-			}
 			if !strings.HasPrefix(id, fullPrefix) {
 				continue
 			}

@@ -150,7 +150,7 @@ scheduleLoop:
 			if err := groupCtx.Err(); err != nil {
 				return
 			}
-			branchCtx := withParallelChild(groupCtx)
+			branchCtx := withSkipCurrentNode(groupCtx)
 			if err := r.runNodeWithRetry(branchCtx, scenario, child, runID); err != nil {
 				// A pause must always halt the whole map, even under
 				// collect_errors: it is not a failure to be aggregated.

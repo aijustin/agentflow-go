@@ -33,6 +33,11 @@ func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent c
 
 func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int, options toolDispatchOptions) (core.ToolResult, error) {
 	if subAgentName, ok := e.delegateTarget(agent, call.Name); ok {
+		if delegationDepthFromContext(ctx) >= maxDelegationDepth {
+			result := core.ToolResult{Tool: call.Name, Error: fmt.Sprintf("delegation depth limit (%d) exceeded", maxDelegationDepth)}
+			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
+			return result, nil
+		}
 		resource := toolResource(agent, call, nil)
 		if err := e.authorizeTool(ctx, runID, resource); err != nil {
 			result := core.ToolResult{Tool: call.Name, Error: "tool invocation unauthorized"}
@@ -109,6 +114,15 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	callCounts[call.Name]++
 	result, err := e.executeToolWithRetry(ctx, runID, agent, call, executor)
 	if err != nil {
+		// A context cancellation/deadline is a runtime-level condition, not
+		// a tool failure: surfacing it as a ToolResult.Error would let the
+		// tool loop keep calling the LLM after the run should have already
+		// stopped, wasting tokens on a call that can never complete. Let it
+		// propagate so the caller (and ultimately Run/RunHybrid) can
+		// classify it as a cancellation or a timeout failure instead.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return core.ToolResult{}, err
+		}
 		result = core.ToolResult{Tool: call.Name, Error: err.Error()}
 	}
 	if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil && result.Error == "" {
@@ -117,9 +131,29 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})
 	if !options.skipMemory {
-		_ = e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromToolResult(call, result)})
+		if err := e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromToolResult(call, result)}); err != nil {
+			return result, err
+		}
 	}
 	return result, nil
+}
+
+// maxDelegationDepth bounds how many levels deep agent-to-agent delegation
+// may nest (A delegates to B, B delegates to C, ...), so a delegation cycle
+// (A delegates to B, B delegates back to A) fails fast with a clear tool
+// error instead of recursing until the call stack or the run budget is
+// exhausted.
+const maxDelegationDepth = 8
+
+type delegationDepthKey struct{}
+
+func withDelegationDepth(ctx context.Context) context.Context {
+	return context.WithValue(ctx, delegationDepthKey{}, delegationDepthFromContext(ctx)+1)
+}
+
+func delegationDepthFromContext(ctx context.Context) int {
+	depth, _ := ctx.Value(delegationDepthKey{}).(int)
+	return depth
 }
 
 func (e *Engine) authorizeGovernanceTool(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, callCounts map[string]int) error {
@@ -208,14 +242,26 @@ func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core
 		return result, nil
 	}
 	e.emitJSON(ctx, core.EventToolCalled, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "sub_agent": subAgentName, "tool_call_id": call.ID})
-	output, err := e.answer(ctx, RunRequest{RunID: runID, Agent: subAgentName, Prompt: input.Prompt, Context: input.Context})
+	output, err := e.answer(withDelegationDepth(ctx), RunRequest{RunID: runID, Agent: subAgentName, Prompt: input.Prompt, Context: input.Context})
 	result := core.ToolResult{Tool: call.Name}
 	if err != nil {
 		var paused RunPausedError
 		if errors.As(err, &paused) {
-			return core.ToolResult{}, err
+			// A delegated sub-agent shares the parent's run snapshot, so a
+			// pause inside the delegation would persist checkpoint state
+			// (checkpoint_agent/messages/tool_calls) for the sub-agent and
+			// overwrite whatever the parent's own tool loop needs to
+			// resume, then complete the whole run with only the
+			// sub-agent's answer once approved - silently discarding the
+			// parent's in-flight turn. maybePauseToolCall refuses to pause
+			// for delegated calls (see delegationDepthFromContext) so this
+			// branch is defensive; still fail the delegation cleanly
+			// rather than letting a pause escape as if the top-level run
+			// itself had paused.
+			result.Error = "delegated sub-agent requested human approval, which is not supported inside a delegation call"
+		} else {
+			result.Error = err.Error()
 		}
-		result.Error = err.Error()
 	} else {
 		raw, marshalErr := json.Marshal(core.AgentOutput{RunID: runID, Text: output})
 		if marshalErr != nil {
@@ -247,7 +293,7 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 			observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
 		)
 		result, err := safecall.Invoke("runtime: tool execute", func() (core.ToolResult, error) {
-			return executor.Execute(toolCtx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, Input: call.Input})
+			return executor.Execute(toolCtx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, ToolCallID: call.ID, Input: call.Input})
 		})
 		if err == nil {
 			toolSpan.End()

@@ -84,6 +84,49 @@ func TestFrameworkResumeAndContinueWorkflowHITL(t *testing.T) {
 	}
 }
 
+// TestFrameworkStreamReturnsPausedChunkForWorkflowPause verifies that a
+// fixed-workflow human-gate pause surfaces through Stream() as a terminal
+// paused chunk (mirroring how Run/RunStructured return a
+// RunResult{Status: Paused, Token: ...}), rather than as an error string
+// the caller must parse a pause token out of.
+func TestFrameworkStreamReturnsPausedChunkForWorkflowPause(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "workflow-hitl-stream",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "approve", Kind: core.NodeHumanGate},
+					{ID: "done", Kind: core.NodeTransform, DependsOn: []string{"approve"}, Input: json.RawMessage(`{"set":{"ok":true}}`)},
+				},
+			},
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("secret"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := fw.Stream(context.Background(), agentflow.RunRequest{RunID: "run-wf-stream", Prompt: "review"})
+	if err != nil {
+		t.Fatalf("expected paused chunk channel, got error: %v", err)
+	}
+	chunk, ok := <-ch
+	if !ok {
+		t.Fatal("expected a chunk before channel close")
+	}
+	if !chunk.Done || !chunk.Paused || chunk.PauseToken == "" {
+		t.Fatalf("expected terminal paused chunk with a token, got %+v", chunk)
+	}
+	if _, stillOpen := <-ch; stillOpen {
+		t.Fatal("expected channel to be closed after the paused chunk")
+	}
+}
+
 func TestFrameworkWorkflowAgentNodePropagatesToolApprovalPause(t *testing.T) {
 	gateway := llmmock.NewGateway()
 	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)

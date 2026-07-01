@@ -5,12 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
+
+// contextSummaryTimeout bounds the summarizer's LLM call. Summarization is a
+// side operation inside context preparation, not the run's actual work, so a
+// slow or hung summarizer model must not be able to consume the whole run
+// budget; it should time out quickly and fall back to the non-LLM summary
+// instead of blocking every turn.
+const contextSummaryTimeout = 10 * time.Second
 
 func (e *Engine) contextManager(ctx context.Context, runID string, policy contextwindow.Policy) *contextwindow.Manager {
 	normalized := policy.Normalize()
@@ -38,7 +46,9 @@ func (e *Engine) contextManager(ctx context.Context, runID string, policy contex
 		if profile == "" {
 			return contextwindowSummaryFallback(messages, budget)
 		}
-		resp, err := e.llm.Chat(ctx, profile, llm.ChatRequest{
+		summaryCtx, cancel := context.WithTimeout(ctx, contextSummaryTimeout)
+		defer cancel()
+		resp, err := e.llm.Chat(summaryCtx, profile, llm.ChatRequest{
 			Messages: []llm.Message{
 				{Role: llm.RoleSystem, Content: fmt.Sprintf("Summarize the following conversation in at most %d tokens worth of text.", budget)},
 				{Role: llm.RoleUser, Content: b.String()},

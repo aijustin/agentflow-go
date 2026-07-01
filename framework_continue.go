@@ -164,10 +164,15 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 		switch variableJSONString(snapshot.Variables, checkpointKindVar) {
 		case checkpointKindBeforeFinalAnswer, checkpointKindToolApproval:
 			return f.engine.ContinueAfterCheckpoint(ctx, runID)
+		default:
+			return RunResult{}, fmt.Errorf("agentflow: unknown autonomous checkpoint kind %q for run %q", variableJSONString(snapshot.Variables, checkpointKindVar), runID)
 		}
 	}
 	var err error
 	if variableJSONString(snapshot.Variables, executionPhaseVar) != executionPhaseAutonomous {
+		if err := f.applyWorkflowAmendment(ctx, runID); err != nil {
+			return RunResult{}, err
+		}
 		result, err := f.finishWorkflowRun(ctx, runID, false)
 		if err != nil || result.Status == runstate.RunStatusPaused {
 			return result, err

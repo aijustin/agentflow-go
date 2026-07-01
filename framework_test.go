@@ -658,6 +658,16 @@ func (f fakeGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatRes
 	return llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: f.content}}, nil
 }
 
+// ChatWithTools makes fakeGateway satisfy llm.ToolCaller so agents built
+// with a default tool attached (see the builder package's minimal helpers)
+// can still run against this fake without runtime.answer refusing to call
+// an LLM that does not genuinely support tool calling. None of the tests
+// using fakeGateway exercise an actual tool call, so this simply returns
+// the same plain assistant message as Chat with no tool calls requested.
+func (f fakeGateway) ChatWithTools(context.Context, string, llm.ToolCallRequest) (llm.ToolCallResponse, error) {
+	return llm.ToolCallResponse{ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: f.content}}}, nil
+}
+
 func ExampleNew() {
 	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}))
 	if err != nil {

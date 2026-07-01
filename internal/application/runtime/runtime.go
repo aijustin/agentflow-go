@@ -141,9 +141,13 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	failRun := func(err error) (RunResult, error) {
 		runSpan.RecordError(err)
-		e.markRunFailed(ctx, req.RunID, err)
+		eventType := core.EventRunFailed
+		if errors.Is(err, context.Canceled) {
+			eventType = core.EventRunCancelled
+		}
+		e.markRunFailedOrCancelled(ctx, req.RunID, err)
 		e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
-			observability.Attribute{Key: "event", Value: string(core.EventRunFailed)},
+			observability.Attribute{Key: "event", Value: string(eventType)},
 			observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 		return RunResult{}, err
 	}
@@ -176,6 +180,13 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	if loaded.Status != runstate.RunStatusRunning {
+		// A concurrent writer already moved this run to a terminal or
+		// paused state (e.g. a tool-loop pause that raced this call, or a
+		// cancellation) between answer() returning and this load; do not
+		// clobber that state with Completed.
+		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", req.RunID, loaded.Status)
+	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
 	finalRef, err := e.stepOutputRef(ctx, req.RunID, "final", finalRaw)
@@ -190,7 +201,17 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return RunResult{}, err
 	}
-	e.recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, time.Since(runStart).Seconds(),
+	// Prefer the run's original start time (persisted in beginRun) over
+	// this call's own start time: a run resumed after a pause/checkpoint
+	// would otherwise only have its final leg measured, understating the
+	// true end-to-end duration.
+	duration := time.Since(runStart)
+	if startedAt := variableString(loaded.Variables, runStartedAtVar); startedAt != "" {
+		if parsed, parseErr := time.Parse(time.RFC3339Nano, startedAt); parseErr == nil {
+			duration = time.Since(parsed)
+		}
+	}
+	e.recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, duration.Seconds(),
 		observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 	e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
 		observability.Attribute{Key: "event", Value: string(core.EventRunCompleted)},
@@ -236,7 +257,7 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		e.markRunFailed(ctx, req.RunID, err)
+		e.markRunFailedOrCancelled(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
 	return e.completeStructuredRun(ctx, req.RunID, raw)
@@ -246,6 +267,9 @@ func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw js
 	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return RunResult{}, err
+	}
+	if loaded.Status != runstate.RunStatusRunning {
+		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", runID, loaded.Status)
 	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRef, err := e.stepOutputRef(ctx, runID, "final", raw)
@@ -366,7 +390,11 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 	if err != nil {
 		return core.AgentOutput{}, err
 	}
-	return core.AgentOutput{RunID: input.RunID, Text: output, Raw: input.Context}, nil
+	// answer() only produces a text response, so there is no distinct raw
+	// structured output to report; Raw previously echoed input.Context
+	// (the caller's own input, not anything the agent generated), which
+	// misled callers into treating the input as if it were the output.
+	return core.AgentOutput{RunID: input.RunID, Text: output}, nil
 }
 
 // RunHybrid continues an existing run – created and partially populated by a
@@ -379,6 +407,9 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	loaded, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
+	}
+	if loaded.ScenarioName != "" && loaded.ScenarioName != e.scenario.Name {
+		return RunResult{}, fmt.Errorf("runtime: run %q belongs to scenario %q, not %q", req.RunID, loaded.ScenarioName, e.scenario.Name)
 	}
 	if loaded.Status == runstate.RunStatusCompleted {
 		return RunResult{}, ErrRunAlreadyCompleted
@@ -395,14 +426,18 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	agent, agentErr := e.resolveAgent(req.Agent)
 	if agentErr != nil {
+		e.markRunFailed(ctx, req.RunID, agentErr)
 		return RunResult{}, agentErr
 	}
 	if e.shouldPauseBeforeFinal() && !e.isCheckpointResumed(loaded) {
 		if e.gate == nil {
-			return RunResult{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
+			err := fmt.Errorf("runtime: human gate required for configured checkpoint")
+			e.markRunFailed(ctx, req.RunID, err)
+			return RunResult{}, err
 		}
 		result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &loaded, checkpointPauseOptions{})
 		if err != nil {
+			e.markRunFailed(ctx, req.RunID, err)
 			return RunResult{}, err
 		}
 		return result, nil
@@ -413,12 +448,15 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		e.markRunFailed(ctx, req.RunID, err)
+		e.markRunFailedOrCancelled(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
 	loaded, err = runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
+	}
+	if loaded.Status != runstate.RunStatusRunning {
+		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", req.RunID, loaded.Status)
 	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))

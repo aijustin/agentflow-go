@@ -111,7 +111,13 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 	runstate.StampTenant(ctx, &snapshot)
 	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
 		if errors.Is(err, runstate.ErrStaleSnapshot) {
-			return false, ErrRunAlreadyCompleted
+			// Another caller created this run first between our
+			// not-found load and this save; the conflict is a race, not
+			// evidence the run already completed. Re-dispatch through the
+			// normal existing-run path so whatever status the winner left
+			// behind (Running, Completed, Paused, ...) is classified
+			// correctly instead of always reporting ErrRunAlreadyCompleted.
+			return e.beginRun(ctx, req)
 		}
 		return false, err
 	}
@@ -119,10 +125,50 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 	return false, nil
 }
 
+// markRunFailedOrCancelled classifies err and persists the run as Cancelled
+// when it stems from the caller's context being explicitly cancelled, or as
+// Failed otherwise (a deadline timeout is still a genuine failure). This
+// mirrors the classification Stream already applies to its tool-loop
+// goroutine, so a caller-initiated cancellation is never recorded - and
+// counted in metrics - as a run failure.
+func (e *Engine) markRunFailedOrCancelled(ctx context.Context, runID string, err error) {
+	if errors.Is(err, context.Canceled) {
+		e.markRunCancelled(ctx, runID)
+		return
+	}
+	e.markRunFailed(ctx, runID, err)
+}
+
 func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core.Agent, prompt string, output string) error {
 	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return err
+	}
+	if loaded.Status != runstate.RunStatusRunning {
+		// The run was paused, cancelled, or failed by a concurrent writer
+		// while this stream was still producing output; do not clobber
+		// that terminal/paused state with Completed.
+		return fmt.Errorf("runtime: cannot complete run %q in status %s", runID, loaded.Status)
+	}
+	// Tool loops persist user/assistant/tool messages incrementally inside
+	// answerWithTools; only plain chat streams need a final memory write
+	// here. Write memory before persisting the terminal Completed status so
+	// a memory failure never leaves the run marked complete with missing
+	// history.
+	if len(agent.Tools) == 0 && len(agent.SubAgents) == 0 {
+		if err := e.writeMemory(ctx, runID, agent, []memoryMessage{
+			{Role: string(llm.RoleUser), Content: prompt},
+			{Role: string(llm.RoleAssistant), Content: output},
+		}); err != nil {
+			return err
+		}
+	}
+	loaded, err = runstate.LoadAuthorized(ctx, e.runs, runID)
+	if err != nil {
+		return err
+	}
+	if loaded.Status != runstate.RunStatusRunning {
+		return fmt.Errorf("runtime: cannot complete run %q in status %s", runID, loaded.Status)
 	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
@@ -133,16 +179,6 @@ func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core
 	loaded.StepOutputs["final"] = finalRef
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return err
-	}
-	// Tool loops persist user/assistant/tool messages incrementally inside
-	// answerWithTools; only plain chat streams need a final memory write here.
-	if len(agent.Tools) == 0 && len(agent.SubAgents) == 0 {
-		if err := e.writeMemory(ctx, runID, agent, []memoryMessage{
-			{Role: string(llm.RoleUser), Content: prompt},
-			{Role: string(llm.RoleAssistant), Content: output},
-		}); err != nil {
-			return err
-		}
 	}
 	if startedAt := variableString(loaded.Variables, runStartedAtVar); startedAt != "" {
 		if runStart, parseErr := time.Parse(time.RFC3339Nano, startedAt); parseErr == nil {
@@ -357,6 +393,7 @@ func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 		snapshot.Status = runstate.RunStatusFailed
 		if saveErr := e.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
 			e.logWarn(persistCtx, "runtime: failed to persist run failure status", "run_id", runID, "save_error", saveErr)
+			return
 		}
 	}
 	e.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))

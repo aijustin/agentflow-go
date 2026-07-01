@@ -44,10 +44,18 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 		ReasoningEffort: profile.ReasoningEffort,
 		ExtraBody:       profile.ExtraBody,
 	}
-	if len(agent.Tools)+len(agent.SubAgents) > 0 && e.llm.Supports(agent.LLM, llm.CapToolCall) {
-		if caller, ok := e.llm.(llm.ToolCaller); ok {
-			return e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt)
+	if len(agent.Tools)+len(agent.SubAgents) > 0 {
+		caller, ok := e.llm.(llm.ToolCaller)
+		if !ok || !e.llm.Supports(agent.LLM, llm.CapToolCall) {
+			// Silently ignoring the configured tools and falling back to a
+			// plain chat call would make the agent behave as if it had no
+			// tools at all, with no indication of why - fail loudly so the
+			// mismatch between agent config and LLM profile capability is
+			// caught immediately instead of manifesting as "the agent
+			// never calls any tools".
+			return "", fmt.Errorf("runtime: agent %q has tools/sub-agents configured but llm profile %q does not support tool calling", agent.Name, agent.LLM)
 		}
+		return e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt)
 	}
 	e.emitJSON(ctx, core.EventContextPrepared, req.RunID, stats)
 	resp, err := e.chatWithRetry(ctx, req.RunID, agent, profile, baseReq)
@@ -337,7 +345,7 @@ func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.A
 		}
 	}
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
-	toolSpecs := e.toolSpecs(agent)
+	toolSpecs := e.toolSpecs(ctx, runID, agent)
 	messages := append([]llm.Message(nil), req.Messages...)
 	toolCounts := make(map[string]int)
 	return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0, 0)
@@ -354,6 +362,11 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 		if profile.Context.StaleToolTurns > 0 {
 			messages = evictStaleToolMessages(messages, profile.Context.StaleToolTurns)
 		}
+		// Recompute on every turn (not just once before the loop) so
+		// plan-driven schema pruning reflects progress made by the tool
+		// calls dispatched in prior iterations of this same loop, not just
+		// the plan state as of the very first turn.
+		toolSpecs := e.toolSpecs(ctx, runID, agent)
 		prepared, stats := e.prepareMessages(ctx, runID, messages, profile)
 		e.emitJSON(ctx, core.EventContextPrepared, runID, stats)
 		toolReq := llm.ToolCallRequest{

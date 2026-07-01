@@ -150,7 +150,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 			}
 			child := core.WorkflowNode{ID: childID, Kind: core.NodeAgent, Ref: agentName}
 			runMember(memberKey, func(runCtx context.Context) error {
-				return r.runAgentNode(withParallelChild(runCtx), scenario, child, runID)
+				return r.runAgentNode(withSkipCurrentNode(runCtx), scenario, child, runID)
 			}, func() (any, error) {
 				raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
 				if err != nil {
@@ -187,7 +187,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 			}
 			child := core.WorkflowNode{ID: childID, Kind: core.NodeTool, Ref: toolName}
 			runMember(memberKey, func(runCtx context.Context) error {
-				return r.runToolNode(withParallelChild(runCtx), scenario, child, runID)
+				return r.runToolNode(withSkipCurrentNode(runCtx), scenario, child, runID)
 			}, func() (any, error) {
 				raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
 				if err != nil {

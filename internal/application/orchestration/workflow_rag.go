@@ -140,15 +140,10 @@ func (r *WorkflowRunner) runSupervisorNode(ctx context.Context, scenario core.Sc
 		spec.Refs = []string{node.Ref}
 	}
 	agentInput := core.AgentInput{RunID: runID, Prompt: spec.Prompt}
+	var amendmentApplied bool
 	if r.runs != nil {
 		if snapshot, loadErr := runstate.LoadAuthorized(ctx, r.runs, runID); loadErr == nil {
-			var applied bool
-			agentInput, applied = applyWorkflowAmendment(snapshot, agentInput)
-			if applied {
-				if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
-					return err
-				}
-			}
+			agentInput, amendmentApplied = applyWorkflowAmendment(snapshot, agentInput)
 		}
 	}
 
@@ -163,6 +158,14 @@ func (r *WorkflowRunner) runSupervisorNode(ctx context.Context, scenario core.Sc
 			return err
 		}
 		outputs[ref] = output
+	}
+	// Only clear the amendment once every delegated agent has actually
+	// succeeded: clearing it beforehand would silently drop the human
+	// feedback if this node is retried after a failure.
+	if amendmentApplied {
+		if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
+			return err
+		}
 	}
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, outputs)
 }

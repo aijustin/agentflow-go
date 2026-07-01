@@ -39,20 +39,47 @@ func downstreamNodeIDs(workflow core.Workflow, start string) map[string]bool {
 	return out
 }
 
+// nodeOrDescendantMatches reports whether stepID names nodeID itself or a
+// step nested under it (subgraph child, loop body, etc.), using the same
+// storage-id prefixing convention as storageNodeID.
+func nodeOrDescendantMatches(stepID, nodeID string) bool {
+	return stepID == nodeID || strings.HasPrefix(stepID, nodeID+".") || strings.HasPrefix(stepID, nodeID+subgraphStepDelimiter)
+}
+
 func truncateStepOutputsForRerun(outputs map[string]runstate.StepOutputRef, workflow core.Workflow, fromNodeID string) {
 	if len(outputs) == 0 {
 		return
 	}
-	remove := downstreamNodeIDs(workflow, fromNodeID)
-	// Loop body nodes are excluded from the dependency graph (they only run
-	// through their owning loop node), so downstreamNodeIDs never reaches
-	// them directly. If a loop node being rerun is in remove, its body
-	// nodes' cached outputs must be truncated too: the loop's own resume
-	// idempotency check (see runLoopNode) treats an existing body output as
-	// "already ran" for the iteration it is about to resume, and a stale
-	// output from before the rerun would make it wrongly skip that body
-	// node instead of re-running it.
-	bodyIDs := make(map[string]bool)
+	remove, bodyIDs := rerunRemovalSets(workflow, fromNodeID)
+	for stepID := range outputs {
+		matched := false
+		for nodeID := range remove {
+			if nodeOrDescendantMatches(stepID, nodeID) {
+				delete(outputs, stepID)
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+		for bodyID := range bodyIDs {
+			if nodeOrDescendantMatches(stepID, bodyID) {
+				delete(outputs, stepID)
+				break
+			}
+		}
+	}
+}
+
+// rerunRemovalSets computes the node IDs whose cached state must be
+// discarded when rerunning a workflow from fromNodeID: every node
+// transitively downstream of it, plus (since loop body nodes are excluded
+// from the dependency graph and only run through their owning loop node)
+// the body node IDs of any loop node being rerun.
+func rerunRemovalSets(workflow core.Workflow, fromNodeID string) (remove map[string]bool, bodyIDs map[string]bool) {
+	remove = downstreamNodeIDs(workflow, fromNodeID)
+	bodyIDs = make(map[string]bool)
 	for _, node := range workflow.Nodes {
 		if node.Kind != core.NodeLoop || !remove[node.ID] || len(node.Input) == 0 {
 			continue
@@ -65,21 +92,29 @@ func truncateStepOutputsForRerun(outputs map[string]runstate.StepOutputRef, work
 			bodyIDs[bodyID] = true
 		}
 	}
-	for stepID := range outputs {
-		matched := false
-		for nodeID := range remove {
-			if stepID == nodeID || strings.HasPrefix(stepID, nodeID+".") || strings.HasPrefix(stepID, nodeID+subgraphStepDelimiter) {
-				delete(outputs, stepID)
-				matched = true
-				break
-			}
-		}
-		if matched {
+	return remove, bodyIDs
+}
+
+// clearLoopProgressForRerun deletes any loop_progress:<nodeID> variable for
+// a loop node being rerun (or nested inside a subgraph being rerun). Without
+// this, ResumeFromStep only truncates StepOutputs and runLoopNode would see
+// the loop's stale iteration count from before the rerun, causing it to skip
+// iterations it has not actually re-executed yet or wrongly report the loop
+// as already completed.
+func clearLoopProgressForRerun(variables map[string]json.RawMessage, workflow core.Workflow, fromNodeID string) {
+	if len(variables) == 0 {
+		return
+	}
+	remove, _ := rerunRemovalSets(workflow, fromNodeID)
+	const progressPrefix = "loop_progress:"
+	for key := range variables {
+		storedNodeID, ok := strings.CutPrefix(key, progressPrefix)
+		if !ok {
 			continue
 		}
-		for bodyID := range bodyIDs {
-			if stepID == bodyID || strings.HasPrefix(stepID, bodyID+".") || strings.HasPrefix(stepID, bodyID+subgraphStepDelimiter) {
-				delete(outputs, stepID)
+		for nodeID := range remove {
+			if nodeOrDescendantMatches(storedNodeID, nodeID) {
+				delete(variables, key)
 				break
 			}
 		}
@@ -191,6 +226,7 @@ func (r *WorkflowRunner) ResumeFromStep(ctx context.Context, scenario core.Scena
 		snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
 	}
 	truncateStepOutputsForRerun(snapshot.StepOutputs, *scenario.Orchestration.Workflow, nodeID)
+	clearLoopProgressForRerun(snapshot.Variables, *scenario.Orchestration.Workflow, nodeID)
 	snapshot.Status = runstate.RunStatusRunning
 	snapshot.CurrentNodeID = ""
 	snapshot.PendingGate = nil

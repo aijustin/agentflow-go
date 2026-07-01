@@ -224,11 +224,16 @@ type RuntimePolicy struct {
 }
 
 type ToolCall struct {
-	RunID    string            `json:"run_id"`
-	Agent    string            `json:"agent,omitempty"`
-	Tool     string            `json:"tool"`
-	Input    json.RawMessage   `json:"input,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	RunID string `json:"run_id"`
+	Agent string `json:"agent,omitempty"`
+	Tool  string `json:"tool"`
+	// ToolCallID is the LLM-issued identifier for this call (e.g.
+	// llm.ToolCall.ID), when the call originated from a tool-calling LLM
+	// turn. Executors that must correlate calls by tool_call_id (rather
+	// than by name alone) can use this field.
+	ToolCallID string            `json:"tool_call_id,omitempty"`
+	Input      json.RawMessage   `json:"input,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 type ToolResult struct {
