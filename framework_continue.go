@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -61,7 +62,11 @@ func (f *Framework) ResumeRunByID(ctx context.Context, runID string, decision co
 	if snapshot.Status != runstate.RunStatusPaused {
 		return RunResult{}, fmt.Errorf("agentflow: run %q is not paused", runID)
 	}
-	token, err := f.tokenSigner.Sign(runstate.TokenPayload{RunID: snapshot.RunID, Version: snapshot.Version})
+	payload := runstate.TokenPayload{RunID: snapshot.RunID, Version: snapshot.Version}
+	if f.tokenTTL > 0 {
+		payload.ExpiresAt = time.Now().UTC().Add(f.tokenTTL)
+	}
+	token, err := f.tokenSigner.Sign(payload)
 	if err != nil {
 		return RunResult{}, err
 	}

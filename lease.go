@@ -119,6 +119,11 @@ func (f *Framework) holdRunLease(ctx context.Context, runID string) (func(), err
 // run out of Running. It returns the IDs of the runs it marked. Requires
 // WithRunLease, and assumes all workers executing this scenario's runs use
 // run-lease coordination as well.
+//
+// Tenant scope: when ctx carries a tenant-scoped principal, only that
+// tenant's runs are scanned and reaped; runs belonging to other tenants are
+// never touched even if the repository's List filtering is lax. Without a
+// tenant principal this is an admin operation across all tenants.
 func (f *Framework) MarkAbandonedRuns(ctx context.Context) ([]string, error) {
 	if f.runLocker == nil {
 		return nil, fmt.Errorf("agentflow: run lease coordination is not configured; use WithRunLease")
@@ -131,11 +136,26 @@ func (f *Framework) MarkAbandonedRuns(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Enforce the tenant boundary here as well instead of trusting the
+	// repository filter alone: a snapshot the caller is not authorized for
+	// must never be probed or reaped.
+	authorized := snapshots[:0]
+	for _, snapshot := range snapshots {
+		if err := runstate.AuthorizeTenant(ctx, snapshot); err != nil {
+			continue
+		}
+		authorized = append(authorized, snapshot)
+	}
+	snapshots = authorized
+	// A distinct reaper owner is required: Acquire is reentrant for the
+	// holding owner, so probing with f.runLeaseOwner would steal (and then
+	// reap) this very worker's own live runs.
+	reaperOwner := f.runLeaseOwner + ":reaper"
 	var marked []string
 	for _, snapshot := range snapshots {
 		// Acquiring the run's lease succeeds only when no live worker holds
 		// it; that is exactly the zombie condition.
-		lease, ok, err := f.runLocker.Acquire(ctx, runLeaseKey(snapshot.RunID), f.runLeaseOwner, f.runLeaseTTL)
+		lease, ok, err := f.runLocker.Acquire(ctx, runLeaseKey(snapshot.RunID), reaperOwner, f.runLeaseTTL)
 		if err != nil {
 			return marked, err
 		}

@@ -14,10 +14,10 @@ import (
 
 // ValidateStudioResult reports graph/scenario validation output for Studio.
 type ValidateStudioResult struct {
-	Valid        bool   `json:"valid"`
-	Error        string `json:"error,omitempty"`
-	ErrorCode    string `json:"error_code,omitempty"`
-	Scenario     string `json:"scenario_name"`
+	Valid     bool   `json:"valid"`
+	Error     string `json:"error,omitempty"`
+	ErrorCode string `json:"error_code,omitempty"`
+	Scenario  string `json:"scenario_name"`
 }
 
 // SaveStudioResult describes a persisted Studio graph write.
@@ -145,6 +145,11 @@ func (f *Framework) RunStudioGraph(ctx context.Context, edited graph.ScenarioGra
 	if err := ValidateScenario(scenario); err != nil {
 		return RunResult{}, err
 	}
+	release, err := f.acquireRunLease(ctx, &req)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer release()
 	switch scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
 		return f.runWorkflowScenario(ctx, scenario, req)

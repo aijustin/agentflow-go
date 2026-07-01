@@ -84,6 +84,7 @@ type Framework struct {
 	events            core.EventSink
 	gate              core.HumanGate
 	tokenSigner       *runstate.TokenSigner
+	tokenTTL          time.Duration
 	llm               llm.Gateway
 	tools             *toolRegistry
 	memory            map[string]memory.Repository
@@ -119,6 +120,7 @@ type options struct {
 	jobQueue            async.Queue
 	tokenSecret         []byte
 	tokenTTL            time.Duration
+	tokenTTLSet         bool
 	tokenWriter         io.Writer
 	policy              security.Policy
 	audit               audit.Sink
@@ -302,6 +304,12 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 			return nil, err
 		}
 		tokenSigner = signer
+		// A leaked resume token for a run that is never resumed would
+		// otherwise stay valid forever, so expiry is on by default and only
+		// an explicit WithHITLTokenTTL(0) disables it.
+		if !cfg.tokenTTLSet {
+			cfg.tokenTTL = defaultHITLTokenTTL
+		}
 		cfg.gate = humancli.NewGate(cfg.runs, signer, cfg.tokenWriter, humancli.WithTokenTTL(cfg.tokenTTL))
 	}
 	for name, ref := range scenario.Memories {
@@ -382,6 +390,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		events:            cfg.events,
 		gate:              cfg.gate,
 		tokenSigner:       tokenSigner,
+		tokenTTL:          cfg.tokenTTL,
 		llm:               cfg.llm,
 		tools:             tools,
 		memory:            cfg.memory,
@@ -744,13 +753,20 @@ func WithHITLTokenSecret(secret []byte, tokenWriter io.Writer) Option {
 	}
 }
 
-// WithHITLTokenTTL sets the lifetime for tokens emitted by WithHITLTokenSecret.
+// defaultHITLTokenTTL bounds how long a HITL resume token stays valid when
+// no explicit TTL is configured.
+const defaultHITLTokenTTL = 24 * time.Hour
+
+// WithHITLTokenTTL sets the lifetime for tokens emitted by
+// WithHITLTokenSecret. Without this option tokens expire after 24 hours;
+// pass 0 explicitly to issue tokens that never expire.
 func WithHITLTokenTTL(ttl time.Duration) Option {
 	return func(o *options) error {
 		if ttl < 0 {
 			return fmt.Errorf("agentflow: HITL token ttl must be >= 0")
 		}
 		o.tokenTTL = ttl
+		o.tokenTTLSet = true
 		return nil
 	}
 }
@@ -1043,6 +1059,19 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 
 // Stream executes an agent using a gateway that implements llm.Streamer.
 func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
+	release, err := f.acquireRunLease(ctx, &req)
+	if err != nil {
+		return nil, err
+	}
+	source, err := f.streamScenario(ctx, req)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return f.releaseLeaseOnStreamClose(ctx, source, release), nil
+}
+
+func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
 		result, err := f.runWorkflow(ctx, req)
@@ -1074,6 +1103,34 @@ func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.Chat
 	default:
 		return f.engine.Stream(ctx, req)
 	}
+}
+
+// releaseLeaseOnStreamClose forwards chunks from source and releases the run
+// lease when the stream ends. Stream execution outlives the Stream call
+// itself (the engine's goroutine keeps running while the caller consumes the
+// channel), so releasing via defer inside Stream would drop the lease while
+// the run is still actively executing.
+func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan llm.ChatChunk, release func()) <-chan llm.ChatChunk {
+	if f.runLocker == nil {
+		return source
+	}
+	out := make(chan llm.ChatChunk)
+	go func() {
+		defer close(out)
+		defer release()
+		for chunk := range source {
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				// Drain source so the engine goroutine can finish its own
+				// cancellation bookkeeping before the lease is dropped.
+				for range source {
+				}
+				return
+			}
+		}
+	}()
+	return out
 }
 
 // pausedChunkChannel reports a workflow/hybrid pause the same way
