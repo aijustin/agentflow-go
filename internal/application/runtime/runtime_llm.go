@@ -118,11 +118,28 @@ func (e *Engine) injectAutonomousPlan(ctx context.Context, runID string, agent c
 	if strings.TrimSpace(planText) == "" {
 		return messages, nil
 	}
-	planned := make([]llm.Message, 0, len(messages)+1)
-	planned = append(planned, llm.Message{Role: llm.RoleSystem, Content: "Autonomous execution plan:\n" + planText})
-	planned = append(planned, messages...)
+	// A replan injects a fresh plan message; drop any earlier plan system
+	// message from history first so the model never sees two (possibly
+	// conflicting) "Autonomous execution plan" messages at once.
+	filtered := stripPriorPlanSystemMessages(messages)
+	planned := make([]llm.Message, 0, len(filtered)+1)
+	planned = append(planned, llm.Message{Role: llm.RoleSystem, Content: planSystemMessagePrefix + planText})
+	planned = append(planned, filtered...)
 	e.emitJSON(ctx, core.EventContextPrepared, runID, map[string]any{"planning": true, "steps": strings.Count(planText, "\n") + 1})
 	return planned, nil
+}
+
+const planSystemMessagePrefix = "Autonomous execution plan:\n"
+
+func stripPriorPlanSystemMessages(messages []llm.Message) []llm.Message {
+	filtered := make([]llm.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == llm.RoleSystem && strings.HasPrefix(msg.Content, planSystemMessagePrefix) {
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	return filtered
 }
 
 func (e *Engine) planningEnabled() bool {
@@ -337,7 +354,7 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 		if profile.Context.StaleToolTurns > 0 {
 			messages = evictStaleToolMessages(messages, profile.Context.StaleToolTurns)
 		}
-		prepared, stats := e.prepareMessages(ctx, messages, profile)
+		prepared, stats := e.prepareMessages(ctx, runID, messages, profile)
 		e.emitJSON(ctx, core.EventContextPrepared, runID, stats)
 		toolReq := llm.ToolCallRequest{
 			ChatRequest: llm.ChatRequest{
@@ -372,18 +389,35 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 			return resp.Message.Content, nil
 		}
 		var dispatchErr error
-		messages, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts, prompt, true, stepsConsumedBase+step+1)
+		messages, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts, prompt, true, stepsConsumedBase+step+1, replanAttempts)
 		if dispatchErr != nil {
 			return "", dispatchErr
 		}
 	}
-	if replanAttempts < maxReplanAttempts && !e.planningComplete(ctx, runID) {
-		replanned, err := e.maybeReplan(ctx, runID, agent, profile, RunRequest{RunID: runID, Agent: agent.Name, Prompt: prompt}, messages)
+	return e.replanOrFail(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumedBase)
+}
+
+// replanOrFail is called once the tool loop has exhausted its step budget,
+// either by running maxSteps local steps or - on the resume-after-approval
+// path - by having already consumed maxSteps steps in total before control
+// returned to the loop. replanAttempts must be the cumulative count of
+// replans across the whole run, including any that happened before a pause
+// and resume, so pausing cannot reset the maxReplanAttempts budget and drive
+// unbounded replanning across checkpoints.
+func (e *Engine) replanOrFail(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int, stepsConsumedBase int) (string, error) {
+	if replanAttempts < maxReplanAttempts {
+		complete, err := e.planningComplete(ctx, runID)
 		if err != nil {
 			return "", err
 		}
-		if len(replanned) > len(messages) {
-			return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts, maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps)
+		if !complete {
+			replanned, err := e.maybeReplan(ctx, runID, agent, profile, RunRequest{RunID: runID, Agent: agent.Name, Prompt: prompt}, messages)
+			if err != nil {
+				return "", err
+			}
+			if len(replanned) > len(messages) {
+				return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts, maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps)
+			}
 		}
 	}
 	return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", stepsConsumedBase+maxSteps)
@@ -397,11 +431,11 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 // persistTurnMemory is true and every call in the batch completes, the
 // assistant turn and tool results are written to memory together so a mid-turn
 // pause never leaves partial assistant/tool_call pairings in memory.
-func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, turnAssistant llm.Message, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, persistTurnMemory bool, stepsConsumed int) ([]llm.Message, error) {
+func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, turnAssistant llm.Message, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, persistTurnMemory bool, stepsConsumed int, replanAttempts int) ([]llm.Message, error) {
 	toolMem := make([]memoryMessage, 0, len(calls))
 	for index := range calls {
 		toolCall := calls[index]
-		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, toolCounts, prompt, stepsConsumed); err != nil {
+		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, toolCounts, prompt, stepsConsumed, replanAttempts); err != nil {
 			return messages, err
 		} else if paused != nil {
 			return messages, *paused
@@ -423,7 +457,9 @@ func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core
 			ToolCallID: toolCall.ID,
 		})
 		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
-			_ = e.markPlanStepDone(ctx, runID, toolCall.Name)
+			if err := e.markPlanStepDone(ctx, runID, toolCall.Name); err != nil {
+				return messages, err
+			}
 		}
 	}
 	if persistTurnMemory {

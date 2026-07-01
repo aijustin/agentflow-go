@@ -30,6 +30,12 @@ type Client struct {
 	scanner *bufio.Scanner
 	mu      sync.Mutex
 	nextID  atomic.Int64
+	// broken records why the client was poisoned after a call was
+	// abandoned while its response was still in flight (see call below).
+	// Requests are strictly sequential over one pipe with no multiplexing,
+	// so once a read is abandoned mid-flight there is no safe way to tell
+	// which later call an eventually-arriving line belongs to.
+	broken error
 }
 
 type rpcRequest struct {
@@ -127,6 +133,9 @@ func (c *Client) call(ctx context.Context, method string, params json.RawMessage
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.broken != nil {
+		return c.broken
+	}
 	id := c.nextID.Add(1)
 	payload, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
 	if err != nil {
@@ -135,18 +144,10 @@ func (c *Client) call(ctx context.Context, method string, params json.RawMessage
 	if _, err := c.stdin.Write(append(payload, '\n')); err != nil {
 		return fmt.Errorf("mcp stdio: write request: %w", err)
 	}
-	if !c.scanner.Scan() {
-		if err := c.scanner.Err(); err != nil {
-			return fmt.Errorf("mcp stdio: read response: %w", err)
-		}
-		return fmt.Errorf("mcp stdio: server closed stdout")
-	}
-	var decoded rpcResponse
-	if err := json.Unmarshal(c.scanner.Bytes(), &decoded); err != nil {
-		return fmt.Errorf("mcp stdio: decode response: %w", err)
-	}
-	if decoded.ID != id {
-		return fmt.Errorf("mcp stdio: response id %d does not match request id %d", decoded.ID, id)
+
+	decoded, err := c.readResponse(ctx, id)
+	if err != nil {
+		return err
 	}
 	if decoded.Error != nil {
 		return fmt.Errorf("mcp stdio: rpc error %d: %s", decoded.Error.Code, decoded.Error.Message)
@@ -158,4 +159,52 @@ func (c *Client) call(ctx context.Context, method string, params json.RawMessage
 		return fmt.Errorf("mcp stdio: decode result: %w", err)
 	}
 	return nil
+}
+
+// readResponse blocks on the underlying scanner in a background goroutine
+// so it can be abandoned once ctx is done instead of hanging forever on a
+// server that never replies. Because the pipe carries one response per
+// request with no id-based demultiplexing wait loop, abandoning a read
+// leaves an unread line that could belong to this request arrive at an
+// arbitrary later point; if that happened it could be silently misread as
+// the response to a future, unrelated call. To avoid that, the client is
+// permanently poisoned once a read is abandoned this way.
+func (c *Client) readResponse(ctx context.Context, id int64) (rpcResponse, error) {
+	type scanResult struct {
+		line []byte
+		err  error
+		ok   bool
+	}
+	resultCh := make(chan scanResult, 1)
+	go func() {
+		ok := c.scanner.Scan()
+		var line []byte
+		if ok {
+			line = append([]byte(nil), c.scanner.Bytes()...)
+		}
+		resultCh <- scanResult{line: line, err: c.scanner.Err(), ok: ok}
+	}()
+
+	var res scanResult
+	select {
+	case res = <-resultCh:
+	case <-ctx.Done():
+		c.broken = fmt.Errorf("mcp stdio: client unusable after a call was cancelled while awaiting a response: %w", ctx.Err())
+		return rpcResponse{}, ctx.Err()
+	}
+
+	if !res.ok {
+		if res.err != nil {
+			return rpcResponse{}, fmt.Errorf("mcp stdio: read response: %w", res.err)
+		}
+		return rpcResponse{}, fmt.Errorf("mcp stdio: server closed stdout")
+	}
+	var decoded rpcResponse
+	if err := json.Unmarshal(res.line, &decoded); err != nil {
+		return rpcResponse{}, fmt.Errorf("mcp stdio: decode response: %w", err)
+	}
+	if decoded.ID != id {
+		return rpcResponse{}, fmt.Errorf("mcp stdio: response id %d does not match request id %d", decoded.ID, id)
+	}
+	return decoded, nil
 }

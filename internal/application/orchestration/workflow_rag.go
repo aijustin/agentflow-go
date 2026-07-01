@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 type queryRouterInput struct {
@@ -138,13 +139,26 @@ func (r *WorkflowRunner) runSupervisorNode(ctx context.Context, scenario core.Sc
 	if len(spec.Refs) == 0 && node.Ref != "" {
 		spec.Refs = []string{node.Ref}
 	}
+	agentInput := core.AgentInput{RunID: runID, Prompt: spec.Prompt}
+	if r.runs != nil {
+		if snapshot, loadErr := runstate.LoadAuthorized(ctx, r.runs, runID); loadErr == nil {
+			var applied bool
+			agentInput, applied = applyWorkflowAmendment(snapshot, agentInput)
+			if applied {
+				if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	outputs := make(map[string]core.AgentOutput, len(spec.Refs))
 	for _, ref := range spec.Refs {
 		runner, ok := r.agents.Agent(ref)
 		if !ok {
 			return fmt.Errorf("orchestration: supervisor node %q unknown agent %q", node.ID, ref)
 		}
-		output, err := runner.Run(ctx, core.AgentInput{RunID: runID, Prompt: spec.Prompt})
+		output, err := runner.Run(ctx, agentInput)
 		if err != nil {
 			return err
 		}

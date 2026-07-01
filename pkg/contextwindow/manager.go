@@ -73,9 +73,23 @@ func (m *Manager) Prepare(messages []Message) Result {
 			stats.BeforeTokens = before
 		}
 	}
-	if m.policy.Strategy == StrategyNone || before <= m.policy.MaxInputTokens {
+	if before <= m.policy.MaxInputTokens {
 		stats.AfterTokens = before
 		return Result{Messages: cloneMessages(messages), Stats: stats}
+	}
+	if m.policy.Strategy == StrategyNone {
+		// StrategyNone means "don't proactively manage the window", not
+		// "ignore the configured budget". Sending an over-budget request
+		// as-is either gets rejected by the provider for exceeding its
+		// real context length or silently balloons cost/latency, so once
+		// MaxInputTokens is actually exceeded, fall back to a sliding
+		// window trim rather than letting the context grow unbounded.
+		protected, candidates := splitProtected(messages, m.policy.SystemPromptProtection)
+		kept, dropped := keepRecent(candidates, m.policy.MaxInputTokens-CountMessages(protected))
+		out := append(cloneMessages(protected), kept...)
+		stats.DroppedMessages = dropped
+		stats.AfterTokens = CountMessages(out)
+		return Result{Messages: out, Stats: stats}
 	}
 
 	protected, candidates := splitProtected(messages, m.policy.SystemPromptProtection)

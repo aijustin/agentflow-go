@@ -69,6 +69,20 @@ func TestClientCallTool(t *testing.T) {
 	}
 }
 
+func TestClientRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		w.Write(make([]byte, DefaultMaxResponseBytes+1))
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListTools(context.Background()); err == nil {
+		t.Fatal("expected oversized response to be rejected")
+	}
+}
+
 func TestClientReturnsRPCError(t *testing.T) {
 	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: 1, Error: &rpcError{Code: -32601, Message: "missing"}})

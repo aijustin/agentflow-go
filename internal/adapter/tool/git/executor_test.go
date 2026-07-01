@@ -40,6 +40,71 @@ func TestExecutorDiff(t *testing.T) {
 	}
 }
 
+func TestExecutorRejectsOptionLikeRefAndPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initTestRepo(t)
+	executor, err := NewExecutor(Config{AllowedRoots: []string{repo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	outputTarget := filepath.Join(t.TempDir(), "pwned")
+	_, err = executor.Execute(t.Context(), core.ToolCall{
+		Tool:  "git",
+		Input: json.RawMessage(`{"action":"log","repo":"` + repo + `","ref":"--output=` + outputTarget + `"}`),
+	})
+	if err == nil {
+		t.Fatal("expected option-like ref to be rejected")
+	}
+	if !strings.Contains(err.Error(), "must not start with '-'") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(outputTarget); !os.IsNotExist(statErr) {
+		t.Fatalf("expected %q to not be written, stat err: %v", outputTarget, statErr)
+	}
+
+	_, err = executor.Execute(t.Context(), core.ToolCall{
+		Tool:  "git",
+		Input: json.RawMessage(`{"action":"diff","repo":"` + repo + `","path":"--no-index"}`),
+	})
+	if err == nil {
+		t.Fatal("expected option-like path to be rejected")
+	}
+}
+
+func TestExecutorRejectsSymlinkEscapeFromAllowedRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	allowedRoot := t.TempDir()
+	secretRepo := initTestRepo(t)
+	writeFile(t, filepath.Join(secretRepo, "secret.txt"), "top secret\n")
+	runGit(t, secretRepo, "add", "secret.txt")
+	runGit(t, secretRepo, "commit", "-m", "secret")
+
+	link := filepath.Join(allowedRoot, "escape")
+	if err := os.Symlink(secretRepo, link); err != nil {
+		t.Skip("symlinks not supported on this platform")
+	}
+
+	executor, err := NewExecutor(Config{AllowedRoots: []string{allowedRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = executor.Execute(t.Context(), core.ToolCall{
+		Tool:  "git",
+		Input: json.RawMessage(`{"action":"log","repo":"` + link + `"}`),
+	})
+	if err == nil {
+		t.Fatal("expected symlink escaping the allowed root to be rejected")
+	}
+}
+
 func initTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

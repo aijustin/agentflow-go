@@ -138,6 +138,16 @@ func Validate(s core.Scenario) error {
 	}
 	switch s.Orchestration.Mode {
 	case "", core.OrchestrationAutonomous:
+		// Autonomous scenarios normally have no orchestration.workflow, but
+		// skill expansion (appscenario.Build, run before Validate in the
+		// normal New()/BuildPlan() path) synthesizes one by merging each
+		// agent's skill workflows with namespaced node ids. That merge can
+		// itself be malformed (e.g. duplicate node ids if an agent lists the
+		// same skill twice), so validate it here too instead of only for
+		// hybrid/fixed_workflow scenarios.
+		if s.Orchestration.Workflow != nil || len(s.Orchestration.Workflows) > 0 {
+			return validateOrchestrationWorkflows(s)
+		}
 		return nil
 	case core.OrchestrationHybrid:
 		if s.Orchestration.Workflow != nil || len(s.Orchestration.Workflows) > 0 {

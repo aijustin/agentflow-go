@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 type parallelGroupSpec struct {
@@ -63,9 +64,27 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	var mu sync.Mutex
 	var collected []string
 
+	// Bound concurrent member execution the same way map nodes do, so a
+	// parallel_group with a large refs/tools list cannot fan out into an
+	// unbounded number of concurrent LLM/tool calls.
+	limit := firstPositive(scenario.Orchestration.MaxParallel, scenario.Runtime.MaxParallel)
+	if limit <= 0 {
+		limit = defaultMapConcurrency
+	}
+	if limit > memberCount {
+		limit = memberCount
+	}
+	sem := make(chan struct{}, limit)
+
 	runMember := func(memberKey string, run func(context.Context) error, decode func() (any, error)) {
 		defer wg.Done()
 		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-groupCtx.Done():
 			return
 		}
 		if err := run(groupCtx); err != nil {
@@ -84,7 +103,13 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 				errs <- nil
 				return
 			}
-			cancel()
+			// Do not cancel the group here: a sibling that hasn't
+			// acquired its semaphore slot yet may still pause, and pause
+			// must always take precedence over a plain error regardless
+			// of scheduling order (see the pause-preference drain
+			// below). Cancelling would race the semaphore-acquire select
+			// of a not-yet-started sibling and could make it exit
+			// without ever running, silently dropping its pause.
 			errs <- err
 			return
 		}
@@ -97,7 +122,6 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 				errs <- nil
 				return
 			}
-			cancel()
 			errs <- err
 			return
 		}
@@ -182,6 +206,14 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	}
 	wg.Wait()
 	close(errs)
+	// If the caller's context was cancelled or timed out, treat that as a
+	// failure even if no member happened to report it: a member that exits
+	// early on ctx cancellation (see the groupCtx.Err() check above) never
+	// sends to errs, which would otherwise let a partially-completed group
+	// look like a success.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var firstErr error
 	for err := range errs {
 		if err == nil {
@@ -205,6 +237,53 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, result)
 }
 
+func loopProgressVariable(storedNodeID string) string {
+	return "loop_progress:" + storedNodeID
+}
+
+type loopProgress struct {
+	Iterations int  `json:"iterations"`
+	Completed  bool `json:"completed"`
+}
+
+// loadLoopProgress reads how many iterations of nodeID already completed on
+// a prior attempt, so a resumed run continues instead of restarting at
+// iteration 1. Progress is stored in run Variables (not StepOutputs) so it
+// never causes the node to look "done" to the generic dependency scheduler,
+// which treats any StepOutputs entry as a finished node.
+func (r *WorkflowRunner) loadLoopProgress(ctx context.Context, runID, storedNodeID string) (loopProgress, error) {
+	if r.runs == nil {
+		return loopProgress{}, nil
+	}
+	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
+	if err != nil {
+		return loopProgress{}, err
+	}
+	raw, ok := snapshot.Variables[loopProgressVariable(storedNodeID)]
+	if !ok || len(raw) == 0 {
+		return loopProgress{}, nil
+	}
+	var progress loopProgress
+	if err := json.Unmarshal(raw, &progress); err != nil {
+		return loopProgress{}, nil
+	}
+	return progress, nil
+}
+
+func (r *WorkflowRunner) saveLoopProgress(ctx context.Context, runID, storedNodeID string, progress loopProgress) error {
+	raw, err := json.Marshal(progress)
+	if err != nil {
+		return err
+	}
+	return r.saveSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
+		if snapshot.Variables == nil {
+			snapshot.Variables = make(map[string]json.RawMessage)
+		}
+		snapshot.Variables[loopProgressVariable(storedNodeID)] = raw
+		return nil
+	})
+}
+
 func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
 	if len(node.Input) == 0 {
 		return fmt.Errorf("orchestration: loop node %q input is required", node.ID)
@@ -218,9 +297,36 @@ func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario
 	}
 	nodes := workflowNodesByID(scenario)
 	maxIterations := firstPositive(spec.MaxIterations, 3)
-	actualIterations := 0
+	storedNodeID := storageNodeID(ctx, node.ID)
+
+	progress, err := r.loadLoopProgress(ctx, runID, storedNodeID)
+	if err != nil {
+		return err
+	}
+	if progress.Completed {
+		// A prior attempt already finished this loop; a resume must not
+		// re-run completed iterations or their side effects.
+		return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]any{
+			"iterations": progress.Iterations,
+			"completed":  true,
+		})
+	}
+
+	actualIterations := progress.Iterations
 	untilMet := spec.Until == ""
-	for iteration := 1; iteration <= maxIterations; iteration++ {
+	// resumeIteration is the only iteration that could have partially run
+	// before a pause or a hard-failure retry of this loop node; every later
+	// iteration in this invocation starts completely fresh. Body node
+	// outputs intentionally keep their plain (unprefixed) node id across
+	// iterations - other nodes and `until` conditions read the body's
+	// *latest* output via that id - so the done-check below is scoped to
+	// resumeIteration only, otherwise a body output left over from an
+	// earlier iteration would make every later iteration look already done.
+	resumeIteration := progress.Iterations + 1
+	for iteration := resumeIteration; iteration <= maxIterations; iteration++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if spec.Until != "" {
 			ok, err := r.conditionEnabled(ctx, runID, spec.Until)
 			if err != nil {
@@ -231,12 +337,22 @@ func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario
 				break
 			}
 		}
-		actualIterations = iteration
 		var lastErr error
 		for _, bodyID := range spec.Body {
 			bodyNode, ok := nodes[bodyID]
 			if !ok {
 				return fmt.Errorf("orchestration: loop node %q references unknown body node %q", node.ID, bodyID)
+			}
+			if iteration == resumeIteration {
+				// Skip body nodes that already produced output (or whose
+				// gate was already approved) during a prior partial attempt
+				// at this exact iteration, so resuming never re-executes
+				// (and re-triggers the side effects of) completed work.
+				if done, err := r.nodeAlreadyDone(ctx, runID, bodyNode); err != nil {
+					return err
+				} else if done {
+					continue
+				}
 			}
 			if err := r.runNodeWithRetry(ctx, scenario, bodyNode, runID); err != nil {
 				var paused WorkflowPausedError
@@ -250,6 +366,13 @@ func (r *WorkflowRunner) runLoopNode(ctx context.Context, scenario core.Scenario
 		if lastErr != nil {
 			return fmt.Errorf("orchestration: loop node %q failed on iteration %d: %w", node.ID, iteration, lastErr)
 		}
+		actualIterations = iteration
+		if err := r.saveLoopProgress(ctx, runID, storedNodeID, loopProgress{Iterations: actualIterations, Completed: false}); err != nil {
+			return err
+		}
+	}
+	if err := r.saveLoopProgress(ctx, runID, storedNodeID, loopProgress{Iterations: actualIterations, Completed: untilMet}); err != nil {
+		return err
 	}
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, map[string]any{
 		"iterations": actualIterations,

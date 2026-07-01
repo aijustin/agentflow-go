@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
-	llmmock "github.com/aijustin/agentflow-go/pkg/llm/mock"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	llmmock "github.com/aijustin/agentflow-go/pkg/llm/mock"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 

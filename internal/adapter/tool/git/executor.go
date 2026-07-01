@@ -87,24 +87,32 @@ func (e *Executor) Execute(ctx context.Context, call core.ToolCall) (core.ToolRe
 }
 
 func (e *Executor) buildArgs(req Request) ([]string, error) {
+	ref := strings.TrimSpace(req.Ref)
+	path := strings.TrimSpace(req.Path)
+	if err := rejectOptionLikeArg("ref", ref); err != nil {
+		return nil, err
+	}
+	if err := rejectOptionLikeArg("path", path); err != nil {
+		return nil, err
+	}
 	switch strings.TrimSpace(strings.ToLower(req.Action)) {
 	case "diff":
 		args := []string{"diff"}
-		if ref := strings.TrimSpace(req.Ref); ref != "" {
+		if ref != "" {
 			args = append(args, ref)
 		}
-		if path := strings.TrimSpace(req.Path); path != "" {
+		if path != "" {
 			args = append(args, "--", path)
 		}
 		return args, nil
 	case "show":
-		if strings.TrimSpace(req.Ref) == "" {
+		if ref == "" {
 			return nil, fmt.Errorf("git tool: show requires ref")
 		}
-		return []string{"show", req.Ref}, nil
+		return []string{"show", ref}, nil
 	case "log":
 		args := []string{"log", "--oneline", "-n", "20"}
-		if ref := strings.TrimSpace(req.Ref); ref != "" {
+		if ref != "" {
 			args = append(args, ref)
 		}
 		return args, nil
@@ -113,6 +121,19 @@ func (e *Executor) buildArgs(req Request) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("git tool: unsupported action %q", req.Action)
 	}
+}
+
+// rejectOptionLikeArg guards against argument injection: ref/path values
+// are interpolated directly into the git command line, and a value like
+// "--output=/etc/cron.d/x" would be parsed by git as an option rather than
+// a revision or pathspec, letting a caller make e.g. "git log"/"git show"
+// write to arbitrary files instead of merely reading the repo. Legitimate
+// refs and pathspecs never start with "-", so reject any that do.
+func rejectOptionLikeArg(field, value string) error {
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("git tool: %s %q must not start with '-'", field, value)
+	}
+	return nil
 }
 
 func normalizeAllowedRoots(roots []string) ([]string, error) {
@@ -129,7 +150,14 @@ func normalizeAllowedRoots(roots []string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("git tool: resolve allowed root %q: %w", root, err)
 		}
-		out = append(out, abs)
+		// Resolve symlinks in the root itself too, so a root configured
+		// via a symlinked path still compares correctly against the
+		// resolved repo path below.
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			return nil, fmt.Errorf("git tool: resolve allowed root %q: %w", root, err)
+		}
+		out = append(out, filepath.Clean(resolved))
 	}
 	return out, nil
 }
@@ -143,13 +171,24 @@ func (e *Executor) resolveRepo(repo string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("git tool: resolve repo %q: %w", repo, err)
 	}
+	// Resolve symlinks before checking confinement: comparing the raw
+	// (possibly symlinked) path against allowedRoots would let a symlink
+	// inside an allowed root point at an arbitrary repo elsewhere on disk
+	// and still pass the prefix check, since git operates on the
+	// symlink's target, not the literal path string.
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("git tool: resolve repo %q: %w", repo, err)
+	}
+	resolved = filepath.Clean(resolved)
 	for _, root := range e.allowedRoots {
-		if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
-			if _, err := os.Stat(filepath.Join(abs, ".git")); err != nil {
-				return "", fmt.Errorf("git tool: %q is not a git repository", abs)
-			}
-			return abs, nil
+		if resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
+			continue
 		}
+		if _, err := os.Stat(filepath.Join(resolved, ".git")); err != nil {
+			return "", fmt.Errorf("git tool: %q is not a git repository", resolved)
+		}
+		return resolved, nil
 	}
 	return "", fmt.Errorf("git tool: repo %q is outside allowed roots", repo)
 }

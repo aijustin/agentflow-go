@@ -12,6 +12,11 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/knowledge"
 )
 
+// DefaultMaxBytes caps a fetched document's size when Config.MaxBytes is
+// left unset, so a misconfigured or unexpectedly large remote source
+// cannot exhaust memory during knowledge ingestion.
+const DefaultMaxBytes int64 = 64 << 20
+
 type Config struct {
 	URLs      []string
 	Namespace string
@@ -53,7 +58,11 @@ func NewLoader(config Config) (*Loader, error) {
 	if client == nil {
 		client = nethttp.DefaultClient
 	}
-	return &Loader{urls: urls, namespace: config.Namespace, metadata: cloneMetadata(config.Metadata), maxBytes: config.MaxBytes, client: client}, nil
+	maxBytes := config.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBytes
+	}
+	return &Loader{urls: urls, namespace: config.Namespace, metadata: cloneMetadata(config.Metadata), maxBytes: maxBytes, client: client}, nil
 }
 
 func (l *Loader) Load(ctx context.Context) ([]knowledge.Document, error) {

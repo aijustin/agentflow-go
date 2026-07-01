@@ -16,3 +16,4 @@ coverage.out
 .studio/
 .DS_Store
 .idea/
+/graphify-out

@@ -210,7 +210,11 @@ func (queue *Queue) Cancel(ctx context.Context, jobID string) error {
 	if !exists {
 		return asyncpkg.ErrJobNotFound
 	}
-	if job.State == asyncpkg.JobCompleted || job.State == asyncpkg.JobDeadLetter || job.State == asyncpkg.JobPaused {
+	// Only completed/dead_letter are terminal; a paused job (e.g. awaiting
+	// HITL approval) must remain cancellable like the postgres adapter,
+	// otherwise a run stuck waiting on human input can never be abandoned
+	// through this queue.
+	if job.State == asyncpkg.JobCompleted || job.State == asyncpkg.JobDeadLetter {
 		return nil
 	}
 	job.State = asyncpkg.JobCancelled

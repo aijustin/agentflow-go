@@ -15,7 +15,14 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 	if !ok {
 		return fmt.Errorf("orchestration: subgraph node %q references unknown workflow %q", node.ID, node.Ref)
 	}
+	// prefix is local to this subgraph invocation and is what withStepPrefix
+	// composes with any prefix already on ctx (e.g. this subgraph is itself
+	// nested inside another subgraph or a loop). fullPrefix is the absolute,
+	// fully-composed prefix that child step-output ids actually carry in the
+	// snapshot, and must be used whenever matching against snapshot.StepOutputs
+	// or snapshot.CurrentNodeID directly.
 	prefix := subgraphStepPrefix(node.ID)
+	fullPrefix := storageNodeID(ctx, node.ID) + subgraphStepDelimiter
 	r.emitJSON(ctx, core.EventSubgraphStarted, scenario.Name, runID, map[string]any{
 		"node_id":      node.ID,
 		"subgraph_ref": node.Ref,
@@ -46,8 +53,21 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 			return err
 		}
 		for id := range snapshot.StepOutputs {
-			if strings.HasPrefix(id, prefix) {
-				alreadyDone[bareNodeID(id, prefix)] = true
+			if strings.HasPrefix(id, fullPrefix) {
+				alreadyDone[bareNodeID(id, fullPrefix)] = true
+			}
+		}
+		// human_gate/interrupt nodes never write a step output, so the loop
+		// above alone can never mark them done. If CurrentNodeID (stored
+		// with its full storage-scoped id when the gate paused) points at a
+		// gate inside this subgraph and the gate has since been resolved
+		// (PendingGate cleared), mark it done too, otherwise resuming would
+		// re-run the subgraph from its first node and re-pause on a gate
+		// that was already approved.
+		if snapshot.CurrentNodeID != "" && snapshot.PendingGate == nil && strings.HasPrefix(snapshot.CurrentNodeID, fullPrefix) {
+			bareID := bareNodeID(snapshot.CurrentNodeID, fullPrefix)
+			if gateNode, ok := nodeByID(sub, bareID); ok && (gateNode.Kind == core.NodeHumanGate || gateNode.Interrupt) {
+				alreadyDone[bareID] = true
 			}
 		}
 	}
@@ -66,10 +86,10 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 					continue
 				}
 			}
-			if !strings.HasPrefix(id, prefix) {
+			if !strings.HasPrefix(id, fullPrefix) {
 				continue
 			}
-			bareID := bareNodeID(id, prefix)
+			bareID := bareNodeID(id, fullPrefix)
 			if ref.Inline != nil {
 				produced[bareID] = ref.Inline
 				continue

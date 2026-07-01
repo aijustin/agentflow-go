@@ -10,19 +10,39 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/internal/fsatomic"
+	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 type Repository struct {
-	dir string
-	mu  sync.Mutex
+	dir    string
+	mu     sync.Mutex
+	logger log.Logger
 }
 
-func NewRepository(dir string) (*Repository, error) {
+type Option func(*Repository)
+
+// WithLogger reports snapshot files that List skips because they are
+// unreadable or fail to decode. Without a logger those files are still
+// skipped (a single corrupt snapshot must not fail listing every other
+// run), but the gap in the result set would otherwise be silent.
+func WithLogger(logger log.Logger) Option {
+	return func(r *Repository) {
+		r.logger = logger
+	}
+}
+
+func NewRepository(dir string, opts ...Option) (*Repository, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &Repository{dir: dir}, nil
+	repo := &Repository{dir: dir}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(repo)
+		}
+	}
+	return repo, nil
 }
 
 func (r *Repository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
@@ -112,10 +132,12 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 		}
 		data, err := os.ReadFile(filepath.Join(r.dir, entry.Name()))
 		if err != nil {
+			r.logSkippedEntry(ctx, entry.Name(), "read snapshot file", err)
 			continue
 		}
 		var snap runstate.RunSnapshot
 		if err := json.Unmarshal(data, &snap); err != nil {
+			r.logSkippedEntry(ctx, entry.Name(), "decode snapshot file", err)
 			continue
 		}
 		if filter.Status != "" && snap.Status != filter.Status {
@@ -157,6 +179,13 @@ func (r *Repository) loadLocked(runID string) (runstate.RunSnapshot, error) {
 		return runstate.RunSnapshot{}, err
 	}
 	return snapshot, nil
+}
+
+func (r *Repository) logSkippedEntry(ctx context.Context, fileName string, reason string, err error) {
+	if r.logger == nil {
+		return
+	}
+	r.logger.Warn(ctx, "runstate file: skipping snapshot in List", "file", fileName, "reason", reason, "error", err)
 }
 
 func (r *Repository) path(runID string) string {

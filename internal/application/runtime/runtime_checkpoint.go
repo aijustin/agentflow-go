@@ -29,21 +29,14 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 	if err := e.saveCheckpointVariables(ctx, snapshot, checkpointVars); err != nil {
 		return RunResult{}, err
 	}
-	loaded, loadErr := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
-	if loadErr != nil {
-		return RunResult{}, loadErr
-	}
-	state := core.CheckpointState{
-		RunID:   req.RunID,
-		Version: loaded.Version,
-		NodeID:  "before_final_answer",
-		Payload: []byte(fmt.Sprintf(`{"prompt":%q,"agent":%q}`, req.Prompt, agent.Name)),
-	}
-	token, err := e.gate.Pause(ctx, state)
+	payload := []byte(fmt.Sprintf(`{"prompt":%q,"agent":%q}`, req.Prompt, agent.Name))
+	token, err := e.pauseWithRetry(ctx, req.RunID, func(version int64) core.CheckpointState {
+		return core.CheckpointState{RunID: req.RunID, Version: version, NodeID: "before_final_answer", Payload: payload}
+	})
 	if err != nil {
 		return RunResult{}, err
 	}
-	e.emit(ctx, core.EventRunPaused, req.RunID, state.Payload)
+	e.emit(ctx, core.EventRunPaused, req.RunID, payload)
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil
 }
 

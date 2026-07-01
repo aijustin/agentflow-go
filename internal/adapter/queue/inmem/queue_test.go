@@ -162,3 +162,28 @@ func TestQueueCancelsJobs(t *testing.T) {
 		t.Fatalf("expected cancelled, got %+v", loaded)
 	}
 }
+
+func TestQueueCancelsPausedJobs(t *testing.T) {
+	ctx := context.Background()
+	queue := NewQueue()
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := queue.Lease(ctx, "worker-1", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("lease failed: ok=%v err=%v", ok, err)
+	}
+	if err := queue.Pause(ctx, lease, asyncpkg.PauseResult{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Cancel(ctx, "job-1"); err != nil {
+		t.Fatalf("expected paused job to be cancellable, got %v", err)
+	}
+	loaded, err := queue.Load(ctx, "job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != asyncpkg.JobCancelled {
+		t.Fatalf("expected cancelled, got %+v", loaded)
+	}
+}

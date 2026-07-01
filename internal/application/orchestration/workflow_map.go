@@ -131,7 +131,12 @@ scheduleLoop:
 					errs <- nil
 					return
 				}
-				cancel()
+				// Do not cancel: an item not yet scheduled may still
+				// pause, and pause must always take precedence over a
+				// plain error regardless of scheduling order. Cancelling
+				// here would race the scheduling loop's semaphore-acquire
+				// select and could stop it from ever scheduling that
+				// item, silently dropping its pause.
 				errs <- fmt.Errorf("orchestration: map node %q branch input: %w", node.ID, err)
 				return
 			}
@@ -162,7 +167,6 @@ scheduleLoop:
 					errs <- nil
 					return
 				}
-				cancel()
 				errs <- err
 				return
 			}
@@ -175,7 +179,6 @@ scheduleLoop:
 					errs <- nil
 					return
 				}
-				cancel()
 				errs <- err
 				return
 			}
@@ -188,7 +191,6 @@ scheduleLoop:
 					errs <- nil
 					return
 				}
-				cancel()
 				errs <- err
 				return
 			}
@@ -201,7 +203,6 @@ scheduleLoop:
 					errs <- nil
 					return
 				}
-				cancel()
 				errs <- fmt.Errorf("orchestration: map node %q decode output for index %d: %w", node.ID, index, err)
 				return
 			}
@@ -214,6 +215,13 @@ scheduleLoop:
 
 	wg.Wait()
 	close(errs)
+	// If the caller's context was cancelled or timed out, treat that as a
+	// failure even if no branch happened to report it: a branch that exits
+	// early on groupCtx cancellation never sends to errs, which would
+	// otherwise let a partially-completed map look like a success.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Prefer a pause error over any other so HITL halts propagate correctly,
 	// regardless of the order branches finished in.
 	var firstErr error

@@ -20,6 +20,12 @@ import (
 
 const level = tier.LevelCold
 
+// maxDecompressedRecordBytes bounds how large a single record may expand to
+// when gunzipped, so a corrupted or maliciously crafted blob cannot exhaust
+// memory via gzip-bomb-style decompression (a few KB of gzip input can
+// otherwise expand to gigabytes).
+const maxDecompressedRecordBytes = 256 << 20
+
 type Config struct {
 	Blobs    runstate.BlobStore
 	IndexDir string
@@ -304,5 +310,12 @@ func gunzip(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer reader.Close()
-	return io.ReadAll(reader)
+	out, err := io.ReadAll(io.LimitReader(reader, maxDecompressedRecordBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(out)) > maxDecompressedRecordBytes {
+		return nil, fmt.Errorf("decompressed record exceeds %d bytes", maxDecompressedRecordBytes)
+	}
+	return out, nil
 }

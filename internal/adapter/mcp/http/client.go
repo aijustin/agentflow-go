@@ -13,10 +13,16 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/mcp"
 )
 
+// DefaultMaxResponseBytes caps how much of an RPC response body is read,
+// so a misbehaving or compromised MCP server cannot exhaust memory by
+// returning an unbounded response.
+const DefaultMaxResponseBytes int64 = 16 << 20
+
 type Client struct {
-	endpoint string
-	client   *nethttp.Client
-	nextID   atomic.Int64
+	endpoint         string
+	client           *nethttp.Client
+	nextID           atomic.Int64
+	maxResponseBytes int64
 }
 
 type rpcRequest struct {
@@ -46,7 +52,7 @@ func NewClient(endpoint string, client *nethttp.Client) (*Client, error) {
 	if client == nil {
 		client = nethttp.DefaultClient
 	}
-	return &Client{endpoint: endpoint, client: client}, nil
+	return &Client{endpoint: endpoint, client: client, maxResponseBytes: DefaultMaxResponseBytes}, nil
 }
 
 func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
@@ -96,9 +102,12 @@ func (c *Client) call(ctx context.Context, method string, params json.RawMessage
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("mcp http: unexpected status %s", resp.Status)
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
 	if err != nil {
 		return err
+	}
+	if int64(len(body)) > c.maxResponseBytes {
+		return fmt.Errorf("mcp http: response exceeds max bytes")
 	}
 	var decoded rpcResponse
 	if err := json.Unmarshal(body, &decoded); err != nil {

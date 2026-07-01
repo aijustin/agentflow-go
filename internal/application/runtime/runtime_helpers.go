@@ -287,6 +287,32 @@ func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate
 	return fmt.Errorf("runtime: failed to save snapshot %q after stale retries", runID)
 }
 
+// pauseWithRetry pauses through the human gate, retrying the whole
+// load-then-pause sequence when a concurrent writer advances the run version
+// between our load and the gate's own compare-and-swap save. Without this
+// retry, a HumanGate.Pause implementation that uses a single fixed expected
+// version turns a legitimate concurrent write into a hard run failure
+// instead of a pause.
+func (e *Engine) pauseWithRetry(ctx context.Context, runID string, build func(version int64) core.CheckpointState) (string, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		if err != nil {
+			return "", err
+		}
+		token, err := e.gate.Pause(ctx, build(snapshot.Version))
+		if err == nil {
+			return token, nil
+		}
+		if !errors.Is(err, runstate.ErrStaleSnapshot) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("runtime: failed to pause run %q after stale snapshot retries", runID)
+}
+
 func retryDelay(ctx context.Context, attempt int) error {
 	delay := 100 * time.Millisecond
 	for range max(0, attempt-1) {

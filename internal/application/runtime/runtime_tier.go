@@ -95,13 +95,20 @@ func (e *Engine) enqueueTierReconcile(ctx context.Context, runID string, agent c
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
+		e.logWarn(ctx, "runtime: marshal tier reconcile payload failed", "run_id", runID, "agent", agent.Name, "memory", agent.Memory, "error", err)
 		return
 	}
-	_ = e.enqueueMemoryReconcile(ctx, asyncpkg.Job{
+	// A failure here just means the async reconcile pass for this write
+	// won't be scheduled; it must not fail the write itself. Log it so a
+	// stuck queue or broken enqueuer is visible instead of silently
+	// leaving tier memory unreconciled.
+	if err := e.enqueueMemoryReconcile(ctx, asyncpkg.Job{
 		ID:          generateRunID(),
 		Type:        asyncpkg.MemoryReconcileJobType,
 		RunID:       runID,
 		Payload:     raw,
 		MaxAttempts: 3,
-	})
+	}); err != nil {
+		e.logWarn(ctx, "runtime: enqueue tier reconcile job failed", "run_id", runID, "agent", agent.Name, "memory", agent.Memory, "error", err)
+	}
 }

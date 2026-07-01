@@ -259,7 +259,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		}
 	}
 	if cfg.checkpointHistory != nil {
-		cfg.runs = &runstaterecording.Repository{Inner: cfg.runs, History: cfg.checkpointHistory}
+		cfg.runs = &runstaterecording.Repository{Inner: cfg.runs, History: cfg.checkpointHistory, Logger: cfg.logger}
 	}
 	if cfg.requireLLM {
 		autoMemory := make(map[string]bool)

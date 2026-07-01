@@ -446,6 +446,27 @@ func TestValidateScenario(t *testing.T) {
 	}
 }
 
+// TestNewRejectsAutonomousScenarioWithDuplicateSkillNodeIDs verifies that
+// New() catches a malformed workflow synthesized by skill expansion (an
+// agent listing the same skill twice namespaces two skill workflows under
+// the identical "agent.skill." prefix, producing duplicate node ids) even
+// though the scenario's orchestration mode is autonomous, which normally
+// has no orchestration.workflow of its own.
+func TestNewRejectsAutonomousScenarioWithDuplicateSkillNodeIDs(t *testing.T) {
+	scenario := core.Scenario{
+		Name:   "autonomous-dup-skill",
+		LLMs:   map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Tools:  map[string]core.Tool{"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalNever}},
+		Skills: map[string]core.Skill{"review": {Workflow: &core.Workflow{Nodes: []core.WorkflowNode{{ID: "inspect", Kind: core.NodeTool, Ref: "echo"}}}}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default", Skills: []string{"review", "review"}},
+		},
+	}
+	if _, err := agentflow.New(scenario); err == nil {
+		t.Fatal("expected duplicate skill node ids to be rejected")
+	}
+}
+
 type contextCaptureGateway struct {
 	fakeGateway
 	lastReq llm.ChatRequest

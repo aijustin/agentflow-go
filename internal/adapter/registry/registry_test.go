@@ -1,7 +1,9 @@
 package registry
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aijustin/agentflow-go/internal/adapter/tool/builtin"
@@ -21,4 +23,22 @@ func TestRegistryRegisterTool(t *testing.T) {
 	if err := reg.RegisterTool("", builtin.NewEchoTool()); err == nil || !strings.Contains(err.Error(), "name") {
 		t.Fatalf("expected name error, got %v", err)
 	}
+}
+
+func TestRegistryConcurrentRegisterAndLookupIsRaceFree(t *testing.T) {
+	reg := New()
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		name := fmt.Sprintf("tool-%d", i)
+		go func() {
+			defer wg.Done()
+			_ = reg.RegisterTool(name, builtin.NewEchoTool())
+		}()
+		go func() {
+			defer wg.Done()
+			reg.Tool(name)
+		}()
+	}
+	wg.Wait()
 }

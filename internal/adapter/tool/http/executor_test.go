@@ -62,6 +62,32 @@ func TestExecutorRejectsDisallowedMethodByDefault(t *testing.T) {
 	}
 }
 
+func TestExecutorRejectsRedirectToHostOutsideAllowlist(t *testing.T) {
+	deniedHit := false
+	denied := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		deniedHit = true
+		_, _ = w.Write([]byte("internal secret"))
+	}))
+	defer denied.Close()
+
+	allowed := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		nethttp.Redirect(w, r, denied.URL+"/secret", nethttp.StatusFound)
+	}))
+	defer allowed.Close()
+
+	executor, err := NewExecutor(Config{AllowedHosts: []string{allowed.URL}, Client: allowed.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = executor.Execute(context.Background(), core.ToolCall{Tool: "http.get", Input: json.RawMessage(`{"url":"` + allowed.URL + `/start"}`)})
+	if err == nil {
+		t.Fatal("expected redirect to a disallowed host to be rejected")
+	}
+	if deniedHit {
+		t.Fatal("request must not have reached the disallowed redirect target")
+	}
+}
+
 func TestExecutorRejectsOversizedResponses(t *testing.T) {
 	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		_, _ = w.Write([]byte("too large"))

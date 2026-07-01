@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -43,9 +44,41 @@ func truncateStepOutputsForRerun(outputs map[string]runstate.StepOutputRef, work
 		return
 	}
 	remove := downstreamNodeIDs(workflow, fromNodeID)
+	// Loop body nodes are excluded from the dependency graph (they only run
+	// through their owning loop node), so downstreamNodeIDs never reaches
+	// them directly. If a loop node being rerun is in remove, its body
+	// nodes' cached outputs must be truncated too: the loop's own resume
+	// idempotency check (see runLoopNode) treats an existing body output as
+	// "already ran" for the iteration it is about to resume, and a stale
+	// output from before the rerun would make it wrongly skip that body
+	// node instead of re-running it.
+	bodyIDs := make(map[string]bool)
+	for _, node := range workflow.Nodes {
+		if node.Kind != core.NodeLoop || !remove[node.ID] || len(node.Input) == 0 {
+			continue
+		}
+		var spec loopSpec
+		if err := json.Unmarshal(node.Input, &spec); err != nil {
+			continue
+		}
+		for _, bodyID := range spec.Body {
+			bodyIDs[bodyID] = true
+		}
+	}
 	for stepID := range outputs {
+		matched := false
 		for nodeID := range remove {
 			if stepID == nodeID || strings.HasPrefix(stepID, nodeID+".") || strings.HasPrefix(stepID, nodeID+subgraphStepDelimiter) {
+				delete(outputs, stepID)
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+		for bodyID := range bodyIDs {
+			if stepID == bodyID || strings.HasPrefix(stepID, bodyID+".") || strings.HasPrefix(stepID, bodyID+subgraphStepDelimiter) {
 				delete(outputs, stepID)
 				break
 			}
@@ -88,6 +121,16 @@ func (r *WorkflowRunner) RestoreSnapshotAndRun(ctx context.Context, scenario cor
 		return fmt.Errorf("orchestration: workflow restore requires running, paused, completed, or failed snapshot, got %s", current.Status)
 	}
 
+	// alreadyDoneFromSnapshot treats a nil PendingGate as "this gate was
+	// already resolved". Restoring always transitions the persisted
+	// snapshot to Running with PendingGate cleared (a restored run cannot
+	// stay paused on a gate token minted against the old snapshot version),
+	// but that must not be conflated with "the gate was actually approved":
+	// keep the *restored* PendingGate for the done-computation below so a
+	// snapshot that was genuinely captured mid-approval re-executes (and
+	// re-pauses on) that gate instead of silently skipping it.
+	restoredPendingGate := restored.PendingGate
+
 	snapshot := restored
 	snapshot.RunID = runID
 	snapshot.Version = current.Version
@@ -103,9 +146,12 @@ func (r *WorkflowRunner) RestoreSnapshotAndRun(ctx context.Context, scenario cor
 		return err
 	}
 
+	doneSnapshot := snapshot
+	doneSnapshot.PendingGate = restoredPendingGate
+
 	ctx, cancel := workflowTimeout(ctx, scenario.Runtime.Timeout)
 	defer cancel()
-	return r.run(ctx, scenario, runID, alreadyDoneFromSnapshot(scenario, snapshot))
+	return r.run(ctx, scenario, runID, alreadyDoneFromSnapshot(scenario, doneSnapshot))
 }
 
 // ResumeFromStep truncates outputs for the node and its downstream steps, then

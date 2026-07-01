@@ -55,11 +55,27 @@ func NewExecutor(config Config) (*Executor, error) {
 	if maxResponseBytes <= 0 {
 		maxResponseBytes = DefaultMaxResponseBytes
 	}
-	client := config.Client
-	if client == nil {
-		client = nethttp.DefaultClient
+	baseClient := config.Client
+	if baseClient == nil {
+		baseClient = nethttp.DefaultClient
 	}
-	return &Executor{allowedHosts: allowedHosts, allowedMethods: allowedMethods, defaultHeaders: cloneMap(config.DefaultHeaders), maxResponseBytes: maxResponseBytes, client: client}, nil
+	// Copy rather than mutate the caller-supplied client: the allowlist
+	// check on the request URL only covers the initial request, and
+	// net/http follows redirects by default. Without re-checking the
+	// allowlist on every hop, an allowed host can redirect the request to
+	// an internal/metadata address (e.g. 169.254.169.254) and this tool
+	// would happily fetch and return it, defeating the allowlist (SSRF).
+	client := *baseClient
+	client.CheckRedirect = func(req *nethttp.Request, via []*nethttp.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("http tool: stopped after 10 redirects")
+		}
+		if !allowedHosts[req.URL.Host] {
+			return fmt.Errorf("http tool: redirect to host %q is not allowed", req.URL.Host)
+		}
+		return nil
+	}
+	return &Executor{allowedHosts: allowedHosts, allowedMethods: allowedMethods, defaultHeaders: cloneMap(config.DefaultHeaders), maxResponseBytes: maxResponseBytes, client: &client}, nil
 }
 
 func (e *Executor) Execute(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {

@@ -19,6 +19,47 @@ func TestManagerNoopWithinBudget(t *testing.T) {
 	}
 }
 
+func TestManagerStrategyNonePassesThroughWithinBudget(t *testing.T) {
+	messages := []Message{
+		{Role: RoleSystem, Content: "system"},
+		{Role: RoleUser, Content: "hello"},
+	}
+	result := New(Policy{Strategy: StrategyNone, MaxInputTokens: 100}).Prepare(messages)
+	if result.Stats.DroppedMessages != 0 || len(result.Messages) != len(messages) {
+		t.Fatalf("expected untouched passthrough within budget, got %+v", result)
+	}
+}
+
+func TestManagerStrategyNoneStillCapsMaxInputTokens(t *testing.T) {
+	messages := []Message{
+		{Role: RoleSystem, Content: "protected system prompt"},
+		{Role: RoleUser, Content: strings.Repeat("old ", 100)},
+		{Role: RoleAssistant, Content: strings.Repeat("middle ", 100)},
+		{Role: RoleUser, Content: "latest question"},
+	}
+	result := New(Policy{
+		Strategy:               StrategyNone,
+		MaxInputTokens:         20,
+		SystemPromptProtection: true,
+	}).Prepare(messages)
+	// Even with no active trimming strategy configured, an over-budget
+	// request must still be capped instead of growing without bound, so
+	// it degrades to the same sliding-window fallback as an explicit
+	// strategy would once MaxInputTokens is actually exceeded.
+	if result.Stats.DroppedMessages == 0 {
+		t.Fatalf("expected StrategyNone to still enforce MaxInputTokens once exceeded, got %+v", result.Stats)
+	}
+	if result.Stats.AfterTokens > result.Stats.MaxInputTokens {
+		t.Fatalf("expected AfterTokens to respect MaxInputTokens cap, got %+v", result.Stats)
+	}
+	if result.Messages[0].Role != RoleSystem || result.Messages[0].Content != "protected system prompt" {
+		t.Fatalf("system prompt was not protected: %+v", result.Messages)
+	}
+	if result.Messages[len(result.Messages)-1].Content != "latest question" {
+		t.Fatalf("latest message was not retained: %+v", result.Messages)
+	}
+}
+
 func TestManagerSlidingWindowProtectsSystemPrompt(t *testing.T) {
 	messages := []Message{
 		{Role: RoleSystem, Content: "protected system prompt"},

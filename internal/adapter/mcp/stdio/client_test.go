@@ -41,6 +41,42 @@ func TestClientListsAndCallsToolsOverStdio(t *testing.T) {
 	}
 }
 
+func TestClientCallCancelledMidReadPoisonsClientInsteadOfHanging(t *testing.T) {
+	client, err := NewClient(context.Background(), Config{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestStdioHelperProcess"},
+		Env:     []string{"AGENTFLOW_TEST_MCP_STDIO=1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	// "hang" never gets a reply from the helper process, so the call must
+	// return once its own context expires rather than blocking forever.
+	hangCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- client.call(hangCtx, "hang", nil, nil)
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected the cancelled call to return an error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("call did not return after its context expired; it is hanging on the abandoned read")
+	}
+
+	// The abandoned read may still be sitting on the response meant for
+	// the cancelled call; a fresh call must not silently consume it as its
+	// own response, so the client should now be permanently poisoned.
+	if err := client.call(context.Background(), "tools/list", nil, nil); err == nil {
+		t.Fatal("expected subsequent calls on a poisoned client to fail")
+	}
+}
+
 func TestStdioHelperProcess(t *testing.T) {
 	if os.Getenv("AGENTFLOW_TEST_MCP_STDIO") != "1" {
 		return
@@ -64,6 +100,10 @@ func TestStdioHelperProcess(t *testing.T) {
 			result = map[string]any{"tools": []map[string]any{{"name": "search", "description": "Search docs"}}}
 		case "tools/call":
 			result = map[string]any{"content": []map[string]any{{"type": "text", "text": "ok"}}}
+		case "hang":
+			// Deliberately never reply, to simulate a server that stalls
+			// mid-request.
+			continue
 		default:
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32601, "message": "method not found"}})
 			continue

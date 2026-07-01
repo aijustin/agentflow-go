@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -15,6 +16,11 @@ type Registry struct {
 	Tools  map[string]core.ToolExecutor
 	Skills map[string]core.Skill
 	Events map[string]core.EventSink
+
+	// mu guards Tools, the only field mutated after construction (via
+	// RegisterTool). Concurrent RegisterTool/Tool/ResolveTool calls would
+	// otherwise be a data race on the map.
+	mu sync.RWMutex
 }
 
 func New() *Registry {
@@ -34,6 +40,8 @@ func (r *Registry) RegisterTool(name string, executor core.ToolExecutor) error {
 	if executor == nil {
 		return fmt.Errorf("registry: tool %q executor is nil", name)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, exists := r.Tools[name]; exists {
 		return fmt.Errorf("registry: tool %q already registered", name)
 	}
@@ -42,6 +50,8 @@ func (r *Registry) RegisterTool(name string, executor core.ToolExecutor) error {
 }
 
 func (r *Registry) Tool(name string) (core.ToolExecutor, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	tool, ok := r.Tools[name]
 	return tool, ok
 }

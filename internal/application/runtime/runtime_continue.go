@@ -13,17 +13,18 @@ import (
 )
 
 const (
-	checkpointKindVar            = "checkpoint_kind"
-	checkpointPromptVar          = "checkpoint_prompt"
-	checkpointAgentVar           = "checkpoint_agent"
-	checkpointContextVar         = "checkpoint_context"
-	checkpointResumedVar         = "checkpoint_resumed"
-	checkpointToolCallsVar       = "checkpoint_tool_calls"
-	checkpointMessagesVar        = "checkpoint_messages"
-	checkpointToolCountsVar      = "checkpoint_tool_counts"
-	checkpointOutputModeVar      = "checkpoint_output_mode"
-	checkpointStepsConsumedVar   = "checkpoint_steps_consumed"
-	humanAmendmentVar            = "human_amendment"
+	checkpointKindVar           = "checkpoint_kind"
+	checkpointPromptVar         = "checkpoint_prompt"
+	checkpointAgentVar          = "checkpoint_agent"
+	checkpointContextVar        = "checkpoint_context"
+	checkpointResumedVar        = "checkpoint_resumed"
+	checkpointToolCallsVar      = "checkpoint_tool_calls"
+	checkpointMessagesVar       = "checkpoint_messages"
+	checkpointToolCountsVar     = "checkpoint_tool_counts"
+	checkpointOutputModeVar     = "checkpoint_output_mode"
+	checkpointStepsConsumedVar  = "checkpoint_steps_consumed"
+	checkpointReplanAttemptsVar = "checkpoint_replan_attempts"
+	humanAmendmentVar           = "human_amendment"
 )
 
 // RunPausedError indicates the run paused and requires human approval before continuing.
@@ -123,7 +124,10 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		return RunResult{}, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM)
 	}
 	stepsConsumed := checkpointStepsConsumed(snapshot.Variables)
-	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, toolCounts, caller, prompt, stepsConsumed)
+	// Cumulative across the whole run (including replans before this pause)
+	// so pausing and resuming cannot reset the replan budget.
+	replanAttempts := checkpointIntVar(snapshot.Variables, checkpointReplanAttemptsVar)
+	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, toolCounts, caller, prompt, stepsConsumed, replanAttempts)
 	if err != nil {
 		var paused RunPausedError
 		if errorsAsRunPaused(err, &paused) {
@@ -135,7 +139,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	return e.completeRun(ctx, snapshot.RunID, output)
 }
 
-func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string, stepsConsumed int) (string, error) {
+func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string, stepsConsumed int, replanAttempts int) (string, error) {
 	if len(pending) > 0 {
 		turnStart := lastAssistantWithToolCallsIndex(messages)
 		// pending[0] is the tool call the human just approved; execute it
@@ -158,9 +162,11 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 			ToolCallID: approved.ID,
 		})
 		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
-			_ = e.markPlanStepDone(ctx, runID, approved.Name)
+			if err := e.markPlanStepDone(ctx, runID, approved.Name); err != nil {
+				return "", err
+			}
 		}
-		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false, stepsConsumed)
+		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false, stepsConsumed, replanAttempts)
 		if err != nil {
 			return "", err
 		}
@@ -171,10 +177,6 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		}
 	}
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
-	remainingSteps := maxSteps - stepsConsumed
-	if remainingSteps <= 0 {
-		return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", maxSteps)
-	}
 	toolSpecs := e.toolSpecs(agent)
 	baseReq := llm.ChatRequest{
 		Messages:        messages,
@@ -185,7 +187,15 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		ReasoningEffort: profile.ReasoningEffort,
 		ExtraBody:       profile.ExtraBody,
 	}
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, remainingSteps, prompt, 0, stepsConsumed)
+	remainingSteps := maxSteps - stepsConsumed
+	if remainingSteps <= 0 {
+		// The step budget was already exhausted before control returned
+		// here (e.g. the pause happened on the very last allowed step).
+		// Try to replan instead of always failing hard, matching the
+		// budget-exhaustion behavior of the non-paused tool loop.
+		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumed)
+	}
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, remainingSteps, prompt, replanAttempts, stepsConsumed)
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {
@@ -262,18 +272,22 @@ func clearHumanAmendment(snapshot *runstate.RunSnapshot) {
 }
 
 func checkpointStepsConsumed(vars map[string]json.RawMessage) int {
+	return checkpointIntVar(vars, checkpointStepsConsumedVar)
+}
+
+func checkpointIntVar(vars map[string]json.RawMessage, key string) int {
 	if vars == nil {
 		return 0
 	}
-	raw, ok := vars[checkpointStepsConsumedVar]
+	raw, ok := vars[key]
 	if !ok || len(raw) == 0 {
 		return 0
 	}
-	var consumed int
-	if err := json.Unmarshal(raw, &consumed); err != nil {
+	var value int
+	if err := json.Unmarshal(raw, &value); err != nil {
 		return 0
 	}
-	return consumed
+	return value
 }
 
 func variableString(vars map[string]json.RawMessage, key string) string {
@@ -310,7 +324,7 @@ func errorsAsRunPaused(err error, target *RunPausedError) bool {
 	return errors.As(err, target)
 }
 
-func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, stepsConsumed int) (*RunPausedError, error) {
+func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, stepsConsumed int, replanAttempts int) (*RunPausedError, error) {
 	if len(pending) == 0 {
 		return nil, nil
 	}
@@ -342,19 +356,16 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		return nil, err
 	}
 	vars := map[string]json.RawMessage{
-		checkpointKindVar:            json.RawMessage(`"tool_approval"`),
-		checkpointAgentVar:           json.RawMessage(fmt.Sprintf("%q", agent.Name)),
-		checkpointPromptVar:          json.RawMessage(fmt.Sprintf("%q", prompt)),
-		checkpointToolCallsVar:       toolCallsRaw,
-		checkpointMessagesVar:        messagesRaw,
-		checkpointToolCountsVar:      countsRaw,
-		checkpointStepsConsumedVar:     json.RawMessage(fmt.Sprintf("%d", stepsConsumed)),
+		checkpointKindVar:           json.RawMessage(`"tool_approval"`),
+		checkpointAgentVar:          json.RawMessage(fmt.Sprintf("%q", agent.Name)),
+		checkpointPromptVar:         json.RawMessage(fmt.Sprintf("%q", prompt)),
+		checkpointToolCallsVar:      toolCallsRaw,
+		checkpointMessagesVar:       messagesRaw,
+		checkpointToolCountsVar:     countsRaw,
+		checkpointStepsConsumedVar:  json.RawMessage(fmt.Sprintf("%d", stepsConsumed)),
+		checkpointReplanAttemptsVar: json.RawMessage(fmt.Sprintf("%d", replanAttempts)),
 	}
 	if err := e.saveCheckpointVariables(ctx, &snapshot, vars); err != nil {
-		return nil, err
-	}
-	snapshot, err = runstate.LoadAuthorized(ctx, e.runs, runID)
-	if err != nil {
 		return nil, err
 	}
 	payload, err := json.Marshal(map[string]any{
@@ -366,11 +377,8 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err != nil {
 		return nil, err
 	}
-	token, err := e.gate.Pause(ctx, core.CheckpointState{
-		RunID:   runID,
-		Version: snapshot.Version,
-		NodeID:  "tool_approval",
-		Payload: payload,
+	token, err := e.pauseWithRetry(ctx, runID, func(version int64) core.CheckpointState {
+		return core.CheckpointState{RunID: runID, Version: version, NodeID: "tool_approval", Payload: payload}
 	})
 	if err != nil {
 		return nil, err

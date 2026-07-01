@@ -239,19 +239,34 @@ func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, r
 	}
 	wg.Wait()
 	close(errs)
-	// Prefer a pause error over any other so HITL halts propagate correctly.
-	var firstErr error
+	// Prefer a pause error over any other so HITL halts propagate correctly,
+	// but never silently discard a sibling's hard failure: record it as an
+	// event so operators can see it even though the pause takes precedence
+	// for control flow.
+	var firstErr, pauseErr error
 	for err := range errs {
 		if err == nil {
 			continue
 		}
 		var paused WorkflowPausedError
 		if errors.As(err, &paused) {
-			return err
+			if pauseErr == nil {
+				pauseErr = err
+			}
+			continue
 		}
 		if firstErr == nil {
 			firstErr = err
 		}
+	}
+	if pauseErr != nil {
+		if firstErr != nil {
+			r.emitJSON(ctx, core.EventStepFailed, scenario.Name, runID, map[string]any{
+				"warning": "sibling node failed in the same batch as a pause; pause takes precedence",
+				"error":   firstErr.Error(),
+			})
+		}
+		return pauseErr
 	}
 	return firstErr
 }
@@ -397,7 +412,13 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 	agentInput := core.AgentInput{RunID: runID, Context: input}
 	if r.runs != nil {
 		if snapshot, loadErr := runstate.LoadAuthorized(ctx, r.runs, runID); loadErr == nil {
-			agentInput = applyWorkflowAmendmentToAgentInput(snapshot, runID, input)
+			var applied bool
+			agentInput, applied = applyWorkflowAmendmentToAgentInput(snapshot, runID, input)
+			if applied {
+				if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
@@ -417,16 +438,18 @@ func (r *WorkflowRunner) runHumanGateNode(ctx context.Context, node core.Workflo
 	if r.runs == nil {
 		return fmt.Errorf("orchestration: run-state repository is required for human gate")
 	}
-	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
-	if err != nil {
-		return err
+	// CurrentNodeID is stored with its full storage-scoped id (including any
+	// subgraph/loop prefix) so that resuming from inside a subgraph or loop
+	// can recognize that this exact gate was already approved, instead of
+	// re-pausing on it a second time.
+	storedID := storageNodeID(ctx, node.ID)
+	prepare := func(snapshot *runstate.RunSnapshot) error {
+		snapshot.CurrentNodeID = storedID
+		return nil
 	}
-	snapshot.CurrentNodeID = node.ID
-	if err := r.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
-		return err
-	}
-	version := snapshot.Version
-	token, err := r.gate.Pause(ctx, core.CheckpointState{RunID: runID, Version: version, NodeID: node.ID, Payload: node.Input})
+	token, err := r.pauseWithRetry(ctx, runID, prepare, func(version int64) core.CheckpointState {
+		return core.CheckpointState{RunID: runID, Version: version, NodeID: node.ID, Payload: node.Input}
+	})
 	if err != nil {
 		return err
 	}
@@ -441,28 +464,111 @@ func (r *WorkflowRunner) pauseForInterrupt(ctx context.Context, node core.Workfl
 	if r.runs == nil {
 		return fmt.Errorf("orchestration: run-state repository is required for interrupt")
 	}
-	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
-	if err != nil {
-		return err
+	storedID := storageNodeID(ctx, node.ID)
+	var payload json.RawMessage
+	prepare := func(snapshot *runstate.RunSnapshot) error {
+		payloadMap := map[string]any{"node_id": node.ID, "interrupt": true}
+		if ref, ok := snapshot.StepOutputs[storedID]; ok {
+			payloadMap["output"] = ref
+		}
+		raw, err := json.Marshal(payloadMap)
+		if err != nil {
+			return fmt.Errorf("orchestration: interrupt payload for node %q: %w", node.ID, err)
+		}
+		payload = raw
+		snapshot.CurrentNodeID = storedID
+		return nil
 	}
-	payloadMap := map[string]any{"node_id": node.ID, "interrupt": true}
-	if ref, ok := snapshot.StepOutputs[node.ID]; ok {
-		payloadMap["output"] = ref
-	}
-	payload, err := json.Marshal(payloadMap)
-	if err != nil {
-		return fmt.Errorf("orchestration: interrupt payload for node %q: %w", node.ID, err)
-	}
-	snapshot.CurrentNodeID = node.ID
-	if err := r.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
-		return err
-	}
-	token, err := r.gate.Pause(ctx, core.CheckpointState{RunID: runID, Version: snapshot.Version, NodeID: node.ID, Payload: json.RawMessage(payload)})
+	token, err := r.pauseWithRetry(ctx, runID, prepare, func(version int64) core.CheckpointState {
+		return core.CheckpointState{RunID: runID, Version: version, NodeID: node.ID, Payload: payload}
+	})
 	if err != nil {
 		return err
 	}
 	r.emitJSON(ctx, core.EventRunPaused, "", runID, map[string]any{"node_id": node.ID, "interrupt": true})
 	return WorkflowPausedError{RunID: runID, NodeID: node.ID, Token: token}
+}
+
+// saveSnapshotWithRetry reloads and mutates the run snapshot, retrying on
+// optimistic-concurrency conflicts so concurrent writers (parallel batch
+// siblings, tool loops) never turn a legitimate write into a hard failure.
+func (r *WorkflowRunner) saveSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) error {
+	for attempt := 0; attempt < 5; attempt++ {
+		snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
+		if err != nil {
+			return err
+		}
+		if mutate != nil {
+			if err := mutate(&snapshot); err != nil {
+				return err
+			}
+		}
+		if err := r.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+			if errors.Is(err, runstate.ErrStaleSnapshot) {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return fmt.Errorf("orchestration: failed to save snapshot %q after stale snapshot retries", runID)
+}
+
+// pauseWithRetry applies an optional snapshot mutation and then pauses
+// through the human gate, retrying the whole sequence when a concurrent
+// writer (e.g. a sibling node in the same parallel batch) advances the run
+// version between our load and the gate's own compare-and-swap save. Without
+// this retry, HumanGate.Pause implementations that use a single fixed
+// expected version turn a legitimate concurrent pause into a hard run
+// failure.
+func (r *WorkflowRunner) pauseWithRetry(ctx context.Context, runID string, prepare func(*runstate.RunSnapshot) error, build func(version int64) core.CheckpointState) (string, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if prepare != nil {
+			if err := r.saveSnapshotWithRetry(ctx, runID, prepare); err != nil {
+				return "", err
+			}
+		}
+		snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
+		if err != nil {
+			return "", err
+		}
+		token, err := r.gate.Pause(ctx, build(snapshot.Version))
+		if err == nil {
+			return token, nil
+		}
+		if !errors.Is(err, runstate.ErrStaleSnapshot) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("orchestration: failed to pause run %q after stale snapshot retries", runID)
+}
+
+// nodeAlreadyDone reports whether n's storage-scoped output already exists,
+// or - for human-gate/interrupt nodes that never write a step output - that
+// the run's CurrentNodeID shows this exact node was already paused and then
+// resolved (PendingGate cleared). Loop and subgraph resume paths use this to
+// skip nodes that already ran without re-triggering their side effects or
+// re-prompting for approval.
+func (r *WorkflowRunner) nodeAlreadyDone(ctx context.Context, runID string, n core.WorkflowNode) (bool, error) {
+	if _, ok, err := r.stepOutputRaw(ctx, runID, n.ID); err != nil {
+		return false, err
+	} else if ok {
+		return true, nil
+	}
+	if n.Kind != core.NodeHumanGate && !n.Interrupt {
+		return false, nil
+	}
+	if r.runs == nil {
+		return false, nil
+	}
+	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
+	if err != nil {
+		return false, err
+	}
+	return snapshot.PendingGate == nil && snapshot.CurrentNodeID == storageNodeID(ctx, n.ID), nil
 }
 
 func (r *WorkflowRunner) saveStepOutput(ctx context.Context, scenario core.Scenario, runID, nodeID string, value any) error {
@@ -756,7 +862,11 @@ func workflowNodeByID(scenario core.Scenario, id string) (core.WorkflowNode, boo
 	if scenario.Orchestration.Workflow == nil {
 		return core.WorkflowNode{}, false
 	}
-	for _, node := range scenario.Orchestration.Workflow.Nodes {
+	return nodeByID(*scenario.Orchestration.Workflow, id)
+}
+
+func nodeByID(workflow core.Workflow, id string) (core.WorkflowNode, bool) {
+	for _, node := range workflow.Nodes {
 		if node.ID == id {
 			return node, true
 		}
