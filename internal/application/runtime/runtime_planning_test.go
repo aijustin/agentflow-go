@@ -8,6 +8,7 @@ import (
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -112,5 +113,23 @@ func TestToolSpecsPrunesToPlannedToolWhenPersistedPlanNamesOne(t *testing.T) {
 	specs := engine.toolSpecs(ctx, "run-plan-prune", agent)
 	if len(specs) != 1 || specs[0].Name != "echo" {
 		t.Fatalf("expected pruning to restrict to the planned tool %q only, got specs %+v", "echo", specs)
+	}
+}
+
+func TestAppendPlanningHintDeduplicates(t *testing.T) {
+	hint := "Next planned step prefers tool \"echo\": call echo"
+	messages := []llm.Message{
+		{Role: llm.RoleUser, Content: "hello"},
+	}
+	once := appendPlanningHint(messages, hint)
+	if len(once) != 2 || once[0].Content != hint {
+		t.Fatalf("expected hint prepended once, got %+v", once)
+	}
+	twice := appendPlanningHint(once, hint)
+	if len(twice) != 2 {
+		t.Fatalf("expected duplicate hint to be skipped, got %d messages", len(twice))
+	}
+	if twice[0].Content != hint {
+		t.Fatalf("expected first message to remain the hint, got %q", twice[0].Content)
 	}
 }

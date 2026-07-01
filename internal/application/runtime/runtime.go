@@ -394,6 +394,9 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 }
 
 func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.AgentInput) (core.AgentOutput, error) {
+	if err := e.ensureRunActive(ctx, input.RunID); err != nil {
+		return core.AgentOutput{}, err
+	}
 	output, err := e.answer(ctx, RunRequest{
 		RunID:   input.RunID,
 		Agent:   agentName,

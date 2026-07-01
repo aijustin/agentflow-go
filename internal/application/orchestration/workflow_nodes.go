@@ -148,7 +148,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 			if index > 0 {
 				memberKey = fmt.Sprintf("%s:%d", memberKey, index)
 			}
-			if raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID); err == nil && ok {
+			if raw, ok, err := r.stepOutputRaw(ctx, runID, childID); err == nil && ok {
 				var value any
 				if err := json.Unmarshal(raw, &value); err == nil {
 					mu.Lock()
@@ -162,7 +162,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 			runMember(memberKey, func(runCtx context.Context) error {
 				return r.runAgentNode(withSkipCurrentNode(runCtx), scenario, child, runID)
 			}, func() (any, error) {
-				raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
+				raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
 				if err != nil {
 					return nil, err
 				}
@@ -185,7 +185,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 			if index > 0 {
 				memberKey = fmt.Sprintf("%s:%d", memberKey, index)
 			}
-			if raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID); err == nil && ok {
+			if raw, ok, err := r.stepOutputRaw(ctx, runID, childID); err == nil && ok {
 				var value any
 				if err := json.Unmarshal(raw, &value); err == nil {
 					mu.Lock()
@@ -199,7 +199,7 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 			runMember(memberKey, func(runCtx context.Context) error {
 				return r.runToolNode(withSkipCurrentNode(runCtx), scenario, child, runID)
 			}, func() (any, error) {
-				raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
+				raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
 				if err != nil {
 					return nil, err
 				}

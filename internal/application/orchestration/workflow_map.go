@@ -174,7 +174,7 @@ scheduleLoop:
 				errs <- err
 				return
 			}
-			raw, ok, err := r.stepOutputRaw(groupCtx, runID, childID)
+			raw, ok, err := r.stepOutputRaw(ctx, runID, childID)
 			if err != nil {
 				if collectErrors {
 					mu.Lock()

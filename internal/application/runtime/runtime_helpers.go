@@ -58,6 +58,26 @@ func (e *Engine) llmProfile(name string) (core.LLMProfileRef, error) {
 	return profile, nil
 }
 
+func (e *Engine) ensureRunActive(ctx context.Context, runID string) error {
+	if runID == "" || e.runs == nil {
+		return nil
+	}
+	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	if err != nil {
+		return err
+	}
+	switch loaded.Status {
+	case runstate.RunStatusRunning:
+		return nil
+	case runstate.RunStatusCompleted:
+		return ErrRunAlreadyCompleted
+	case runstate.RunStatusCancelled:
+		return ErrRunCancelled
+	default:
+		return fmt.Errorf("runtime: run %q is not running (status=%s)", runID, loaded.Status)
+	}
+}
+
 func (e *Engine) ensureRunPaused(ctx context.Context, runID string) error {
 	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {

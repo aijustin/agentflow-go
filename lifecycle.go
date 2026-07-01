@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // WithCloser registers a function invoked by Framework.Close in LIFO order.
@@ -35,9 +36,20 @@ func (f *Framework) Close(ctx context.Context) error {
 	}
 	var errs []error
 	for i := len(f.closers) - 1; i >= 0; i-- {
-		if err := f.closers[i](ctx); err != nil {
+		closerCtx := ctx
+		var cancel context.CancelFunc
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			closerCtx, cancel = context.WithTimeout(ctx, closerTimeout)
+		}
+		err := f.closers[i](closerCtx)
+		if cancel != nil {
+			cancel()
+		}
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
+
+const closerTimeout = 30 * time.Second

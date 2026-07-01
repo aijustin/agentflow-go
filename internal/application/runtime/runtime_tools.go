@@ -128,11 +128,20 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		callCounts[call.Name]++
 	}
 	if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil {
+		persistErr := err.Error()
 		if result.Error == "" {
-			result.Error = "persist tool output: " + err.Error()
+			result.Error = "persist tool output: " + persistErr
 		} else {
 			e.logWarn(ctx, "runtime: failed to persist tool output after tool error", "run_id", runID, "tool", call.Name, "error", err)
 		}
+		e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
+		e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error, "persist_error": persistErr})
+		if !options.skipMemory {
+			if err := e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromToolResult(call, result)}); err != nil {
+				return result, err
+			}
+		}
+		return result, nil
 	}
 	e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})

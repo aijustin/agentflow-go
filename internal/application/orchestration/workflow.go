@@ -419,12 +419,11 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 	if err != nil {
 		return err
 	}
-	agentInput := core.AgentInput{RunID: runID, Context: input}
-	var amendmentApplied bool
-	if r.runs != nil {
-		if snapshot, loadErr := runstate.LoadAuthorized(ctx, r.runs, runID); loadErr == nil {
-			agentInput, amendmentApplied = applyWorkflowAmendmentToAgentInput(snapshot, runID, input)
-		}
+	agentInput := coreAgentInputFromResolved(input)
+	agentInput.RunID = runID
+	agentInput, amendmentApplied, err := r.resolveWorkflowAmendmentForAgent(ctx, runID, agentInput)
+	if err != nil {
+		return err
 	}
 	if amendmentApplied {
 		if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
@@ -808,12 +807,52 @@ func parseConditionValue(raw string) any {
 }
 
 func workflowValuesEqual(left, right any) bool {
-	leftBytes, leftErr := json.Marshal(left)
-	rightBytes, rightErr := json.Marshal(right)
+	leftNorm := normalizeWorkflowValue(left)
+	rightNorm := normalizeWorkflowValue(right)
+	leftBytes, leftErr := json.Marshal(leftNorm)
+	rightBytes, rightErr := json.Marshal(rightNorm)
 	if leftErr == nil && rightErr == nil {
 		return string(leftBytes) == string(rightBytes)
 	}
-	return fmt.Sprint(left) == fmt.Sprint(right)
+	return fmt.Sprint(leftNorm) == fmt.Sprint(rightNorm)
+}
+
+func normalizeWorkflowValue(value any) any {
+	switch typed := value.(type) {
+	case float64:
+		if typed == float64(int64(typed)) {
+			return int64(typed)
+		}
+		return typed
+	case int:
+		return int64(typed)
+	case int32:
+		return int64(typed)
+	case int64:
+		return typed
+	case json.Number:
+		if i, err := typed.Int64(); err == nil {
+			return i
+		}
+		if f, err := typed.Float64(); err == nil {
+			return normalizeWorkflowValue(f)
+		}
+		return typed.String()
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = normalizeWorkflowValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeWorkflowValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func cloneAnyMap(values map[string]any) map[string]any {

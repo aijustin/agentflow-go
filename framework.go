@@ -261,16 +261,18 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 	if cfg.checkpointHistory != nil {
 		cfg.runs = &runstaterecording.Repository{Inner: cfg.runs, History: cfg.checkpointHistory, Logger: cfg.logger}
 	}
+	autoMemory := make(map[string]bool)
+	for name, ref := range scenario.Memories {
+		if ref.Type == "in_memory" {
+			autoMemory[name] = true
+		}
+	}
+	wiringRules := defaultWiringOptions()
 	if cfg.requireLLM {
-		autoMemory := make(map[string]bool)
-		for name, ref := range scenario.Memories {
-			if ref.Type == "in_memory" {
-				autoMemory[name] = true
-			}
-		}
-		if err := validateWiring(scenario, cfg, autoMemory, WiringOptions{RequireLLM: true}); err != nil {
-			return nil, err
-		}
+		wiringRules.RequireLLM = true
+	}
+	if err := validateWiring(scenario, cfg, autoMemory, wiringRules); err != nil {
+		return nil, err
 	}
 	tools := newToolRegistry(cfg.tools, cfg.resolver)
 	var tokenSigner *runstate.TokenSigner

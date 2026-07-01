@@ -900,6 +900,36 @@ func TestEngineBeginRunRejectsPausedRun(t *testing.T) {
 	}
 }
 
+func TestEngineRunAgentRejectsNonRunningRun(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: &capturingGateway{response: "ok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		status runstate.RunStatus
+		want   error
+	}{
+		{name: "completed", status: runstate.RunStatusCompleted, want: ErrRunAlreadyCompleted},
+		{name: "cancelled", status: runstate.RunStatusCancelled, want: ErrRunCancelled},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runID := "run-agent-" + tt.name
+			if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+				RunID: runID, ScenarioName: "scenario", Status: tt.status,
+			}, 0); err != nil {
+				t.Fatal(err)
+			}
+			_, err := engine.RunAgent(context.Background(), "assistant", core.AgentInput{RunID: runID, Prompt: "again"})
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
 func TestEngineRunHybridRejectsCompletedRun(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: &capturingGateway{response: "ok"}})

@@ -147,6 +147,9 @@ func appendPlanningHint(messages []llm.Message, hint string) []llm.Message {
 	if hint == "" {
 		return messages
 	}
+	if len(messages) > 0 && messages[0].Role == llm.RoleSystem && messages[0].Content == hint {
+		return messages
+	}
 	out := make([]llm.Message, 0, len(messages)+1)
 	out = append(out, llm.Message{Role: llm.RoleSystem, Content: hint})
 	out = append(out, messages...)
