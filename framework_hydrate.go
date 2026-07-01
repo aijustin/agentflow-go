@@ -68,11 +68,34 @@ func mergeWorkflowContext(userContext, hydrated json.RawMessage) (json.RawMessag
 	return json.Marshal(userObj)
 }
 
-func completedHybridResult(snapshot runstate.RunSnapshot) (RunResult, bool) {
+func (f *Framework) workflowRunOutput(ctx context.Context, snapshot runstate.RunSnapshot) string {
+	if ref, ok := snapshot.StepOutputs["final"]; ok && len(ref.Inline) > 0 {
+		return string(ref.Inline)
+	}
+	if len(snapshot.StepOutputs) == 0 {
+		return ""
+	}
+	raw, err := runstate.HydrateStepContext(ctx, f.blobs, snapshot.StepOutputs)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func completedHybridResult(ctx context.Context, f *Framework, snapshot runstate.RunSnapshot) (RunResult, bool) {
 	if snapshot.Status != runstate.RunStatusCompleted {
 		return RunResult{}, false
 	}
-	return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusCompleted, Output: "hybrid run already completed"}, true
+	output := f.workflowRunOutput(ctx, snapshot)
+	if ref, ok := snapshot.StepOutputs["final"]; ok && len(ref.Inline) > 0 {
+		return RunResult{
+			RunID:            snapshot.RunID,
+			Status:           runstate.RunStatusCompleted,
+			Output:           output,
+			StructuredOutput: ref.Inline,
+		}, true
+	}
+	return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusCompleted, Output: output}, true
 }
 
 func isEmptyOrNullJSON(raw json.RawMessage) bool {

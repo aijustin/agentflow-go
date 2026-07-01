@@ -141,7 +141,10 @@ func (r *WorkflowRunner) run(ctx context.Context, scenario core.Scenario, runID 
 	deps := dependencies(workflow)
 	pending := make(map[string]bool, len(nodes))
 	done := make(map[string]bool, len(nodes))
-	bodyOnly := loopBodyNodeIDs(workflow)
+	bodyOnly, err := loopBodyNodeIDs(workflow)
+	if err != nil {
+		return err
+	}
 	for id := range nodes {
 		if bodyOnly[id] {
 			continue
@@ -423,20 +426,17 @@ func (r *WorkflowRunner) runAgentNode(ctx context.Context, scenario core.Scenari
 			agentInput, amendmentApplied = applyWorkflowAmendmentToAgentInput(snapshot, runID, input)
 		}
 	}
+	if amendmentApplied {
+		if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
+			return err
+		}
+	}
 	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
 	output, err := safecall.Invoke("orchestration: agent run", func() (core.AgentOutput, error) {
 		return agent.Run(ctx, agentInput)
 	})
 	if err != nil {
 		return err
-	}
-	// Only clear the amendment once the agent call has actually succeeded:
-	// clearing it beforehand would silently drop the human feedback if
-	// runNodeWithRetry has to retry this node after a failure.
-	if amendmentApplied {
-		if err := r.clearWorkflowAmendment(ctx, runID); err != nil {
-			return err
-		}
 	}
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, output)
 }
@@ -583,7 +583,7 @@ func (r *WorkflowRunner) nodeAlreadyDone(ctx context.Context, runID string, n co
 
 func (r *WorkflowRunner) saveStepOutput(ctx context.Context, scenario core.Scenario, runID, nodeID string, value any) error {
 	if r.runs == nil {
-		return nil
+		return fmt.Errorf("orchestration: run-state repository is required to save step output")
 	}
 	nodeID = storageNodeID(ctx, nodeID)
 	raw, err := json.Marshal(value)
@@ -673,8 +673,11 @@ func (r *WorkflowRunner) conditionEnabled(ctx context.Context, runID, condition 
 			return false, fmt.Errorf("orchestration: eq condition requires path and expected value")
 		}
 		actual, found, err := r.resolveWorkflowPath(ctx, runID, strings.TrimSpace(args[0]))
-		if err != nil || !found {
+		if err != nil {
 			return false, err
+		}
+		if !found {
+			return false, nil
 		}
 		expected := parseConditionValue(strings.TrimSpace(args[1]))
 		return workflowValuesEqual(actual, expected), nil
@@ -685,8 +688,11 @@ func (r *WorkflowRunner) conditionEnabled(ctx context.Context, runID, condition 
 			return false, fmt.Errorf("orchestration: ne condition requires path and expected value")
 		}
 		actual, found, err := r.resolveWorkflowPath(ctx, runID, strings.TrimSpace(args[0]))
-		if err != nil || !found {
+		if err != nil {
 			return false, err
+		}
+		if !found {
+			return true, nil
 		}
 		expected := parseConditionValue(strings.TrimSpace(args[1]))
 		return !workflowValuesEqual(actual, expected), nil

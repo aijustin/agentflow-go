@@ -111,7 +111,6 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil
 	}
-	callCounts[call.Name]++
 	result, err := e.executeToolWithRetry(ctx, runID, agent, call, executor)
 	if err != nil {
 		// A context cancellation/deadline is a runtime-level condition, not
@@ -125,8 +124,15 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		}
 		result = core.ToolResult{Tool: call.Name, Error: err.Error()}
 	}
-	if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil && result.Error == "" {
-		result.Error = "persist tool output: " + err.Error()
+	if result.Error == "" {
+		callCounts[call.Name]++
+	}
+	if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil {
+		if result.Error == "" {
+			result.Error = "persist tool output: " + err.Error()
+		} else {
+			e.logWarn(ctx, "runtime: failed to persist tool output after tool error", "run_id", runID, "tool", call.Name, "error", err)
+		}
 	}
 	e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})

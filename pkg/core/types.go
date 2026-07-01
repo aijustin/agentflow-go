@@ -287,3 +287,10 @@ type HumanGate interface {
 	Pause(ctx context.Context, state CheckpointState) (token string, err error)
 	Resume(ctx context.Context, token string, decision Decision, amendment json.RawMessage) error
 }
+
+// PauseTokenDecoder is an optional HumanGate extension for deployments that
+// do not use HMAC-signed pause tokens. ResumeAndContinue uses it to resolve
+// the run ID before calling Resume.
+type PauseTokenDecoder interface {
+	RunIDFromPauseToken(token string) (string, error)
+}

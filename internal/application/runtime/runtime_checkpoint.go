@@ -17,6 +17,9 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 	if e.gate == nil {
 		return RunResult{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
 	}
+	if delegationDepthFromContext(ctx) > 0 {
+		return RunResult{}, fmt.Errorf("runtime: before_final_answer checkpoint is not supported inside delegated sub-agent calls")
+	}
 	checkpointVars := map[string]json.RawMessage{
 		checkpointPromptVar:  json.RawMessage(fmt.Sprintf("%q", req.Prompt)),
 		checkpointAgentVar:   json.RawMessage(fmt.Sprintf("%q", agent.Name)),
@@ -36,6 +39,7 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 	if err != nil {
 		return RunResult{}, err
 	}
+	e.ensureRunPaused(ctx, req.RunID)
 	e.emit(ctx, core.EventRunPaused, req.RunID, payload)
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil
 }

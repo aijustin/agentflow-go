@@ -118,7 +118,10 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
 		return RunResult{}, err
 	}
-	profile := e.scenario.LLMs[agent.LLM]
+	profile, err := e.llmProfile(agent.LLM)
+	if err != nil {
+		return RunResult{}, err
+	}
 	caller, ok := e.llm.(llm.ToolCaller)
 	if !ok || !e.llm.Supports(agent.LLM, llm.CapToolCall) {
 		return RunResult{}, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM)
@@ -162,11 +165,14 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 			ToolCallID: approved.ID,
 		})
 		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
+			// See the identical comment in dispatchToolCalls: this is plan
+			// bookkeeping, not the tool result itself, so a failure here
+			// must not discard the already-successful approved tool call.
 			if err := e.markPlanStepDone(ctx, runID, approved.Name); err != nil {
-				return "", err
+				e.logWarn(ctx, "runtime: failed to update plan progress after successful tool call", "run_id", runID, "tool", approved.Name, "error", err)
 			}
 		}
-		messages, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false, stepsConsumed, replanAttempts)
+		messages, _, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false, stepsConsumed, replanAttempts, false)
 		if err != nil {
 			return "", err
 		}
@@ -193,9 +199,9 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		// here (e.g. the pause happened on the very last allowed step).
 		// Try to replan instead of always failing hard, matching the
 		// budget-exhaustion behavior of the non-paused tool loop.
-		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumed)
+		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumed, true)
 	}
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, remainingSteps, prompt, replanAttempts, stepsConsumed)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, remainingSteps, prompt, replanAttempts, stepsConsumed, true)
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {
@@ -204,7 +210,7 @@ func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResu
 		return RunResult{}, err
 	}
 	if loaded.Status != runstate.RunStatusRunning {
-		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", runID, loaded.Status)
+		return nonRunningCompletionResult(runID, loaded.Status)
 	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
@@ -220,6 +226,7 @@ func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResu
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return RunResult{}, err
 	}
+	e.recordRunCompleted(ctx, loaded)
 	e.emit(ctx, core.EventRunCompleted, runID, finalRef.Inline)
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
@@ -327,6 +334,13 @@ func errorsAsRunPaused(err error, target *RunPausedError) bool {
 	return errors.As(err, target)
 }
 
+func (e *Engine) persistUserPromptIfNeeded(ctx context.Context, runID string, agent core.Agent, prompt string) error {
+	if strings.TrimSpace(prompt) == "" {
+		return nil
+	}
+	return e.writeMemory(ctx, runID, agent, []memoryMessage{{Role: string(llm.RoleUser), Content: prompt}})
+}
+
 func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, stepsConsumed int, replanAttempts int) (*RunPausedError, error) {
 	if len(pending) == 0 {
 		return nil, nil
@@ -384,6 +398,12 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err := e.saveCheckpointVariables(ctx, &snapshot, vars); err != nil {
 		return nil, err
 	}
+	// Persist the user prompt when pausing so HITL inspection can see what
+	// was asked, without writing it at tool-loop start where a later
+	// failure/cancel would leave orphaned history.
+	if err := e.persistUserPromptIfNeeded(ctx, runID, agent, prompt); err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(map[string]any{
 		"tool":        call.Name,
 		"tool_call":   call.ID,
@@ -399,6 +419,7 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err != nil {
 		return nil, err
 	}
+	e.ensureRunPaused(ctx, runID)
 	e.emitJSON(ctx, core.EventRunPaused, runID, payload)
 	paused := RunPausedError{RunID: runID, Token: token, Kind: "tool_approval"}
 	return &paused, nil

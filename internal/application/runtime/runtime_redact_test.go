@@ -87,7 +87,7 @@ func TestEngineContextSummarizerRedactsBeforeSendingToLLM(t *testing.T) {
 		{Role: contextwindow.RoleAssistant, Content: "acknowledged, topsecret code received and stored safely"},
 		{Role: contextwindow.RoleUser, Content: "please repeat the topsecret code back to confirm receipt"},
 	}
-	engine.contextManager(context.Background(), "run-summary", policy).Prepare(raw)
+	engine.contextManager(context.Background(), "run-summary", core.Agent{Name: "assistant", LLM: "default"}, policy).Prepare(raw)
 	if strings.Contains(gateway.req.Messages[len(gateway.req.Messages)-1].Content, "topsecret") {
 		t.Fatalf("expected summarizer input to be redacted, got: %s", gateway.req.Messages[len(gateway.req.Messages)-1].Content)
 	}

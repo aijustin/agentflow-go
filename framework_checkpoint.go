@@ -125,7 +125,7 @@ func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (R
 		return RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunCompleted, runID, nil)
-	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: "fixed workflow completed"}, nil
+	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: f.workflowRunOutput(ctx, loaded)}, nil
 }
 
 // ListRunCheckpoints returns append-only snapshot revisions recorded for a run.
@@ -205,5 +205,5 @@ func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, vers
 		return RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunCompleted, runID, nil)
-	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: "fixed workflow completed"}, nil
+	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: f.workflowRunOutput(ctx, loaded)}, nil
 }

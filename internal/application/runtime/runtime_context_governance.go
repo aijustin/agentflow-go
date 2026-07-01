@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,10 +21,14 @@ import (
 // instead of blocking every turn.
 const contextSummaryTimeout = 10 * time.Second
 
-func (e *Engine) contextManager(ctx context.Context, runID string, policy contextwindow.Policy) *contextwindow.Manager {
+func (e *Engine) contextManager(ctx context.Context, runID string, agent core.Agent, policy contextwindow.Policy) *contextwindow.Manager {
 	normalized := policy.Normalize()
 	if normalized.SummaryMode != "llm" || e.llm == nil {
 		return contextwindow.New(normalized)
+	}
+	summarizerProfile := agent.LLM
+	if summarizerProfile == "" {
+		summarizerProfile = sortedLLMProfileName(e.scenario.LLMs)
 	}
 	return contextwindow.NewWithSummarizer(normalized, func(messages []contextwindow.Message, budget int) string {
 		if len(messages) == 0 {
@@ -42,7 +47,7 @@ func (e *Engine) contextManager(ctx context.Context, runID string, policy contex
 			b.WriteString(e.redactSummaryContent(ctx, runID, msg))
 			b.WriteByte('\n')
 		}
-		profile := firstLLMProfile(e.scenario.LLMs)
+		profile := summarizerProfile
 		if profile == "" {
 			return contextwindowSummaryFallback(messages, budget)
 		}
@@ -89,11 +94,16 @@ func (e *Engine) redactSummaryContent(ctx context.Context, runID string, msg con
 	return out.Content
 }
 
-func firstLLMProfile(profiles map[string]core.LLMProfileRef) string {
-	for name := range profiles {
-		return name
+func sortedLLMProfileName(profiles map[string]core.LLMProfileRef) string {
+	if len(profiles) == 0 {
+		return ""
 	}
-	return ""
+	names := make([]string, 0, len(profiles))
+	for name := range profiles {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names[0]
 }
 
 func contextwindowSummaryFallback(messages []contextwindow.Message, budget int) string {

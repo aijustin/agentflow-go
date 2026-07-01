@@ -202,7 +202,11 @@ func (r *WorkflowRunner) ResumeFromStep(ctx context.Context, scenario core.Scena
 	if !ok {
 		return fmt.Errorf("orchestration: workflow node %q not found", nodeID)
 	}
-	if loopBodyNodeIDs(*scenario.Orchestration.Workflow)[nodeID] {
+	bodyOnly, err := loopBodyNodeIDs(*scenario.Orchestration.Workflow)
+	if err != nil {
+		return err
+	}
+	if bodyOnly[nodeID] {
 		return fmt.Errorf("orchestration: cannot resume from loop body node %q", nodeID)
 	}
 	if node.Kind == core.NodeHumanGate {

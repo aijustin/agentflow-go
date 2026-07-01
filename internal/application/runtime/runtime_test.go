@@ -70,6 +70,46 @@ func TestEngineRunUsesLLM(t *testing.T) {
 	}
 }
 
+// pauseRacingGateway simulates another writer pausing the run concurrently
+// with this call's own in-flight LLM request: by the time Chat returns
+// successfully, the snapshot has already been moved to Paused underneath
+// the caller.
+type pauseRacingGateway struct {
+	repo     runstate.Repository
+	runID    string
+	response string
+}
+
+func (g *pauseRacingGateway) Supports(string, llm.Capability) bool { return true }
+
+func (g *pauseRacingGateway) Chat(ctx context.Context, _ string, _ llm.ChatRequest) (llm.ChatResponse, error) {
+	snapshot, err := g.repo.Load(ctx, g.runID)
+	if err != nil {
+		return llm.ChatResponse{}, err
+	}
+	snapshot.Status = runstate.RunStatusPaused
+	if err := g.repo.Save(ctx, &snapshot, snapshot.Version); err != nil {
+		return llm.ChatResponse{}, err
+	}
+	return llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: g.response}}, nil
+}
+
+func TestEngineRunReportsPausedResultOnConcurrentPauseRace(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := &pauseRacingGateway{repo: repo, runID: "run-race-pause", response: "answer"}
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Run(context.Background(), RunRequest{RunID: "run-race-pause", Agent: "assistant", Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("expected a paused result, not an error, got err=%v result=%+v", err, result)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused status, got %+v", result)
+	}
+}
+
 func TestEngineRunAppliesContextGovernance(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := &capturingGateway{response: "governed"}
@@ -760,6 +800,31 @@ func TestEngineRunStructuredUsesAgentOutputSchema(t *testing.T) {
 	}
 }
 
+func TestEngineRunRejectsOutputSchemaAgent(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapStructuredOutput)
+	scenario := baseScenario(false)
+	agent := scenario.Agents["assistant"]
+	agent.Policy.OutputSchema = json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.Run(context.Background(), RunRequest{RunID: "run-schema-via-run", Agent: "assistant", Prompt: "json"})
+	if err == nil || !strings.Contains(err.Error(), "output_schema") {
+		t.Fatalf("expected an output_schema error from Run(), got %v", err)
+	}
+	loaded, err := repo.Load(context.Background(), "run-schema-via-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusFailed {
+		t.Fatalf("expected run marked failed, got %+v", loaded)
+	}
+}
+
 func TestEngineRunStructuredContinuesExistingRun(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
@@ -1003,12 +1068,11 @@ func TestEngineStreamRejectsBeforeFinalCheckpoint(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "streaming does not support before_final_answer") {
 		t.Fatalf("expected unsupported checkpoint error, got %v", err)
 	}
-	loaded, err := repo.Load(context.Background(), "run-stream-hitl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Status != runstate.RunStatusFailed {
-		t.Fatalf("expected failed snapshot, got %+v", loaded)
+	// The checkpoint-support check is a static scenario property, so it is
+	// rejected before beginRun ever creates a snapshot: no spurious failed
+	// run should be left behind.
+	if _, err := repo.Load(context.Background(), "run-stream-hitl"); !errors.Is(err, runstate.ErrNotFound) {
+		t.Fatalf("expected no run snapshot to be created, got err=%v", err)
 	}
 }
 
@@ -1560,6 +1624,9 @@ func baseScenario(hitl bool) core.Scenario {
 	}
 	return core.Scenario{
 		Name: "scenario",
+		LLMs: map[string]core.LLMProfileRef{
+			"default": {Provider: "mock", Model: "test"},
+		},
 		Agents: map[string]core.Agent{
 			"assistant": {
 				Name:         "assistant",

@@ -789,7 +789,8 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 		return RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunCompleted, req.RunID, nil)
-	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: "fixed workflow completed"}, nil
+	output := f.workflowRunOutput(ctx, loaded)
+	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
 
 // runHybrid executes a hybrid scenario: the optional fixed workflow DAG runs
@@ -800,6 +801,8 @@ func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, e
 	if f.scenario.Orchestration.Workflow == nil {
 		return f.engine.Run(ctx, req)
 	}
+	ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
+	defer cancel()
 	req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
 	if err != nil || paused.Status != "" {
 		return paused, err
@@ -812,8 +815,9 @@ func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunReque
 }
 
 func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scenario core.Scenario, req RunRequest) (RunRequest, RunResult, error) {
-	ctx, cancel := withScenarioTimeout(ctx, scenario.Runtime.Timeout)
-	defer cancel()
+	if scenario.Orchestration.Workflow == nil {
+		return req, RunResult{}, fmt.Errorf("agentflow: hybrid scenario has no workflow configured")
+	}
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
@@ -856,8 +860,7 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 	}
 	req, err = f.hydrateRunRequest(ctx, req, loaded)
 	if err != nil {
-		f.markWorkflowFailed(ctx, req.RunID, err)
-		return req, RunResult{}, err
+		return req, RunResult{}, fmt.Errorf("agentflow: hydrate workflow context for autonomous phase: %w", err)
 	}
 	return req, RunResult{}, nil
 }
@@ -871,6 +874,13 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 	defer cancel()
 	if snapshot, err := runstate.LoadAuthorized(persistCtx, f.runs, runID); err == nil {
 		snapshot.Status = runstate.RunStatusFailed
+		if snapshot.Variables == nil {
+			snapshot.Variables = make(map[string]json.RawMessage)
+		}
+		// Mirrors engine.markRunFailed's run_error_message variable so a
+		// failed run's reason survives on the snapshot itself, not just in
+		// the (possibly rotated-out) event stream.
+		snapshot.Variables["run_error_message"] = json.RawMessage(fmt.Sprintf("%q", cause.Error()))
 		if saveErr := f.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
 			if f.logger != nil {
 				f.logger.Warn(persistCtx, "agentflow: failed to persist workflow failure status", "run_id", runID, "save_error", saveErr)
@@ -900,7 +910,12 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 		}
 		return f.engine.RunStructured(ctx, req)
 	case core.OrchestrationHybrid:
-		req, paused, err := f.prepareHybridAutonomousRun(ctx, req)
+		if f.scenario.Orchestration.Workflow == nil {
+			return f.engine.RunStructured(ctx, req)
+		}
+		ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
+		defer cancel()
+		req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
 		if err != nil || paused.Status != "" {
 			return paused, err
 		}
@@ -927,7 +942,12 @@ func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.Chat
 		}
 		return f.engine.Stream(ctx, req)
 	case core.OrchestrationHybrid:
-		req, paused, err := f.prepareHybridAutonomousRun(ctx, req)
+		if f.scenario.Orchestration.Workflow == nil {
+			return f.engine.Stream(ctx, req)
+		}
+		ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
+		defer cancel()
+		req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
 		if err != nil {
 			return nil, err
 		}

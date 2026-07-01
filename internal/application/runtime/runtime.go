@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
@@ -127,16 +126,18 @@ type RunResult struct {
 }
 
 func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
-	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
-	defer cancel()
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		ctx, cancel = e.withTimeout(ctx, e.scenario.Runtime.Timeout)
+		defer cancel()
+	}
 	ctx, runSpan := e.startSpan(ctx, observability.SpanRun,
 		observability.Attribute{Key: "run_id", Value: req.RunID},
 		observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
 	)
 	defer runSpan.End()
 
-	runStart := time.Now()
-	if _, err := e.beginRun(ctx, &req); err != nil {
+	if err := e.beginRun(ctx, &req); err != nil {
 		return RunResult{}, err
 	}
 	failRun := func(err error) (RunResult, error) {
@@ -156,11 +157,22 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if agentErr != nil {
 		return failRun(agentErr)
 	}
+	if len(agent.Policy.OutputSchema) > 0 {
+		// Run() always calls answer(), which only ever produces plain text:
+		// silently ignoring output_schema here would return free-text
+		// output for an agent the caller configured to emit structured
+		// JSON, with no indication anything was skipped. RunStructured is
+		// the entry point that actually enforces the schema.
+		return failRun(fmt.Errorf("runtime: agent %q has an output_schema configured; use RunStructured instead of Run", agent.Name))
+	}
 	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return failRun(err)
 	}
 	if e.shouldPauseBeforeFinal() && !e.isCheckpointResumed(snapshot) {
+		if e.gate == nil {
+			return failRun(fmt.Errorf("runtime: human gate required for configured checkpoint"))
+		}
 		result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &snapshot, checkpointPauseOptions{})
 		if err != nil {
 			return failRun(err)
@@ -168,7 +180,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return result, nil
 	}
 
-	output, err := e.answer(ctx, req)
+	output, err := e.answerForAgent(ctx, req, agent)
 	if err != nil {
 		var paused RunPausedError
 		if errorsAsRunPaused(err, &paused) {
@@ -185,7 +197,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		// paused state (e.g. a tool-loop pause that raced this call, or a
 		// cancellation) between answer() returning and this load; do not
 		// clobber that state with Completed.
-		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", req.RunID, loaded.Status)
+		return nonRunningCompletionResult(req.RunID, loaded.Status)
 	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
@@ -201,29 +213,24 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return RunResult{}, err
 	}
-	// Prefer the run's original start time (persisted in beginRun) over
-	// this call's own start time: a run resumed after a pause/checkpoint
-	// would otherwise only have its final leg measured, understating the
-	// true end-to-end duration.
-	duration := time.Since(runStart)
-	if startedAt := variableString(loaded.Variables, runStartedAtVar); startedAt != "" {
-		if parsed, parseErr := time.Parse(time.RFC3339Nano, startedAt); parseErr == nil {
-			duration = time.Since(parsed)
-		}
-	}
-	e.recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, duration.Seconds(),
-		observability.Attribute{Key: "scenario", Value: e.scenario.Name})
-	e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
-		observability.Attribute{Key: "event", Value: string(core.EventRunCompleted)},
-		observability.Attribute{Key: "scenario", Value: e.scenario.Name})
+	e.recordRunCompleted(ctx, loaded)
 	e.emit(ctx, core.EventRunCompleted, req.RunID, loaded.StepOutputs["final"].Inline)
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
 
 func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, error) {
-	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
-	defer cancel()
-	if _, err := e.beginRun(ctx, &req); err != nil {
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		ctx, cancel = e.withTimeout(ctx, e.scenario.Runtime.Timeout)
+		defer cancel()
+	}
+	ctx, runSpan := e.startSpan(ctx, observability.SpanRun,
+		observability.Attribute{Key: "run_id", Value: req.RunID},
+		observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
+		observability.Attribute{Key: "structured", Value: "true"},
+	)
+	defer runSpan.End()
+	if err := e.beginRun(ctx, &req); err != nil {
 		return RunResult{}, err
 	}
 	agent, err := e.resolveAgent(req.Agent)
@@ -269,7 +276,7 @@ func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw js
 		return RunResult{}, err
 	}
 	if loaded.Status != runstate.RunStatusRunning {
-		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", runID, loaded.Status)
+		return nonRunningCompletionResult(runID, loaded.Status)
 	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRef, err := e.stepOutputRef(ctx, runID, "final", raw)
@@ -284,19 +291,25 @@ func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw js
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return RunResult{}, err
 	}
+	e.recordRunCompleted(ctx, loaded)
 	e.emit(ctx, core.EventRunCompleted, runID, finalRef.Inline)
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: string(raw), StructuredOutput: raw}, nil
 }
 
 func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
-	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
-	if _, err := e.beginRun(ctx, &req); err != nil {
-		cancel()
-		return nil, err
-	}
+	// This is a static scenario configuration check, not a property of any
+	// particular run, so reject it before beginRun creates (and immediately
+	// has to fail) a run snapshot for a request that can never succeed.
 	if e.shouldPauseBeforeFinal() {
-		err := fmt.Errorf("runtime: streaming does not support before_final_answer checkpoint; use Run or RunStructured")
-		e.markRunFailed(ctx, req.RunID, err)
+		return nil, fmt.Errorf("runtime: streaming does not support before_final_answer checkpoint; use Run or RunStructured")
+	}
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		ctx, cancel = e.withTimeout(ctx, e.scenario.Runtime.Timeout)
+	} else {
+		cancel = func() {}
+	}
+	if err := e.beginRun(ctx, &req); err != nil {
 		cancel()
 		return nil, err
 	}
@@ -402,8 +415,11 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 // new RunSnapshot; instead it loads the one already saved for req.RunID,
 // updates it on completion.
 func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, error) {
-	ctx, cancel := e.withTimeout(ctx, e.scenario.Runtime.Timeout)
-	defer cancel()
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		ctx, cancel = e.withTimeout(ctx, e.scenario.Runtime.Timeout)
+		defer cancel()
+	}
 	loaded, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
@@ -423,11 +439,24 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	if loaded.Status == runstate.RunStatusFailed {
 		return RunResult{}, ErrRunFailed
 	}
-	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
+	ctx, runSpan := e.startSpan(ctx, observability.SpanRun,
+		observability.Attribute{Key: "run_id", Value: req.RunID},
+		observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
+		observability.Attribute{Key: "hybrid", Value: "true"},
+	)
+	defer runSpan.End()
 	agent, agentErr := e.resolveAgent(req.Agent)
 	if agentErr != nil {
 		e.markRunFailed(ctx, req.RunID, agentErr)
 		return RunResult{}, agentErr
+	}
+	if len(agent.Policy.OutputSchema) > 0 {
+		// See the identical check in Run(): this path also ends in a plain
+		// text answer() call, so an output_schema would silently be
+		// ignored otherwise.
+		err := fmt.Errorf("runtime: agent %q has an output_schema configured; use RunStructured instead of Run", agent.Name)
+		e.markRunFailed(ctx, req.RunID, err)
+		return RunResult{}, err
 	}
 	if e.shouldPauseBeforeFinal() && !e.isCheckpointResumed(loaded) {
 		if e.gate == nil {
@@ -442,7 +471,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		}
 		return result, nil
 	}
-	output, err := e.answer(ctx, req)
+	output, err := e.answerForAgent(ctx, req, agent)
 	if err != nil {
 		var paused RunPausedError
 		if errorsAsRunPaused(err, &paused) {
@@ -456,7 +485,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		return RunResult{}, err
 	}
 	if loaded.Status != runstate.RunStatusRunning {
-		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", req.RunID, loaded.Status)
+		return nonRunningCompletionResult(req.RunID, loaded.Status)
 	}
 	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
@@ -472,6 +501,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return RunResult{}, err
 	}
+	e.recordRunCompleted(ctx, loaded)
 	e.emit(ctx, core.EventRunCompleted, req.RunID, finalRef.Inline)
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }

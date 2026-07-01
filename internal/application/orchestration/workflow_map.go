@@ -19,9 +19,11 @@ type mapSpec struct {
 }
 
 type mapBranch struct {
-	Kind  core.WorkflowNodeKind `json:"kind"`
-	Ref   string                `json:"ref,omitempty"`
-	Input json.RawMessage       `json:"input,omitempty"`
+	Kind      core.WorkflowNodeKind `json:"kind"`
+	Ref       string                `json:"ref,omitempty"`
+	Input     json.RawMessage       `json:"input,omitempty"`
+	Condition string                `json:"condition,omitempty"`
+	Retry     core.RetryPolicy      `json:"retry"`
 }
 
 // defaultMapConcurrency bounds how many map branches run concurrently when the
@@ -141,10 +143,12 @@ scheduleLoop:
 				return
 			}
 			child := core.WorkflowNode{
-				ID:    childID,
-				Kind:  spec.Branch.Kind,
-				Ref:   spec.Branch.Ref,
-				Input: childInput,
+				ID:        childID,
+				Kind:      spec.Branch.Kind,
+				Ref:       spec.Branch.Ref,
+				Input:     childInput,
+				Condition: spec.Branch.Condition,
+				Retry:     spec.Branch.Retry,
 			}
 
 			if err := groupCtx.Err(); err != nil {

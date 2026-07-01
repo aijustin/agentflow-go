@@ -13,16 +13,23 @@ import (
 )
 
 func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
-	if e.llm == nil {
-		return req.Prompt, nil
-	}
 	agent, err := e.resolveAgent(req.Agent)
 	if err != nil {
 		return "", err
 	}
+	return e.answerForAgent(ctx, req, agent)
+}
+
+func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.Agent) (string, error) {
+	if e.llm == nil {
+		return req.Prompt, nil
+	}
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	defer cancel()
-	profile := e.scenario.LLMs[agent.LLM]
+	profile, err := e.llmProfile(agent.LLM)
+	if err != nil {
+		return "", err
+	}
 	history, err := e.readMemory(ctx, req.RunID, agent, req.Prompt)
 	if err != nil {
 		return "", err
@@ -88,7 +95,11 @@ func (e *Engine) injectAutonomousPlan(ctx context.Context, runID string, agent c
 			return nil, err
 		}
 		plannerAgent = resolved
-		profile = e.scenario.LLMs[plannerAgent.LLM]
+		var profileErr error
+		profile, profileErr = e.llmProfile(plannerAgent.LLM)
+		if profileErr != nil {
+			return nil, profileErr
+		}
 	}
 	maxSteps := firstPositive(e.scenario.Orchestration.Planning.MaxSteps, agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 5)
 	planReq := llm.ChatRequest{
@@ -226,7 +237,10 @@ func (e *Engine) structuredAnswer(ctx context.Context, req RunRequest) (json.Raw
 	}
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	defer cancel()
-	profile := e.scenario.LLMs[agent.LLM]
+	profile, err := e.llmProfile(agent.LLM)
+	if err != nil {
+		return nil, err
+	}
 	history, err := e.readMemory(ctx, req.RunID, agent, req.Prompt)
 	if err != nil {
 		return nil, err
@@ -266,8 +280,17 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 	if err != nil {
 		return nil, core.Agent{}, nil, err
 	}
-	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
-	profile := e.scenario.LLMs[agent.LLM]
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		ctx, cancel = e.withTimeout(ctx, agent.Policy.Timeout)
+	} else {
+		cancel = func() {}
+	}
+	profile, err := e.llmProfile(agent.LLM)
+	if err != nil {
+		cancel()
+		return nil, core.Agent{}, nil, err
+	}
 	history, err := e.readMemory(ctx, req.RunID, agent, req.Prompt)
 	if err != nil {
 		cancel()
@@ -339,19 +362,14 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 const maxReplanAttempts = 3
 
 func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, prompt string) (string, error) {
-	if strings.TrimSpace(prompt) != "" {
-		if err := e.writeMemory(ctx, runID, agent, []memoryMessage{{Role: string(llm.RoleUser), Content: prompt}}); err != nil {
-			return "", err
-		}
-	}
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
 	toolSpecs := e.toolSpecs(ctx, runID, agent)
 	messages := append([]llm.Message(nil), req.Messages...)
 	toolCounts := make(map[string]int)
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0, 0)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0, 0, false)
 }
 
-func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int, stepsConsumedBase int) (string, error) {
+func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int, stepsConsumedBase int, userPromptPersisted bool) (string, error) {
 	if hint := e.planningToolHint(ctx, runID); hint != "" {
 		messages = appendPlanningHint(messages, hint)
 	}
@@ -367,7 +385,7 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 		// calls dispatched in prior iterations of this same loop, not just
 		// the plan state as of the very first turn.
 		toolSpecs := e.toolSpecs(ctx, runID, agent)
-		prepared, stats := e.prepareMessages(ctx, runID, messages, profile)
+		prepared, stats := e.prepareMessages(ctx, runID, agent, messages, profile)
 		e.emitJSON(ctx, core.EventContextPrepared, runID, stats)
 		toolReq := llm.ToolCallRequest{
 			ChatRequest: llm.ChatRequest{
@@ -396,18 +414,23 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 			if strings.TrimSpace(resp.Message.Content) == "" && resp.FinishReason == "length" {
 				return "", fmt.Errorf("runtime: llm response was empty after reaching max tokens; increase max_output_tokens or disable reasoning output for profile %q", agent.LLM)
 			}
-			if err := e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromLLM(assistant)}); err != nil {
+			mem := make([]memoryMessage, 0, 2)
+			if !userPromptPersisted && strings.TrimSpace(prompt) != "" {
+				mem = append(mem, memoryMessage{Role: string(llm.RoleUser), Content: prompt})
+			}
+			mem = append(mem, memoryMessageFromLLM(assistant))
+			if err := e.writeMemory(ctx, runID, agent, mem); err != nil {
 				return "", err
 			}
 			return resp.Message.Content, nil
 		}
 		var dispatchErr error
-		messages, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts, prompt, true, stepsConsumedBase+step+1, replanAttempts)
+		messages, userPromptPersisted, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts, prompt, true, stepsConsumedBase+step+1, replanAttempts, userPromptPersisted)
 		if dispatchErr != nil {
 			return "", dispatchErr
 		}
 	}
-	return e.replanOrFail(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumedBase)
+	return e.replanOrFail(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumedBase, userPromptPersisted)
 }
 
 // replanOrFail is called once the tool loop has exhausted its step budget,
@@ -417,7 +440,7 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 // replans across the whole run, including any that happened before a pause
 // and resume, so pausing cannot reset the maxReplanAttempts budget and drive
 // unbounded replanning across checkpoints.
-func (e *Engine) replanOrFail(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int, stepsConsumedBase int) (string, error) {
+func (e *Engine) replanOrFail(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int, stepsConsumedBase int, userPromptPersisted bool) (string, error) {
 	if replanAttempts < maxReplanAttempts {
 		complete, err := e.planningComplete(ctx, runID)
 		if err != nil {
@@ -429,7 +452,7 @@ func (e *Engine) replanOrFail(ctx context.Context, runID string, agent core.Agen
 				return "", err
 			}
 			if len(replanned) > len(messages) {
-				return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts, maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps)
+				return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts, maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps, userPromptPersisted)
 			}
 		}
 	}
@@ -444,24 +467,24 @@ func (e *Engine) replanOrFail(ctx context.Context, runID string, agent core.Agen
 // persistTurnMemory is true and every call in the batch completes, the
 // assistant turn and tool results are written to memory together so a mid-turn
 // pause never leaves partial assistant/tool_call pairings in memory.
-func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, turnAssistant llm.Message, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, persistTurnMemory bool, stepsConsumed int, replanAttempts int) ([]llm.Message, error) {
+func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, turnAssistant llm.Message, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, persistTurnMemory bool, stepsConsumed int, replanAttempts int, userPromptPersisted bool) ([]llm.Message, bool, error) {
 	toolMem := make([]memoryMessage, 0, len(calls))
 	for index := range calls {
 		toolCall := calls[index]
 		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, toolCounts, prompt, stepsConsumed, replanAttempts); err != nil {
-			return messages, err
+			return messages, userPromptPersisted, err
 		} else if paused != nil {
-			return messages, *paused
+			return messages, userPromptPersisted, *paused
 		}
 		result, err := e.dispatchTool(ctx, runID, agent, toolCall, toolCounts, true)
 		if err != nil {
-			return messages, err
+			return messages, userPromptPersisted, err
 		}
 		toolMem = append(toolMem, memoryMessageFromToolResult(toolCall, result))
 		contextResult := compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
 		raw, err := json.Marshal(contextResult)
 		if err != nil {
-			return messages, err
+			return messages, userPromptPersisted, err
 		}
 		messages = append(messages, llm.Message{
 			Role:       llm.RoleTool,
@@ -470,17 +493,28 @@ func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core
 			ToolCallID: toolCall.ID,
 		})
 		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
+			// markPlanStepDone only updates plan-progress bookkeeping; the
+			// tool call above already executed successfully and its result
+			// is already appended to messages/toolMem, so a bookkeeping
+			// failure here must not discard that real, already-completed
+			// work by failing the whole turn.
 			if err := e.markPlanStepDone(ctx, runID, toolCall.Name); err != nil {
-				return messages, err
+				e.logWarn(ctx, "runtime: failed to update plan progress after successful tool call", "run_id", runID, "tool", toolCall.Name, "error", err)
 			}
 		}
 	}
 	if persistTurnMemory {
+		if !userPromptPersisted && strings.TrimSpace(prompt) != "" {
+			if err := e.writeMemory(ctx, runID, agent, []memoryMessage{{Role: string(llm.RoleUser), Content: prompt}}); err != nil {
+				return messages, userPromptPersisted, err
+			}
+			userPromptPersisted = true
+		}
 		if err := e.persistToolTurnMemory(ctx, runID, agent, turnAssistant, toolMem); err != nil {
-			return messages, err
+			return messages, userPromptPersisted, err
 		}
 	}
-	return messages, nil
+	return messages, userPromptPersisted, nil
 }
 
 func (e *Engine) chatWithRetry(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest) (llm.ChatResponse, error) {

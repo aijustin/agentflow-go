@@ -28,7 +28,7 @@ func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decisio
 	if f.gate == nil {
 		return RunResult{}, fmt.Errorf("agentflow: human gate is not configured")
 	}
-	runID, err := f.runIDFromToken(token)
+	runID, err := f.runIDFromToken(ctx, token)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -71,15 +71,26 @@ func (f *Framework) ResumeRunByID(ctx context.Context, runID string, decision co
 	return RunResult{RunID: runID, Status: loaded.Status}, nil
 }
 
-func (f *Framework) runIDFromToken(token string) (string, error) {
-	if f.tokenSigner == nil {
-		return "", fmt.Errorf("agentflow: token signer is not configured")
+func (f *Framework) runIDFromToken(ctx context.Context, token string) (string, error) {
+	if f.tokenSigner != nil {
+		payload, err := f.tokenSigner.Verify(token)
+		if err != nil {
+			return "", err
+		}
+		return payload.RunID, nil
 	}
-	payload, err := f.tokenSigner.Verify(token)
-	if err != nil {
-		return "", err
+	if decoder, ok := f.gate.(core.PauseTokenDecoder); ok {
+		return decoder.RunIDFromPauseToken(token)
 	}
-	return payload.RunID, nil
+	// Custom gates that return the run ID itself as the opaque token can
+	// resume without an HMAC signer as long as the snapshot is paused.
+	if f.runs != nil {
+		snapshot, err := runstate.LoadAuthorized(ctx, f.runs, token)
+		if err == nil && snapshot.Status == runstate.RunStatusPaused {
+			return token, nil
+		}
+	}
+	return "", fmt.Errorf("agentflow: cannot resolve run ID from pause token; configure TokenSigner or implement core.PauseTokenDecoder")
 }
 
 func (f *Framework) continueRun(ctx context.Context, runID string) (RunResult, error) {
@@ -153,12 +164,16 @@ func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCom
 		return RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunCompleted, runID, nil)
-	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: "fixed workflow completed"}, nil
+	output := f.workflowRunOutput(ctx, loaded)
+	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
 
 func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapshot runstate.RunSnapshot) (RunResult, error) {
-	if result, ok := completedHybridResult(snapshot); ok {
+	if result, ok := completedHybridResult(ctx, f, snapshot); ok {
 		return result, nil
+	}
+	if snapshot.Status == runstate.RunStatusPaused {
+		return RunResult{RunID: runID, Status: runstate.RunStatusPaused}, nil
 	}
 	if variableJSONString(snapshot.Variables, executionPhaseVar) == executionPhaseAutonomous {
 		switch variableJSONString(snapshot.Variables, checkpointKindVar) {
@@ -170,6 +185,9 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 	}
 	var err error
 	if variableJSONString(snapshot.Variables, executionPhaseVar) != executionPhaseAutonomous {
+		if snapshot.PendingGate != nil {
+			return RunResult{RunID: runID, Status: runstate.RunStatusPaused}, nil
+		}
 		if err := f.applyWorkflowAmendment(ctx, runID); err != nil {
 			return RunResult{}, err
 		}

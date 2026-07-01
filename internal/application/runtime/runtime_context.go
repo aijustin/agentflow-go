@@ -104,11 +104,11 @@ func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile c
 	if req.Prompt != "" {
 		raw = append(raw, contextwindow.Message{Role: contextwindow.RoleUser, Content: req.Prompt})
 	}
-	prepared, stats := e.prepareRawMessages(ctx, req.RunID, raw, profile)
+	prepared, stats := e.prepareRawMessages(ctx, req.RunID, agent, raw, profile)
 	return enforceToolCallPairing(restorePreparedToolCalls(prepared, history)), stats
 }
 
-func (e *Engine) prepareMessages(ctx context.Context, runID string, messages []llm.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
+func (e *Engine) prepareMessages(ctx context.Context, runID string, agent core.Agent, messages []llm.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
 	raw := make([]contextwindow.Message, 0, len(messages))
 	for i, msg := range messages {
 		metadata := cloneMetadata(msg.Metadata)
@@ -121,7 +121,7 @@ func (e *Engine) prepareMessages(ctx context.Context, runID string, messages []l
 			Metadata:   metadata,
 		})
 	}
-	prepared, stats := e.prepareRawMessages(ctx, runID, raw, profile)
+	prepared, stats := e.prepareRawMessages(ctx, runID, agent, raw, profile)
 	return enforceToolCallPairing(restorePreparedToolCalls(prepared, messages)), stats
 }
 
@@ -140,7 +140,7 @@ func restorePreparedToolCalls(prepared []llm.Message, source []llm.Message) []ll
 	return prepared
 }
 
-func (e *Engine) prepareRawMessages(ctx context.Context, runID string, raw []contextwindow.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
+func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent core.Agent, raw []contextwindow.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
 	policy := profile.Context
 	if policy.ContextWindowTokens == 0 {
 		policy.ContextWindowTokens = profile.ContextWindowTokens
@@ -148,7 +148,7 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, raw []con
 	if policy.ReservedOutputTokens == 0 {
 		policy.ReservedOutputTokens = profile.MaxOutputTokens
 	}
-	result := e.contextManager(ctx, runID, policy).Prepare(raw)
+	result := e.contextManager(ctx, runID, agent, policy).Prepare(raw)
 	messages := make([]llm.Message, 0, len(result.Messages))
 	for _, msg := range result.Messages {
 		messages = append(messages, llm.Message{

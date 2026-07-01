@@ -33,6 +33,8 @@ func (r *WorkflowRunner) runSubgraphNode(ctx context.Context, scenario core.Scen
 		Workflow:    &sub,
 		Workflows:   scenario.Orchestration.Workflows,
 		MaxParallel: scenario.Orchestration.MaxParallel,
+		HumanInLoop: scenario.Orchestration.HumanInLoop,
+		Planning:    scenario.Orchestration.Planning,
 	}
 	subCtx := withStepPrefix(ctx, prefix)
 	alreadyDone := make(map[string]bool)

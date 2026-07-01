@@ -24,7 +24,7 @@ type loopSpec struct {
 	Until         string   `json:"until,omitempty"`
 }
 
-func loopBodyNodeIDs(workflow core.Workflow) map[string]bool {
+func loopBodyNodeIDs(workflow core.Workflow) (map[string]bool, error) {
 	ids := make(map[string]bool)
 	for _, node := range workflow.Nodes {
 		if node.Kind != core.NodeLoop || len(node.Input) == 0 {
@@ -32,13 +32,13 @@ func loopBodyNodeIDs(workflow core.Workflow) map[string]bool {
 		}
 		var spec loopSpec
 		if err := json.Unmarshal(node.Input, &spec); err != nil {
-			continue
+			return nil, fmt.Errorf("orchestration: loop node %q decode input: %w", node.ID, err)
 		}
 		for _, bodyID := range spec.Body {
 			ids[bodyID] = true
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
@@ -87,6 +87,11 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 		case <-groupCtx.Done():
 			return
 		}
+		r.emitJSON(ctx, core.EventStepStarted, scenario.Name, runID, map[string]any{
+			"node_id":         memberKey,
+			"parallel_group":  node.ID,
+			"parallel_member": true,
+		})
 		if err := run(groupCtx); err != nil {
 			// A pause must always halt the whole group, even under
 			// collect_errors: it is not a failure to be aggregated.
@@ -128,6 +133,11 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 		mu.Lock()
 		outputs[memberKey] = value
 		mu.Unlock()
+		r.emitJSON(ctx, core.EventStepCompleted, scenario.Name, runID, map[string]any{
+			"node_id":         memberKey,
+			"parallel_group":  node.ID,
+			"parallel_member": true,
+		})
 	}
 
 	for index, ref := range spec.Refs {

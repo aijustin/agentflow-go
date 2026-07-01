@@ -22,6 +22,7 @@ import (
 
 var (
 	ErrRunAlreadyCompleted = errors.New("runtime: run already completed")
+	ErrRunInProgress         = errors.New("runtime: run is already running")
 	ErrRunPaused           = errors.New("runtime: run is paused")
 	ErrRunFailed           = errors.New("runtime: run has failed")
 	ErrRunCancelled        = errors.New("runtime: run is cancelled")
@@ -38,6 +39,35 @@ func (e *Engine) ResolveAgentName(name string) (string, error) {
 		return "", err
 	}
 	return agent.Name, nil
+}
+
+func (e *Engine) llmProfile(name string) (core.LLMProfileRef, error) {
+	if name == "" {
+		if e.llm == nil {
+			return core.LLMProfileRef{}, nil
+		}
+		return core.LLMProfileRef{}, fmt.Errorf("runtime: agent llm profile is required")
+	}
+	profile, ok := e.scenario.LLMs[name]
+	if !ok {
+		if e.llm == nil {
+			return core.LLMProfileRef{}, nil
+		}
+		return core.LLMProfileRef{}, fmt.Errorf("runtime: llm profile %q not found in scenario", name)
+	}
+	return profile, nil
+}
+
+func (e *Engine) ensureRunPaused(ctx context.Context, runID string) error {
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	if err != nil {
+		return err
+	}
+	if snapshot.Status != runstate.RunStatusRunning {
+		return nil
+	}
+	snapshot.Status = runstate.RunStatusPaused
+	return e.runs.Save(ctx, &snapshot, snapshot.Version)
 }
 
 func (e *Engine) resolveAgent(name string) (core.Agent, error) {
@@ -60,8 +90,11 @@ func (e *Engine) resolveAgent(name string) (core.Agent, error) {
 	return agent, nil
 }
 
-// beginRun creates a new run snapshot or resumes an existing one for continued execution.
-func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool, err error) {
+// beginRun creates a new run snapshot or resumes an existing one for
+// continued execution. It reports only an error: no caller has ever used
+// the "did this resume an existing run" signal it once also returned, so
+// that dead bool was removed rather than kept in an unused state.
+func (e *Engine) beginRun(ctx context.Context, req *RunRequest) error {
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
@@ -71,31 +104,31 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 		switch existing.Status {
 		case runstate.RunStatusCompleted:
 			if _, hasFinal := existing.StepOutputs["final"]; hasFinal {
-				return false, ErrRunAlreadyCompleted
+				return ErrRunAlreadyCompleted
 			}
 		case runstate.RunStatusCancelled:
-			return false, ErrRunCancelled
+			return ErrRunCancelled
 		case runstate.RunStatusPaused:
-			return false, ErrRunPaused
+			return ErrRunPaused
 		case runstate.RunStatusFailed:
-			return false, ErrRunFailed
+			return ErrRunFailed
+		case runstate.RunStatusRunning:
+			if autonomousRunInProgress(existing) {
+				return ErrRunInProgress
+			}
 		}
-		existing.Status = runstate.RunStatusRunning
 		saveCtx := ctx
 		if wasCompleted {
 			saveCtx = runstate.ContextWithStatusTransitionOverride(ctx)
 		}
-		if err := e.saveSnapshotWithRetry(saveCtx, req.RunID, func(snapshot *runstate.RunSnapshot) error {
+		return e.saveSnapshotWithRetry(saveCtx, req.RunID, func(snapshot *runstate.RunSnapshot) error {
 			snapshot.Status = runstate.RunStatusRunning
 			saveResumeMetadata(snapshot, *req)
 			return nil
-		}); err != nil {
-			return false, err
-		}
-		return true, nil
+		})
 	}
 	if !errors.Is(err, runstate.ErrNotFound) {
-		return false, err
+		return err
 	}
 	snapshot := runstate.RunSnapshot{
 		RunID:        req.RunID,
@@ -119,10 +152,31 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) (continued bool,
 			// correctly instead of always reporting ErrRunAlreadyCompleted.
 			return e.beginRun(ctx, req)
 		}
-		return false, err
+		return err
 	}
 	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
-	return false, nil
+	return nil
+}
+
+// autonomousRunInProgress reports whether a Running snapshot looks like an
+// in-flight autonomous run (as opposed to a workflow-prepared snapshot waiting
+// for RunHybrid/RunStructured to continue). Two concurrent Run() calls against
+// the same run ID would both see an empty-step Running snapshot; rejecting
+// that case prevents duplicate execution without blocking hybrid continuation
+// where the workflow phase has already written step outputs.
+func autonomousRunInProgress(snapshot runstate.RunSnapshot) bool {
+	if len(snapshot.StepOutputs) == 0 {
+		return true
+	}
+	if _, hasFinal := snapshot.StepOutputs["final"]; hasFinal {
+		return false
+	}
+	for key := range snapshot.StepOutputs {
+		if strings.HasPrefix(key, "tool.") || strings.HasPrefix(key, "agent.") {
+			return true
+		}
+	}
+	return false
 }
 
 // markRunFailedOrCancelled classifies err and persists the run as Cancelled
@@ -180,12 +234,7 @@ func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core
 	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
 		return err
 	}
-	if startedAt := variableString(loaded.Variables, runStartedAtVar); startedAt != "" {
-		if runStart, parseErr := time.Parse(time.RFC3339Nano, startedAt); parseErr == nil {
-			e.recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, time.Since(runStart).Seconds(),
-				observability.Attribute{Key: "scenario", Value: e.scenario.Name})
-		}
-	}
+	e.recordRunCompleted(ctx, loaded)
 	e.emit(ctx, core.EventRunCompleted, runID, loaded.StepOutputs["final"].Inline)
 	return nil
 }
@@ -217,7 +266,7 @@ func delegateToolName(agentName string) string {
 
 func (e *Engine) saveStepOutput(ctx context.Context, runID, key string, value any) error {
 	if e.runs == nil {
-		return nil
+		return fmt.Errorf("runtime: runstate repository is required to save step output")
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -284,9 +333,10 @@ func shouldRetry(ctx context.Context, err error) bool {
 }
 
 const (
-	runStartedAtVar = "run_started_at"
-	resumePromptVar = "resume_prompt"
-	resumeAgentVar  = "resume_agent"
+	runStartedAtVar    = "run_started_at"
+	runErrorMessageVar = "run_error_message"
+	resumePromptVar    = "resume_prompt"
+	resumeAgentVar     = "resume_agent"
 )
 
 func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
@@ -378,6 +428,59 @@ func persistenceContext(ctx context.Context) (context.Context, context.CancelFun
 	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
+// runDuration reports how long a run has been executing, preferring the
+// run_started_at variable stamped by beginRun (most precise: it survives
+// resumes and always reflects the true first Running transition), then
+// falling back to the snapshot's CreatedAt - which every runstate
+// repository implementation stamps via StampSnapshot regardless of which
+// code path created the run, including workflow/hybrid snapshots created
+// directly by the framework layer rather than through beginRun. Returns 0
+// if neither is available so callers can skip the histogram observation
+// rather than record a meaningless zero-based duration.
+func runDuration(snapshot runstate.RunSnapshot) time.Duration {
+	if startedAt := variableString(snapshot.Variables, runStartedAtVar); startedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, startedAt); err == nil {
+			return time.Since(parsed)
+		}
+	}
+	if !snapshot.CreatedAt.IsZero() {
+		return time.Since(snapshot.CreatedAt)
+	}
+	return 0
+}
+
+// recordRunCompleted records the duration histogram and completed-event
+// counter for a finished run. Only Run() used to record these; every other
+// completion path (RunStructured, RunHybrid, completeRun, completeStreamRun)
+// silently skipped them, leaving gaps in dashboards built on these metrics.
+func (e *Engine) recordRunCompleted(ctx context.Context, snapshot runstate.RunSnapshot) {
+	if d := runDuration(snapshot); d > 0 {
+		e.recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, d.Seconds(),
+			observability.Attribute{Key: "scenario", Value: e.scenario.Name})
+	}
+	e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
+		observability.Attribute{Key: "event", Value: string(core.EventRunCompleted)},
+		observability.Attribute{Key: "scenario", Value: e.scenario.Name})
+}
+
+// nonRunningCompletionResult builds the RunResult/error pair to return when
+// a completion path discovers the run is no longer Running: some other
+// concurrent writer already moved it to Paused/Cancelled/Failed between the
+// answer producing its output and this reload. Reporting Paused/Cancelled/
+// Failed as a structured RunResult - the same way this engine already
+// reports a pause discovered synchronously within a single call - lets
+// callers branch on RunResult.Status instead of receiving an opaque
+// "cannot complete" error that hides which terminal state the run actually
+// ended up in.
+func nonRunningCompletionResult(runID string, status runstate.RunStatus) (RunResult, error) {
+	switch status {
+	case runstate.RunStatusPaused, runstate.RunStatusCancelled, runstate.RunStatusFailed:
+		return RunResult{RunID: runID, Status: status}, nil
+	default:
+		return RunResult{}, fmt.Errorf("runtime: cannot complete run %q in status %s", runID, status)
+	}
+}
+
 func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
@@ -391,6 +494,14 @@ func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 			return
 		}
 		snapshot.Status = runstate.RunStatusFailed
+		if snapshot.Variables == nil {
+			snapshot.Variables = make(map[string]json.RawMessage)
+		}
+		// Persist the failure reason on the snapshot itself, not just in
+		// the emitted event: reloading a failed run later (e.g. from a
+		// separate diagnostic tool, or after the event bus has rotated old
+		// events out) would otherwise give no indication of why it failed.
+		snapshot.Variables[runErrorMessageVar] = json.RawMessage(fmt.Sprintf("%q", cause.Error()))
 		if saveErr := e.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
 			e.logWarn(persistCtx, "runtime: failed to persist run failure status", "run_id", runID, "save_error", saveErr)
 			return
