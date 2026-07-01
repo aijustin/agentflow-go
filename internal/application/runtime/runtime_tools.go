@@ -215,7 +215,9 @@ func (e *Engine) recordAudit(ctx context.Context, event audit.Event) {
 	if e.audit == nil {
 		return
 	}
-	_ = e.audit.Record(ctx, event.WithDefaults(time.Now().UTC()))
+	if err := e.audit.Record(ctx, event.WithDefaults(time.Now().UTC())); err != nil {
+		e.logWarn(ctx, "runtime: audit record failed", "event_type", event.Type, "run_id", event.RunID, "error", err)
+	}
 }
 
 func principalFromContext(ctx context.Context) identity.Principal {

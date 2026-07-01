@@ -85,6 +85,65 @@ func TestWorkflowRunnerUsesDependenciesAndRetries(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunnerDoesNotRetryPermanentError(t *testing.T) {
+	reg := registry.New()
+	calls := 0
+	if err := reg.RegisterTool("flaky", toolFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		calls++
+		return core.ToolResult{}, fmt.Errorf("permanent failure")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runs := newWorkflowRun(t)
+	scenario := core.Scenario{
+		Name: "scenario",
+		Orchestration: core.Orchestration{
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "flaky", Kind: core.NodeTool, Ref: "flaky", Retry: core.RetryPolicy{MaxAttempts: 3}},
+			}},
+		},
+	}
+	err := NewWorkflowRunner(reg, runs, nil).Run(context.Background(), scenario, "run-1")
+	if err == nil || calls != 1 {
+		t.Fatalf("permanent error must fail after one attempt, got err=%v calls=%d", err, calls)
+	}
+}
+
+func TestWorkflowRunnerDoesNotAutoRetrySideEffectToolNode(t *testing.T) {
+	reg := registry.New()
+	calls := 0
+	if err := reg.RegisterTool("writer", toolFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		calls++
+		return core.ToolResult{}, transientWorkflowError{message: "flaky write"}
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runs := newWorkflowRun(t)
+	scenario := core.Scenario{
+		Name:    "scenario",
+		Runtime: core.RuntimePolicy{MaxRetries: 3},
+		Tools: map[string]core.Tool{
+			"writer": {Name: "writer", SideEffect: core.SideEffectWrite},
+		},
+		Orchestration: core.Orchestration{
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "writer", Kind: core.NodeTool, Ref: "writer"},
+			}},
+		},
+	}
+	err := NewWorkflowRunner(reg, runs, nil).Run(context.Background(), scenario, "run-1")
+	if err == nil || calls != 1 {
+		t.Fatalf("write side-effect node must not auto-retry, got err=%v calls=%d", err, calls)
+	}
+	// An explicit per-node retry policy remains an opt-in override.
+	calls = 0
+	scenario.Orchestration.Workflow.Nodes[0].Retry = core.RetryPolicy{MaxAttempts: 2}
+	err = NewWorkflowRunner(reg, newWorkflowRun(t), nil).Run(context.Background(), scenario, "run-2")
+	if err == nil || calls != 2 {
+		t.Fatalf("explicit retry policy must be honored, got err=%v calls=%d", err, calls)
+	}
+}
+
 func TestWorkflowRunnerSkipsFalseConditionAndRunsParallelOutputs(t *testing.T) {
 	reg := registry.New()
 	state := &workflowTestState{seen: make(map[string]bool)}
@@ -366,13 +425,21 @@ func (s *workflowTestState) tool(name, requires string, failBeforeSuccess int) c
 		}
 		if s.failures[name] < failBeforeSuccess {
 			s.failures[name]++
-			return core.ToolResult{}, fmt.Errorf("temporary failure")
+			return core.ToolResult{}, transientWorkflowError{message: "temporary failure"}
 		}
 		s.seen[name] = true
 		raw, _ := json.Marshal(map[string]string{"tool": name})
 		return core.ToolResult{Tool: call.Tool, Output: raw}, nil
 	})
 }
+
+// transientWorkflowError classifies itself as retryable, matching the shared
+// pkg/retry semantics used by runNodeWithRetry.
+type transientWorkflowError struct{ message string }
+
+func (e transientWorkflowError) Error() string { return e.message }
+
+func (e transientWorkflowError) Retryable() bool { return true }
 
 type toolFunc func(context.Context, core.ToolCall) (core.ToolResult, error)
 

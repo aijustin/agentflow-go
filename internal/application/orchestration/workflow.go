@@ -15,6 +15,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/observability"
+	"github.com/aijustin/agentflow-go/pkg/retry"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -286,25 +287,64 @@ func (r *WorkflowRunner) runNodeWithRetry(ctx context.Context, scenario core.Sce
 		return r.runNode(ctx, scenario, node, runID)
 	}
 	attempts := firstPositive(node.Retry.MaxAttempts, scenario.Runtime.MaxRetries+1, 1)
+	if node.Retry.MaxAttempts <= 0 && !nodeAutoRetrySafe(scenario, node) {
+		// Without an explicit per-node retry policy, a tool node whose side
+		// effect is write/external/dangerous is never re-executed
+		// automatically: the failed attempt may already have committed its
+		// side effect, and re-running it would duplicate that effect.
+		attempts = 1
+	}
 	var lastErr error
+	attempted := 0
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := r.runNode(ctx, scenario, node, runID); err != nil {
-			var paused WorkflowPausedError
-			if errors.As(err, &paused) {
-				return err
+		attempted = attempt
+		err := r.runNode(ctx, scenario, node, runID)
+		if err == nil {
+			if node.Interrupt {
+				return r.pauseForInterrupt(ctx, scenario, node, runID)
 			}
-			lastErr = err
-			continue
+			return nil
 		}
-		if node.Interrupt {
-			return r.pauseForInterrupt(ctx, scenario, node, runID)
+		var paused WorkflowPausedError
+		if errors.As(err, &paused) {
+			return err
 		}
-		return nil
+		lastErr = err
+		// Align with the runtime's retry classification: only errors that
+		// explicitly classify themselves as retryable are re-attempted;
+		// anything else is permanent and re-running would just repeat the
+		// failure (or its side effects).
+		if attempt == attempts || !retry.Retryable(ctx, err) {
+			break
+		}
+		if err := retry.Backoff(ctx, attempt); err != nil {
+			return err
+		}
 	}
-	return fmt.Errorf("orchestration: node %q failed after %d attempt(s): %w", node.ID, attempts, lastErr)
+	return fmt.Errorf("orchestration: node %q failed after %d attempt(s): %w", node.ID, attempted, lastErr)
+}
+
+// nodeAutoRetrySafe reports whether a node may be retried without an
+// explicit per-node retry policy. Only tool nodes carry a side-effect
+// classification; tools declared write/external/dangerous are excluded from
+// the scenario-level automatic retry fallback.
+func nodeAutoRetrySafe(scenario core.Scenario, node core.WorkflowNode) bool {
+	if node.Kind != core.NodeTool {
+		return true
+	}
+	tool, ok := scenario.Tools[node.Ref]
+	if !ok {
+		return true
+	}
+	switch tool.SideEffect {
+	case core.SideEffectWrite, core.SideEffectExternal, core.SideEffectDangerous:
+		return false
+	default:
+		return true
+	}
 }
 
 func (r *WorkflowRunner) runNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {

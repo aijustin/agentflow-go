@@ -38,6 +38,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/catalog"
+	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -54,6 +55,16 @@ type RunRequest = appexec.RunRequest
 
 // RunResult is the result returned from Framework.Run.
 type RunResult = appexec.RunResult
+
+// Classified run-state errors, re-exported from the runtime so callers of
+// every orchestration mode's entry points can branch on them with errors.Is.
+var (
+	ErrRunAlreadyCompleted = appexec.ErrRunAlreadyCompleted
+	ErrRunInProgress       = appexec.ErrRunInProgress
+	ErrRunPaused           = appexec.ErrRunPaused
+	ErrRunFailed           = appexec.ErrRunFailed
+	ErrRunCancelled        = appexec.ErrRunCancelled
+)
 
 // Plan is a resolved scenario plan that library users can inspect before
 // creating a Framework.
@@ -83,6 +94,9 @@ type Framework struct {
 	recorder          observability.Recorder
 	tracer            observability.Tracer
 	logger            log.Logger
+	runLocker         coordination.Locker
+	runLeaseOwner     string
+	runLeaseTTL       time.Duration
 	closers           []func(context.Context) error
 }
 
@@ -114,6 +128,9 @@ type options struct {
 	tracer              observability.Tracer
 	logger              log.Logger
 	requireLLM          bool
+	runLocker           coordination.Locker
+	runLeaseOwner       string
+	runLeaseTTL         time.Duration
 	closers             []func(context.Context) error
 }
 
@@ -375,6 +392,9 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		recorder:          cfg.recorder,
 		tracer:            cfg.tracer,
 		logger:            cfg.logger,
+		runLocker:         cfg.runLocker,
+		runLeaseOwner:     cfg.runLeaseOwner,
+		runLeaseTTL:       cfg.runLeaseTTL,
 		closers:           append([]func(context.Context) error(nil), cfg.closers...),
 	}, nil
 }
@@ -737,6 +757,11 @@ func WithHITLTokenTTL(ttl time.Duration) Option {
 
 // Run executes the framework scenario.
 func (f *Framework) Run(ctx context.Context, req RunRequest) (RunResult, error) {
+	release, err := f.acquireRunLease(ctx, &req)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer release()
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
 		return f.runWorkflow(ctx, req)
@@ -770,6 +795,9 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
 	runstate.StampTenant(ctx, &snapshot)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
+		if errors.Is(err, runstate.ErrStaleSnapshot) {
+			return RunResult{}, f.classifyExistingRun(ctx, req.RunID)
+		}
 		return RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
@@ -782,15 +810,10 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 		f.markWorkflowFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	loaded, err := runstate.LoadAuthorized(ctx, f.runs, req.RunID)
+	loaded, err := f.completeWorkflowRun(ctx, req.RunID, nil)
 	if err != nil {
 		return RunResult{}, err
 	}
-	loaded.Status = runstate.RunStatusCompleted
-	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
-	}
-	f.emit(ctx, core.EventRunCompleted, req.RunID, nil)
 	output := f.workflowRunOutput(ctx, loaded)
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
@@ -810,10 +833,6 @@ func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, e
 		return paused, err
 	}
 	return f.engine.RunHybrid(ctx, req)
-}
-
-func (f *Framework) prepareHybridAutonomousRun(ctx context.Context, req RunRequest) (RunRequest, RunResult, error) {
-	return f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
 }
 
 func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scenario core.Scenario, req RunRequest) (RunRequest, RunResult, error) {
@@ -837,6 +856,9 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
 	runstate.StampTenant(ctx, &snapshot)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
+		if errors.Is(err, runstate.ErrStaleSnapshot) {
+			return req, RunResult{}, f.classifyExistingRun(ctx, req.RunID)
+		}
 		return req, RunResult{}, err
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
@@ -849,15 +871,17 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 		f.markWorkflowFailed(ctx, req.RunID, err)
 		return req, RunResult{}, err
 	}
-	loaded, err := runstate.LoadAuthorized(ctx, f.runs, req.RunID)
+	loaded, err := f.saveRunSnapshotWithRetry(ctx, req.RunID, func(snapshot *runstate.RunSnapshot) error {
+		if snapshot.Variables == nil {
+			snapshot.Variables = make(map[string]json.RawMessage)
+		}
+		snapshot.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseAutonomous))
+		return nil
+	})
 	if err != nil {
-		return req, RunResult{}, err
-	}
-	if loaded.Variables == nil {
-		loaded.Variables = make(map[string]json.RawMessage)
-	}
-	loaded.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseAutonomous))
-	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
+		// The workflow phase finished but the phase transition could not be
+		// persisted; without it a resume would re-run the whole workflow.
+		f.markWorkflowFailed(ctx, req.RunID, err)
 		return req, RunResult{}, err
 	}
 	req, err = f.hydrateRunRequest(ctx, req, loaded)
@@ -865,6 +889,91 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 		return req, RunResult{}, fmt.Errorf("agentflow: hydrate workflow context for autonomous phase: %w", err)
 	}
 	return req, RunResult{}, nil
+}
+
+// classifyExistingRun converts a create-conflict on an already-existing run
+// ID into the same classified sentinel errors the autonomous beginRun path
+// reports, instead of surfacing a bare optimistic-concurrency error that
+// hides which state the existing run is actually in.
+func (f *Framework) classifyExistingRun(ctx context.Context, runID string) error {
+	existing, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	if err != nil {
+		return fmt.Errorf("agentflow: run %q already exists: %w", runID, err)
+	}
+	switch existing.Status {
+	case runstate.RunStatusCompleted:
+		return ErrRunAlreadyCompleted
+	case runstate.RunStatusCancelled:
+		return ErrRunCancelled
+	case runstate.RunStatusPaused:
+		return ErrRunPaused
+	case runstate.RunStatusFailed:
+		return ErrRunFailed
+	default:
+		return ErrRunInProgress
+	}
+}
+
+// runNotRunningError reports that a completion save observed the run in a
+// non-Running status: a concurrent writer (cancellation, failure, pause)
+// got there first and its state must not be clobbered with Completed.
+type runNotRunningError struct {
+	runID  string
+	status runstate.RunStatus
+}
+
+func (e runNotRunningError) Error() string {
+	return fmt.Sprintf("agentflow: cannot complete run %q in status %s", e.runID, e.status)
+}
+
+// saveRunSnapshotWithRetry mirrors the engine's saveSnapshotWithRetry:
+// reload-mutate-save with retries on optimistic-concurrency conflicts, so a
+// single ErrStaleSnapshot from a concurrent writer does not abort a
+// bookkeeping save (e.g. the final Completed transition).
+func (f *Framework) saveRunSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) (runstate.RunSnapshot, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+		if err != nil {
+			return runstate.RunSnapshot{}, err
+		}
+		if err := mutate(&snapshot); err != nil {
+			return runstate.RunSnapshot{}, err
+		}
+		if err := f.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+			if errors.Is(err, runstate.ErrStaleSnapshot) {
+				continue
+			}
+			return runstate.RunSnapshot{}, err
+		}
+		return snapshot, nil
+	}
+	return runstate.RunSnapshot{}, fmt.Errorf("agentflow: failed to save snapshot %q after stale retries", runID)
+}
+
+// completeWorkflowRun persists the terminal Completed transition for a
+// workflow (or hybrid workflow-phase) run. On a status conflict the error is
+// returned without touching the run; on a persistent save failure the run is
+// marked Failed so it does not linger in Running forever.
+func (f *Framework) completeWorkflowRun(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot)) (runstate.RunSnapshot, error) {
+	loaded, err := f.saveRunSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
+		if snapshot.Status != runstate.RunStatusRunning {
+			return runNotRunningError{runID: runID, status: snapshot.Status}
+		}
+		if mutate != nil {
+			mutate(snapshot)
+		}
+		snapshot.Status = runstate.RunStatusCompleted
+		return nil
+	})
+	if err != nil {
+		var conflict runNotRunningError
+		if !errors.As(err, &conflict) {
+			f.markWorkflowFailed(ctx, runID, err)
+		}
+		return runstate.RunSnapshot{}, err
+	}
+	f.emit(ctx, core.EventRunCompleted, runID, nil)
+	return loaded, nil
 }
 
 func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause error) {
@@ -897,6 +1006,11 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 // RunStructured executes an agent using its configured output_schema and a
 // gateway that implements llm.StructuredOutputter.
 func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResult, error) {
+	release, err := f.acquireRunLease(ctx, &req)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer release()
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
 		result, err := f.runWorkflow(ctx, req)

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	blobinmem "github.com/aijustin/agentflow-go/internal/adapter/blob/inmem"
 	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
 	"github.com/aijustin/agentflow-go/internal/adapter/llm/mock"
 	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
@@ -441,6 +442,162 @@ func TestEngineContinueAppliesHumanAmendment(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected amendment in llm messages, got %+v", gateway.req.Messages)
+	}
+}
+
+func TestEngineContinueToolApprovalAmendmentFollowsToolResults(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "risky", Input: json.RawMessage(`{"query":"approve"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Tools["risky"] = core.Tool{
+		Name:        "risky",
+		Type:        "builtin.echo",
+		Description: "Risky echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Approval:    core.ApprovalPause,
+		SideEffect:  core.SideEffectWrite,
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Tools = []string{"risky"}
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"risky": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-amend-order", Agent: "assistant", Prompt: "go"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionAmend, json.RawMessage(`"use metric units"`)); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-amend-order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "done" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+	requests := gateway.ToolRequests("default")
+	if len(requests) != 2 {
+		t.Fatalf("expected two tool-call requests, got %d", len(requests))
+	}
+	messages := requests[1].Messages
+	assistantIdx := -1
+	for index, msg := range messages {
+		if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 {
+			assistantIdx = index
+		}
+	}
+	if assistantIdx == -1 {
+		t.Fatalf("expected assistant tool_calls message, got %+v", messages)
+	}
+	if assistantIdx+1 >= len(messages) || messages[assistantIdx+1].Role != llm.RoleTool || messages[assistantIdx+1].ToolCallID != "call-1" {
+		t.Fatalf("tool result must immediately follow assistant tool_calls message, got %+v", messages)
+	}
+	feedbackIdx := -1
+	for index, msg := range messages {
+		if msg.Role == llm.RoleUser && strings.Contains(msg.Content, "use metric units") {
+			feedbackIdx = index
+		}
+	}
+	if feedbackIdx == -1 {
+		t.Fatalf("expected human feedback message in llm messages, got %+v", messages)
+	}
+	if feedbackIdx <= assistantIdx+1 {
+		t.Fatalf("human feedback must come after the turn's tool results, got index %d in %+v", feedbackIdx, messages)
+	}
+}
+
+func TestEngineToolApprovalCheckpointExternalizesMessagesAndCleansUp(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	blobs := blobinmem.NewStore()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "risky", Input: json.RawMessage(`{"query":"approve"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Runtime.StepOutputThreshold = 16
+	scenario.Tools["risky"] = core.Tool{
+		Name:        "risky",
+		Type:        "builtin.echo",
+		Description: "Risky echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Approval:    core.ApprovalPause,
+		SideEffect:  core.SideEffectWrite,
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Tools = []string{"risky"}
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		Blobs:     blobs,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"risky": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-ckpt-blob", Agent: "assistant", Prompt: "go"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	snapshot, err := repo.Load(context.Background(), "run-ckpt-blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ref runstate.StepOutputRef
+	if err := json.Unmarshal(snapshot.Variables[checkpointMessagesVar], &ref); err != nil || ref.Blob == nil {
+		t.Fatalf("expected externalized checkpoint messages, got %s", snapshot.Variables[checkpointMessagesVar])
+	}
+	if _, ok := runstate.CollectBlobRefs(snapshot)[ref.Blob.ID]; !ok {
+		t.Fatalf("checkpoint blob %q must count as referenced so orphan GC cannot delete it", ref.Blob.ID)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-ckpt-blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "done" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+	snapshot, err = repo.Load(context.Background(), "run-ckpt-blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{checkpointMessagesVar, checkpointToolCallsVar, checkpointToolCountsVar} {
+		if _, ok := snapshot.Variables[key]; ok {
+			t.Fatalf("expected checkpoint variable %q to be cleared after resume", key)
+		}
 	}
 }
 

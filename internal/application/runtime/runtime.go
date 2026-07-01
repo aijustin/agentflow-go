@@ -188,34 +188,11 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		return failRun(err)
 	}
-	loaded, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
-	if err != nil {
-		return RunResult{}, err
-	}
-	if loaded.Status != runstate.RunStatusRunning {
-		// A concurrent writer already moved this run to a terminal or
-		// paused state (e.g. a tool-loop pause that raced this call, or a
-		// cancellation) between answer() returning and this load; do not
-		// clobber that state with Completed.
-		return nonRunningCompletionResult(req.RunID, loaded.Status)
-	}
-	loaded.Status = runstate.RunStatusCompleted
-	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
-	finalRef, err := e.stepOutputRef(ctx, req.RunID, "final", finalRaw)
-	if err != nil {
-		e.markRunFailed(ctx, req.RunID, err)
-		return RunResult{}, err
-	}
-	if loaded.StepOutputs == nil {
-		loaded.StepOutputs = make(map[string]runstate.StepOutputRef)
-	}
-	loaded.StepOutputs["final"] = finalRef
-	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
-	}
-	e.recordRunCompleted(ctx, loaded)
-	e.emit(ctx, core.EventRunCompleted, req.RunID, loaded.StepOutputs["final"].Inline)
-	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: output}, nil
+	// persistRunCompleted re-checks on every save attempt that no concurrent
+	// writer moved this run to a terminal or paused state (e.g. a tool-loop
+	// pause that raced this call, or a cancellation) between answer()
+	// returning and the completion save; such a state is never clobbered.
+	return e.completeRun(ctx, req.RunID, output)
 }
 
 func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, error) {
@@ -271,28 +248,14 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 }
 
 func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw json.RawMessage) (RunResult, error) {
-	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
-	if err != nil {
+	if _, err := e.persistRunCompleted(ctx, runID, raw); err != nil {
+		var conflict completionConflictError
+		if errors.As(err, &conflict) {
+			return nonRunningCompletionResult(runID, conflict.status)
+		}
+		e.markRunFailedOrCancelled(ctx, runID, err)
 		return RunResult{}, err
 	}
-	if loaded.Status != runstate.RunStatusRunning {
-		return nonRunningCompletionResult(runID, loaded.Status)
-	}
-	loaded.Status = runstate.RunStatusCompleted
-	finalRef, err := e.stepOutputRef(ctx, runID, "final", raw)
-	if err != nil {
-		e.markRunFailed(ctx, runID, err)
-		return RunResult{}, err
-	}
-	if loaded.StepOutputs == nil {
-		loaded.StepOutputs = make(map[string]runstate.StepOutputRef)
-	}
-	loaded.StepOutputs["final"] = finalRef
-	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
-	}
-	e.recordRunCompleted(ctx, loaded)
-	e.emit(ctx, core.EventRunCompleted, runID, finalRef.Inline)
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: string(raw), StructuredOutput: raw}, nil
 }
 
@@ -386,9 +349,12 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 			}
 			return
 		}
-		if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, b.String()); err != nil {
-			sendTerminal(llm.ChatChunk{Error: err.Error()})
-		}
+		// The source closed without ever sending a Done chunk: the provider
+		// stream was cut off mid-answer. Treating it as a normal completion
+		// would persist a truncated output as the run's final answer.
+		streamErr := errors.New("runtime: llm stream closed without a done chunk")
+		e.markRunFailed(ctx, req.RunID, streamErr)
+		sendTerminal(llm.ChatChunk{Error: streamErr.Error()})
 	}()
 	return out, nil
 }
@@ -483,30 +449,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		e.markRunFailedOrCancelled(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	loaded, err = runstate.LoadAuthorized(ctx, e.runs, req.RunID)
-	if err != nil {
-		return RunResult{}, err
-	}
-	if loaded.Status != runstate.RunStatusRunning {
-		return nonRunningCompletionResult(req.RunID, loaded.Status)
-	}
-	loaded.Status = runstate.RunStatusCompleted
-	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
-	finalRef, err := e.stepOutputRef(ctx, req.RunID, "final", finalRaw)
-	if err != nil {
-		e.markRunFailed(ctx, req.RunID, err)
-		return RunResult{}, err
-	}
-	if loaded.StepOutputs == nil {
-		loaded.StepOutputs = make(map[string]runstate.StepOutputRef)
-	}
-	loaded.StepOutputs["final"] = finalRef
-	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
-	}
-	e.recordRunCompleted(ctx, loaded)
-	e.emit(ctx, core.EventRunCompleted, req.RunID, finalRef.Inline)
-	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: output}, nil
+	return e.completeRun(ctx, req.RunID, output)
 }
 
 var autonomousPlanSchema = json.RawMessage(`{"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"goal":{"type":"string"},"tool":{"type":"string"}},"required":["goal"]}}},"required":["steps"]}`)

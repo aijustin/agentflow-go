@@ -360,6 +360,8 @@ Workflow 边位于 `scenario.orchestration.workflow.edges`，使用 `from`、`to
 
 路径以 `steps.<node_id>` 开头，后续字段来自该节点保存到 RunState 的 JSON 输出。Tool 节点输出通常形如 `steps.<id>.output.<field>`，因为 `core.ToolResult` 会把工具原始 JSON 放在 `output` 字段中。
 
+注意：条件为 false 时节点被跳过（事件流中会出现 `skipped: true` 的 `StepCompleted`），但**跳过不会向下游传播**——被跳过的节点仍视为已完成，其下游节点照常进入调度。如果希望下游节点也不执行，需要在下游节点上声明自己的 `condition`（例如同样检查 `exists(steps.<id>.output)`，被跳过的节点不会写入步骤输出）。
+
 `transform` 节点的 `input` 可以使用 `set` 和 `copy` 构造新的步骤输出：
 
 ```yaml

@@ -39,7 +39,9 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 	if err != nil {
 		return RunResult{}, err
 	}
-	e.ensureRunPaused(ctx, req.RunID)
+	if err := e.ensureRunPaused(ctx, req.RunID); err != nil {
+		e.logWarn(ctx, "runtime: failed to persist paused status", "run_id", req.RunID, "error", err)
+	}
 	e.emit(ctx, core.EventRunPaused, req.RunID, payload)
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil
 }
@@ -69,6 +71,14 @@ func (e *Engine) markCheckpointResumed(ctx context.Context, snapshot *runstate.R
 		}
 		loaded.Variables[checkpointResumedVar] = json.RawMessage(`true`)
 		clearHumanAmendment(loaded)
+		// Drop the tool-approval checkpoint state now that this resume has
+		// decoded it: the serialized conversation is the largest thing on
+		// the snapshot and would otherwise be carried (and re-written) by
+		// every subsequent snapshot save for the rest of the run. Any blob
+		// it referenced becomes orphaned and reclaimable by blob GC.
+		delete(loaded.Variables, checkpointMessagesVar)
+		delete(loaded.Variables, checkpointToolCallsVar)
+		delete(loaded.Variables, checkpointToolCountsVar)
 		return nil
 	})
 }

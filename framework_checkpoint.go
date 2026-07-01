@@ -36,7 +36,7 @@ type PendingHITLInfo struct {
 
 // ListRunCheckpointsResult summarizes append-only snapshot revisions for a run.
 type ListRunCheckpointsResult struct {
-	RunID       string                      `json:"run_id"`
+	RunID       string                       `json:"run_id"`
 	Checkpoints []runstate.CheckpointSummary `json:"checkpoints"`
 }
 
@@ -110,22 +110,23 @@ func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (R
 		return RunResult{}, err
 	}
 
-	loaded, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	loaded, err := f.completeWorkflowRun(ctx, runID, f.stampHybridWorkflowPhase)
 	if err != nil {
 		return RunResult{}, err
 	}
-	if f.scenario.Orchestration.Mode == core.OrchestrationHybrid {
-		if loaded.Variables == nil {
-			loaded.Variables = make(map[string]json.RawMessage)
-		}
-		loaded.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow))
-	}
-	loaded.Status = runstate.RunStatusCompleted
-	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
-	}
-	f.emit(ctx, core.EventRunCompleted, runID, nil)
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: f.workflowRunOutput(ctx, loaded)}, nil
+}
+
+// stampHybridWorkflowPhase marks the snapshot as being in the workflow phase
+// for hybrid scenarios; a no-op for other orchestration modes.
+func (f *Framework) stampHybridWorkflowPhase(snapshot *runstate.RunSnapshot) {
+	if f.scenario.Orchestration.Mode != core.OrchestrationHybrid {
+		return
+	}
+	if snapshot.Variables == nil {
+		snapshot.Variables = make(map[string]json.RawMessage)
+	}
+	snapshot.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow))
 }
 
 // ListRunCheckpoints returns append-only snapshot revisions recorded for a run.
@@ -190,20 +191,9 @@ func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, vers
 		return RunResult{}, err
 	}
 
-	loaded, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	loaded, err := f.completeWorkflowRun(ctx, runID, f.stampHybridWorkflowPhase)
 	if err != nil {
 		return RunResult{}, err
 	}
-	if f.scenario.Orchestration.Mode == core.OrchestrationHybrid {
-		if loaded.Variables == nil {
-			loaded.Variables = make(map[string]json.RawMessage)
-		}
-		loaded.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow))
-	}
-	loaded.Status = runstate.RunStatusCompleted
-	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
-	}
-	f.emit(ctx, core.EventRunCompleted, runID, nil)
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: f.workflowRunOutput(ctx, loaded)}, nil
 }

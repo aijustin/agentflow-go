@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	resumePromptVar          = "resume_prompt"
-	resumeAgentVar           = "resume_agent"
-	executionPhaseVar        = "execution_phase"
-	executionPhaseWorkflow   = "workflow"
-	executionPhaseAutonomous = "autonomous"
-	checkpointKindVar        = "checkpoint_kind"
+	resumePromptVar                 = "resume_prompt"
+	resumeAgentVar                  = "resume_agent"
+	executionPhaseVar               = "execution_phase"
+	executionPhaseWorkflow          = "workflow"
+	executionPhaseAutonomous        = "autonomous"
+	checkpointKindVar               = "checkpoint_kind"
 	checkpointKindBeforeFinalAnswer = "before_final_answer"
 	checkpointKindToolApproval      = "tool_approval"
 )
@@ -37,6 +37,13 @@ func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decisio
 	}
 	if decision == core.DecisionReject {
 		return RunResult{RunID: runID, Status: runstate.RunStatusCancelled}, nil
+	}
+	if f.runLocker != nil {
+		release, err := f.holdRunLease(ctx, runID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		defer release()
 	}
 	return f.continueRun(ctx, runID)
 }
@@ -152,20 +159,69 @@ func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCom
 		f.markWorkflowFailed(ctx, runID, err)
 		return RunResult{}, err
 	}
-	loaded, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	if !markCompleted {
+		loaded, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		return RunResult{RunID: runID, Status: loaded.Status}, nil
+	}
+	loaded, err := f.completeWorkflowRun(ctx, runID, nil)
 	if err != nil {
 		return RunResult{}, err
 	}
-	if !markCompleted {
-		return RunResult{RunID: runID, Status: loaded.Status}, nil
-	}
-	loaded.Status = runstate.RunStatusCompleted
-	if err := f.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
-	}
-	f.emit(ctx, core.EventRunCompleted, runID, nil)
 	output := f.workflowRunOutput(ctx, loaded)
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: output}, nil
+}
+
+// RetryFailedRun moves a Failed workflow or hybrid run back to Running and
+// re-executes it from its persisted progress: workflow nodes that already
+// produced step outputs are skipped, and a hybrid run whose workflow phase
+// already finished re-enters the autonomous phase directly (workflow step
+// outputs are re-hydrated into the request context).
+func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult, error) {
+	switch f.scenario.Orchestration.Mode {
+	case core.OrchestrationFixedWorkflow, core.OrchestrationHybrid:
+	default:
+		return RunResult{}, fmt.Errorf("agentflow: RetryFailedRun requires fixed_workflow or hybrid orchestration mode")
+	}
+	if f.runs == nil {
+		return RunResult{}, fmt.Errorf("agentflow: run-state repository is not configured")
+	}
+	snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if snapshot.Status != runstate.RunStatusFailed {
+		return RunResult{}, fmt.Errorf("agentflow: run %q is not failed (status=%s)", runID, snapshot.Status)
+	}
+	if f.runLocker != nil {
+		release, err := f.holdRunLease(ctx, runID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		defer release()
+	}
+	// Failed is terminal for normal transitions; this retry entry point is
+	// the one deliberate exception, so it uses the explicit transition
+	// override instead of weakening the state machine itself.
+	snapshot.Status = runstate.RunStatusRunning
+	if snapshot.Variables != nil {
+		delete(snapshot.Variables, "run_error_message")
+	}
+	saveCtx := runstate.ContextWithStatusTransitionOverride(ctx)
+	if err := f.runs.Save(saveCtx, &snapshot, snapshot.Version); err != nil {
+		return RunResult{}, err
+	}
+	f.emit(ctx, core.EventRunResumed, runID, nil)
+	if f.scenario.Orchestration.Mode == core.OrchestrationFixedWorkflow {
+		return f.finishWorkflowRun(ctx, runID, true)
+	}
+	snapshot, err = runstate.LoadAuthorized(ctx, f.runs, runID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	return f.continueHybridRun(ctx, runID, snapshot)
 }
 
 func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapshot runstate.RunSnapshot) (RunResult, error) {
@@ -179,6 +235,16 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 		switch variableJSONString(snapshot.Variables, checkpointKindVar) {
 		case checkpointKindBeforeFinalAnswer, checkpointKindToolApproval:
 			return f.engine.ContinueAfterCheckpoint(ctx, runID)
+		case "":
+			// No pending checkpoint: this is a recovery continuation (e.g.
+			// RetryFailedRun) of a run whose workflow phase already
+			// finished. Re-hydrate the workflow step outputs and re-enter
+			// the autonomous phase.
+			req, err := f.hydrateRunRequest(ctx, hybridRunRequest(snapshot), snapshot)
+			if err != nil {
+				return RunResult{}, err
+			}
+			return f.engine.RunHybrid(ctx, req)
 		default:
 			return RunResult{}, fmt.Errorf("agentflow: unknown autonomous checkpoint kind %q for run %q", variableJSONString(snapshot.Variables, checkpointKindVar), runID)
 		}

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -103,7 +104,11 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	}
 	var messages []llm.Message
 	if raw := snapshot.Variables[checkpointMessagesVar]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &messages); err != nil {
+		resolved, err := e.resolveCheckpointVar(ctx, raw)
+		if err != nil {
+			return RunResult{}, fmt.Errorf("runtime: resolve checkpoint messages: %w", err)
+		}
+		if err := json.Unmarshal(resolved, &messages); err != nil {
 			return RunResult{}, fmt.Errorf("runtime: decode checkpoint messages: %w", err)
 		}
 	}
@@ -113,8 +118,21 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 			return RunResult{}, fmt.Errorf("runtime: decode checkpoint tool counts: %w", err)
 		}
 	}
+	if len(messages) == 0 {
+		// A tool_approval checkpoint always persists the conversation up to
+		// and including the paused assistant turn. Missing messages mean the
+		// checkpoint state was already consumed by a prior resume (it is
+		// cleared by markCheckpointResumed); continuing with an empty
+		// conversation would silently re-run the tool loop from nothing.
+		return RunResult{}, fmt.Errorf("runtime: checkpoint messages for run %q are missing; the checkpoint may already have been consumed by a prior resume", snapshot.RunID)
+	}
 	prompt := applyHumanAmendment(snapshot.Variables, variableString(snapshot.Variables, checkpointPromptVar))
-	messages = injectHumanAmendmentMessages(messages, snapshot.Variables)
+	// Capture the amendment text before markCheckpointResumed clears it; it
+	// is injected as a user message only after every pending tool call of the
+	// paused assistant turn has produced its tool result, because providers
+	// reject a user message wedged between an assistant tool_calls message
+	// and its tool responses.
+	amendment := humanAmendmentText(snapshot.Variables)
 	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
 		return RunResult{}, err
 	}
@@ -130,7 +148,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	// Cumulative across the whole run (including replans before this pause)
 	// so pausing and resuming cannot reset the replan budget.
 	replanAttempts := checkpointIntVar(snapshot.Variables, checkpointReplanAttemptsVar)
-	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, toolCounts, caller, prompt, stepsConsumed, replanAttempts)
+	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, toolCounts, caller, prompt, amendment, stepsConsumed, replanAttempts)
 	if err != nil {
 		var paused RunPausedError
 		if errorsAsRunPaused(err, &paused) {
@@ -142,7 +160,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	return e.completeRun(ctx, snapshot.RunID, output)
 }
 
-func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string, stepsConsumed int, replanAttempts int) (string, error) {
+func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string, amendment string, stepsConsumed int, replanAttempts int) (string, error) {
 	if len(pending) > 0 {
 		turnStart := lastAssistantWithToolCallsIndex(messages)
 		// pending[0] is the tool call the human just approved; execute it
@@ -182,6 +200,12 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 			}
 		}
 	}
+	// All tool_call IDs of the paused turn now have their tool responses, so
+	// the human feedback can be appended without breaking the provider's
+	// assistant(tool_calls) -> tool message ordering contract.
+	if amendment != "" {
+		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: "Human feedback: " + amendment})
+	}
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
 	toolSpecs := e.toolSpecs(ctx, runID, agent)
 	baseReq := llm.ChatRequest{
@@ -205,29 +229,17 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {
-	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
-	if err != nil {
-		return RunResult{}, err
-	}
-	if loaded.Status != runstate.RunStatusRunning {
-		return nonRunningCompletionResult(runID, loaded.Status)
-	}
-	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
-	finalRef, err := e.stepOutputRef(ctx, runID, "final", finalRaw)
-	if err != nil {
-		e.markRunFailed(ctx, runID, err)
+	if _, err := e.persistRunCompleted(ctx, runID, finalRaw); err != nil {
+		var conflict completionConflictError
+		if errors.As(err, &conflict) {
+			return nonRunningCompletionResult(runID, conflict.status)
+		}
+		// The run produced its answer but the terminal state could not be
+		// persisted; mark it Failed so it does not linger in Running forever.
+		e.markRunFailedOrCancelled(ctx, runID, err)
 		return RunResult{}, err
 	}
-	if loaded.StepOutputs == nil {
-		loaded.StepOutputs = make(map[string]runstate.StepOutputRef)
-	}
-	loaded.StepOutputs["final"] = finalRef
-	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return RunResult{}, err
-	}
-	e.recordRunCompleted(ctx, loaded)
-	e.emit(ctx, core.EventRunCompleted, runID, finalRef.Inline)
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
 
@@ -249,21 +261,15 @@ func applyHumanAmendment(vars map[string]json.RawMessage, prompt string) string 
 	return prompt + "\n\nHuman feedback: " + amendment
 }
 
-func injectHumanAmendmentMessages(messages []llm.Message, vars map[string]json.RawMessage) []llm.Message {
+func humanAmendmentText(vars map[string]json.RawMessage) string {
 	if vars == nil {
-		return messages
+		return ""
 	}
 	raw, ok := vars[humanAmendmentVar]
 	if !ok || len(raw) == 0 {
-		return messages
+		return ""
 	}
-	amendment := decodeAmendmentText(raw)
-	if amendment == "" {
-		return messages
-	}
-	out := append([]llm.Message(nil), messages...)
-	out = append(out, llm.Message{Role: llm.RoleUser, Content: "Human feedback: " + amendment})
-	return out
+	return decodeAmendmentText(raw)
 }
 
 func decodeAmendmentText(raw json.RawMessage) string {
@@ -313,6 +319,39 @@ func variableString(vars map[string]json.RawMessage, key string) string {
 		return strings.TrimSpace(string(raw))
 	}
 	return value
+}
+
+// externalizeCheckpointVar returns the payload to persist for a potentially
+// large checkpoint variable: the raw JSON itself when it fits within the
+// step-output threshold, otherwise a StepOutputRef pointing at a blob.
+func (e *Engine) externalizeCheckpointVar(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	threshold := e.scenario.Runtime.StepOutputThreshold
+	if threshold <= 0 || int64(len(raw)) <= threshold || e.blobs == nil {
+		return raw, nil
+	}
+	ref, err := e.blobs.Put(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(runstate.StepOutputRef{Blob: &ref})
+}
+
+// resolveCheckpointVar resolves a checkpoint variable persisted by
+// externalizeCheckpointVar back to its raw payload. Inline payloads (legacy
+// JSON arrays or values below the threshold) pass through unchanged.
+func (e *Engine) resolveCheckpointVar(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return raw, nil
+	}
+	var ref runstate.StepOutputRef
+	if err := json.Unmarshal(trimmed, &ref); err != nil || ref.Blob == nil {
+		return raw, nil
+	}
+	if e.blobs == nil {
+		return nil, fmt.Errorf("runtime: blob store is required to resolve externalized checkpoint state")
+	}
+	return e.blobs.Get(ctx, *ref.Blob)
 }
 
 func (e *Engine) isCheckpointResumed(snapshot runstate.RunSnapshot) bool {
@@ -381,6 +420,14 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err != nil {
 		return nil, err
 	}
+	// The serialized conversation can be arbitrarily large (it includes every
+	// tool output of the run so far); externalize it to the blob store above
+	// the step-output threshold so a pause never has to fit the whole
+	// conversation into one snapshot row/value.
+	messagesRaw, err = e.externalizeCheckpointVar(ctx, messagesRaw)
+	if err != nil {
+		return nil, err
+	}
 	countsRaw, err := json.Marshal(toolCounts)
 	if err != nil {
 		return nil, err
@@ -419,7 +466,9 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err != nil {
 		return nil, err
 	}
-	e.ensureRunPaused(ctx, runID)
+	if err := e.ensureRunPaused(ctx, runID); err != nil {
+		e.logWarn(ctx, "runtime: failed to persist paused status", "run_id", runID, "error", err)
+	}
 	e.emitJSON(ctx, core.EventRunPaused, runID, payload)
 	paused := RunPausedError{RunID: runID, Token: token, Kind: "tool_approval"}
 	return &paused, nil

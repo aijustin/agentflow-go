@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"slices"
 	"strings"
 	"time"
@@ -17,12 +16,13 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
+	"github.com/aijustin/agentflow-go/pkg/retry"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 var (
 	ErrRunAlreadyCompleted = errors.New("runtime: run already completed")
-	ErrRunInProgress         = errors.New("runtime: run is already running")
+	ErrRunInProgress       = errors.New("runtime: run is already running")
 	ErrRunPaused           = errors.New("runtime: run is paused")
 	ErrRunFailed           = errors.New("runtime: run has failed")
 	ErrRunCancelled        = errors.New("runtime: run is cancelled")
@@ -100,7 +100,13 @@ func (e *Engine) resolveAgent(name string) (core.Agent, error) {
 		if len(names) == 0 {
 			return core.Agent{}, fmt.Errorf("runtime: no agents configured")
 		}
-		slices.Sort(names)
+		// Defaulting is only unambiguous with a single agent. Silently
+		// picking the alphabetically first of several routed requests to
+		// whichever agent happened to sort first.
+		if len(names) > 1 {
+			slices.Sort(names)
+			return core.Agent{}, fmt.Errorf("runtime: multiple agents configured (%s); specify the agent explicitly", strings.Join(names, ", "))
+		}
 		agentName = names[0]
 	}
 	agent, ok := e.scenario.Agents[agentName]
@@ -237,25 +243,15 @@ func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core
 			return err
 		}
 	}
-	loaded, err = runstate.LoadAuthorized(ctx, e.runs, runID)
-	if err != nil {
-		return err
-	}
-	if loaded.Status != runstate.RunStatusRunning {
-		return fmt.Errorf("runtime: cannot complete run %q in status %s", runID, loaded.Status)
-	}
-	loaded.Status = runstate.RunStatusCompleted
 	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
-	finalRef, err := e.stepOutputRef(ctx, runID, "final", finalRaw)
-	if err != nil {
+	if _, err := e.persistRunCompleted(ctx, runID, finalRaw); err != nil {
+		var conflict completionConflictError
+		if errors.As(err, &conflict) {
+			return fmt.Errorf("runtime: cannot complete run %q in status %s", runID, conflict.status)
+		}
+		e.markRunFailedOrCancelled(ctx, runID, err)
 		return err
 	}
-	loaded.StepOutputs["final"] = finalRef
-	if err := e.runs.Save(ctx, &loaded, loaded.Version); err != nil {
-		return err
-	}
-	e.recordRunCompleted(ctx, loaded)
-	e.emit(ctx, core.EventRunCompleted, runID, loaded.StepOutputs["final"].Inline)
 	return nil
 }
 
@@ -336,20 +332,7 @@ func (e *Engine) withTimeout(ctx context.Context, timeout time.Duration) (contex
 }
 
 func shouldRetry(ctx context.Context, err error) bool {
-	if err == nil {
-		return false
-	}
-	if ctx.Err() != nil {
-		return false
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	var classified interface{ Retryable() bool }
-	if errors.As(err, &classified) {
-		return classified.Retryable()
-	}
-	return false
+	return retry.Retryable(ctx, err)
 }
 
 const (
@@ -420,28 +403,7 @@ func (e *Engine) pauseWithRetry(ctx context.Context, runID string, build func(ve
 }
 
 func retryDelay(ctx context.Context, attempt int) error {
-	delay := 100 * time.Millisecond
-	for range max(0, attempt-1) {
-		delay *= 2
-		if delay >= 2*time.Second {
-			delay = 2 * time.Second
-			break
-		}
-	}
-	// Add ±25% jitter to prevent thundering-herd on concurrent retries.
-	jitter := time.Duration(rand.N(int64(delay/2))) - delay/4
-	delay += jitter
-	if delay < time.Millisecond {
-		delay = time.Millisecond
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return retry.Backoff(ctx, attempt)
 }
 
 func persistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -481,6 +443,47 @@ func (e *Engine) recordRunCompleted(ctx context.Context, snapshot runstate.RunSn
 	e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
 		observability.Attribute{Key: "event", Value: string(core.EventRunCompleted)},
 		observability.Attribute{Key: "scenario", Value: e.scenario.Name})
+}
+
+// completionConflictError reports that a completion save observed the run in
+// a non-Running status: a concurrent writer (pause, cancellation, failure)
+// got there first and its state must not be clobbered with Completed.
+type completionConflictError struct {
+	status runstate.RunStatus
+}
+
+func (e completionConflictError) Error() string {
+	return fmt.Sprintf("runtime: run is not running (status=%s)", e.status)
+}
+
+// persistRunCompleted writes the terminal Completed status together with the
+// "final" step output, retrying optimistic-concurrency conflicts by
+// reloading and re-checking on every attempt that the run is still Running.
+// A bare runs.Save here used to give up on the first ErrStaleSnapshot,
+// leaving the run stuck in Running with its produced answer lost.
+func (e *Engine) persistRunCompleted(ctx context.Context, runID string, finalRaw json.RawMessage) (runstate.RunSnapshot, error) {
+	finalRef, err := e.stepOutputRef(ctx, runID, "final", finalRaw)
+	if err != nil {
+		return runstate.RunSnapshot{}, err
+	}
+	var saved runstate.RunSnapshot
+	if err := e.saveSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
+		if snapshot.Status != runstate.RunStatusRunning {
+			return completionConflictError{status: snapshot.Status}
+		}
+		snapshot.Status = runstate.RunStatusCompleted
+		if snapshot.StepOutputs == nil {
+			snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
+		}
+		snapshot.StepOutputs["final"] = finalRef
+		saved = *snapshot
+		return nil
+	}); err != nil {
+		return runstate.RunSnapshot{}, err
+	}
+	e.recordRunCompleted(ctx, saved)
+	e.emit(ctx, core.EventRunCompleted, runID, finalRef.Inline)
+	return saved, nil
 }
 
 // nonRunningCompletionResult builds the RunResult/error pair to return when
