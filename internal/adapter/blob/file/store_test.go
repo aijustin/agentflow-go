@@ -28,3 +28,42 @@ func TestStorePersistsBlobs(t *testing.T) {
 		t.Fatalf("unexpected blob %q", got)
 	}
 }
+
+func TestStoreListAndDelete(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(ctx, []byte("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, err := store.List(ctx)
+	if err != nil || len(refs) != 1 {
+		t.Fatalf("unexpected list: %+v err=%v", refs, err)
+	}
+	if err := store.Delete(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	refs, err = store.List(ctx)
+	if err != nil || len(refs) != 0 {
+		t.Fatalf("expected empty list after delete: %+v err=%v", refs, err)
+	}
+}
+
+func TestStoreGetRejectsChecksumMismatch(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(ctx, []byte("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref.Sha256 = "deadbeef"
+	if _, err := store.Get(ctx, ref); err == nil {
+		t.Fatal("expected checksum mismatch")
+	}
+}

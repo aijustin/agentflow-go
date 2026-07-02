@@ -69,3 +69,29 @@ func TestRepositoryNotFound(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
+
+func TestRepositoryListDeleteAndAppend(t *testing.T) {
+	repo := NewRepository()
+	ctx := context.Background()
+	ns := memory.Namespace{RunID: "run", SessionID: "session", Scope: memory.ScopeSession}
+	if err := repo.Set(ctx, ns, "alpha", json.RawMessage(`"a"`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Set(ctx, ns, "beta", json.RawMessage(`"b"`)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := repo.List(ctx, ns, "a")
+	if err != nil || len(entries) != 1 || entries[0].Key != "alpha" {
+		t.Fatalf("unexpected prefix list: %+v err=%v", entries, err)
+	}
+	all, err := repo.List(ctx, ns, "")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("expected two entries, got %+v err=%v", all, err)
+	}
+	if err := repo.Delete(ctx, ns, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Get(ctx, ns, "alpha"); err == nil {
+		t.Fatal("expected deleted key to be missing")
+	}
+}

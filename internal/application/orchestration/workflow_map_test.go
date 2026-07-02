@@ -64,6 +64,67 @@ func TestWorkflowRunnerMapNodeWithAgents(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunnerMapNodeWithStringItems(t *testing.T) {
+	runs := newWorkflowRun(t)
+	runner := NewWorkflowRunner(nil, runs, nil)
+	scenario := core.Scenario{
+		Name: "map-strings",
+		Orchestration: core.Orchestration{
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{
+						ID:    "items",
+						Kind:  core.NodeTransform,
+						Input: json.RawMessage(`{"set":{"list":["one","two"]}}`),
+					},
+					{
+						ID:   "fanout",
+						Kind: core.NodeMap,
+						Input: json.RawMessage(`{
+							"items_path": "steps.items.list",
+							"branch": {"kind": "transform", "input": {"set": {"tagged": true}}}
+						}`),
+						DependsOn: []string{"items"},
+					},
+				},
+			},
+		},
+	}
+	if err := runner.Run(context.Background(), scenario, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, ok := snapshot.StepOutputs["fanout"]
+	if !ok {
+		t.Fatal("expected map node output")
+	}
+	var output map[string]any
+	if err := json.Unmarshal(ref.Inline, &output); err != nil {
+		t.Fatal(err)
+	}
+	members, ok := output["members"].(map[string]any)
+	if !ok || len(members) != 2 {
+		t.Fatalf("expected two string map members, got %+v", output)
+	}
+}
+
+func TestCoerceAnySlice(t *testing.T) {
+	got, err := coerceAnySlice([]any{"a", "b"})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("[]any: got=%v err=%v", got, err)
+	}
+	got, err = coerceAnySlice([]string{"a", "b"})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("[]string: got=%v err=%v", got, err)
+	}
+	if _, err := coerceAnySlice("not-array"); err == nil {
+		t.Fatal("expected error for non-array")
+	}
+}
+
 func TestWorkflowRunnerMapNodeWithTransformBranch(t *testing.T) {
 	runs := newWorkflowRun(t)
 	runner := NewWorkflowRunner(nil, runs, nil)

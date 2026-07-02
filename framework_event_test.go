@@ -84,3 +84,37 @@ func TestWebhookHTTPHandlerDispatchesEvent(t *testing.T) {
 		t.Fatalf("unexpected body: %+v", result)
 	}
 }
+
+func TestFrameworkResolveEvent(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "resolve-event",
+		Agents: map[string]core.Agent{
+			"support": {Name: "support"},
+		},
+		Triggers: []core.Trigger{{
+			Event:      "ticket.created",
+			Agent:      "support",
+			PromptPath: "summary",
+			RunIDPath:  "ticket_id",
+		}},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+	router := agentflow.NewEventRouter(scenario)
+	if router == nil {
+		t.Fatal("expected router")
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := fw.ResolveEvent(agentflow.IncomingEvent{
+		Type:    "ticket.created",
+		Payload: json.RawMessage(`{"summary":"hello","ticket_id":"T-1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.RunID != "T-1" || req.Agent != "support" || req.Prompt != "hello" {
+		t.Fatalf("unexpected resolved request: %+v", req)
+	}
+}

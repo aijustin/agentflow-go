@@ -7,8 +7,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +96,43 @@ func TestAuthenticatorRejectsExpiredToken(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expired token must not authenticate")
+	}
+}
+
+func TestAuthenticatorValidatesRS256WithPEMKey(t *testing.T) {
+	now := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
+	privateKey := mustRSAKey(t)
+	publicDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER})
+	authenticator, err := NewAuthenticator(Config{
+		Issuer:   "https://issuer.example.test",
+		Audience: "agentflow-api",
+		Keys: []Key{{
+			ID:              "rsa-1",
+			Algorithm:       AlgorithmRS256,
+			RSAPublicKeyPEM: publicPEM,
+		}},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := signedRS256Token(t, "rsa-1", privateKey, map[string]any{
+		"iss":       "https://issuer.example.test",
+		"aud":       "agentflow-api",
+		"sub":       "user-rsa",
+		"tenant_id": "tenant-a",
+		"exp":       now.Add(time.Hour).Unix(),
+	})
+	principal, ok, err := authenticator.AuthenticateBearer(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || principal.ID != "user-rsa" {
+		t.Fatalf("unexpected principal ok=%v principal=%+v", ok, principal)
 	}
 }
 

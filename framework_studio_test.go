@@ -3,6 +3,7 @@ package agentflow_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,4 +215,120 @@ func TestFrameworkRunStudioGraph(t *testing.T) {
 	if result.RunID != "studio-run-1" || result.Status != runstate.RunStatusCompleted {
 		t.Fatalf("unexpected studio run result: %+v", result)
 	}
+}
+
+func TestFrameworkValidateStudioGraphErrors(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-invalid",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := fw.ExportScenarioGraph()
+	edited.Workflow.Nodes = append(edited.Workflow.Nodes, graph.GraphNode{ID: "missing", Kind: string(core.NodeAgent), Ref: "unknown-agent"})
+	result, err := fw.ValidateStudioGraph(context.Background(), edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Valid {
+		t.Fatalf("expected invalid graph, got %+v", result)
+	}
+	if result.Error == "" || result.ErrorCode == "" {
+		t.Fatalf("expected structured validation error, got %+v", result)
+	}
+}
+
+func TestFrameworkRunStudioGraphInvalidGraph(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-run-invalid",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := fw.ExportScenarioGraph()
+	edited.Workflow.Nodes = append(edited.Workflow.Nodes, graph.GraphNode{ID: "bad", Kind: string(core.NodeAgent), Ref: "missing"})
+	if _, err := fw.RunStudioGraph(context.Background(), edited, agentflow.RunRequest{RunID: "studio-bad"}); err == nil {
+		t.Fatal("expected error for invalid studio graph")
+	}
+}
+
+func TestFrameworkRunStudioGraphWorkflowFailure(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-run-fail",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Tools: map[string]core.Tool{
+			"boom": {Name: "boom", Type: "builtin.boom", Approval: core.ApprovalNever},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "fail", Kind: core.NodeTool, Ref: "boom", Input: json.RawMessage(`{}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithToolExecutor("boom", errorTool{err: errors.New("boom")}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.RunStudioGraph(context.Background(), fw.ExportScenarioGraph(), agentflow.RunRequest{RunID: "studio-fail"}); err == nil {
+		t.Fatal("expected workflow failure")
+	}
+}
+
+func TestFrameworkImportStudioScenarioYAMLInvalid(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-import",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.ImportStudioScenarioYAML(context.Background(), []byte(":\n\tbad yaml"), graph.ScenarioGraph{}); err == nil {
+		t.Fatal("expected yaml parse error")
+	}
+	if _, err := fw.ImportStudioScenarioYAML(context.Background(), []byte("scenario:\n  name: no-agents\n  orchestration:\n    mode: autonomous"), graph.ScenarioGraph{}); err == nil {
+		t.Fatal("expected scenario validation error")
+	}
+}
+
+type errorTool struct {
+	err error
+}
+
+func (e errorTool) Execute(context.Context, core.ToolCall) (core.ToolResult, error) {
+	return core.ToolResult{}, e.err
 }

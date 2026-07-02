@@ -92,3 +92,15 @@ func TestGatewayPropagatesRouteError(t *testing.T) {
 		t.Fatalf("expected ErrNoResponse, got %v", err)
 	}
 }
+
+func TestGatewaySupportsDelegatesToProfile(t *testing.T) {
+	mock := llmmock.NewGateway()
+	mock.SetCapabilities("planner", llm.CapChat, llm.CapStream)
+	gateway := New(map[string]llm.Gateway{"planner": mock})
+	if !gateway.Supports("planner", llm.CapStream) {
+		t.Fatal("expected stream capability")
+	}
+	if gateway.Supports("missing", llm.CapChat) {
+		t.Fatal("unknown profile should not support chat")
+	}
+}

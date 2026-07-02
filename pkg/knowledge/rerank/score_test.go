@@ -24,3 +24,16 @@ func TestScoreRerankerPrefersLexicalOverlap(t *testing.T) {
 		t.Fatalf("expected refund doc first, got %q", results[0].Document.ID)
 	}
 }
+
+func TestScoreRerankerSingleResult(t *testing.T) {
+	r := rerank.NewScoreReranker()
+	results, err := r.Rerank(context.Background(), "query", []knowledge.SearchResult{
+		{Document: knowledge.Document{ID: "1", Content: "only"}, Score: 0.9},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Document.ID != "1" {
+		t.Fatalf("unexpected results: %+v", results)
+	}
+}

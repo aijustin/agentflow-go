@@ -61,6 +61,38 @@ func TestCompositeStoreRoutesByTier(t *testing.T) {
 	}
 }
 
+func TestCompositeStoreDeleteListCount(t *testing.T) {
+	ctx := context.Background()
+	hot := newTestStore()
+	warm := newTestStore()
+	cold := newTestStore()
+	composite := &CompositeStore{Hot: hot, Warm: warm, Cold: cold}
+	ns := memory.Namespace{Scope: memory.ScopeSession, SessionID: "composite:ops", Agent: "assistant"}
+	now := time.Now().UTC()
+	record := Record{
+		CognitiveRecord: memory.CognitiveRecord{ID: "rec-del", Content: "bye", CreatedAt: now},
+		Tier:            LevelCold,
+		LastAccessAt:    now,
+	}
+	if err := composite.Put(ctx, ns, record); err != nil {
+		t.Fatal(err)
+	}
+	count, err := composite.Count(ctx, ns, LevelCold)
+	if err != nil || count != 1 {
+		t.Fatalf("cold count=%d err=%v", count, err)
+	}
+	listed, err := composite.List(ctx, ns, LevelCold, 10)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("list=%+v err=%v", listed, err)
+	}
+	if err := composite.Delete(ctx, ns, "rec-del"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := composite.Get(ctx, ns, "rec-del"); !errors.Is(err, memory.ErrNotFound) {
+		t.Fatalf("expected not found after delete, got %v", err)
+	}
+}
+
 func TestCompositeStorePutFailureKeepsExistingRecord(t *testing.T) {
 	ctx := context.Background()
 	hot := newTestStore()

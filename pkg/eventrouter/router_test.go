@@ -48,3 +48,39 @@ func TestRouterResolveUnknownEvent(t *testing.T) {
 		t.Fatal("expected unknown event error")
 	}
 }
+
+func TestRouterResolveGeneratesRunIDAndDefaultPrompt(t *testing.T) {
+	router := NewRouter(core.Scenario{
+		Agents: map[string]core.Agent{"support": {Name: "support"}},
+		Triggers: []core.Trigger{{
+			Event: "ticket.created",
+			Agent: "support",
+		}},
+	})
+	req, err := router.Resolve(Event{
+		Type:    "ticket.created",
+		Payload: json.RawMessage(`{"summary":"Need help"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.RunID == "" || req.Prompt != "Need help" || req.Agent != "support" {
+		t.Fatalf("unexpected request: %+v", req)
+	}
+}
+
+func TestRouterResolveRejectsUnknownAgent(t *testing.T) {
+	router := NewRouter(core.Scenario{
+		Triggers: []core.Trigger{{Event: "ticket.created", Agent: "missing"}},
+	})
+	if _, err := router.Resolve(Event{Type: "ticket.created"}); err == nil {
+		t.Fatal("expected unknown agent error")
+	}
+}
+
+func TestRouterResolveRejectsEmptyEventType(t *testing.T) {
+	router := NewRouter(core.Scenario{})
+	if _, err := router.Resolve(Event{}); err == nil {
+		t.Fatal("expected empty event type error")
+	}
+}

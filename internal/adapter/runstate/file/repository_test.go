@@ -94,6 +94,34 @@ func TestRepositoryListLogsAndSkipsCorruptSnapshots(t *testing.T) {
 	}
 }
 
+func TestRepositoryLoadAndDelete(t *testing.T) {
+	ctx := context.Background()
+	repo, err := NewRepository(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := runstate.RunSnapshot{RunID: "run-load", ScenarioName: "scenario", Status: runstate.RunStatusRunning}
+	if err := repo.Save(ctx, &snapshot, 0); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.Load(ctx, "run-load")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.RunID != "run-load" {
+		t.Fatalf("loaded=%+v", loaded)
+	}
+	if err := repo.Delete(ctx, "run-load"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Delete(ctx, "run-load"); err != nil {
+		t.Fatal("delete of missing run should be idempotent")
+	}
+	if _, err := repo.Load(ctx, "run-load"); err != runstate.ErrNotFound {
+		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
 func TestRepositoryRejectsInvalidStatusTransition(t *testing.T) {
 	ctx := context.Background()
 	repo, err := NewRepository(t.TempDir())

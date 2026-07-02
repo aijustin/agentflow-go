@@ -44,3 +44,10 @@ func TestProfileSupportsUsesDefaultsWhenCapabilitiesEmpty(t *testing.T) {
 		t.Fatal("unexpected default embed capability")
 	}
 }
+
+func TestCapabilitiesFromStringsSkipsUnknown(t *testing.T) {
+	got := CapabilitiesFromStrings([]string{"chat", "nope", "stream"})
+	if len(got) != 2 || got[0] != CapChat || got[1] != CapStream {
+		t.Fatalf("unexpected capabilities: %+v", got)
+	}
+}

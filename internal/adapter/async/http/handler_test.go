@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	nethttp "net/http"
 	"net/http/httptest"
 	"testing"
@@ -204,7 +205,53 @@ func TestHandlerReturnsNotFoundForMissingRun(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodGet, "/v1/runs/missing", nil))
 	if rec.Code != nethttp.StatusNotFound {
-		t.Fatalf("expected not found, got %d", rec.Code)
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandlerListJobsAndRequeue(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	ctx := context.Background()
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-dead", Type: asyncpkg.RunJobType, MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := queue.Lease(ctx, "worker", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("lease: ok=%v err=%v", ok, err)
+	}
+	if err := queue.Fail(ctx, lease, errors.New("boom")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(HandlerConfig{Queue: queue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, httptest.NewRequest(nethttp.MethodGet, "/v1/jobs?state=dead_letter", nil))
+	if list.Code != nethttp.StatusOK {
+		t.Fatalf("list jobs code=%d body=%s", list.Code, list.Body.String())
+	}
+	requeue := httptest.NewRecorder()
+	handler.ServeHTTP(requeue, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/job-dead/requeue", nil))
+	if requeue.Code != nethttp.StatusOK {
+		t.Fatalf("requeue code=%d body=%s", requeue.Code, requeue.Body.String())
+	}
+}
+
+func TestHandlerRejectsInvalidEventAndResumeBodies(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := httptest.NewRecorder()
+	handler.ServeHTTP(event, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/events", bytes.NewBufferString(`{"payload":{}}`)))
+	if event.Code != nethttp.StatusBadRequest {
+		t.Fatalf("expected 400 for missing event type, got %d", event.Code)
+	}
+	resume := httptest.NewRecorder()
+	handler.ServeHTTP(resume, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/hitl/resume", bytes.NewBufferString(`{"token":"tok"}`)))
+	if resume.Code != nethttp.StatusBadRequest {
+		t.Fatalf("expected 400 for missing decision, got %d", resume.Code)
 	}
 }
 
@@ -220,6 +267,29 @@ func TestHandlerRejectsInvalidConfigAndBody(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/runs", bytes.NewBufferString(`{"prompt":"too large"}`)))
 	if rec.Code != nethttp.StatusRequestEntityTooLarge {
 		t.Fatalf("expected body too large, got %d", rec.Code)
+	}
+}
+
+func TestHandlerDefaultGenerateRunID(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	handler, err := NewHandler(HandlerConfig{Queue: queue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/runs", bytes.NewBufferString(`{"prompt":"hello"}`)))
+	if rec.Code != nethttp.StatusAccepted {
+		t.Fatalf("unexpected submit response: %d %s", rec.Code, rec.Body.String())
+	}
+	var resp JobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Job.ID == "" {
+		t.Fatal("expected generated run id")
+	}
+	if _, err := queue.Load(context.Background(), resp.Job.ID); err != nil {
+		t.Fatalf("expected enqueued job: %v", err)
 	}
 }
 

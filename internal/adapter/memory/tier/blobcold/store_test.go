@@ -47,6 +47,17 @@ func TestStorePutGetListDelete(t *testing.T) {
 	if _, err := store.Get(ctx, ns, "cold-1"); err != memory.ErrNotFound {
 		t.Fatalf("expected not found after delete, got %v", err)
 	}
+	count, err := store.Count(ctx, ns, tier.LevelCold)
+	if err != nil || count != 0 {
+		t.Fatalf("count after delete=%d err=%v", count, err)
+	}
+	if err := store.Put(ctx, ns, record); err != nil {
+		t.Fatal(err)
+	}
+	count, err = store.Count(ctx, ns, tier.LevelCold)
+	if err != nil || count != 1 {
+		t.Fatalf("count after put=%d err=%v", count, err)
+	}
 	if _, err := NewStore(Config{Blobs: blobs, IndexDir: ""}); err == nil {
 		t.Fatal("expected empty index dir error")
 	}

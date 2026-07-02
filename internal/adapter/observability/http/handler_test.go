@@ -156,6 +156,96 @@ func TestHandlerStudioEndpoints(t *testing.T) {
 	}
 }
 
+func TestHandlerCompareResumeAndFork(t *testing.T) {
+	store := obsinmem.NewStore()
+	handler, err := NewHandler(Config{
+		Store:   store,
+		Resume:  resumeStub{value: map[string]any{"status": "completed"}},
+		Restore: checkpointStub{value: map[string]any{"status": "completed"}},
+		Compare: compareStub{value: map[string]any{"shared_steps": []any{}}},
+		Thread:  threadStub{value: []any{map[string]any{"run_id": "run-1"}}},
+		Fork:    forkStub{value: map[string]any{"run_id": "run-fork"}},
+		Studio:  studioValidateStub{value: map[string]any{"valid": true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	compare := httptest.NewRecorder()
+	handler.ServeHTTP(compare, httptest.NewRequest(http.MethodGet, "/api/compare?run_a=run-1&run_b=run-2", nil))
+	if compare.Code != http.StatusOK {
+		t.Fatalf("compare code=%d body=%s", compare.Code, compare.Body.String())
+	}
+
+	resume := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/run-1/resume-from-step", strings.NewReader(`{"node_id":"a"}`))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(resume, req)
+	if resume.Code != http.StatusOK {
+		t.Fatalf("resume-from-step code=%d body=%s", resume.Code, resume.Body.String())
+	}
+
+	restore := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/runs/run-1/resume-from-checkpoint", strings.NewReader(`{"version":2}`))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(restore, req)
+	if restore.Code != http.StatusOK {
+		t.Fatalf("resume-from-checkpoint code=%d body=%s", restore.Code, restore.Body.String())
+	}
+
+	thread := httptest.NewRecorder()
+	handler.ServeHTTP(thread, httptest.NewRequest(http.MethodGet, "/api/runs/run-1/thread", nil))
+	if thread.Code != http.StatusOK {
+		t.Fatalf("thread code=%d body=%s", thread.Code, thread.Body.String())
+	}
+
+	fork := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/runs/run-1/fork", strings.NewReader(`{"version":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(fork, req)
+	if fork.Code != http.StatusOK {
+		t.Fatalf("fork code=%d body=%s", fork.Code, fork.Body.String())
+	}
+
+	validate := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/studio/validate", strings.NewReader(`{"name":"demo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(validate, req)
+	if validate.Code != http.StatusOK {
+		t.Fatalf("studio validate code=%d body=%s", validate.Code, validate.Body.String())
+	}
+}
+
+type resumeStub struct{ value any }
+
+func (s resumeStub) ResumeFromStep(context.Context, string, string) (any, error) {
+	return s.value, nil
+}
+
+type compareStub struct{ value any }
+
+func (s compareStub) CompareRuns(context.Context, string, string) (any, error) {
+	return s.value, nil
+}
+
+type threadStub struct{ value any }
+
+func (s threadStub) ListRunThread(context.Context, string) (any, error) {
+	return s.value, nil
+}
+
+type forkStub struct{ value any }
+
+func (s forkStub) ForkRun(context.Context, string, int64) (any, error) {
+	return s.value, nil
+}
+
+type studioValidateStub struct{ value any }
+
+func (s studioValidateStub) ValidateStudioGraph(context.Context, any) (any, error) {
+	return s.value, nil
+}
+
 type graphStub struct{ value any }
 
 func (s graphStub) ExportScenarioGraph() any { return s.value }

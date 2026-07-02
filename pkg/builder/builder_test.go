@@ -3,12 +3,42 @@ package builder_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
+
+func TestAgentBuilderPolicyOptions(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	got := builder.New("agent-options").
+		DefaultMockLLM().
+		Agent("assistant").
+		Metadata("team", "platform").
+		MaxSteps(7).
+		Timeout(30 * time.Second).
+		RetryLimit(2).
+		OutputSchema(schema).
+		HumanCheckpoint("review").
+		Instructions("go").
+		Autonomous().
+		Scenario()
+	agent := got.Agents["assistant"]
+	if agent.Metadata["team"] != "platform" {
+		t.Fatalf("metadata=%+v", agent.Metadata)
+	}
+	if agent.Policy.MaxSteps != 7 || agent.Policy.RetryLimit != 2 || agent.Policy.Timeout != 30*time.Second {
+		t.Fatalf("policy=%+v", agent.Policy)
+	}
+	if string(agent.Policy.OutputSchema) != string(schema) {
+		t.Fatalf("schema=%s", agent.Policy.OutputSchema)
+	}
+	if len(agent.Policy.HumanCheckpoints) != 1 || agent.Policy.HumanCheckpoints[0] != "review" {
+		t.Fatalf("checkpoints=%+v", agent.Policy.HumanCheckpoints)
+	}
+}
 
 func TestAutonomousScenarioMatchesYAMLShape(t *testing.T) {
 	got := builder.New("autonomous-echo").

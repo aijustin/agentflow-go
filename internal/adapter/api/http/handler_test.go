@@ -77,3 +77,30 @@ func TestNewHandlerValidatesInputs(t *testing.T) {
 		t.Fatal("expected missing queue error")
 	}
 }
+
+func TestHandlerOptionalRoutesAndHealthMethod(t *testing.T) {
+	studio := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler, err := NewHandler(HandlerConfig{
+		Queue:            queueinmem.NewQueue(),
+		EventsHandler:    http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		HITLHandler:      http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		StudioHandler:    studio,
+		RetentionHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		MetricsHandler:   http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/v1/events", "/v1/hitl/resume", "/v1/studio/validate", "/v1/admin/retention/purge-blobs", "/metrics"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code == http.StatusNotFound {
+			t.Fatalf("expected mounted route %s, got 404", path)
+		}
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/healthz", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for POST healthz, got %d", rec.Code)
+	}
+}

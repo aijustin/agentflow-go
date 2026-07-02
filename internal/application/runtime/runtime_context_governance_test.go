@@ -74,6 +74,21 @@ func TestCompactToolResultForContextRespectsFinalTokenBudget(t *testing.T) {
 	}
 }
 
+func TestContextwindowSummaryFallbackRespectsBudget(t *testing.T) {
+	messages := []contextwindow.Message{
+		{Role: "user", Content: "first message"},
+		{Role: "assistant", Content: "second message"},
+		{Role: "user", Content: strings.Repeat("long ", 200)},
+	}
+	summary := contextwindowSummaryFallback(messages, 20)
+	if summary == "" || !strings.HasPrefix(summary, "Earlier context summary:") {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+	if contextwindow.EstimateTokens(summary) > 20*3 {
+		t.Fatalf("summary exceeded budget: %q", summary)
+	}
+}
+
 func TestCompactToolResultForContextFoldsErrorIntoContent(t *testing.T) {
 	result := core.ToolResult{
 		Tool:   "echo",
@@ -144,5 +159,29 @@ func TestEnforceToolCallPairingKeepsBalancedPairs(t *testing.T) {
 	out := enforceToolCallPairing(messages)
 	if len(out) != 2 {
 		t.Fatalf("expected balanced pair untouched, got %+v", out)
+	}
+}
+
+func TestSortedLLMProfileName(t *testing.T) {
+	if sortedLLMProfileName(nil) != "" {
+		t.Fatal("expected empty for nil profiles")
+	}
+	got := sortedLLMProfileName(map[string]core.LLMProfileRef{
+		"zeta": {Provider: "mock"},
+		"alpha": {Provider: "mock"},
+	})
+	if got != "alpha" {
+		t.Fatalf("expected sorted first name alpha, got %q", got)
+	}
+}
+
+func TestPruneToolSpecs(t *testing.T) {
+	specs := []llm.ToolSpec{{Name: "echo"}, {Name: "search"}}
+	if got := pruneToolSpecs(specs, nil); len(got) != 2 {
+		t.Fatalf("expected all specs when allowlist empty, got %+v", got)
+	}
+	got := pruneToolSpecs(specs, map[string]struct{}{"echo": {}})
+	if len(got) != 1 || got[0].Name != "echo" {
+		t.Fatalf("expected only echo, got %+v", got)
 	}
 }

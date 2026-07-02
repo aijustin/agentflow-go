@@ -58,6 +58,94 @@ func TestKnowledgeWiringOptionsBindsCollection(t *testing.T) {
 	}
 }
 
+func TestKnowledgeWiringOptionsRejectsMissingRegistry(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "rag",
+		Knowledge: core.KnowledgeConfig{
+			Collections: []core.KnowledgeCollection{{Name: "docs", Namespace: "docs"}},
+		},
+	}
+	if _, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{}); err == nil {
+		t.Fatal("expected embedder/store required error")
+	}
+}
+
+func TestKnowledgeWiringOptionsRejectsMissingTool(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "rag",
+		LLMs: map[string]core.LLMProfileRef{
+			"embed": {Provider: "mock", Model: "embed", Capabilities: []string{"embed"}},
+		},
+		Knowledge: core.KnowledgeConfig{
+			Collections: []core.KnowledgeCollection{{
+				Name: "docs", Namespace: "docs", Tool: "missing.tool", EmbedProfile: "embed",
+			}},
+		},
+	}
+	_, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+		Embedder: stubEmbedder{},
+		Store:    stubVectorStore{},
+	})
+	if err == nil {
+		t.Fatal("expected missing tool error")
+	}
+}
+
+func TestKnowledgeWiringOptionsHybridSearchMode(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "rag",
+		LLMs: map[string]core.LLMProfileRef{
+			"embed": {Provider: "mock", Model: "embed", Capabilities: []string{"embed"}},
+		},
+		Knowledge: core.KnowledgeConfig{
+			Collections: []core.KnowledgeCollection{{
+				Name: "docs", Namespace: "docs", Tool: "knowledge.retrieve",
+				EmbedProfile: "embed", SearchMode: "hybrid",
+			}},
+		},
+		Tools: map[string]core.Tool{
+			"knowledge.retrieve": {Name: "knowledge.retrieve", Type: "knowledge.retriever"},
+		},
+	}
+	opts, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+		Embedder: stubEmbedder{},
+		Store:    stubVectorStore{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts) != 1 {
+		t.Fatalf("expected 1 option, got %d", len(opts))
+	}
+}
+
+func TestKnowledgeWiringOptionsDefaultToolName(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "rag-default-tool",
+		LLMs: map[string]core.LLMProfileRef{
+			"embed": {Provider: "mock", Model: "embed", Capabilities: []string{"embed"}},
+		},
+		Knowledge: core.KnowledgeConfig{
+			Collections: []core.KnowledgeCollection{{
+				Name: "docs", Namespace: "docs", EmbedProfile: "embed",
+			}},
+		},
+		Tools: map[string]core.Tool{
+			"knowledge.docs": {Name: "knowledge.docs", Type: "knowledge.retriever"},
+		},
+	}
+	opts, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+		Embedder: stubEmbedder{},
+		Store:    stubVectorStore{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts) != 1 {
+		t.Fatalf("expected 1 option, got %d", len(opts))
+	}
+}
+
 func TestMCPWiringOptionsRequiresMetadata(t *testing.T) {
 	scenario := core.Scenario{
 		Name: "mcp",

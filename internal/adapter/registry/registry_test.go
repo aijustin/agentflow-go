@@ -1,12 +1,14 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/aijustin/agentflow-go/internal/adapter/tool/builtin"
+	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
 func TestRegistryRegisterTool(t *testing.T) {
@@ -41,4 +43,25 @@ func TestRegistryConcurrentRegisterAndLookupIsRaceFree(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestRegistryResolveTool(t *testing.T) {
+	reg := New()
+	echo := builtin.NewEchoTool()
+	if err := reg.RegisterTool("echo", echo); err != nil {
+		t.Fatal(err)
+	}
+	executor, ok, err := reg.ResolveTool(context.Background(), core.Tool{Name: "echo"})
+	if err != nil || !ok || executor == nil {
+		t.Fatalf("ResolveTool echo: ok=%v err=%v executor=%v", ok, err, executor)
+	}
+	_, ok, err = reg.ResolveTool(context.Background(), core.Tool{Name: "missing"})
+	if err != nil || ok {
+		t.Fatalf("expected missing tool, ok=%v err=%v", ok, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := reg.ResolveTool(ctx, core.Tool{Name: "echo"}); err == nil {
+		t.Fatal("expected cancelled context error")
+	}
 }

@@ -47,3 +47,23 @@ func TestStoreGetMissing(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
+
+func TestStoreListAndDelete(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore()
+	ref, err := store.Put(ctx, []byte("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, err := store.List(ctx)
+	if err != nil || len(refs) != 1 {
+		t.Fatalf("unexpected list: %+v err=%v", refs, err)
+	}
+	if err := store.Delete(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	refs, err = store.List(ctx)
+	if err != nil || len(refs) != 0 {
+		t.Fatalf("expected empty list after delete: %+v err=%v", refs, err)
+	}
+}

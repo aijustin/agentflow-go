@@ -88,3 +88,27 @@ func TestRepositorySaveSucceedsAndLogsWhenHistoryAppendFails(t *testing.T) {
 		t.Fatal("expected the history append failure to be logged")
 	}
 }
+
+func TestRepositoryDelegatesLoadDeleteAndList(t *testing.T) {
+	inner := runstateinmem.NewRepository()
+	repo := &Repository{Inner: inner}
+	ctx := context.Background()
+	snap := &runstate.RunSnapshot{RunID: "run-2", ScenarioName: "demo", Status: runstate.RunStatusCompleted}
+	if err := repo.Save(ctx, snap, 0); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.Load(ctx, "run-2")
+	if err != nil || loaded.RunID != "run-2" {
+		t.Fatalf("load: %+v err=%v", loaded, err)
+	}
+	list, err := repo.List(ctx, runstate.ListFilter{Limit: 10})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list: %+v err=%v", list, err)
+	}
+	if err := repo.Delete(ctx, "run-2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Load(ctx, "run-2"); err == nil {
+		t.Fatal("expected missing run after delete")
+	}
+}

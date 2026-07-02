@@ -68,3 +68,35 @@ func TestRepositoryLoadsClone(t *testing.T) {
 		t.Fatalf("stored snapshot was mutated: %s", reloaded.Status)
 	}
 }
+
+func TestRepositoryListDeleteAndFilters(t *testing.T) {
+	repo := NewRepository()
+	ctx := context.Background()
+	for _, snap := range []runstate.RunSnapshot{
+		{RunID: "run-a", ScenarioName: "demo", TenantID: "t1", Status: runstate.RunStatusRunning},
+		{RunID: "run-b", ScenarioName: "demo", TenantID: "t2", Status: runstate.RunStatusCompleted},
+		{RunID: "run-c", ScenarioName: "other", Status: runstate.RunStatusRunning},
+	} {
+		s := snap
+		if err := repo.Save(ctx, &s, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	running, err := repo.List(ctx, runstate.ListFilter{ScenarioName: "demo", Status: runstate.RunStatusRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running) != 1 || running[0].RunID != "run-a" {
+		t.Fatalf("unexpected running filter: %+v", running)
+	}
+	tenant, err := repo.List(ctx, runstate.ListFilter{TenantID: "t2"})
+	if err != nil || len(tenant) != 1 || tenant[0].RunID != "run-b" {
+		t.Fatalf("unexpected tenant filter: %+v err=%v", tenant, err)
+	}
+	if err := repo.Delete(ctx, "run-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Load(ctx, "run-a"); err == nil {
+		t.Fatal("expected deleted run to be missing")
+	}
+}

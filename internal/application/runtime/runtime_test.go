@@ -930,6 +930,27 @@ func TestEngineRunAgentRejectsNonRunningRun(t *testing.T) {
 	}
 }
 
+func TestEngineRunAgentSuccess(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: &capturingGateway{response: "agent answer"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run-agent-ok"
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: runID, ScenarioName: "scenario", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	output, err := engine.RunAgent(context.Background(), "assistant", core.AgentInput{RunID: runID, Prompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Text != "agent answer" || output.RunID != runID {
+		t.Fatalf("unexpected agent output: %+v", output)
+	}
+}
+
 func TestEngineRunHybridRejectsCompletedRun(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: &capturingGateway{response: "ok"}})

@@ -125,3 +125,20 @@ func TestWorkflowRunnerResumeFromStep(t *testing.T) {
 		t.Fatalf("expected third output after rerun: %+v", loaded.StepOutputs)
 	}
 }
+
+func TestClearLoopProgressForRerun(t *testing.T) {
+	workflow := core.Workflow{
+		Nodes: []core.WorkflowNode{
+			{ID: "loop", Kind: core.NodeLoop, Input: json.RawMessage(`{"body":["body"],"max_iterations":2}`)},
+			{ID: "body", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"done":true}}`)},
+		},
+	}
+	variables := map[string]json.RawMessage{
+		"loop_progress:loop": json.RawMessage(`{"iteration":1}`),
+		"input":              json.RawMessage(`{}`),
+	}
+	clearLoopProgressForRerun(variables, workflow, "loop")
+	if _, ok := variables["loop_progress:loop"]; ok {
+		t.Fatalf("expected loop progress cleared, got %+v", variables)
+	}
+}

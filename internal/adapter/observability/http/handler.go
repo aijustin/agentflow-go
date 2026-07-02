@@ -254,7 +254,7 @@ func (handler *Handler) handleRunResource(w nethttp.ResponseWriter, r *nethttp.R
 		handler.handleCheckpointVersion(w, r, runID, segments[1])
 	case len(segments) == 1 && segments[0] == "resume-from-checkpoint":
 		handler.handleResumeFromCheckpoint(w, r, runID)
-	case len(segments) == 1 && segments[0] == "hitl/resume":
+	case len(segments) == 2 && segments[0] == "hitl" && segments[1] == "resume":
 		handler.handleRunHITLResume(w, r, runID)
 	case len(segments) == 1 && segments[0] == "thread":
 		handler.handleRunThread(w, r, runID)

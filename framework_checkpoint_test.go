@@ -3,6 +3,7 @@ package agentflow_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
@@ -186,5 +187,181 @@ func TestFrameworkCheckpointHistory(t *testing.T) {
 	}
 	if result.Status != runstate.RunStatusCompleted {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestFrameworkResumeFromStepInvalidNode(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "resume-invalid-step",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run-invalid-step"
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.ResumeFromStep(context.Background(), runID, "missing")
+	if err == nil {
+		t.Fatal("expected error for unknown node")
+	}
+}
+
+func TestFrameworkResumeFromCheckpointUnknownVersion(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "resume-unknown-version",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run-unknown-version"
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.ResumeFromCheckpoint(context.Background(), runID, 99999)
+	if !errors.Is(err, runstate.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestFrameworkListRunCheckpointsRequiresHistory(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "no-history",
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.ListRunCheckpoints(context.Background(), "run-x", 0); err == nil {
+		t.Fatal("expected error when checkpoint history is not configured")
+	}
+	if _, err := fw.GetRunCheckpoint(context.Background(), "run-x", 1); err == nil {
+		t.Fatal("expected error when checkpoint history is not configured")
+	}
+}
+
+func TestFrameworkListRunStepsWithPendingHITL(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "steps-hitl",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "approve", Kind: core.NodeHumanGate},
+					{ID: "done", Kind: core.NodeTransform, DependsOn: []string{"approve"}, Input: json.RawMessage(`{"set":{"ok":true}}`)},
+				},
+			},
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("secret"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run-steps-hitl"
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID, Prompt: "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused, got %+v", result)
+	}
+	steps, err := fw.ListRunSteps(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps.PendingHITL == nil || steps.PendingHITL.NodeID != "approve" {
+		t.Fatalf("expected pending HITL on approve node, got %+v", steps.PendingHITL)
+	}
+}
+
+func TestFrameworkHybridCheckpointPhaseStamp(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "hybrid-checkpoint",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalNever},
+		},
+		Agents: map[string]core.Agent{
+			"analyst": {Name: "analyst", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationHybrid,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "prep", Kind: core.NodeTool, Ref: "echo", Input: json.RawMessage(`{"message":"data"}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(fakeGateway{content: "hybrid done"}),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+		agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run-hybrid-checkpoint"
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID, Agent: "analyst", Prompt: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := fw.ListRunCheckpoints(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Checkpoints) == 0 {
+		t.Fatal("expected checkpoints")
+	}
+	first := list.Checkpoints[0]
+	if _, err := fw.ResumeFromCheckpoint(context.Background(), runID, first.Version); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(snapshot.Variables["execution_phase"]); got != `"workflow"` {
+		t.Fatalf("expected hybrid workflow phase stamp, got %s", got)
 	}
 }

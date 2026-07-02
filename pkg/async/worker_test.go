@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -156,6 +157,18 @@ func (q *testQueue) Requeue(_ context.Context, jobID string) error {
 	return nil
 }
 
+func (q *testQueue) Renew(_ context.Context, lease Lease, ttl time.Duration) (Lease, bool, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	job, err := q.leasedJob(lease)
+	if err != nil {
+		return Lease{}, false, nil
+	}
+	job.LeaseExpiresAt = time.Now().UTC().Add(ttl)
+	q.jobs[job.ID] = job
+	return Lease{JobID: job.ID, WorkerID: lease.WorkerID, Attempt: job.Attempts, ExpiresAt: job.LeaseExpiresAt}, true, nil
+}
+
 func (q *testQueue) leasedJob(lease Lease) (Job, error) {
 	job, ok := q.jobs[lease.JobID]
 	if !ok {
@@ -219,6 +232,63 @@ func waitForContext(ctx context.Context) error {
 	return ctx.Err()
 }
 
+func TestWorkerCompletesJob(t *testing.T) {
+	queue := newTestQueue()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	handler := HandlerFunc(func(ctx context.Context, job Job) error {
+		close(done)
+		return nil
+	})
+	worker, err := NewWorker(queue, handler, WorkerConfig{
+		WorkerID:     "worker-1",
+		PollInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(context.Background(), Job{ID: "job-ok", Type: RunJobType, MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = worker.Run(ctx) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("job was not processed")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var loaded Job
+	for time.Now().Before(deadline) {
+		var loadErr error
+		loaded, loadErr = queue.Load(context.Background(), "job-ok")
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		if loaded.State == JobCompleted {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if loaded.State != JobCompleted {
+		t.Fatalf("expected completed job, got %q", loaded.State)
+	}
+	cancel()
+}
+
+func TestNewWorkerValidation(t *testing.T) {
+	if _, err := NewWorker(nil, HandlerFunc(func(context.Context, Job) error { return nil }), WorkerConfig{WorkerID: "w1"}); err == nil {
+		t.Fatal("expected nil queue error")
+	}
+	queue := newTestQueue()
+	if _, err := NewWorker(queue, nil, WorkerConfig{WorkerID: "w1"}); err == nil {
+		t.Fatal("expected nil handler error")
+	}
+	if _, err := NewWorker(queue, HandlerFunc(func(context.Context, Job) error { return nil }), WorkerConfig{}); err == nil {
+		t.Fatal("expected missing worker id error")
+	}
+}
+
 func TestCollectQueueMetrics(t *testing.T) {
 	queue := newTestQueue()
 	ctx := context.Background()
@@ -244,4 +314,81 @@ func TestCollectQueueMetrics(t *testing.T) {
 	if metrics.Queued != 1 || metrics.DeadLetter != 1 {
 		t.Fatalf("unexpected metrics: %+v", metrics)
 	}
+}
+
+func TestWorkerRenewsLeaseWhileHandlingJob(t *testing.T) {
+	queue := &renewCountQueue{Queue: newTestQueue()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	handler := HandlerFunc(func(context.Context, Job) error {
+		time.Sleep(150 * time.Millisecond)
+		return nil
+	})
+	worker, err := NewWorker(queue, handler, WorkerConfig{
+		WorkerID:      "worker-renew",
+		PollInterval:  5 * time.Millisecond,
+		LeaseTTL:      50 * time.Millisecond,
+		RenewInterval: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(context.Background(), Job{ID: "job-renew", Type: RunJobType, MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = worker.Run(ctx) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if queue.renews.Load() > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected lease renewal during long-running job")
+}
+
+type renewCountQueue struct {
+	Queue
+	renews atomic.Int32
+}
+
+func (q *renewCountQueue) Renew(ctx context.Context, lease Lease, ttl time.Duration) (Lease, bool, error) {
+	renewer, ok := q.Queue.(LeaseRenewer)
+	if !ok {
+		return Lease{}, false, nil
+	}
+	renewed, ok, err := renewer.Renew(ctx, lease, ttl)
+	if ok {
+		q.renews.Add(1)
+	}
+	return renewed, ok, err
+}
+
+func TestWorkerPausesJobOnRunPausedError(t *testing.T) {
+	queue := newTestQueue()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	handler := HandlerFunc(func(context.Context, Job) error {
+		return RunPausedError{RunID: "run-pause", Token: "tok-1"}
+	})
+	worker, err := NewWorker(queue, handler, WorkerConfig{WorkerID: "worker-pause", PollInterval: 5 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(context.Background(), Job{ID: "job-pause", Type: RunJobType, MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = worker.Run(ctx) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		loaded, err := queue.Load(context.Background(), "job-pause")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.State == JobPaused {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected paused job state")
 }

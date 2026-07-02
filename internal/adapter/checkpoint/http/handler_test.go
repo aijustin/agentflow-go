@@ -85,3 +85,42 @@ func TestCheckpointHandlerHistoryAndRestore(t *testing.T) {
 		t.Fatalf("restore code=%d body=%s", restore.Code, restore.Body.String())
 	}
 }
+
+type stubForker struct {
+	result any
+	err    error
+}
+
+func (s stubForker) ForkRun(context.Context, string, int64) (any, error) {
+	return s.result, s.err
+}
+
+func TestCheckpointHandlerFork(t *testing.T) {
+	handler := NewHandler(HandlerConfig{
+		Fork: stubForker{result: map[string]any{"run_id": "run-fork", "parent_run_id": "run-1"}},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/run-1/fork", strings.NewReader(`{"version":2}`))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fork code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCheckpointHandlerValidationErrors(t *testing.T) {
+	handler := NewHandler(HandlerConfig{
+		Checkpoint: stubCheckpoint{result: map[string]any{"status": "completed"}},
+		Restore:    stubCheckpoint{restore: map[string]any{"status": "completed"}},
+	})
+	resume := httptest.NewRecorder()
+	handler.ServeHTTP(resume, httptest.NewRequest(http.MethodPost, "/v1/runs/run-1/resume-from-step", strings.NewReader(`{}`)))
+	if resume.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing node_id, got %d", resume.Code)
+	}
+	restore := httptest.NewRecorder()
+	handler.ServeHTTP(restore, httptest.NewRequest(http.MethodPost, "/v1/runs/run-1/resume-from-checkpoint", strings.NewReader(`{"version":0}`)))
+	if restore.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid version, got %d", restore.Code)
+	}
+}

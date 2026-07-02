@@ -2,6 +2,7 @@ package agentflow_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -202,5 +203,185 @@ func TestFrameworkMarkAbandonedRunsRequiresLease(t *testing.T) {
 	}
 	if _, err := fw.MarkAbandonedRuns(context.Background()); err == nil {
 		t.Fatal("expected error when run lease coordination is not configured")
+	}
+}
+
+func TestWithRunLeaseValidation(t *testing.T) {
+	_, err := agentflow.New(
+		retryWorkflowScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
+		agentflow.WithToolExecutor("stepA", noopTool{}),
+		agentflow.WithToolExecutor("stepB", noopTool{}),
+		agentflow.WithRunLease(nil, "worker", time.Minute),
+	)
+	if err == nil {
+		t.Fatal("expected error for nil locker")
+	}
+
+	locker := agentflow.NewInMemoryLocker()
+	fw, err := agentflow.New(
+		retryWorkflowScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
+		agentflow.WithToolExecutor("stepA", noopTool{}),
+		agentflow.WithToolExecutor("stepB", noopTool{}),
+		agentflow.WithRunLease(locker, "", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-default-lease", Prompt: "go"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFrameworkRunStructuredHoldsLease(t *testing.T) {
+	locker := agentflow.NewInMemoryLocker()
+	scenario := core.Scenario{
+		Name: "structured-lease",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {
+				Name: "assistant",
+				LLM:  "default",
+				Policy: core.AgentPolicy{
+					OutputSchema: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`),
+				},
+			},
+		},
+	}
+	gateway := structuredFakeGateway{payload: json.RawMessage(`{"answer":"ok"}`)}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithRunLease(locker, "worker-a", time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := locker.Acquire(context.Background(), "run:run-structured-lease", "worker-b", time.Minute); err != nil || !ok {
+		t.Fatalf("failed to pre-acquire lease: ok=%v err=%v", ok, err)
+	}
+	_, err = fw.RunStructured(context.Background(), agentflow.RunRequest{
+		RunID:  "run-structured-lease",
+		Agent:  "assistant",
+		Prompt: "json",
+	})
+	if !errors.Is(err, agentflow.ErrRunInProgress) {
+		t.Fatalf("expected ErrRunInProgress, got %v", err)
+	}
+}
+
+func TestFrameworkResumeAndContinueHoldsLease(t *testing.T) {
+	locker := agentflow.NewInMemoryLocker()
+	scenario := core.Scenario{
+		Name: "continue-lease",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Tools: map[string]core.Tool{
+			"slow": {Name: "slow", Type: "builtin.slow", Approval: core.ApprovalNever},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "approve", Kind: core.NodeHumanGate},
+					{ID: "wait", Kind: core.NodeTool, Ref: "slow", DependsOn: []string{"approve"}, Input: json.RawMessage(`{}`)},
+				},
+			},
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithToolExecutor("slow", slowTool{delay: 200 * time.Millisecond}),
+		agentflow.WithRunLease(locker, "worker-a", time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-resume-lease", Prompt: "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused, got %+v", result)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := fw.ResumeAndContinue(context.Background(), result.Token, core.DecisionApprove, nil); err != nil {
+			t.Errorf("continue failed: %v", err)
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if _, ok, err := locker.Acquire(context.Background(), "run:run-resume-lease", "worker-b", time.Minute); err != nil || ok {
+		t.Fatalf("lease must be held during continue: ok=%v err=%v", ok, err)
+	}
+	<-done
+	if _, ok, err := locker.Acquire(context.Background(), "run:run-resume-lease", "worker-b", time.Minute); err != nil || !ok {
+		t.Fatalf("lease should be free after continue: ok=%v err=%v", ok, err)
+	}
+}
+
+type slowTool struct {
+	delay time.Duration
+}
+
+func (s slowTool) Execute(ctx context.Context, _ core.ToolCall) (core.ToolResult, error) {
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return core.ToolResult{}, ctx.Err()
+	case <-timer.C:
+		return core.ToolResult{Output: json.RawMessage(`{"ok":true}`)}, nil
+	}
+}
+
+func TestFrameworkHoldRunLeaseRenewal(t *testing.T) {
+	locker := agentflow.NewInMemoryLocker()
+	scenario := core.Scenario{
+		Name: "lease-renewal",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"noop": {Name: "noop"},
+		},
+		Tools: map[string]core.Tool{
+			"slow": {Name: "slow", Type: "builtin.slow", Approval: core.ApprovalNever},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "wait", Kind: core.NodeTool, Ref: "slow", Input: json.RawMessage(`{}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithToolExecutor("slow", slowTool{delay: 200 * time.Millisecond}),
+		agentflow.WithRunLease(locker, "worker-a", 100*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-renew"}); err != nil {
+			t.Errorf("run failed: %v", err)
+		}
+	}()
+	time.Sleep(150 * time.Millisecond)
+	if _, ok, err := locker.Acquire(context.Background(), "run:run-renew", "worker-b", time.Minute); err != nil || ok {
+		t.Fatalf("renewal should keep lease held: ok=%v err=%v", ok, err)
+	}
+	<-done
+	if _, ok, err := locker.Acquire(context.Background(), "run:run-renew", "worker-b", time.Minute); err != nil || !ok {
+		t.Fatalf("lease should be free after run: ok=%v err=%v", ok, err)
 	}
 }

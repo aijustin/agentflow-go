@@ -6,9 +6,43 @@ import (
 	"time"
 
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
+	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 )
+
+func TestTierMemoryWrappers(t *testing.T) {
+	if NewInMemoryTierHotStore() == nil {
+		t.Fatal("expected hot store")
+	}
+	manager := tier.NewManager(tierinmem.NewStore(), tier.DefaultPolicy(), tier.NoopMigrationObserver{})
+	cog := NewCognitiveTierMemory(manager, tier.RecallWeights{})
+	if cog == nil {
+		t.Fatal("expected cognitive tier memory")
+	}
+	summarizer := NewLLMTierSummarizer(stubChatter{}, "chat")
+	if summarizer == nil {
+		t.Fatal("expected summarizer")
+	}
+}
+
+type stubChatter struct{}
+
+func (stubChatter) Chat(context.Context, string, llm.ChatRequest) (llm.ChatResponse, error) {
+	return llm.ChatResponse{}, nil
+}
+
+func (stubChatter) ChatStream(context.Context, string, llm.ChatRequest) (<-chan llm.ChatChunk, error) {
+	return nil, nil
+}
+
+func (stubChatter) ChatWithTools(context.Context, string, llm.ToolCallRequest) (llm.ToolCallResponse, error) {
+	return llm.ToolCallResponse{}, nil
+}
+
+func (stubChatter) StructuredChat(context.Context, string, []byte, llm.ChatRequest) ([]byte, error) {
+	return nil, nil
+}
 
 func TestCompositeTierStoreWarmColdSurvivesHotRestart(t *testing.T) {
 	ctx := context.Background()

@@ -455,3 +455,114 @@ func TestFrameworkResumeAndContinueReject(t *testing.T) {
 		t.Fatalf("expected cancelled, got %+v", result)
 	}
 }
+
+func TestFrameworkResumeAndContinueWorkflowAmendment(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "workflow-amendment",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "approve", Kind: core.NodeHumanGate},
+					{ID: "done", Kind: core.NodeTransform, DependsOn: []string{"approve"}, Input: json.RawMessage(`{"set":{"ok":true}}`)},
+				},
+			},
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("secret"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-amend", Prompt: "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	amendment := json.RawMessage(`"please revise the summary"`)
+	result, err = fw.ResumeAndContinue(context.Background(), result.Token, core.DecisionApprove, amendment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-amend")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.Variables["human_amendment"]; ok {
+		t.Fatal("human_amendment should be consumed")
+	}
+	if got := string(snapshot.Variables["workflow_amendment"]); got != `"please revise the summary"` {
+		t.Fatalf("expected workflow_amendment persisted, got %s", got)
+	}
+}
+
+func TestFrameworkResumeAndContinueRequiresGate(t *testing.T) {
+	fw, err := agentflow.New(builder.MinimalAutonomous("assistant"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.ResumeAndContinue(context.Background(), "token", core.DecisionApprove, nil)
+	if err == nil {
+		t.Fatal("expected human gate error")
+	}
+}
+
+func TestFrameworkResumeRunByIDWithoutContinue(t *testing.T) {
+	fw, err := agentflow.New(
+		builder.MinimalHumanInLoop("assistant"),
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-no-continue", Agent: "assistant", Prompt: "approve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = fw.ResumeRunByID(context.Background(), "run-no-continue", core.DecisionApprove, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusRunning {
+		t.Fatalf("expected running after resume without continue, got %+v", result)
+	}
+}
+
+func TestFrameworkResumeRunByIDRejectsNonPaused(t *testing.T) {
+	fw, err := agentflow.New(
+		builder.MinimalAutonomous("assistant"),
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-active", Agent: "assistant", Prompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.ResumeRunByID(context.Background(), "run-active", core.DecisionApprove, nil, false)
+	if err == nil {
+		t.Fatal("expected not paused error")
+	}
+}
+
+func TestFrameworkRetryFailedRunRejectsAutonomousMode(t *testing.T) {
+	fw, err := agentflow.New(
+		builder.MinimalAutonomous("assistant"),
+		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.RetryFailedRun(context.Background(), "run-1")
+	if err == nil {
+		t.Fatal("expected orchestration mode error")
+	}
+}

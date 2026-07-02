@@ -103,6 +103,41 @@ func TestDualWriteManagerRebuildIndexConverges(t *testing.T) {
 	}
 }
 
+func TestDualWriteManagerRecallDelegates(t *testing.T) {
+	ctx := context.Background()
+	inner := newTestStore()
+	manager := NewDualWriteManager(NewManager(inner, DefaultPolicy(), NoopMigrationObserver{}), nil)
+	ns := memory.Namespace{Scope: memory.ScopeSession, SessionID: "recall", Agent: "assistant"}
+	now := time.Now().UTC()
+	record := Record{
+		CognitiveRecord: memory.CognitiveRecord{ID: "msg-1", Content: "hello", CreatedAt: now},
+		Tier:            LevelHot, LastAccessAt: now,
+	}
+	if err := manager.Remember(ctx, ns, record); err != nil {
+		t.Fatal(err)
+	}
+	got, err := manager.Recall(ctx, ns, "hello", RecallBudget{Total: 5}.Normalize())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "msg-1" {
+		t.Fatalf("unexpected recall: %+v", got)
+	}
+}
+
+func TestDualWriteManagerReconcileDelegatesToInner(t *testing.T) {
+	ctx := context.Background()
+	inner := newTestStore()
+	index := NewCognitiveAdapter(NewManager(newTestStore(), DefaultPolicy(), NoopMigrationObserver{}), RecallWeights{})
+	manager := NewDualWriteManager(NewManager(inner, DefaultPolicy(), NoopMigrationObserver{}), index)
+	ns := memory.Namespace{Scope: memory.ScopeSession, SessionID: "reconcile", Agent: "assistant"}
+	report, err := manager.Reconcile(ctx, ns, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = report
+}
+
 // flakyCognitive fails the first Remember to simulate a transient mirror outage.
 type flakyCognitive struct {
 	inner    memory.CognitiveMemory
