@@ -237,8 +237,8 @@ func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core
 	// history.
 	if len(agent.Tools) == 0 && len(agent.SubAgents) == 0 {
 		if err := e.writeMemory(ctx, runID, agent, []memoryMessage{
-			{Role: string(llm.RoleUser), Content: prompt},
-			{Role: string(llm.RoleAssistant), Content: output},
+			runTurnMemoryMessage(string(llm.RoleUser), prompt),
+			runTurnMemoryMessage(string(llm.RoleAssistant), output),
 		}); err != nil {
 			return err
 		}

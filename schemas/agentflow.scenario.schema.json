@@ -223,6 +223,10 @@
           "type": "integer",
           "minimum": 0,
           "description": "Drop tool result messages older than this many assistant turns."
+        },
+        "pin_user_messages": {
+          "type": "boolean",
+          "description": "When true, retain user messages during context-window truncation before dropping assistant/tool messages. Defaults to true when omitted."
         }
       }
     },

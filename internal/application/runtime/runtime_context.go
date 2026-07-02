@@ -162,6 +162,18 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent cor
 	return messages, result.Stats
 }
 
+func (e *Engine) emitContextPrepared(ctx context.Context, runID string, stats contextwindow.Stats) {
+	e.emitJSON(ctx, core.EventContextPrepared, runID, stats)
+	if stats.DroppedUserMessages > 0 {
+		e.emitJSON(ctx, core.EventContextIncomplete, runID, map[string]any{
+			"dropped_user_messages":      stats.DroppedUserMessages,
+			"dropped_assistant_messages": stats.DroppedAssistantMessages,
+			"dropped_tool_messages":      stats.DroppedToolMessages,
+			"warning":                    "context may be incomplete: user messages were dropped during truncation",
+		})
+	}
+}
+
 func (e *Engine) toolSpecs(ctx context.Context, runID string, agent core.Agent) []llm.ToolSpec {
 	specs := make([]llm.ToolSpec, 0, len(agent.Tools)+len(agent.SubAgents))
 	for _, name := range agent.Tools {

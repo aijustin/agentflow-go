@@ -34,6 +34,16 @@ type Policy struct {
 	SummaryMode            string            `json:"summary_mode,omitempty" yaml:"summary_mode,omitempty"`
 	ToolSchemaPruning      bool              `json:"tool_schema_pruning,omitempty" yaml:"tool_schema_pruning,omitempty"`
 	StaleToolTurns         int               `json:"stale_tool_turns,omitempty" yaml:"stale_tool_turns,omitempty"`
+	PinUserMessages      *bool             `json:"pin_user_messages,omitempty" yaml:"pin_user_messages,omitempty"`
+}
+
+// PinUserMessagesEnabled reports whether user messages should be retained
+// during context-window truncation. When nil, user pinning defaults to true.
+func (p Policy) PinUserMessagesEnabled() bool {
+	if p.PinUserMessages == nil {
+		return true
+	}
+	return *p.PinUserMessages
 }
 
 func (p Policy) Normalize() Policy {

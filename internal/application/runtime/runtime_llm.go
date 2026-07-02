@@ -64,7 +64,7 @@ func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.
 		}
 		return e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt)
 	}
-	e.emitJSON(ctx, core.EventContextPrepared, req.RunID, stats)
+	e.emitContextPrepared(ctx, req.RunID, stats)
 	resp, err := e.chatWithRetry(ctx, req.RunID, agent, profile, baseReq)
 	if err != nil {
 		return "", err
@@ -76,8 +76,8 @@ func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.
 		return "", fmt.Errorf("runtime: llm response was empty after reaching max tokens; increase max_output_tokens or disable reasoning output for profile %q", agent.LLM)
 	}
 	if err := e.writeMemory(ctx, req.RunID, agent, []memoryMessage{
-		{Role: string(llm.RoleUser), Content: req.Prompt},
-		{Role: string(llm.RoleAssistant), Content: resp.Message.Content},
+		runTurnMemoryMessage(string(llm.RoleUser), req.Prompt),
+		runTurnMemoryMessage(string(llm.RoleAssistant), resp.Message.Content),
 	}); err != nil {
 		return "", err
 	}
@@ -246,7 +246,7 @@ func (e *Engine) structuredAnswer(ctx context.Context, req RunRequest) (json.Raw
 		return nil, err
 	}
 	messages, stats := e.prepareContext(ctx, agent, profile, req, history)
-	e.emitJSON(ctx, core.EventContextPrepared, req.RunID, stats)
+	e.emitContextPrepared(ctx, req.RunID, stats)
 	baseReq := llm.ChatRequest{
 		Messages:        messages,
 		Temperature:     profile.Temperature,
@@ -304,7 +304,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 			return nil, core.Agent{}, nil, err
 		}
 	}
-	e.emitJSON(ctx, core.EventContextPrepared, req.RunID, stats)
+	e.emitContextPrepared(ctx, req.RunID, stats)
 	baseReq := llm.ChatRequest{
 		Messages:        messages,
 		Temperature:     profile.Temperature,
@@ -386,7 +386,7 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 		// the plan state as of the very first turn.
 		toolSpecs := e.toolSpecs(ctx, runID, agent)
 		prepared, stats := e.prepareMessages(ctx, runID, agent, messages, profile)
-		e.emitJSON(ctx, core.EventContextPrepared, runID, stats)
+		e.emitContextPrepared(ctx, runID, stats)
 		toolReq := llm.ToolCallRequest{
 			ChatRequest: llm.ChatRequest{
 				Messages:        prepared,
@@ -416,7 +416,7 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 			}
 			mem := make([]memoryMessage, 0, 2)
 			if !userPromptPersisted && strings.TrimSpace(prompt) != "" {
-				mem = append(mem, memoryMessage{Role: string(llm.RoleUser), Content: prompt})
+				mem = append(mem, runTurnMemoryMessage(string(llm.RoleUser), prompt))
 			}
 			mem = append(mem, memoryMessageFromLLM(assistant))
 			if err := e.writeMemory(ctx, runID, agent, mem); err != nil {
@@ -505,7 +505,7 @@ func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core
 	}
 	if persistTurnMemory {
 		if !userPromptPersisted && strings.TrimSpace(prompt) != "" {
-			if err := e.writeMemory(ctx, runID, agent, []memoryMessage{{Role: string(llm.RoleUser), Content: prompt}}); err != nil {
+			if err := e.writeMemory(ctx, runID, agent, []memoryMessage{runTurnMemoryMessage(string(llm.RoleUser), prompt)}); err != nil {
 				return messages, userPromptPersisted, err
 			}
 			userPromptPersisted = true

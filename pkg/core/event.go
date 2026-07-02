@@ -35,6 +35,7 @@ const (
 	EventMemoryDemoted     EventType = "MemoryDemoted"
 	EventMemoryEvicted     EventType = "MemoryEvicted"
 	EventContextPrepared   EventType = "ContextPrepared"
+	EventContextIncomplete EventType = "ContextIncomplete"
 )
 
 type Event struct {

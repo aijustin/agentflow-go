@@ -22,31 +22,51 @@ import (
 )
 
 type memoryMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
-	ToolCalls  []llm.ToolCall `json:"tool_calls,omitempty"`
-	Tool       string         `json:"tool,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	Time       time.Time      `json:"time"`
+	Role       string            `json:"role"`
+	Content    string            `json:"content,omitempty"`
+	ToolCalls  []llm.ToolCall    `json:"tool_calls,omitempty"`
+	Tool       string            `json:"tool,omitempty"`
+	ToolCallID string            `json:"tool_call_id,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+	Time       time.Time         `json:"time"`
+}
+
+func withMemoryProvenance(msg memoryMessage, provenance string) memoryMessage {
+	if provenance == "" {
+		return msg
+	}
+	if msg.Metadata == nil {
+		msg.Metadata = map[string]string{}
+	}
+	msg.Metadata[memory.ProvenanceKey] = provenance
+	return msg
+}
+
+func runTurnMemoryMessage(role, content string) memoryMessage {
+	return withMemoryProvenance(memoryMessage{Role: role, Content: content}, memory.ProvenanceRunTurn)
 }
 
 func memoryMessageFromLLM(msg llm.Message) memoryMessage {
-	return memoryMessage{
+	return memoryMessageFromLLMWithProvenance(msg, memory.ProvenanceRunTurn)
+}
+
+func memoryMessageFromLLMWithProvenance(msg llm.Message, provenance string) memoryMessage {
+	return withMemoryProvenance(memoryMessage{
 		Role:       string(msg.Role),
 		Content:    msg.Content,
 		ToolCalls:  append([]llm.ToolCall(nil), msg.ToolCalls...),
 		Tool:       msg.Name,
 		ToolCallID: msg.ToolCallID,
-	}
+	}, provenance)
 }
 
 func memoryMessageFromToolResult(call llm.ToolCall, result core.ToolResult) memoryMessage {
-	return memoryMessage{
+	return withMemoryProvenance(memoryMessage{
 		Role:       string(llm.RoleTool),
 		Content:    string(mustMarshal(result)),
 		Tool:       call.Name,
 		ToolCallID: call.ID,
-	}
+	}, memory.ProvenanceToolLoop)
 }
 
 func lastAssistantWithToolCallsIndex(messages []llm.Message) int {
@@ -63,7 +83,7 @@ func (e *Engine) persistToolTurnMemory(ctx context.Context, runID string, agent 
 		return nil
 	}
 	batch := make([]memoryMessage, 0, 1+len(tools))
-	batch = append(batch, memoryMessageFromLLM(assistant))
+	batch = append(batch, memoryMessageFromLLMWithProvenance(assistant, memory.ProvenanceToolLoop))
 	batch = append(batch, tools...)
 	return e.writeMemory(ctx, runID, agent, batch)
 }
@@ -132,7 +152,7 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent,
 	raw, err := repo.Get(ctx, ns, "messages")
 	if err != nil {
 		if err == memory.ErrNotFound {
-			e.emitJSON(ctx, core.EventMemoryRead, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": 0})
+			e.emitJSON(ctx, core.EventMemoryRead, runID, memoryReadPayload(agent, nil, 0, 0, 0))
 			return nil, nil
 		}
 		return nil, err
@@ -141,6 +161,7 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent,
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		return nil, fmt.Errorf("runtime: memory %q messages are invalid: %w", agent.Memory, err)
 	}
+	storedCount := len(stored)
 	messages := make([]llm.Message, 0, len(stored))
 	for _, msg := range stored {
 		switch llm.Role(msg.Role) {
@@ -157,13 +178,14 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent,
 			})
 		}
 	}
+	recallLimit := 0
 	if profile, ok := e.scenario.LLMs[agent.LLM]; ok {
-		limit := profile.Context.Normalize().MemoryRecallLimit
-		if limit > 0 && len(messages) > limit {
-			messages = messages[len(messages)-limit:]
+		recallLimit = profile.Context.Normalize().MemoryRecallLimit
+		if recallLimit > 0 && len(messages) > recallLimit {
+			messages = messages[len(messages)-recallLimit:]
 		}
 	}
-	e.emitJSON(ctx, core.EventMemoryRead, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": len(messages)})
+	e.emitJSON(ctx, core.EventMemoryRead, runID, memoryReadPayload(agent, stored, storedCount, len(messages), recallLimit))
 	return messages, nil
 }
 
@@ -196,8 +218,60 @@ func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent
 			return err
 		}
 	}
-	e.emitJSON(ctx, core.EventMemoryWrite, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": len(messages)})
+	e.emitJSON(ctx, core.EventMemoryWrite, runID, memoryWritePayload(agent, messages))
 	return nil
+}
+
+func memoryReadPayload(agent core.Agent, stored []memoryMessage, storedCount, recalledCount, recallLimit int) map[string]any {
+	payload := map[string]any{
+		"agent":            agent.Name,
+		"memory":           agent.Memory,
+		"stored_messages":  storedCount,
+		"messages":         recalledCount,
+		"messages_by_role": summarizeMemoryRoles(stored),
+		"messages_by_provenance": summarizeMemoryProvenance(stored),
+	}
+	if recallLimit > 0 && storedCount > recalledCount {
+		payload["memory_recall_limit"] = recallLimit
+	}
+	return payload
+}
+
+func memoryWritePayload(agent core.Agent, messages []memoryMessage) map[string]any {
+	return map[string]any{
+		"agent":                  agent.Name,
+		"memory":                 agent.Memory,
+		"messages":               len(messages),
+		"messages_by_provenance": summarizeMemoryProvenance(messages),
+	}
+}
+
+func summarizeMemoryRoles(messages []memoryMessage) map[string]int {
+	counts := map[string]int{}
+	for _, msg := range messages {
+		counts[msg.Role]++
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+func summarizeMemoryProvenance(messages []memoryMessage) map[string]int {
+	counts := map[string]int{}
+	for _, msg := range messages {
+		provenance := memory.ProvenanceUntracked
+		if msg.Metadata != nil {
+			if value := strings.TrimSpace(msg.Metadata[memory.ProvenanceKey]); value != "" {
+				provenance = value
+			}
+		}
+		counts[provenance]++
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
 }
 
 func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Agent, manager tier.Manager, settings tier.Settings, query string) ([]llm.Message, error) {
@@ -217,11 +291,13 @@ func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Ag
 		return nil, err
 	}
 	messages := make([]llm.Message, 0, len(records))
+	stored := make([]memoryMessage, 0, len(records))
 	for _, record := range records {
 		msg, err := tierRecordToMessage(record)
 		if err != nil {
 			return nil, err
 		}
+		stored = append(stored, msg)
 		switch llm.Role(msg.Role) {
 		case llm.RoleUser, llm.RoleAssistant, llm.RoleTool:
 			messages = append(messages, llm.Message{
@@ -237,16 +313,19 @@ func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Ag
 			})
 		}
 	}
-	e.emitJSON(ctx, core.EventMemoryRead, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": len(messages), "tiered": true})
+	recallLimit := 0
+	if profile, ok := e.scenario.LLMs[agent.LLM]; ok {
+		recallLimit = profile.Context.Normalize().MemoryRecallLimit
+		if recallLimit > 0 && len(messages) > recallLimit {
+			messages = messages[len(messages)-recallLimit:]
+		}
+	}
+	payload := memoryReadPayload(agent, stored, len(stored), len(messages), recallLimit)
+	payload["tiered"] = true
+	e.emitJSON(ctx, core.EventMemoryRead, runID, payload)
 	e.recorder.ObserveHistogram(ctx, observability.MetricMemoryRecallLatencySeconds, time.Since(start).Seconds(),
 		observability.Attribute{Key: "memory", Value: agent.Memory},
 	)
-	if profile, ok := e.scenario.LLMs[agent.LLM]; ok {
-		limit := profile.Context.Normalize().MemoryRecallLimit
-		if limit > 0 && len(messages) > limit {
-			messages = messages[len(messages)-limit:]
-		}
-	}
 	return messages, nil
 }
 
@@ -273,7 +352,9 @@ func (e *Engine) writeTierMemory(ctx context.Context, runID string, agent core.A
 			return err
 		}
 	}
-	e.emitJSON(ctx, core.EventMemoryWrite, runID, map[string]any{"agent": agent.Name, "memory": agent.Memory, "messages": len(messages), "tiered": true})
+	payload := memoryWritePayload(agent, messages)
+	payload["tiered"] = true
+	e.emitJSON(ctx, core.EventMemoryWrite, runID, payload)
 	e.enqueueTierReconcile(ctx, runID, agent)
 	return nil
 }

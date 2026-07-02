@@ -71,6 +71,125 @@ func TestGatewayChatSendsRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestGatewayChatWithToolsNormalizesContentToolCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"choices":[{
+				"message":{
+					"role":"assistant",
+					"content":"{\"name\":\"echo\",\"arguments\":{\"query\":\"hello\"}}"
+				},
+				"finish_reason":"stop"
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	resp, err := gateway.ChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "call echo"}}},
+		Tools:       []llm.ToolSpec{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != "echo" || string(resp.ToolCalls[0].Input) != `{"query":"hello"}` {
+		t.Fatalf("unexpected normalized tool call: %+v", resp)
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Fatalf("expected finish_reason tool_calls, got %q", resp.FinishReason)
+	}
+}
+
+func TestGatewayChatWithToolsNormalizesContentToolCallArray(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"choices":[{
+				"message":{
+					"role":"assistant",
+					"content":"[{\"name\":\"echo\",\"arguments\":{\"query\":\"one\"}},{\"name\":\"status\",\"arguments\":{}}]"
+				},
+				"finish_reason":"stop"
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	resp, err := gateway.ChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "call tools"}}},
+		Tools: []llm.ToolSpec{
+			{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)},
+			{Name: "status", Schema: json.RawMessage(`{"type":"object"}`)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolCalls) != 2 || resp.ToolCalls[0].Name != "echo" || resp.ToolCalls[1].Name != "status" {
+		t.Fatalf("unexpected normalized tool calls: %+v", resp.ToolCalls)
+	}
+}
+
+func TestGatewayChatWithToolsNormalizesFencedContentToolCall(t *testing.T) {
+	fenced := "```json\n{\"name\":\"echo\",\"arguments\":{\"query\":\"hello\"}}\n```"
+	payload, err := json.Marshal(map[string]any{
+		"choices": []map[string]any{{
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": fenced,
+			},
+			"finish_reason": "stop",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	resp, err := gateway.ChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "call echo"}}},
+		Tools:       []llm.ToolSpec{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != "echo" {
+		t.Fatalf("unexpected normalized tool call: %+v", resp)
+	}
+}
+
+func TestGatewayChatWithToolsDoesNotMisparsePlainJSONAnswer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"choices":[{
+				"message":{
+					"role":"assistant",
+					"content":"{\"answer\":\"ok\"}"
+				},
+				"finish_reason":"stop"
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	resp, err := gateway.ChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "answer"}}},
+		Tools:       []llm.ToolSpec{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolCalls) != 0 || resp.Message.Content != `{"answer":"ok"}` {
+		t.Fatalf("expected plain JSON answer to remain text, got %+v", resp)
+	}
+}
+
 func TestGatewayChatWithTools(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any

@@ -377,7 +377,7 @@ func (e *Engine) persistUserPromptIfNeeded(ctx context.Context, runID string, ag
 	if strings.TrimSpace(prompt) == "" {
 		return nil
 	}
-	return e.writeMemory(ctx, runID, agent, []memoryMessage{{Role: string(llm.RoleUser), Content: prompt}})
+	return e.writeMemory(ctx, runID, agent, []memoryMessage{runTurnMemoryMessage(string(llm.RoleUser), prompt)})
 }
 
 func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, stepsConsumed int, replanAttempts int) (*RunPausedError, error) {

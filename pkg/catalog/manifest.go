@@ -21,17 +21,17 @@ type Metadata struct {
 }
 
 type ToolDocument struct {
-	APIVersion string    `yaml:"apiVersion"`
-	Kind       string    `yaml:"kind"`
-	Metadata   Metadata  `yaml:"metadata"`
-	Spec       core.Tool `yaml:"spec"`
+	APIVersion string   `yaml:"apiVersion"`
+	Kind       string   `yaml:"kind"`
+	Metadata   Metadata `yaml:"metadata"`
+	Spec       toolSpec `yaml:"spec"`
 }
 
 type SkillDocument struct {
-	APIVersion string     `yaml:"apiVersion"`
-	Kind       string     `yaml:"kind"`
-	Metadata   Metadata   `yaml:"metadata"`
-	Spec       core.Skill `yaml:"spec"`
+	APIVersion string    `yaml:"apiVersion"`
+	Kind       string    `yaml:"kind"`
+	Metadata   Metadata  `yaml:"metadata"`
+	Spec       skillSpec `yaml:"spec"`
 }
 
 func LoadToolManifestFile(path string) (core.Tool, error) {
@@ -47,8 +47,10 @@ func LoadToolManifest(data []byte) (core.Tool, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return core.Tool{}, fmt.Errorf("catalog: tool manifest: %w", err)
 	}
-	tool := doc.Spec
-	tool.Name = doc.Metadata.Name
+	tool, err := doc.Spec.toCore(doc.Metadata.Name)
+	if err != nil {
+		return core.Tool{}, fmt.Errorf("catalog: tool manifest: %w", err)
+	}
 	if err := ValidateToolManifest(tool); err != nil {
 		return core.Tool{}, err
 	}
@@ -68,8 +70,10 @@ func LoadSkillManifest(data []byte) (core.Skill, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return core.Skill{}, fmt.Errorf("catalog: skill manifest: %w", err)
 	}
-	skill := doc.Spec
-	skill.Name = doc.Metadata.Name
+	skill, err := doc.Spec.toCore(doc.Metadata.Name)
+	if err != nil {
+		return core.Skill{}, fmt.Errorf("catalog: skill manifest: %w", err)
+	}
 	if doc.Metadata.Version != "" {
 		skill.Version = doc.Metadata.Version
 	}

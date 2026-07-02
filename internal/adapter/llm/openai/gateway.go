@@ -47,7 +47,11 @@ func (g *Gateway) Chat(ctx context.Context, profileName string, req llm.ChatRequ
 }
 
 func (g *Gateway) ChatWithTools(ctx context.Context, profileName string, req llm.ToolCallRequest) (llm.ToolCallResponse, error) {
-	return g.chat(ctx, profileName, req.ChatRequest, req.Tools)
+	resp, err := g.chat(ctx, profileName, req.ChatRequest, req.Tools)
+	if err != nil {
+		return llm.ToolCallResponse{}, err
+	}
+	return normalizeContentToolCalls(resp, req.Tools), nil
 }
 
 func (g *Gateway) StructuredChat(ctx context.Context, profileName string, schema json.RawMessage, req llm.ChatRequest) (json.RawMessage, error) {

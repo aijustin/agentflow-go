@@ -28,9 +28,13 @@ type Stats struct {
 	BeforeTokens    int      `json:"before_tokens"`
 	AfterTokens     int      `json:"after_tokens"`
 	MaxInputTokens  int      `json:"max_input_tokens"`
-	DroppedMessages int      `json:"dropped_messages"`
-	Summarized      bool     `json:"summarized"`
-	SummaryTokens   int      `json:"summary_tokens,omitempty"`
+	DroppedMessages          int  `json:"dropped_messages"`
+	DroppedUserMessages      int  `json:"dropped_user_messages,omitempty"`
+	DroppedAssistantMessages int  `json:"dropped_assistant_messages,omitempty"`
+	DroppedToolMessages      int  `json:"dropped_tool_messages,omitempty"`
+	ContextIncomplete        bool `json:"context_incomplete,omitempty"`
+	Summarized               bool `json:"summarized"`
+	SummaryTokens            int  `json:"summary_tokens,omitempty"`
 }
 
 type Result struct {
@@ -85,9 +89,9 @@ func (m *Manager) Prepare(messages []Message) Result {
 		// MaxInputTokens is actually exceeded, fall back to a sliding
 		// window trim rather than letting the context grow unbounded.
 		protected, candidates := splitProtected(messages, m.policy.SystemPromptProtection)
-		kept, dropped := keepRecent(candidates, m.policy.MaxInputTokens-CountMessages(protected))
+		kept, dropped := m.trimCandidates(candidates, m.policy.MaxInputTokens-CountMessages(protected))
 		out := append(cloneMessages(protected), kept...)
-		stats.DroppedMessages = dropped
+		dropped.applyTo(&stats)
 		stats.AfterTokens = CountMessages(out)
 		return Result{Messages: out, Stats: stats}
 	}
@@ -95,9 +99,9 @@ func (m *Manager) Prepare(messages []Message) Result {
 	protected, candidates := splitProtected(messages, m.policy.SystemPromptProtection)
 	switch m.policy.Strategy {
 	case StrategySlidingWindow:
-		kept, dropped := keepRecent(candidates, m.policy.MaxInputTokens-CountMessages(protected))
+		kept, dropped := m.trimCandidates(candidates, m.policy.MaxInputTokens-CountMessages(protected))
 		out := append(cloneMessages(protected), kept...)
-		stats.DroppedMessages = dropped
+		dropped.applyTo(&stats)
 		stats.AfterTokens = CountMessages(out)
 		return Result{Messages: out, Stats: stats}
 	case StrategySlidingWindowWithSummary:
@@ -109,16 +113,20 @@ func (m *Manager) Prepare(messages []Message) Result {
 			stats.SummaryTokens = EstimateTokens(summary.Content)
 		}
 		out = append(out, remaining...)
-		stats.DroppedMessages = dropped
+		dropped.applyTo(&stats)
 		stats.AfterTokens = CountMessages(out)
 		return Result{Messages: out, Stats: stats}
 	default:
-		kept, dropped := keepRecent(candidates, m.policy.MaxInputTokens-CountMessages(protected))
+		kept, dropped := m.trimCandidates(candidates, m.policy.MaxInputTokens-CountMessages(protected))
 		out := append(cloneMessages(protected), kept...)
-		stats.DroppedMessages = dropped
+		dropped.applyTo(&stats)
 		stats.AfterTokens = CountMessages(out)
 		return Result{Messages: out, Stats: stats}
 	}
+}
+
+func (m *Manager) trimCandidates(candidates []Message, budget int) ([]Message, roleDropStats) {
+	return trimToBudget(candidates, budget, m.policy.PinUserMessagesEnabled())
 }
 
 func CountMessages(messages []Message) int {
@@ -178,15 +186,15 @@ func keepRecent(messages []Message, budget int) ([]Message, int) {
 	return out, len(messages) - len(out)
 }
 
-func (m *Manager) summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, []Message, int) {
+func (m *Manager) summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, []Message, roleDropStats) {
 	if budget <= 0 {
-		return Message{}, nil, len(messages)
+		return Message{}, nil, countAllDropped(messages)
 	}
 	recentBudget := budget - summaryBudget
 	if recentBudget < budget/2 {
 		recentBudget = budget / 2
 	}
-	remaining, dropped := keepRecent(messages, recentBudget)
+	remaining, dropped := m.trimCandidates(messages, recentBudget)
 	droppedMessages := messages[:max(0, len(messages)-len(remaining))]
 	summaryText := buildSummary(droppedMessages, summaryBudget)
 	if m.summarizer != nil && (m.policy.SummaryMode == "llm" || m.policy.SummaryMode == "custom") {
