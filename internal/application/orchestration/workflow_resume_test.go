@@ -3,6 +3,7 @@ package orchestration
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -16,6 +17,67 @@ type capturingAgent struct {
 func (a *capturingAgent) Run(_ context.Context, input core.AgentInput) (core.AgentOutput, error) {
 	a.lastPrompt = input.Prompt
 	return core.AgentOutput{RunID: input.RunID, Text: "ok"}, nil
+}
+
+func TestApplyWorkflowAmendmentToAgentInput(t *testing.T) {
+	snapshot := runstate.RunSnapshot{
+		Variables: map[string]json.RawMessage{
+			"workflow_amendment": json.RawMessage(`"revise output"`),
+		},
+	}
+	input, applied := applyWorkflowAmendmentToAgentInput(snapshot, "run-1", json.RawMessage(`{"prompt":"draft"}`))
+	if !applied || input.RunID != "run-1" || !strings.Contains(input.Prompt, "revise output") {
+		t.Fatalf("input=%+v applied=%v", input, applied)
+	}
+}
+
+func TestApplyWorkflowAmendmentHelpers(t *testing.T) {
+	snapshot := runstate.RunSnapshot{
+		Variables: map[string]json.RawMessage{
+			"workflow_amendment": json.RawMessage(`"revise"`),
+		},
+	}
+	input, applied := applyWorkflowAmendment(snapshot, core.AgentInput{Prompt: "analyze"})
+	if !applied || input.Prompt != "analyze\n\nHuman feedback: revise" {
+		t.Fatalf("unexpected amended input: %+v applied=%v", input, applied)
+	}
+	input, applied = applyWorkflowAmendment(runstate.RunSnapshot{}, core.AgentInput{})
+	if applied {
+		t.Fatal("expected no amendment without variable")
+	}
+	if got := snapshotVariableString(map[string]json.RawMessage{"resume_prompt": json.RawMessage(`"hi"`)}, "resume_prompt"); got != "hi" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestWorkflowRunnerClearWorkflowAmendment(t *testing.T) {
+	runs := newWorkflowRun(t)
+	runner := NewWorkflowRunner(nil, runs, nil)
+	snapshot := runstate.RunSnapshot{
+		RunID:  "run-1",
+		Status: runstate.RunStatusRunning,
+		Variables: map[string]json.RawMessage{
+			"workflow_amendment": json.RawMessage(`"revise"`),
+		},
+	}
+	loaded, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Version = loaded.Version
+	if err := runs.Save(context.Background(), &snapshot, loaded.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.clearWorkflowAmendment(context.Background(), "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.Variables["workflow_amendment"]; ok {
+		t.Fatal("expected amendment cleared")
+	}
 }
 
 func TestWorkflowRunnerAppliesAmendmentToAgentNode(t *testing.T) {

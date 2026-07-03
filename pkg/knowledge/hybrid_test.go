@@ -23,3 +23,13 @@ func TestMergeRRFCombinesLists(t *testing.T) {
 		t.Fatalf("expected top fused doc b, got %q", merged[0].Document.ID)
 	}
 }
+
+func TestMergeRRFSkipsEmptyDocumentIDs(t *testing.T) {
+	merged := knowledge.MergeRRF([][]knowledge.SearchResult{{
+		{Document: knowledge.Document{ID: "", Content: "skip"}},
+		{Document: knowledge.Document{ID: "a", Content: "keep"}},
+	}}, 0, 0)
+	if len(merged) != 1 || merged[0].Document.ID != "a" {
+		t.Fatalf("unexpected merge result: %+v", merged)
+	}
+}

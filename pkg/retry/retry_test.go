@@ -45,3 +45,33 @@ func TestBackoffCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRetryableRejectsDeadlineExceeded(t *testing.T) {
+	ctx := context.Background()
+	if Retryable(ctx, context.DeadlineExceeded) {
+		t.Fatal("deadline exceeded should not retry")
+	}
+}
+
+type nonRetryableErr struct{}
+
+func (nonRetryableErr) Error() string   { return "permanent classified" }
+func (nonRetryableErr) Retryable() bool { return false }
+
+func TestRetryableHonorsFalseClassification(t *testing.T) {
+	if Retryable(context.Background(), nonRetryableErr{}) {
+		t.Fatal("classified non-retryable error should not retry")
+	}
+}
+
+func TestBackoffUsesExponentialDelay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := Backoff(ctx, 4); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed < 200*time.Millisecond {
+		t.Fatalf("expected backoff delay for attempt 4, got %v", elapsed)
+	}
+}

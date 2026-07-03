@@ -52,3 +52,21 @@ func TestFrameworkPurgeOrphanBlobs(t *testing.T) {
 		t.Fatal("orphan blob should be deleted")
 	}
 }
+
+func TestFrameworkPurgeOrphanBlobsNoOpWithoutStores(t *testing.T) {
+	fw, err := New(core.Scenario{
+		Name:   "blob-gc-empty",
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant", LLM: "mock"}},
+		LLMs:   map[string]core.LLMProfileRef{"mock": {Provider: "mock", Model: "test"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := fw.PurgeOrphanBlobs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected no purge without stores, got %d", removed)
+	}
+}

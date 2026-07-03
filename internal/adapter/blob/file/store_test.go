@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"testing"
+
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func TestStorePersistsBlobs(t *testing.T) {
@@ -65,5 +67,16 @@ func TestStoreGetRejectsChecksumMismatch(t *testing.T) {
 	ref.Sha256 = "deadbeef"
 	if _, err := store.Get(ctx, ref); err == nil {
 		t.Fatal("expected checksum mismatch")
+	}
+}
+
+func TestStoreGetMissingBlob(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, runstate.BlobRef{ID: "missing", Sha256: "missing"}); err == nil {
+		t.Fatal("expected missing blob error")
 	}
 }

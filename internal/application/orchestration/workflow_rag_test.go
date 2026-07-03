@@ -8,11 +8,23 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
-func TestWorkflowRunnerQueryRouter(t *testing.T) {
+func TestClassifyQueryRoute(t *testing.T) {
+	if got := classifyQueryRoute("search docs"); got != "rag" {
+		t.Fatalf("got %q", got)
+	}
+	if got := classifyQueryRoute("please review"); got != "hitl" {
+		t.Fatalf("got %q", got)
+	}
+	if got := classifyQueryRoute("hello"); got != "direct" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestWorkflowRunnerQueryRouterNode(t *testing.T) {
 	runs := newWorkflowRun(t)
 	runner := NewWorkflowRunner(nil, runs, nil)
 	scenario := core.Scenario{
-		Name: "router",
+		Name: "query-router",
 		Orchestration: core.Orchestration{
 			Workflow: &core.Workflow{
 				Nodes: []core.WorkflowNode{{
@@ -32,33 +44,76 @@ func TestWorkflowRunnerQueryRouter(t *testing.T) {
 	}
 	ref, ok := snapshot.StepOutputs["route"]
 	if !ok {
-		t.Fatal("expected router output")
+		t.Fatal("expected route output")
 	}
-	var output struct {
-		Route string `json:"route"`
-	}
-	if err := json.Unmarshal(ref.Inline, &output); err != nil {
+	var out queryRouterOutput
+	if err := json.Unmarshal(ref.Inline, &out); err != nil {
 		t.Fatal(err)
 	}
-	if output.Route != "rag" {
-		t.Fatalf("expected rag route, got %q", output.Route)
+	if out.Route != "rag" {
+		t.Fatalf("unexpected route: %+v", out)
 	}
 }
 
-func TestWorkflowRunnerRAGGrade(t *testing.T) {
+func TestGradeRetrievalResultsScoresKeywordOverlap(t *testing.T) {
+	raw := json.RawMessage(`{"results":[{"content":"billing policy details","score":0.5}]}`)
+	if got := gradeRetrievalResults("billing policy", raw); got <= 0 {
+		t.Fatalf("score=%v", got)
+	}
+	if got := gradeRetrievalResults("", json.RawMessage(`{}`)); got != 0 {
+		t.Fatalf("empty=%v", got)
+	}
+}
+
+func TestWorkflowRunnerSupervisorNode(t *testing.T) {
+	runs := newWorkflowRun(t)
+	agent := &capturingAgent{}
+	runner := NewWorkflowRunner(nil, runs, nil, WithAgentRegistry(singleAgentRegistry{agent: agent}))
+	scenario := core.Scenario{
+		Name: "supervisor",
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{{
+					ID:    "delegate",
+					Kind:  core.NodeSupervisor,
+					Ref:   "assistant",
+					Input: json.RawMessage(`{"prompt":"coordinate"}`),
+				}},
+			},
+		},
+	}
+	if err := runner.Run(context.Background(), scenario, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastPrompt != "coordinate" {
+		t.Fatalf("prompt=%q", agent.lastPrompt)
+	}
+	snapshot, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.StepOutputs["delegate"]; !ok {
+		t.Fatalf("expected supervisor output: %+v", snapshot.StepOutputs)
+	}
+}
+
+func TestWorkflowRunnerRAGGradeNode(t *testing.T) {
 	runs := newWorkflowRun(t)
 	runner := NewWorkflowRunner(nil, runs, nil)
 	scenario := core.Scenario{
-		Name: "grade",
+		Name: "rag-grade",
 		Orchestration: core.Orchestration{
 			Workflow: &core.Workflow{
 				Nodes: []core.WorkflowNode{{
 					ID:   "grade",
 					Kind: core.NodeRAGGrade,
 					Input: json.RawMessage(`{
-						"query":"refund policy",
-						"results":{"results":[{"content":"refund policy details","score":0.8}]},
-						"min_score":0.35
+						"query":"billing",
+						"results":[{"content":"billing policy details","score":0.2}],
+						"min_score":0.3
 					}`),
 				}},
 			},
@@ -71,24 +126,15 @@ func TestWorkflowRunnerRAGGrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := snapshot.StepOutputs["grade"]
-	var output struct {
-		Relevant bool    `json:"relevant"`
-		Score    float64 `json:"score"`
+	ref, ok := snapshot.StepOutputs["grade"]
+	if !ok {
+		t.Fatal("expected grade output")
 	}
-	if err := json.Unmarshal(ref.Inline, &output); err != nil {
+	var out ragGradeOutput
+	if err := json.Unmarshal(ref.Inline, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !output.Relevant {
-		t.Fatalf("expected relevant grade, got %+v", output)
-	}
-}
-
-func TestClassifyQueryRoute(t *testing.T) {
-	if got := classifyQueryRoute("What is in the knowledge base?"); got != "rag" {
-		t.Fatalf("expected rag, got %q", got)
-	}
-	if got := classifyQueryRoute("hello there"); got != "direct" {
-		t.Fatalf("expected direct, got %q", got)
+	if out.Relevant || out.RewriteQuery == "" {
+		t.Fatalf("expected rewrite for low score: %+v", out)
 	}
 }

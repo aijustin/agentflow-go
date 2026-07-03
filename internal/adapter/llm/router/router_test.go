@@ -93,6 +93,30 @@ func TestGatewayPropagatesRouteError(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsUnsupportedCapabilities(t *testing.T) {
+	gateway := New(map[string]llm.Gateway{"chat-only": chatOnlyGateway{}})
+
+	if _, err := gateway.ChatWithTools(context.Background(), "chat-only", llm.ToolCallRequest{}); err == nil || !strings.Contains(err.Error(), "tool calling") {
+		t.Fatalf("expected tool calling error, got %v", err)
+	}
+	if _, err := gateway.StructuredChat(context.Background(), "chat-only", nil, llm.ChatRequest{}); err == nil || !strings.Contains(err.Error(), "structured output") {
+		t.Fatalf("expected structured output error, got %v", err)
+	}
+	if _, err := gateway.StreamChat(context.Background(), "chat-only", llm.ChatRequest{}); err == nil || !strings.Contains(err.Error(), "streaming") {
+		t.Fatalf("expected streaming error, got %v", err)
+	}
+	if _, err := gateway.Embed(context.Background(), "chat-only", []string{"x"}); err == nil || !strings.Contains(err.Error(), "embeddings") {
+		t.Fatalf("expected embeddings error, got %v", err)
+	}
+}
+
+type chatOnlyGateway struct{}
+
+func (chatOnlyGateway) Supports(string, llm.Capability) bool { return true }
+func (chatOnlyGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatResponse, error) {
+	return llm.ChatResponse{}, nil
+}
+
 func TestGatewaySupportsDelegatesToProfile(t *testing.T) {
 	mock := llmmock.NewGateway()
 	mock.SetCapabilities("planner", llm.CapChat, llm.CapStream)

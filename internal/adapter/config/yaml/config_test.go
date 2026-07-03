@@ -64,6 +64,39 @@ scenario:
 	}
 }
 
+func TestLoadMemoryTierTTLFields(t *testing.T) {
+	scenario, err := Load([]byte(`
+scenario:
+  name: tiered
+  llms:
+    default:
+      provider: mock
+      model: test
+  memories:
+    session:
+      type: in_memory
+      scope: session
+      tiers:
+        enabled: true
+        hot_ttl: 1h
+        warm_ttl: 24h
+        demote_idle: 30m
+  agents:
+    worker:
+      llm: default
+      memory: session
+  orchestration:
+    mode: autonomous
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tiers := scenario.Memories["session"].Tiers
+	if tiers == nil || !tiers.Enabled || tiers.HotTTL != "1h0m0s" || tiers.WarmTTL != "24h0m0s" || tiers.DemoteIdle != "30m0s" {
+		t.Fatalf("unexpected tier settings: %+v", tiers)
+	}
+}
+
 func TestScenarioJSONSchemaIncludesSupportedEnums(t *testing.T) {
 	var schema map[string]any
 	if err := json.Unmarshal(ScenarioJSONSchema(), &schema); err != nil {

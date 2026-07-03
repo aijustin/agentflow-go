@@ -31,9 +31,10 @@ func TestProductionHTTPHandlerMountsFrameworkRoutes(t *testing.T) {
 	}
 	queue := agentflow.NewInMemoryJobQueue()
 	handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
-		Queue:     queue,
-		Framework: fw,
-		Version:   "test",
+		Queue:          queue,
+		Framework:      fw,
+		Version:        "test",
+		StudioSavePath: t.TempDir() + "/scenario.yaml",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,5 +73,11 @@ func TestProductionHTTPHandlerMountsFrameworkRoutes(t *testing.T) {
 	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if health.Code != http.StatusOK {
 		t.Fatalf("expected health ok, got %d", health.Code)
+	}
+
+	checkpoint := httptest.NewRecorder()
+	handler.ServeHTTP(checkpoint, httptest.NewRequest(http.MethodGet, "/v1/runs/run-1/steps", nil))
+	if checkpoint.Code == http.StatusNotFound {
+		t.Fatal("expected checkpoint routes to be mounted")
 	}
 }

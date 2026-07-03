@@ -93,3 +93,34 @@ func mustSplitter(t *testing.T, config TextSplitterConfig) Chunker {
 	}
 	return splitter
 }
+
+func TestNewIndexerRejectsInvalidConfig(t *testing.T) {
+	store := &recordingStore{}
+	cases := []IndexerConfig{
+		{Store: store, Profile: "embed"},
+		{Embedder: &recordingEmbedder{}, Profile: "embed"},
+		{Embedder: &recordingEmbedder{}, Store: store},
+	}
+	for _, cfg := range cases {
+		if _, err := NewIndexer(cfg); err == nil {
+			t.Fatalf("expected error for config %+v", cfg)
+		}
+	}
+}
+
+func TestIndexerRespectsCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	indexer, err := NewIndexer(IndexerConfig{
+		Embedder: &recordingEmbedder{},
+		Store:    &recordingStore{},
+		Profile:  "embed",
+		Chunker:  mustSplitter(t, TextSplitterConfig{MaxRunes: 5}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexer.Index(ctx, []Document{{ID: "doc", Content: "hello"}}); err == nil {
+		t.Fatal("expected cancelled context error")
+	}
+}

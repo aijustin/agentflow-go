@@ -62,6 +62,28 @@ func TestChainToolPoliciesRunsInOrder(t *testing.T) {
 	}
 }
 
+func TestMaxSideEffectPolicyAllowsWriteWhenThresholdWrite(t *testing.T) {
+	policy := NewMaxSideEffectPolicy(core.SideEffectWrite)
+	if err := policy.AuthorizeTool(context.Background(), ToolInvocation{SideEffect: core.SideEffectWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if err := policy.AuthorizeTool(context.Background(), ToolInvocation{SideEffect: core.SideEffectExternal}); !errors.Is(err, ErrDenied) {
+		t.Fatalf("expected external side effect denied, got %v", err)
+	}
+}
+
+func TestJSONFieldRedactorRedactsArrayElements(t *testing.T) {
+	out, err := NewJSONFieldRedactor("token").RedactOutput(context.Background(), OutputRedaction{
+		Data: json.RawMessage(`[{"token":"t1"},{"ok":true}]`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != `[{"token":"[REDACTED]"},{"ok":true}]` {
+		t.Fatalf("unexpected redacted array: %s", out)
+	}
+}
+
 func TestMaxSideEffectPolicyRanksUnknownAsDangerous(t *testing.T) {
 	policy := NewMaxSideEffectPolicy(core.SideEffectRead)
 	err := policy.AuthorizeTool(context.Background(), ToolInvocation{Tool: "mystery", SideEffect: core.SideEffectLevel("unknown")})

@@ -40,6 +40,35 @@ func TestAgentBuilderPolicyOptions(t *testing.T) {
 	}
 }
 
+func TestAgentBuilderSkillsAndOrchestrationChain(t *testing.T) {
+	scenario := builder.New("chain").
+		DefaultMockLLM().
+		Agent("assistant").
+		Skills("research", "review").
+		Orchestration(builder.HumanInLoop(true, "before_final_answer")).
+		Scenario()
+	agent := scenario.Agents["assistant"]
+	if len(agent.Skills) != 2 || agent.Skills[0] != "research" {
+		t.Fatalf("skills=%+v", agent.Skills)
+	}
+	if !scenario.Orchestration.HumanInLoop.Enabled {
+		t.Fatal("expected human in loop enabled")
+	}
+}
+
+func TestBeforeFinalAnswerCheckpointPreset(t *testing.T) {
+	scenario := builder.New("hitl-preset").
+		DefaultMockLLM().
+		Agent("assistant").
+		BeforeFinalAnswerCheckpoint().
+		Autonomous().
+		Scenario()
+	checkpoints := scenario.Agents["assistant"].Policy.HumanCheckpoints
+	if len(checkpoints) != 1 || checkpoints[0] != builder.CheckpointBeforeFinalAnswer {
+		t.Fatalf("checkpoints=%+v", checkpoints)
+	}
+}
+
 func TestAutonomousScenarioMatchesYAMLShape(t *testing.T) {
 	got := builder.New("autonomous-echo").
 		DefaultMockLLM().

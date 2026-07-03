@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
+	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -66,5 +67,33 @@ func TestEngineTierMemoryRecallPrefersQueryMatch(t *testing.T) {
 	}
 	if len(messages) != 1 || messages[0].Content != "billing invoice overdue" {
 		t.Fatalf("expected billing-related recall, got %+v", messages)
+	}
+}
+
+func TestEngineRememberCognitivePersistsMessage(t *testing.T) {
+	ctx := context.Background()
+	cog := memoryinmem.NewCognitiveRepository()
+	scenario := baseScenario(false)
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "custom", Scope: string(memory.ScopeSession), Namespace: "cog"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      runstateinmem.NewRepository(),
+		Cognitive: map[string]memory.CognitiveMemory{"session": cog},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().UTC()
+	if err := engine.rememberCognitive(ctx, "run-cog", agent, memoryMessage{Role: "user", Content: "remember this", Time: when}); err != nil {
+		t.Fatal(err)
+	}
+	ns := memory.Namespace{Scope: memory.ScopeSession, SessionID: "cog:assistant", Agent: "assistant"}
+	results, err := cog.Recall(ctx, ns, "remember", 5)
+	if err != nil || len(results) == 0 {
+		t.Fatalf("search=%+v err=%v", results, err)
 	}
 }

@@ -125,3 +125,36 @@ func TestPurgeWithPolicyMaxAgeAndLimit(t *testing.T) {
 		t.Fatalf("expected limit=1 purge, removed=%d", removed)
 	}
 }
+
+func TestPurgeWithPolicyByStatusFilter(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	fw, err := New(core.Scenario{
+		Name:   "retention-status",
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant", LLM: "mock"}},
+		LLMs:   map[string]core.LLMProfileRef{"mock": {Provider: "mock", Model: "test"}},
+	}, WithRunStateRepository(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, spec := range []struct {
+		id     string
+		status runstate.RunStatus
+	}{
+		{"done", runstate.RunStatusCompleted},
+		{"active", runstate.RunStatusRunning},
+	} {
+		if err := repo.Save(ctx, &runstate.RunSnapshot{
+			RunID: spec.id, ScenarioName: "retention-status", Status: spec.status,
+		}, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, err := fw.PurgeWithPolicy(ctx, RetentionPolicy{Status: runstate.RunStatusCompleted})
+	if err != nil || removed != 1 {
+		t.Fatalf("removed=%d err=%v", removed, err)
+	}
+	if _, err := repo.Load(ctx, "active"); err != nil {
+		t.Fatalf("running run should remain: %v", err)
+	}
+}

@@ -3,6 +3,8 @@ package catalog
 import (
 	"testing"
 
+	"encoding/json"
+
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
@@ -62,5 +64,37 @@ spec:
 	}
 	if tool.Name != "echo" || tool.Type != "builtin.echo" {
 		t.Fatalf("unexpected tool: %+v", tool)
+	}
+}
+
+func TestValidateToolManifestRejectsInvalidFields(t *testing.T) {
+	cases := []core.Tool{
+		{Name: "", Type: "builtin.echo"},
+		{Name: "echo", Type: ""},
+		{Name: "echo", Type: "builtin.echo", Approval: core.ApprovalPolicy("maybe")},
+		{Name: "echo", Type: "builtin.echo", SideEffect: core.SideEffectLevel("explosive")},
+		{Name: "echo", Type: "builtin.echo", RateCap: -1},
+		{Name: "echo", Type: "builtin.echo", InputSchema: json.RawMessage(`{`)},
+	}
+	for _, tool := range cases {
+		if err := ValidateToolManifest(tool); err == nil {
+			t.Fatalf("expected validation error for %+v", tool)
+		}
+	}
+}
+
+func TestValidateSkillManifestRejectsInvalidFields(t *testing.T) {
+	cases := []core.Skill{
+		{Name: ""},
+		{Name: "skill", Version: "not-a-version"},
+		{Name: "skill", PromptFragments: []core.PromptFragment{{Name: "x", Content: ""}}},
+		{Name: "skill", ToolPolicies: []core.SkillToolPolicy{{Tool: ""}}},
+		{Name: "skill", ToolPolicies: []core.SkillToolPolicy{{Tool: "echo", Approval: core.ApprovalPolicy("maybe")}}},
+		{Name: "skill", ToolPolicies: []core.SkillToolPolicy{{Tool: "echo", RateCap: -1}}},
+	}
+	for _, skill := range cases {
+		if err := ValidateSkillManifest(skill); err == nil {
+			t.Fatalf("expected validation error for %+v", skill)
+		}
 	}
 }

@@ -148,3 +148,22 @@ func TestEstimateTokens(t *testing.T) {
 		t.Fatal("non-empty text should have tokens")
 	}
 }
+
+func TestManagerUnknownStrategyFallsBackToTrim(t *testing.T) {
+	messages := []Message{
+		{Role: RoleSystem, Content: "system"},
+		{Role: RoleUser, Content: strings.Repeat("old ", 100)},
+		{Role: RoleUser, Content: "latest"},
+	}
+	result := New(Policy{
+		Strategy:               Strategy("unsupported"),
+		MaxInputTokens:         20,
+		SystemPromptProtection: true,
+	}).Prepare(messages)
+	if result.Stats.DroppedMessages == 0 {
+		t.Fatalf("expected fallback trim for unknown strategy, got %+v", result.Stats)
+	}
+	if result.Messages[len(result.Messages)-1].Content != "latest" {
+		t.Fatalf("expected latest message retained: %+v", result.Messages)
+	}
+}

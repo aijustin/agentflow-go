@@ -45,3 +45,18 @@ func TestRecorderRecordQueueMetrics(t *testing.T) {
 		t.Fatalf("expected queue gauge, got %q", body)
 	}
 }
+
+func TestRecorderHistogramWithLabels(t *testing.T) {
+	recorder := NewRecorder()
+	recorder.ObserveHistogram(context.Background(), observability.MetricRunDurationSeconds, 1.5,
+		observability.Attribute{Key: "scenario", Value: "demo"},
+		observability.Attribute{Key: "status", Value: "completed"},
+	)
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	w := httptest.NewRecorder()
+	recorder.Handler().ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, `agentflow_run_duration_seconds_bucket{scenario="demo",status="completed",le="+Inf"}`) {
+		t.Fatalf("expected labeled histogram, got %q", body)
+	}
+}

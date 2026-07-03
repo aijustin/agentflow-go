@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -28,6 +29,24 @@ func TestSinkRecordsEventMetricsAndSpans(t *testing.T) {
 	}
 	if len(tracer.spans) != 1 || tracer.spans[0].name != obspkg.SpanRuntimeEvent || !tracer.spans[0].ended {
 		t.Fatalf("unexpected spans: %+v", tracer.spans)
+	}
+}
+
+func TestSinkUsesNoopDefaultsAndForwardsNextError(t *testing.T) {
+	nextErr := errors.New("downstream failed")
+	sink := NewSink(Config{
+		Next: core.EventSinkFunc(func(context.Context, core.Event) error { return nextErr }),
+	})
+	err := sink.Emit(context.Background(), core.Event{Type: core.EventRunFailed, RunID: "run-2"})
+	if err != nextErr {
+		t.Fatalf("expected downstream error, got %v", err)
+	}
+}
+
+func TestSinkUsesNoopRecorderAndTracerWhenUnset(t *testing.T) {
+	sink := NewSink(Config{})
+	if err := sink.Emit(context.Background(), core.Event{Type: core.EventToolCalled, RunID: "run-3", ScenarioName: "demo"}); err != nil {
+		t.Fatal(err)
 	}
 }
 

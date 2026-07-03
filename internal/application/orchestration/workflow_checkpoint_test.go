@@ -69,6 +69,48 @@ func TestTruncateStepOutputsForRerun(t *testing.T) {
 	}
 }
 
+func TestRestoreSnapshotAndRun(t *testing.T) {
+	runs := newWorkflowRun(t)
+	runner := NewWorkflowRunner(nil, runs, nil)
+	scenario := core.Scenario{
+		Name: "restore",
+		Orchestration: core.Orchestration{
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "first", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"value":"v1"}}`)},
+					{ID: "second", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"value":"v2"}}`), DependsOn: []string{"first"}},
+				},
+			},
+		},
+	}
+	if err := runner.Run(context.Background(), scenario, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Status = runstate.RunStatusCompleted
+	if err := runs.Save(context.Background(), &current, current.Version); err != nil {
+		t.Fatal(err)
+	}
+	restored := current
+	restored.StepOutputs = map[string]runstate.StepOutputRef{}
+	if err := runner.RestoreSnapshotAndRun(context.Background(), scenario, "run-1", restored); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.StepOutputs["first"]; !ok {
+		t.Fatalf("expected first output after restore rerun: %+v", loaded.StepOutputs)
+	}
+	if _, ok := loaded.StepOutputs["second"]; !ok {
+		t.Fatalf("expected second output after restore rerun: %+v", loaded.StepOutputs)
+	}
+}
+
 func TestWorkflowRunnerResumeFromStep(t *testing.T) {
 	runs := newWorkflowRun(t)
 	runner := NewWorkflowRunner(nil, runs, nil)

@@ -40,6 +40,27 @@ func TestEventSinkMigrationObserverEmitsPromotedEvent(t *testing.T) {
 	}
 }
 
+func TestChainMigrationObserversFansOut(t *testing.T) {
+	first := &captureEvents{}
+	second := &captureEvents{}
+	observer := ChainMigrationObservers(
+		EventSinkMigrationObserver{Sink: first, Scenario: "a"},
+		EventSinkMigrationObserver{Sink: second, Scenario: "b"},
+	)
+	ns := memory.Namespace{Scope: memory.ScopeSession, SessionID: "s1", Agent: "assistant"}
+	observer.Demoted(context.Background(), ns, "rec-1", LevelHot, LevelWarm)
+	if len(first.events) != 1 || len(second.events) != 1 {
+		t.Fatalf("events first=%d second=%d", len(first.events), len(second.events))
+	}
+}
+
+func TestEventSinkMigrationObserverNilSink(t *testing.T) {
+	var observer EventSinkMigrationObserver
+	ns := memory.Namespace{Scope: memory.ScopeSession, SessionID: "s1", Agent: "assistant"}
+	observer.Promoted(context.Background(), ns, "rec-1", LevelHot, LevelWarm)
+	observer.Demoted(context.Background(), ns, "rec-1", LevelWarm, LevelCold)
+}
+
 func TestChainMigrationObserversSkipsNilAndNoop(t *testing.T) {
 	sink := &captureEvents{}
 	observer := ChainMigrationObservers(nil, NoopMigrationObserver{}, EventSinkMigrationObserver{Sink: sink, Scenario: "tier-memory"})

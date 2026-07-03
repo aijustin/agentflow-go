@@ -138,6 +138,12 @@ func TestWorkflowValuesEqualNormalizesNumericTypes(t *testing.T) {
 		{left: float64(1), right: int(1), want: true},
 		{left: float64(1.5), right: int64(1), want: false},
 		{left: json.Number("1"), right: int64(1), want: true},
+		{left: json.Number("2.5"), right: float64(2.5), want: true},
+		{
+			left:  map[string]any{"count": float64(2), "tags": []any{float64(1)}},
+			right: map[string]any{"count": int64(2), "tags": []any{int64(1)}},
+			want:  true,
+		},
 	}
 	for _, tt := range tests {
 		if got := workflowValuesEqual(tt.left, tt.right); got != tt.want {

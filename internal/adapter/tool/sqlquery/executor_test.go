@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
@@ -23,6 +24,57 @@ var (
 	testStatesMu       sync.Mutex
 	testStates         = make(map[string]*testState)
 )
+
+func TestNewExecutorRejectsNilDB(t *testing.T) {
+	if _, err := NewExecutor(Config{}); err == nil {
+		t.Fatal("expected nil db error")
+	}
+}
+
+func TestExecutorAllowsAdHocSelectWhenEnabled(t *testing.T) {
+	state := &testState{columns: []string{"id"}, rows: [][]driver.Value{{int64(7)}}}
+	db := openTestDB(t, state)
+	executor, err := NewExecutor(Config{DB: db, AllowAdHocQuery: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := executor.Execute(context.Background(), core.ToolCall{Tool: "sql.query", Input: mustInput(t, Request{Query: "SELECT id FROM users"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Response
+	if err := json.Unmarshal(result.Output, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.RowCount != 1 {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	if id, ok := out.Rows[0]["id"].(float64); !ok || id != 7 {
+		t.Fatalf("unexpected id value: %+v (%T)", out.Rows[0]["id"], out.Rows[0]["id"])
+	}
+}
+
+func TestExecutorRejectsEmptyInput(t *testing.T) {
+	db := openTestDB(t, &testState{})
+	executor, err := NewExecutor(Config{DB: db, AllowedQueries: map[string]string{"users.list": "SELECT id FROM users"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = executor.Execute(context.Background(), core.ToolCall{Tool: "sql.query"})
+	if err == nil {
+		t.Fatal("expected empty input error")
+	}
+}
+
+func TestNormalizeValueConvertsBytesAndTime(t *testing.T) {
+	when := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if got := normalizeValue([]byte("raw")); got != "raw" {
+		t.Fatalf("bytes: got %v", got)
+	}
+	if got := normalizeValue(when); got != when.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("time: got %v", got)
+	}
+}
 
 func TestExecutorRunsAllowlistedSelectAndReturnsRows(t *testing.T) {
 	state := &testState{columns: []string{"id", "name"}, rows: [][]driver.Value{{int64(1), "alice"}}}

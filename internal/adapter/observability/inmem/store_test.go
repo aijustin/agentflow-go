@@ -79,3 +79,15 @@ func TestStoreRejectsEventsWithoutRunID(t *testing.T) {
 		t.Fatal("expected missing run id error")
 	}
 }
+
+func TestStoreWithNowOption(t *testing.T) {
+	fixed := time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)
+	store := NewStore(WithNow(func() time.Time { return fixed }))
+	record, err := store.Append(context.Background(), core.Event{Type: core.EventRunStarted, RunID: "run-now", ScenarioName: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.CreatedAt.Equal(fixed) {
+		t.Fatalf("expected configured timestamp, got %v", record.CreatedAt)
+	}
+}

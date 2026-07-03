@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -89,11 +90,34 @@ func TestNormalizeQueriesAndEvents(t *testing.T) {
 	if StatusAfterEvent(RunStatusRunning, core.EventRunFailed) != RunStatusFailed {
 		t.Fatal("expected failed status")
 	}
+	if StatusAfterEvent("", core.EventToolCalled) != RunStatusRunning {
+		t.Fatal("expected default running status for empty current")
+	}
+	if StatusAfterEvent(RunStatusPaused, core.EventToolCalled) != RunStatusPaused {
+		t.Fatal("expected current status preserved for unrelated event")
+	}
+	raw := []byte(`{"x":1}`)
+	clone := CloneRawMessage(raw)
+	clone[0] = 'X'
+	if raw[0] != '{' {
+		t.Fatal("clone should not alias source bytes")
+	}
+	cloned := CloneEvent(core.Event{Payload: raw})
+	if len(cloned.Payload) != len(raw) {
+		t.Fatal("expected cloned payload")
+	}
 }
 
 func TestNoopRecorderAndTracer(t *testing.T) {
 	ctx := context.Background()
 	NoopRecorder{}.IncCounter(ctx, MetricRuntimeEventsTotal)
+	NoopRecorder{}.ObserveHistogram(ctx, MetricRunDurationSeconds, 1.0)
+	NoopRecorder{}.SetGauge(ctx, MetricQueueJobsQueued, 2)
+	rec := RecorderFunc(func(context.Context, MetricName, ...Attribute) {})
+	rec.ObserveHistogram(ctx, MetricRunDurationSeconds, 1.0)
+	rec.SetGauge(ctx, MetricQueueJobsRunning, 3)
 	_, span := NoopTracer{}.Start(ctx, SpanRun)
+	span.RecordError(errors.New("boom"))
+	span.SetAttributes(Attribute{Key: "run_id", Value: "run-1"})
 	span.End()
 }

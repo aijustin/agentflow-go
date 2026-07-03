@@ -37,3 +37,31 @@ func TestAuthorizeTenantAllowsLegacySnapshots(t *testing.T) {
 		t.Fatalf("legacy snapshot should remain accessible: %v", err)
 	}
 }
+
+type stubRepo struct {
+	snapshot RunSnapshot
+}
+
+func (s stubRepo) Load(context.Context, string) (RunSnapshot, error) { return s.snapshot, nil }
+func (s stubRepo) Save(context.Context, *RunSnapshot, int64) error     { return nil }
+func (s stubRepo) Delete(context.Context, string) error                { return nil }
+func (s stubRepo) List(context.Context, ListFilter) ([]RunSnapshot, error) {
+	return nil, nil
+}
+
+func TestLoadAuthorizedEnforcesTenant(t *testing.T) {
+	repo := stubRepo{snapshot: RunSnapshot{RunID: "run-1", TenantID: "tenant-b", Status: RunStatusRunning}}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "user-1", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	if _, err := LoadAuthorized(ctx, repo, "run-1"); !errors.Is(err, ErrTenantMismatch) {
+		t.Fatalf("expected tenant mismatch, got %v", err)
+	}
+	ctx = identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "user-1", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-b"},
+	})
+	snapshot, err := LoadAuthorized(ctx, repo, "run-1")
+	if err != nil || snapshot.RunID != "run-1" {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+}

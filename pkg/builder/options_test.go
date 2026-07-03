@@ -43,6 +43,38 @@ func TestBuilderOptionHelpers(t *testing.T) {
 	}
 }
 
+func TestBuilderExtendedOptionHelpers(t *testing.T) {
+	scenario := builder.New("extended-options").
+		LLM("chat", builder.LLMProvider("openai"), builder.LLMModel("gpt"), builder.LLMCapabilities("chat")).
+		Memory("custom", builder.CustomMemory(builder.MemoryScopeSession), builder.MemoryNamespace("ns"),
+			builder.TierSessionMemory("tier-ns", builder.TierWarmCapacity(5), builder.TierColdCapacity(50), builder.TierPromoteAccess(2), builder.TierRecallBudget(10, 4, 3, 3))).
+		Tool("git", builder.BuiltinTool("builtin.git")).Done().
+		KnowledgeCollection(builder.CollectionName("docs"), builder.CollectionNamespace("docs"), builder.CollectionTool("search"),
+			builder.CollectionEmbedProfile("embed"), builder.CollectionTenantScoped(true), builder.CollectionAgents("assistant")).
+		Agent("assistant").Description("helper").Role("support").Tools("git").SubAgent("worker").
+		LLM("chat").Memory("custom").Skill("review").Done().
+		Runtime(builder.RuntimeMaxSteps(10), builder.RuntimeMaxRetries(2), builder.RuntimeSecret("KEY", "value")).
+		Orchestration(builder.Mode(builder.ModeAutonomous), builder.MaxParallel(3), builder.Planning(true, builder.PlanningAgent("planner"), builder.PlanningExecute(true), builder.PlanningMaxSteps(5))).
+		Autonomous().
+		Scenario()
+	if scenario.LLMs["chat"].Provider != "openai" {
+		t.Fatalf("llm=%+v", scenario.LLMs["chat"])
+	}
+	if scenario.Memories["custom"].Type != builder.MemoryTypeCustom {
+		t.Fatalf("memory=%+v", scenario.Memories["custom"])
+	}
+	if scenario.Runtime.Secrets["KEY"] != "value" || scenario.Runtime.MaxSteps != 10 {
+		t.Fatalf("runtime=%+v", scenario.Runtime)
+	}
+	if scenario.Orchestration.Planning.Agent != "planner" || scenario.Orchestration.MaxParallel != 3 {
+		t.Fatalf("orchestration=%+v", scenario.Orchestration)
+	}
+	agent := scenario.Agents["assistant"]
+	if agent.Role != "support" || len(agent.Skills) != 1 || len(agent.SubAgents) != 1 {
+		t.Fatalf("agent=%+v", agent)
+	}
+}
+
 func TestRuntimeAndOrchestrationOptions(t *testing.T) {
 	timeout := 5 * time.Minute
 	scenario := builder.New("runtime-options").
@@ -57,5 +89,18 @@ func TestRuntimeAndOrchestrationOptions(t *testing.T) {
 	}
 	if !scenario.Orchestration.HumanInLoop.Enabled || scenario.Orchestration.Mode != builder.ModeHybrid {
 		t.Fatalf("orchestration=%+v", scenario.Orchestration)
+	}
+}
+
+func TestOrchestrationWorkflowOption(t *testing.T) {
+	wf := builder.NewWorkflow().NodeTransform("prep", json.RawMessage(`{"set":{"ok":true}}`)).Build()
+	scenario := builder.New("workflow-option").
+		DefaultMockLLM().
+		Agent("assistant").Done().
+		Orchestration(builder.Workflow(wf)).
+		FixedWorkflow(wf).
+		Scenario()
+	if scenario.Orchestration.Workflow == nil || len(scenario.Orchestration.Workflow.Nodes) != 1 {
+		t.Fatalf("workflow=%+v", scenario.Orchestration.Workflow)
 	}
 }

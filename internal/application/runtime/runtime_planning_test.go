@@ -133,3 +133,17 @@ func TestAppendPlanningHintDeduplicates(t *testing.T) {
 		t.Fatalf("expected first message to remain the hint, got %q", twice[0].Content)
 	}
 }
+
+func TestEngineReplanOrFailReturnsErrorWhenBudgetExhausted(t *testing.T) {
+	scenario := baseScenario(false)
+	engine, err := NewEngine(scenario, Dependencies{Runs: runstateinmem.NewRepository()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := scenario.Agents["assistant"]
+	profile := scenario.LLMs["default"]
+	_, err = engine.replanOrFail(context.Background(), "run-replan", agent, profile, llm.ChatRequest{}, nil, nil, nil, nil, 1, "prompt", maxReplanAttempts, 0, false)
+	if err == nil {
+		t.Fatal("expected max steps error")
+	}
+}

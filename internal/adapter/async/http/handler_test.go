@@ -314,6 +314,116 @@ func TestHandlerUsesConfiguredClockForGeneratedJobs(t *testing.T) {
 	}
 }
 
+func TestHandlerSubmitRunWithoutPolicyUsesContextPrincipal(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	handler, err := NewHandler(HandlerConfig{Queue: queue, IDGenerator: func() string { return "run-open" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/runs", bytes.NewBufferString(`{"prompt":"hello"}`)))
+	if rec.Code != nethttp.StatusAccepted {
+		t.Fatalf("unexpected response: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlerCancelCompletedRunStateIsNoOp(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	runs := runstateinmem.NewRepository()
+	ctx := context.Background()
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "run-done", RunID: "run-done", Type: asyncpkg.RunJobType}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runs.Save(ctx, &runstate.RunSnapshot{
+		RunID: "run-done", ScenarioName: "scenario", Status: runstate.RunStatusCompleted,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(HandlerConfig{Queue: queue, RunState: runs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/runs/run-done/cancel", nil))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected cancel response: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlerCancelJobRoute(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	ctx := context.Background()
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: asyncpkg.EventJobType, MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(HandlerConfig{Queue: queue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/job-1/cancel", nil))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected cancel response: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlerNotFoundAndMethodNotAllowed(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodGet, "/v1/runs", nil))
+	if rec.Code != nethttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodGet, "/v1/unknown", nil))
+	if rec.Code != nethttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandlerListJobsRequiresAdminQueue(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{Queue: stubQueueWithoutAdmin{Queue: queueinmem.NewQueue()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodGet, "/v1/jobs", nil))
+	if rec.Code != nethttp.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d", rec.Code)
+	}
+}
+
+func TestHandlerRequeueRequiresAdminQueue(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{Queue: stubQueueWithoutAdmin{Queue: queueinmem.NewQueue()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/job-1/requeue", nil))
+	if rec.Code != nethttp.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d", rec.Code)
+	}
+}
+
+func TestHandlerSubmitResumeRejectsInvalidDecision(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/hitl/resume", bytes.NewBufferString(`{"token":"tok","decision":"bogus"}`)))
+	if rec.Code != nethttp.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid decision, got %d", rec.Code)
+	}
+}
+
+type stubQueueWithoutAdmin struct {
+	asyncpkg.Queue
+}
+
 func hasAuditEvent(events []audit.Event, typ audit.EventType) bool {
 	for _, event := range events {
 		if event.Type == typ {

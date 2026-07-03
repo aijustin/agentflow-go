@@ -3,11 +3,13 @@ package orchestration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/aijustin/agentflow-go/internal/adapter/registry"
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
@@ -108,6 +110,60 @@ func TestWorkflowRunnerMapNodeWithStringItems(t *testing.T) {
 	members, ok := output["members"].(map[string]any)
 	if !ok || len(members) != 2 {
 		t.Fatalf("expected two string map members, got %+v", output)
+	}
+}
+
+func TestWorkflowRunnerMapNodeCollectErrors(t *testing.T) {
+	reg := registry.New()
+	if err := reg.RegisterTool("fail", toolFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{}, fmt.Errorf("branch failed")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runs := newWorkflowRun(t)
+	runner := NewWorkflowRunner(reg, runs, nil)
+	scenario := core.Scenario{
+		Name: "map-collect-errors",
+		Orchestration: core.Orchestration{
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{
+						ID:    "items",
+						Kind:  core.NodeTransform,
+						Input: json.RawMessage(`{"set":{"list":["one","two"]}}`),
+					},
+					{
+						ID:   "fanout",
+						Kind: core.NodeMap,
+						Input: json.RawMessage(`{
+							"items_path": "steps.items.list",
+							"on_error": "collect_errors",
+							"branch": {"kind": "tool", "ref": "fail"}
+						}`),
+						DependsOn: []string{"items"},
+					},
+				},
+			},
+		},
+	}
+	if err := runner.Run(context.Background(), scenario, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := runs.Load(context.Background(), "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, ok := snapshot.StepOutputs["fanout"]
+	if !ok {
+		t.Fatal("expected map node output")
+	}
+	var output map[string]any
+	if err := json.Unmarshal(ref.Inline, &output); err != nil {
+		t.Fatal(err)
+	}
+	errorsField, ok := output["errors"].([]any)
+	if !ok || len(errorsField) != 2 {
+		t.Fatalf("expected collected branch errors, got %+v", output)
 	}
 }
 

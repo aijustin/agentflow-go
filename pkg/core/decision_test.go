@@ -34,3 +34,9 @@ func TestDecisionUnmarshalText(t *testing.T) {
 		})
 	}
 }
+
+func TestDecisionString(t *testing.T) {
+	if DecisionApprove.String() != "approve" {
+		t.Fatalf("got %q", DecisionApprove.String())
+	}
+}

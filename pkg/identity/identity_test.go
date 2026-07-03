@@ -27,3 +27,19 @@ func TestRequirePrincipalMissing(t *testing.T) {
 		t.Fatalf("expected missing principal, got %v", err)
 	}
 }
+
+func TestPrincipalValidateAndRoles(t *testing.T) {
+	if err := (Principal{}).Validate(); !errors.Is(err, ErrPrincipalMissing) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	principal := Principal{ID: "u1", Type: PrincipalUser, Scope: Scope{TenantID: "t1"}, Roles: []Role{RoleAdmin, RoleViewer}}
+	if err := principal.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !principal.HasAnyRole(RoleAdmin, RoleOperator) || principal.HasAnyRole(RoleService) {
+		t.Fatalf("unexpected HasAnyRole result for %+v", principal.Roles)
+	}
+	if _, ok := PrincipalFromContext(context.Background()); ok {
+		t.Fatal("expected missing principal in bare context")
+	}
+}

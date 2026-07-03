@@ -223,6 +223,24 @@ func TestOIDCJWTConstructorRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestJWTAuthenticatorConstructor(t *testing.T) {
+	auth, err := agentflow.NewJWTAuthenticator(agentflow.JWTAuthenticatorConfig{
+		Issuer:   "https://issuer.example.test",
+		Audience: "agentflow-api",
+		Keys: []agentflow.JWTKey{{
+			ID:         "key-1",
+			Algorithm:  agentflow.JWTAlgorithmHS256,
+			HMACSecret: []byte("secret-value"),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth == nil {
+		t.Fatal("expected authenticator")
+	}
+}
+
 func TestAuthorizationMiddlewareConstructorRejectsInvalidInputs(t *testing.T) {
 	if _, err := agentflow.NewAuthorizationMiddleware(agentflow.AuthorizationMiddlewareConfig{}); err == nil {
 		t.Fatal("expected invalid authorization middleware config")

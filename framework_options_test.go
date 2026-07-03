@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
@@ -27,6 +28,13 @@ func TestBuildPlan(t *testing.T) {
 	}
 	if len(plan.LLMs) == 0 {
 		t.Fatal("expected resolved LLM metadata")
+	}
+}
+
+func TestBuildPlanRejectsInvalidScenario(t *testing.T) {
+	_, err := agentflow.BuildPlan(core.Scenario{Name: "invalid"})
+	if err == nil {
+		t.Fatal("expected validation error for scenario without agents")
 	}
 }
 
@@ -217,5 +225,45 @@ func TestFrameworkWiringOptionsRejectNil(t *testing.T) {
 				t.Fatal("expected nil option error")
 			}
 		})
+	}
+}
+
+func TestFrameworkWithMemoryAndTierOptionsRejectInvalid(t *testing.T) {
+	scenario := testAutonomousScenario()
+	memRepo, err := agentflow.NewFileMemoryRepository(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentflow.New(scenario, agentflow.WithMemoryRepository("", memRepo)); err == nil {
+		t.Fatal("expected empty memory name error")
+	}
+	if _, err := agentflow.New(scenario, agentflow.WithMemoryRepository("session", nil)); err == nil {
+		t.Fatal("expected nil memory repo error")
+	}
+	if _, err := agentflow.New(scenario, agentflow.WithTierMemory("", tier.NewManager(tierinmem.NewStore(), tier.DefaultPolicy(), tier.NoopMigrationObserver{}))); err == nil {
+		t.Fatal("expected empty tier memory name error")
+	}
+}
+
+func TestFrameworkToolResolverRejectsNilExecutor(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "nil-resolver",
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalNever},
+		},
+		Agents: map[string]core.Agent{"worker": {Name: "worker"}},
+		Orchestration: core.Orchestration{
+			Mode:     core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{{ID: "echo", Kind: core.NodeTool, Ref: "echo"}}},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithToolResolver(agentflow.ToolResolverFunc(func(context.Context, core.Tool) (core.ToolExecutor, error) {
+		return nil, nil
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-nil-tool", Agent: "worker"}); err == nil {
+		t.Fatal("expected nil executor error")
 	}
 }

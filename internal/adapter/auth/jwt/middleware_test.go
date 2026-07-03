@@ -57,3 +57,30 @@ func TestMiddlewareAddsPrincipalToRequestContext(t *testing.T) {
 		t.Fatalf("unexpected status %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestMiddlewareRejectsMissingBearerToken(t *testing.T) {
+	authenticator, err := NewAuthenticator(Config{
+		Keys: []Key{{Algorithm: AlgorithmHS256, HMACSecret: []byte("secret")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	middleware, err := NewMiddleware(MiddlewareConfig{Authenticator: authenticator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run without token")
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/runs", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestNewMiddlewareRequiresAuthenticator(t *testing.T) {
+	if _, err := NewMiddleware(MiddlewareConfig{}); err == nil {
+		t.Fatal("expected authenticator required error")
+	}
+}

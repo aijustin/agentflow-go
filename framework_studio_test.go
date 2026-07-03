@@ -276,6 +276,79 @@ func TestFrameworkRunStudioGraphInvalidGraph(t *testing.T) {
 	}
 }
 
+func TestFrameworkCompareRunsRequiresRunIDs(t *testing.T) {
+	fw, err := agentflow.New(core.Scenario{
+		Name:   "compare",
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.CompareRuns(context.Background(), "", "run-b"); err == nil {
+		t.Fatal("expected missing run id error")
+	}
+}
+
+func TestFrameworkRunStudioGraphHybridWithWorkflow(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-hybrid",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationHybrid,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "prep", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"ready":true}}`)},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(fakeGateway{content: "studio hybrid"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.RunStudioGraph(context.Background(), fw.ExportScenarioGraph(), agentflow.RunRequest{
+		RunID: "studio-hybrid-1", Agent: "assistant", Prompt: "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || result.Output != "studio hybrid" {
+		t.Fatalf("unexpected hybrid studio run: %+v", result)
+	}
+}
+
+func TestFrameworkRunStudioGraphHybridAutonomousOnly(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-hybrid-auto",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode:     core.OrchestrationHybrid,
+			Workflow: nil,
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(fakeGateway{content: "auto only"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := fw.ExportScenarioGraph()
+	edited.Workflow = nil
+	result, err := fw.RunStudioGraph(context.Background(), edited, agentflow.RunRequest{
+		RunID: "studio-auto-1", Agent: "assistant", Prompt: "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected autonomous studio run: %+v", result)
+	}
+}
+
 func TestFrameworkRunStudioGraphWorkflowFailure(t *testing.T) {
 	scenario := core.Scenario{
 		Name: "studio-run-fail",

@@ -2,9 +2,11 @@ package inmem
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -98,5 +100,36 @@ func TestRepositoryListDeleteAndFilters(t *testing.T) {
 	}
 	if _, err := repo.Load(ctx, "run-a"); err == nil {
 		t.Fatal("expected deleted run to be missing")
+	}
+}
+
+func TestRepositoryListDeepClonesSnapshot(t *testing.T) {
+	repo := NewRepository()
+	ctx := context.Background()
+	snap := runstate.RunSnapshot{
+		RunID: "rich", ScenarioName: "demo", Status: runstate.RunStatusRunning,
+		Variables: map[string]json.RawMessage{
+			"nested": json.RawMessage(`{"items":[1,2]}`),
+		},
+		StepOutputs: map[string]runstate.StepOutputRef{"step-1": {Inline: json.RawMessage(`"done"`)}},
+		PendingGate: &core.CheckpointState{NodeID: "review", Version: 2},
+	}
+	if err := repo.Save(ctx, &snap, 0); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := repo.List(ctx, runstate.ListFilter{ScenarioName: "demo"})
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("list=%+v err=%v", listed, err)
+	}
+	got := listed[0]
+	got.Variables["nested"][0] = 'X'
+	got.StepOutputs["step-1"].Inline[0] = 'X'
+	got.PendingGate.Version = 99
+	loaded, err := repo.Load(ctx, "rich")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Variables["nested"][0] != '{' || loaded.StepOutputs["step-1"].Inline[0] != '"' || loaded.PendingGate.Version != 2 {
+		t.Fatalf("list should return deep clones, got %+v", loaded)
 	}
 }

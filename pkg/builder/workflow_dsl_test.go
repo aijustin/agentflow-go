@@ -61,3 +61,28 @@ func TestRouteIfNe(t *testing.T) {
 		t.Fatalf("edges = %+v", wf.Edges)
 	}
 }
+
+func TestWorkflowDSLMissingAndMapBranches(t *testing.T) {
+	if got := builder.ConditionMissing(builder.StepPath("prep", "output")); got != "missing(steps.prep.output)" {
+		t.Fatalf("ConditionMissing = %q", got)
+	}
+	wf := builder.NewWorkflow().
+		NodeTransform("items", json.RawMessage(`{"set":{"list":["a"]}}`)).
+		MapOver("fanout", builder.StepPath("items", "list"), builder.MapToolBranch("echo"), builder.MapOnError("collect_errors")).
+		RouteIfExists("items", "fanout", builder.StepPath("items", "output")).
+		RouteIfMissing("fanout", "items", builder.StepPath("missing", "output")).
+		Build()
+	if len(wf.Nodes) != 2 || wf.Nodes[1].Kind != builder.NodeMap {
+		t.Fatalf("nodes = %+v", wf.Nodes)
+	}
+	if len(wf.Edges) != 2 {
+		t.Fatalf("edges = %+v", wf.Edges)
+	}
+}
+
+func TestMapSubgraphBranchConfig(t *testing.T) {
+	branch := builder.MapSubgraphBranch("prep")
+	if branch.Kind != builder.NodeSubgraph || branch.Ref != "prep" {
+		t.Fatalf("unexpected branch: %+v", branch)
+	}
+}

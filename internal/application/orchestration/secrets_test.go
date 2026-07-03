@@ -20,6 +20,16 @@ func TestResolveRuntimeSecretsSubstitutesRefs(t *testing.T) {
 	}
 }
 
+func TestResolveRuntimeSecretsInvalidJSONUsesStringSubstitution(t *testing.T) {
+	out, err := resolveRuntimeSecrets(json.RawMessage(`token=${secret:TOKEN}`), map[string]string{"TOKEN": "secret-value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "token=secret-value" {
+		t.Fatalf("unexpected output: %s", out)
+	}
+}
+
 func TestResolveRuntimeSecretsPlainString(t *testing.T) {
 	out, err := resolveRuntimeSecrets(json.RawMessage(`"${secret:KEY}"`), map[string]string{"KEY": "value"})
 	if err != nil {
