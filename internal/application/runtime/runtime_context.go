@@ -105,7 +105,9 @@ func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile c
 		raw = append(raw, contextwindow.Message{Role: contextwindow.RoleUser, Content: req.Prompt})
 	}
 	prepared, stats := e.prepareRawMessages(ctx, req.RunID, agent, raw, profile)
-	return enforceToolCallPairing(restorePreparedToolCalls(prepared, history)), stats
+	paired, drops := enforceToolCallPairingWithStats(restorePreparedToolCalls(prepared, history))
+	e.emitPairingIncomplete(ctx, req.RunID, drops)
+	return paired, stats
 }
 
 func (e *Engine) prepareMessages(ctx context.Context, runID string, agent core.Agent, messages []llm.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
@@ -122,7 +124,9 @@ func (e *Engine) prepareMessages(ctx context.Context, runID string, agent core.A
 		})
 	}
 	prepared, stats := e.prepareRawMessages(ctx, runID, agent, raw, profile)
-	return enforceToolCallPairing(restorePreparedToolCalls(prepared, messages)), stats
+	paired, drops := enforceToolCallPairingWithStats(restorePreparedToolCalls(prepared, messages))
+	e.emitPairingIncomplete(ctx, runID, drops)
+	return paired, stats
 }
 
 func restorePreparedToolCalls(prepared []llm.Message, source []llm.Message) []llm.Message {
@@ -160,6 +164,20 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent cor
 		})
 	}
 	return messages, result.Stats
+}
+
+// emitPairingIncomplete surfaces an EventContextIncomplete when repairing the
+// tool_call/tool_result contract had to drop orphaned tool results or strip
+// unanswered tool_calls after truncation, so this silent loss is observable.
+func (e *Engine) emitPairingIncomplete(ctx context.Context, runID string, drops pairingDrops) {
+	if !drops.any() {
+		return
+	}
+	e.emitJSON(ctx, core.EventContextIncomplete, runID, map[string]any{
+		"dropped_orphan_tool_results":    drops.orphanToolResults,
+		"stripped_unanswered_tool_calls": drops.unansweredToolCalls,
+		"warning":                        "context may be incomplete: tool_call/tool_result pairing was repaired after truncation",
+	})
 }
 
 func (e *Engine) emitContextPrepared(ctx context.Context, runID string, stats contextwindow.Stats) {

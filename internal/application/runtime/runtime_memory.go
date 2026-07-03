@@ -96,6 +96,10 @@ func (e *Engine) persistToolTurnFromStepOutputs(ctx context.Context, runID strin
 	if err != nil {
 		return err
 	}
+	// Store the same compacted result the model sees (matching dispatchToolCalls),
+	// keeping memory and LLM context consistent on resume. The full result
+	// remains in StepOutputs. With ToolResultMaxTokens==0 (default) this is a no-op.
+	profile, _ := e.llmProfile(agent.LLM)
 	tools := make([]memoryMessage, 0, len(assistant.ToolCalls))
 	for _, call := range assistant.ToolCalls {
 		raw, ok, err := e.stepOutputBytes(ctx, snapshot, "tool."+call.ID)
@@ -109,7 +113,7 @@ func (e *Engine) persistToolTurnFromStepOutputs(ctx context.Context, runID strin
 		if err := json.Unmarshal(raw, &result); err != nil {
 			return fmt.Errorf("runtime: decode tool output %q: %w", call.ID, err)
 		}
-		tools = append(tools, memoryMessageFromToolResult(call, result))
+		tools = append(tools, memoryMessageFromToolResult(call, compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)))
 	}
 	if len(tools) == 0 {
 		return nil
@@ -228,16 +232,81 @@ func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent
 		}
 	}
 	e.emitJSON(ctx, core.EventMemoryWrite, runID, memoryWritePayload(agent, messages))
+	if err := e.capStoredMemory(ctx, repo, ns, agent); err != nil {
+		return err
+	}
 	return nil
+}
+
+// capStoredMemory enforces the optional write-side flat-memory cap
+// (Context.MemoryStoreLimit). When the stored history exceeds the limit it is
+// rewritten to the most recent limit messages. Zero (default) disables the cap
+// so append behavior is unchanged.
+func (e *Engine) capStoredMemory(ctx context.Context, repo memory.Repository, ns memory.Namespace, agent core.Agent) error {
+	profile, ok := e.scenario.LLMs[agent.LLM]
+	if !ok {
+		return nil
+	}
+	limit := profile.Context.Normalize().MemoryStoreLimit
+	if limit <= 0 {
+		return nil
+	}
+	raw, err := repo.Get(ctx, ns, "messages")
+	if err != nil {
+		if err == memory.ErrNotFound {
+			return nil
+		}
+		return err
+	}
+	var stored []memoryMessage
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return fmt.Errorf("runtime: memory %q messages are invalid: %w", agent.Memory, err)
+	}
+	if len(stored) <= limit {
+		return nil
+	}
+	trimmed := trimStoredMessages(stored, limit)
+	out, err := json.Marshal(trimmed)
+	if err != nil {
+		return err
+	}
+	return repo.Set(ctx, ns, "messages", out)
+}
+
+// trimStoredMessages keeps the most recent limit stored messages and drops any
+// tool result at the trimmed boundary whose issuing assistant tool_call fell
+// outside the retained window, matching the read-side pairing contract so the
+// persisted history never starts with an orphaned tool result.
+func trimStoredMessages(stored []memoryMessage, limit int) []memoryMessage {
+	if limit <= 0 || len(stored) <= limit {
+		return stored
+	}
+	window := stored[len(stored)-limit:]
+	issued := make(map[string]struct{})
+	for _, msg := range window {
+		for _, call := range msg.ToolCalls {
+			issued[call.ID] = struct{}{}
+		}
+	}
+	out := make([]memoryMessage, 0, len(window))
+	for _, msg := range window {
+		if msg.Role == string(llm.RoleTool) && msg.ToolCallID != "" {
+			if _, ok := issued[msg.ToolCallID]; !ok {
+				continue
+			}
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 func memoryReadPayload(agent core.Agent, stored []memoryMessage, storedCount, recalledCount, recallLimit int) map[string]any {
 	payload := map[string]any{
-		"agent":            agent.Name,
-		"memory":           agent.Memory,
-		"stored_messages":  storedCount,
-		"messages":         recalledCount,
-		"messages_by_role": summarizeMemoryRoles(stored),
+		"agent":                  agent.Name,
+		"memory":                 agent.Memory,
+		"stored_messages":        storedCount,
+		"messages":               recalledCount,
+		"messages_by_role":       summarizeMemoryRoles(stored),
 		"messages_by_provenance": summarizeMemoryProvenance(stored),
 	}
 	if recallLimit > 0 && storedCount > recalledCount {

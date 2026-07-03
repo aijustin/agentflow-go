@@ -16,6 +16,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/security"
+	"github.com/aijustin/agentflow-go/pkg/toolschema"
 )
 
 type toolDispatchOptions struct {
@@ -66,6 +67,13 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	if tool.Name == "" {
 		tool.Name = call.Name
 	}
+	if e.scenario.Runtime.ValidateToolInput && len(tool.InputSchema) > 0 {
+		if err := toolschema.Validate(tool.InputSchema, call.Input); err != nil {
+			result := core.ToolResult{Tool: call.Name, Error: "invalid tool input: " + err.Error()}
+			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
+			return result, nil
+		}
+	}
 	if !options.approved {
 		if reason := core.ToolApprovalDenialReason(tool); reason != "" {
 			result := core.ToolResult{Tool: call.Name, Error: reason}
@@ -111,7 +119,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil
 	}
-	result, err := e.executeToolWithRetry(ctx, runID, agent, call, executor)
+	result, err := e.executeToolWithRetry(ctx, runID, agent, tool, call, executor)
 	if err != nil {
 		// A context cancellation/deadline is a runtime-level condition, not
 		// a tool failure: surfacing it as a ToolResult.Error would let the
@@ -294,7 +302,7 @@ func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core
 	return result, nil
 }
 
-func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, executor core.ToolExecutor) (core.ToolResult, error) {
+func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, executor core.ToolExecutor) (core.ToolResult, error) {
 	attempts := e.maxAttempts(agent)
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -309,9 +317,14 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 			observability.Attribute{Key: "tool", Value: call.Name},
 			observability.Attribute{Key: "scenario_name", Value: e.scenario.Name},
 		)
+		// A per-tool timeout (tool.Timeout, default 0 = disabled) bounds a
+		// single execution attempt so a slow tool cannot consume the whole
+		// run budget. withTimeout is a no-op when the timeout is zero.
+		execCtx, cancelTimeout := e.withTimeout(toolCtx, tool.Timeout)
 		result, err := safecall.Invoke("runtime: tool execute", func() (core.ToolResult, error) {
-			return executor.Execute(toolCtx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, ToolCallID: call.ID, Input: call.Input})
+			return executor.Execute(execCtx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, ToolCallID: call.ID, Input: call.Input})
 		})
+		cancelTimeout()
 		if err == nil {
 			toolSpan.End()
 			e.recorder.ObserveHistogram(ctx, observability.MetricToolDurationSeconds, time.Since(start).Seconds(),

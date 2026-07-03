@@ -139,7 +139,23 @@ func pruneToolSpecs(specs []llm.ToolSpec, allowed map[string]struct{}) []llm.Too
 // producing a message list most LLM providers reject outright. This removes
 // any orphaned tool result and strips any tool_call left unanswered by a
 // dropped result, so truncated history is always self-consistent.
+// pairingDrops counts what enforceToolCallPairing removed so callers can
+// surface an EventContextIncomplete when truncation broke tool_call pairing.
+type pairingDrops struct {
+	orphanToolResults   int
+	unansweredToolCalls int
+}
+
+func (d pairingDrops) any() bool {
+	return d.orphanToolResults > 0 || d.unansweredToolCalls > 0
+}
+
 func enforceToolCallPairing(messages []llm.Message) []llm.Message {
+	out, _ := enforceToolCallPairingWithStats(messages)
+	return out
+}
+
+func enforceToolCallPairingWithStats(messages []llm.Message) ([]llm.Message, pairingDrops) {
 	issued := make(map[string]struct{})
 	answered := make(map[string]struct{})
 	for _, msg := range messages {
@@ -150,10 +166,12 @@ func enforceToolCallPairing(messages []llm.Message) []llm.Message {
 			answered[msg.ToolCallID] = struct{}{}
 		}
 	}
+	var drops pairingDrops
 	out := make([]llm.Message, 0, len(messages))
 	for _, msg := range messages {
 		if msg.Role == llm.RoleTool && msg.ToolCallID != "" {
 			if _, ok := issued[msg.ToolCallID]; !ok {
+				drops.orphanToolResults++
 				continue
 			}
 		}
@@ -165,6 +183,7 @@ func enforceToolCallPairing(messages []llm.Message) []llm.Message {
 				}
 			}
 			if len(kept) != len(msg.ToolCalls) {
+				drops.unansweredToolCalls += len(msg.ToolCalls) - len(kept)
 				msg.ToolCalls = kept
 				if len(kept) == 0 && strings.TrimSpace(msg.Content) == "" {
 					continue
@@ -173,7 +192,7 @@ func enforceToolCallPairing(messages []llm.Message) []llm.Message {
 		}
 		out = append(out, msg)
 	}
-	return out
+	return out, drops
 }
 
 func evictStaleToolMessages(messages []llm.Message, keepTurns int) []llm.Message {

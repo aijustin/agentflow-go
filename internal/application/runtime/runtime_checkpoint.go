@@ -37,6 +37,13 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 		return core.CheckpointState{RunID: req.RunID, Version: version, NodeID: "before_final_answer", Payload: payload}
 	})
 	if err != nil {
+		// The gate never moved the run to Paused, so the checkpoint metadata
+		// we just wrote would otherwise leave the run Running with a
+		// consumable checkpoint. Roll it back so no resume path can act on a
+		// pause that did not happen.
+		if clearErr := e.clearCheckpointState(ctx, snapshot, ""); clearErr != nil {
+			e.logWarn(ctx, "runtime: failed to roll back checkpoint variables after pause failure", "run_id", req.RunID, "error", clearErr)
+		}
 		return RunResult{}, err
 	}
 	if err := e.ensureRunPaused(ctx, req.RunID); err != nil {

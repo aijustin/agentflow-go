@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	checkpointKindVar           = "checkpoint_kind"
-	checkpointPromptVar         = "checkpoint_prompt"
-	checkpointAgentVar          = "checkpoint_agent"
-	checkpointContextVar        = "checkpoint_context"
-	beforeFinalResumedVar       = "before_final_resumed"
+	checkpointKindVar     = "checkpoint_kind"
+	checkpointPromptVar   = "checkpoint_prompt"
+	checkpointAgentVar    = "checkpoint_agent"
+	checkpointContextVar  = "checkpoint_context"
+	beforeFinalResumedVar = "before_final_resumed"
 	// checkpointResumedVar is deprecated; reads accept it for backward compatibility.
-	checkpointResumedVar = "checkpoint_resumed"
+	checkpointResumedVar        = "checkpoint_resumed"
 	checkpointToolCallsVar      = "checkpoint_tool_calls"
 	checkpointMessagesVar       = "checkpoint_messages"
 	checkpointToolCountsVar     = "checkpoint_tool_counts"
@@ -432,6 +432,21 @@ func checkpointBoolVar(vars map[string]json.RawMessage, key string) bool {
 	return value
 }
 
+// ClearCheckpointState removes any pending checkpoint metadata (and a stored
+// human amendment) for a run without resuming execution. It is used when a run
+// is resumed/approved but the caller chose not to continue execution, so a
+// later Run() must not re-enter or act on the now-consumed checkpoint.
+func (e *Engine) ClearCheckpointState(ctx context.Context, runID string) error {
+	return e.saveSnapshotWithRetry(ctx, runID, func(loaded *runstate.RunSnapshot) error {
+		if loaded.Variables == nil {
+			return nil
+		}
+		clearHumanAmendment(loaded)
+		clearCheckpointVariables(loaded.Variables)
+		return nil
+	})
+}
+
 // ClearOrphanedCheckpointState removes tool_approval checkpoint metadata when
 // the serialized conversation was already consumed and cannot be resumed.
 func ClearOrphanedCheckpointState(snapshot *runstate.RunSnapshot) {
@@ -548,6 +563,14 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		return core.CheckpointState{RunID: runID, Version: version, NodeID: "tool_approval", Payload: payload}
 	})
 	if err != nil {
+		// The gate never moved the run to Paused, so the tool-approval
+		// checkpoint we just wrote would otherwise leave the run Running with
+		// a consumable checkpoint (pending tool calls + messages). Roll it
+		// back so no resume path can execute the pending tool without an
+		// actual human approval.
+		if clearErr := e.clearCheckpointState(ctx, &snapshot, ""); clearErr != nil {
+			e.logWarn(ctx, "runtime: failed to roll back checkpoint variables after pause failure", "run_id", runID, "error", clearErr)
+		}
 		return nil, err
 	}
 	if err := e.ensureRunPaused(ctx, runID); err != nil {

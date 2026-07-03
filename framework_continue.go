@@ -78,6 +78,15 @@ func (f *Framework) ResumeRunByID(ctx context.Context, runID string, decision co
 	if err := f.gate.Resume(ctx, token, decision, amendment); err != nil {
 		return RunResult{}, err
 	}
+	// The gate approved the run (status is now Running) but the caller does
+	// not want execution to continue here. Clear the checkpoint metadata so a
+	// later Run() on the same ID does not re-enter or overwrite the consumed
+	// checkpoint. A rejected run is Cancelled and needs no cleanup.
+	if decision == core.DecisionApprove || decision == core.DecisionAmend {
+		if err := f.engine.ClearCheckpointState(ctx, runID); err != nil {
+			return RunResult{}, err
+		}
+	}
 	loaded, err := runstate.LoadAuthorized(ctx, f.runs, runID)
 	if err != nil {
 		return RunResult{}, err
@@ -344,6 +353,7 @@ func (f *Framework) newWorkflowRunner() *orchestration.WorkflowRunner {
 		orchestration.WithBlobStore(f.blobs),
 		orchestration.WithWorkflowToolPolicy(f.toolGov),
 		orchestration.WithOutputRedactor(f.redactor),
+		orchestration.WithMemoryRewinder(f.engine),
 	)
 }
 

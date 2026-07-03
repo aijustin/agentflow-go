@@ -52,16 +52,20 @@ type AgentPolicy struct {
 }
 
 type Tool struct {
-	Name         string            `json:"name"`
-	Description  string            `json:"description,omitempty"`
-	Type         string            `json:"type"`
-	InputSchema  json.RawMessage   `json:"input_schema,omitempty"`
-	OutputSchema json.RawMessage   `json:"output_schema,omitempty"`
-	SideEffect   SideEffectLevel   `json:"side_effect,omitempty"`
-	Approval     ApprovalPolicy    `json:"approval,omitempty"`
-	LLM          string            `json:"llm,omitempty"`
-	RateCap      int               `json:"rate_cap,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	Type         string          `json:"type"`
+	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	SideEffect   SideEffectLevel `json:"side_effect,omitempty"`
+	Approval     ApprovalPolicy  `json:"approval,omitempty"`
+	LLM          string          `json:"llm,omitempty"`
+	RateCap      int             `json:"rate_cap,omitempty"`
+	// Timeout bounds a single tool execution attempt. Zero (the default)
+	// disables the per-tool timeout, so the call is only bounded by the
+	// run/agent context deadline, preserving the previous behavior.
+	Timeout  time.Duration     `json:"timeout,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 type PromptFragment struct {
@@ -215,12 +219,16 @@ type HumanInLoopPolicy struct {
 }
 
 type RuntimePolicy struct {
-	Timeout             time.Duration     `json:"timeout,omitempty"`
-	MaxSteps            int               `json:"max_steps,omitempty"`
-	MaxRetries          int               `json:"max_retries,omitempty"`
-	MaxParallel         int               `json:"max_parallel,omitempty"`
-	StepOutputThreshold int64             `json:"step_output_threshold,omitempty"`
-	Secrets             map[string]string `json:"secrets,omitempty"`
+	Timeout             time.Duration `json:"timeout,omitempty"`
+	MaxSteps            int           `json:"max_steps,omitempty"`
+	MaxRetries          int           `json:"max_retries,omitempty"`
+	MaxParallel         int           `json:"max_parallel,omitempty"`
+	StepOutputThreshold int64         `json:"step_output_threshold,omitempty"`
+	// ValidateToolInput, when true, validates each tool call's input against
+	// the tool's declared InputSchema before execution. Defaults to false to
+	// preserve the previous behavior (schema is advisory to the model only).
+	ValidateToolInput bool              `json:"validate_tool_input,omitempty"`
+	Secrets           map[string]string `json:"secrets,omitempty"`
 }
 
 type ToolCall struct {

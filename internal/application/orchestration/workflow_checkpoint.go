@@ -10,6 +10,59 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
+// conversationMemoryWatermarksVar mirrors the runtime engine's snapshot
+// variable key (see runtime.conversationMemoryWatermarksVar); the two literals
+// must stay in sync.
+const conversationMemoryWatermarksVar = "conversation_memory_watermarks"
+
+type conversationWatermarkEntry struct {
+	Agent string `json:"agent"`
+	Len   int    `json:"len"`
+}
+
+// rewindConversationMemory truncates each affected agent's run-scoped
+// conversation memory back to the earliest watermark recorded for any node
+// being discarded, so a re-run does not see turns from the rewound (future)
+// portion of the run. It is a no-op when no rewinder is wired or no watermarks
+// were recorded.
+func (r *WorkflowRunner) rewindConversationMemory(ctx context.Context, runID string, variables map[string]json.RawMessage, removed map[string]bool) error {
+	if r.memory == nil || len(variables) == 0 || len(removed) == 0 {
+		return nil
+	}
+	raw := variables[conversationMemoryWatermarksVar]
+	if len(raw) == 0 {
+		return nil
+	}
+	var marks map[string]conversationWatermarkEntry
+	if err := json.Unmarshal(raw, &marks); err != nil {
+		return nil
+	}
+	keep := make(map[string]int)
+	for storedNodeID, entry := range marks {
+		if !watermarkNodeDiscarded(removed, storedNodeID) {
+			continue
+		}
+		if existing, ok := keep[entry.Agent]; !ok || entry.Len < existing {
+			keep[entry.Agent] = entry.Len
+		}
+	}
+	for agentName, k := range keep {
+		if err := r.memory.RewindConversationMemory(ctx, runID, agentName, k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func watermarkNodeDiscarded(removed map[string]bool, storedNodeID string) bool {
+	for nodeID := range removed {
+		if nodeOrDescendantMatches(storedNodeID, nodeID) {
+			return true
+		}
+	}
+	return false
+}
+
 // downstreamNodeIDs returns the start node and every workflow node that
 // transitively depends on it via edges or depends_on.
 func downstreamNodeIDs(workflow core.Workflow, start string) map[string]bool {
@@ -166,6 +219,19 @@ func (r *WorkflowRunner) RestoreSnapshotAndRun(ctx context.Context, scenario cor
 	// re-pauses on) that gate instead of silently skipping it.
 	restoredPendingGate := restored.PendingGate
 
+	// Rewind conversation memory for every node that ran after the restore
+	// point (present in the current snapshot but not the restored one) so the
+	// re-run does not inherit those discarded turns.
+	removed := make(map[string]bool)
+	for stepID := range current.StepOutputs {
+		if _, ok := restored.StepOutputs[stepID]; !ok {
+			removed[stepID] = true
+		}
+	}
+	if err := r.rewindConversationMemory(ctx, runID, current.Variables, removed); err != nil {
+		return err
+	}
+
 	snapshot := restored
 	snapshot.RunID = runID
 	snapshot.Version = current.Version
@@ -231,6 +297,17 @@ func (r *WorkflowRunner) ResumeFromStep(ctx context.Context, scenario core.Scena
 	}
 	truncateStepOutputsForRerun(snapshot.StepOutputs, *scenario.Orchestration.Workflow, nodeID)
 	clearLoopProgressForRerun(snapshot.Variables, *scenario.Orchestration.Workflow, nodeID)
+	remove, bodyIDs := rerunRemovalSets(*scenario.Orchestration.Workflow, nodeID)
+	removed := make(map[string]bool, len(remove)+len(bodyIDs))
+	for id := range remove {
+		removed[id] = true
+	}
+	for id := range bodyIDs {
+		removed[id] = true
+	}
+	if err := r.rewindConversationMemory(ctx, runID, snapshot.Variables, removed); err != nil {
+		return err
+	}
 	snapshot.Status = runstate.RunStatusRunning
 	snapshot.CurrentNodeID = ""
 	snapshot.PendingGate = nil

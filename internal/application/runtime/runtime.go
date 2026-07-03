@@ -395,6 +395,12 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 		}
 		return core.AgentOutput{}, RunPausedError{RunID: result.RunID, Token: result.Token, Kind: "before_final_answer"}
 	}
+	// Stamp the conversation memory watermark for this workflow node before
+	// it appends any turns, so workflow time-travel can rewind memory in step
+	// with rewound step outputs.
+	if err := e.recordConversationWatermark(ctx, input.RunID, agent); err != nil {
+		return core.AgentOutput{}, err
+	}
 	output, err := e.answer(ctx, RunRequest{
 		RunID:   input.RunID,
 		Agent:   agentName,

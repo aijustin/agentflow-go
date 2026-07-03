@@ -35,6 +35,11 @@ type Policy struct {
 	ToolSchemaPruning      bool              `json:"tool_schema_pruning,omitempty" yaml:"tool_schema_pruning,omitempty"`
 	StaleToolTurns         int               `json:"stale_tool_turns,omitempty" yaml:"stale_tool_turns,omitempty"`
 	PinUserMessages      *bool             `json:"pin_user_messages,omitempty" yaml:"pin_user_messages,omitempty"`
+	// MemoryStoreLimit caps how many messages are retained in the persistent
+	// flat memory store. When exceeded, the oldest messages are dropped on
+	// write (keeping the most recent MemoryStoreLimit). Zero (the default)
+	// disables the write-side cap, preserving unbounded append behavior.
+	MemoryStoreLimit int `json:"memory_store_limit,omitempty" yaml:"memory_store_limit,omitempty"`
 }
 
 // PinUserMessagesEnabled reports whether user messages should be retained

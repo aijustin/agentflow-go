@@ -27,6 +27,13 @@ type AgentRegistry interface {
 	Agent(name string) (core.AgentRunner, bool)
 }
 
+// ConversationMemoryRewinder truncates a run-scoped conversation memory to the
+// first keep messages. Workflow time-travel uses it to rewind agent memory in
+// step with rewound step outputs.
+type ConversationMemoryRewinder interface {
+	RewindConversationMemory(ctx context.Context, runID, agentName string, keep int) error
+}
+
 type RunnerOption func(*WorkflowRunner)
 
 func WithAgentRegistry(agents AgentRegistry) RunnerOption {
@@ -63,6 +70,14 @@ func WithOutputRedactor(redactor governance.OutputRedactor) RunnerOption {
 	}
 }
 
+// WithMemoryRewinder wires the capability used to rewind run-scoped
+// conversation memory when a workflow is rewound via time-travel.
+func WithMemoryRewinder(memory ConversationMemoryRewinder) RunnerOption {
+	return func(r *WorkflowRunner) {
+		r.memory = memory
+	}
+}
+
 type WorkflowRunner struct {
 	tools    ToolRegistry
 	agents   AgentRegistry
@@ -72,6 +87,7 @@ type WorkflowRunner struct {
 	events   core.EventSink
 	toolGov  governance.ToolPolicy
 	redactor governance.OutputRedactor
+	memory   ConversationMemoryRewinder
 }
 
 type WorkflowPausedError struct {
@@ -421,10 +437,18 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 		return err
 	}
 	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
-	if reason := core.ToolApprovalDenialReason(tool); reason != "" {
-		return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
-	}
+	// Approval handling mirrors the autonomous runtime (maybePauseToolCall +
+	// dispatchToolWithOptions): when a human gate is configured, any policy
+	// that requires approval (pause / always / risky-with-side-effect)
+	// pauses for a human decision rather than failing the node. Only when no
+	// gate is available do we fall back to a hard denial.
 	if core.ToolApprovalPauseRequired(tool) {
+		if r.gate == nil {
+			if reason := core.ToolApprovalDenialReason(tool); reason != "" {
+				return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
+			}
+			return fmt.Errorf("orchestration: tool %q requires human gate for pause approval", node.Ref)
+		}
 		if approvedInput, ok, err := r.workflowToolApprovalInput(ctx, runID, node.ID); err != nil {
 			return err
 		} else if ok {
@@ -435,6 +459,10 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 		} else {
 			return r.pauseForWorkflowToolApproval(ctx, scenario, node, runID, tool, input)
 		}
+	} else if reason := core.ToolApprovalDenialReason(tool); reason != "" {
+		// Unsupported/unknown approval policies are not pausable but must
+		// still be rejected rather than executed.
+		return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
 	}
 	if r.toolGov != nil {
 		if err := r.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
@@ -453,11 +481,19 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if !ok {
 		return fmt.Errorf("orchestration: tool %q not found", node.Ref)
 	}
+	// Node-level retry (including the side-effect safety gate) is applied by
+	// runNodeWithRetry, so a single execution here is correct.
 	result, err := safecall.Invoke("orchestration: tool execute", func() (core.ToolResult, error) {
 		return executor.Execute(ctx, core.ToolCall{RunID: runID, Tool: node.Ref, Input: input})
 	})
 	if err != nil {
 		return err
+	}
+	// A tool that signals failure via ToolResult.Error (with a nil Go error)
+	// must fail the workflow node instead of being persisted as a successful
+	// step output.
+	if result.Error != "" {
+		return fmt.Errorf("orchestration: tool %q failed: %s", node.Ref, result.Error)
 	}
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, result)
 }

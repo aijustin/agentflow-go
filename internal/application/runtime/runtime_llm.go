@@ -481,8 +481,12 @@ func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core
 		if err != nil {
 			return messages, userPromptPersisted, err
 		}
-		toolMem = append(toolMem, memoryMessageFromToolResult(toolCall, result))
+		// Persist the same compacted result the model sees so a later memory
+		// recall/replay never surfaces tool output the model never received.
+		// The full, uncompacted result stays in StepOutputs["tool.<id>"] for
+		// audit. With ToolResultMaxTokens==0 (default) this is a no-op.
 		contextResult := compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
+		toolMem = append(toolMem, memoryMessageFromToolResult(toolCall, contextResult))
 		raw, err := json.Marshal(contextResult)
 		if err != nil {
 			return messages, userPromptPersisted, err
