@@ -79,6 +79,7 @@ func (e *Engine) markCheckpointResumed(ctx context.Context, snapshot *runstate.R
 		delete(loaded.Variables, checkpointMessagesVar)
 		delete(loaded.Variables, checkpointToolCallsVar)
 		delete(loaded.Variables, checkpointToolCountsVar)
+		delete(loaded.Variables, checkpointWorkflowNodeVar)
 		return nil
 	})
 }

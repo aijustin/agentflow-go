@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
@@ -180,6 +181,93 @@ func TestFrameworkWorkflowAgentNodePropagatesToolApprovalPause(t *testing.T) {
 	if snapshot.PendingGate == nil || snapshot.PendingGate.NodeID != "tool_approval" {
 		t.Fatalf("expected tool approval pending gate, got %+v", snapshot.PendingGate)
 	}
+}
+
+func TestFrameworkResumeAndContinueFixedWorkflowToolApprovalPause(t *testing.T) {
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{
+			ID:    "call-1",
+			Name:  "echo",
+			Input: json.RawMessage(`{"message":"needs approval"}`),
+		}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	toolCalls := 0
+	scenario := core.Scenario{
+		Name: "workflow-agent-tool-resume",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalPause, SideEffect: core.SideEffectWrite},
+		},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default", Tools: []string{"echo"}, Policy: core.AgentPolicy{MaxSteps: 2}},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{{ID: "work", Kind: core.NodeAgent, Ref: "assistant"}},
+			},
+		},
+	}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("echo", countingTool{calls: &toolCalls}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-wf-tool-resume", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused || result.Token == "" {
+		t.Fatalf("expected paused workflow agent node, got %+v", result)
+	}
+	if toolCalls != 0 {
+		t.Fatalf("tool must not run before approval, got %d calls", toolCalls)
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "run-wf-tool-resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if variable := snapshot.Variables["checkpoint_workflow_node"]; len(variable) == 0 {
+		t.Fatalf("expected checkpoint_workflow_node, got %+v", snapshot.Variables)
+	}
+	result, err = fw.ResumeAndContinue(context.Background(), result.Token, core.DecisionApprove, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected completed workflow, got %+v", result)
+	}
+	if toolCalls != 1 {
+		t.Fatalf("expected approved tool to execute once on resume, got %d calls", toolCalls)
+	}
+	snapshot, err = fw.RunStateRepository().Load(context.Background(), "run-wf-tool-resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.StepOutputs["work"]; !ok {
+		t.Fatalf("expected agent node output after resume: %+v", snapshot.StepOutputs)
+	}
+	if !strings.Contains(result.Output, `"text":"done"`) {
+		t.Fatalf("expected workflow output to include agent answer, got %q", result.Output)
+	}
+}
+
+type countingTool struct {
+	calls *int
+}
+
+func (t countingTool) Execute(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
+	*t.calls++
+	return core.ToolResult{Tool: call.Tool, Output: json.RawMessage(`{"ok":true}`)}, nil
 }
 
 func TestFrameworkResumeRunByIDDeclarativeInterrupt(t *testing.T) {

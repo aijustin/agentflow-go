@@ -21,6 +21,7 @@ const (
 	checkpointKindVar               = "checkpoint_kind"
 	checkpointKindBeforeFinalAnswer = "before_final_answer"
 	checkpointKindToolApproval      = "tool_approval"
+	checkpointWorkflowNodeVar       = "checkpoint_workflow_node"
 )
 
 // ResumeAndContinue resumes a paused run and continues execution until the next
@@ -112,12 +113,43 @@ func (f *Framework) continueRun(ctx context.Context, runID string) (RunResult, e
 	}
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		return f.continueWorkflowRun(ctx, runID)
+		return f.continueFixedWorkflowRun(ctx, runID, snapshot)
 	case core.OrchestrationHybrid:
 		return f.continueHybridRun(ctx, runID, snapshot)
 	default:
 		return f.engine.ContinueAfterCheckpoint(ctx, runID)
 	}
+}
+
+func (f *Framework) continueFixedWorkflowRun(ctx context.Context, runID string, snapshot runstate.RunSnapshot) (RunResult, error) {
+	switch variableJSONString(snapshot.Variables, checkpointKindVar) {
+	case checkpointKindBeforeFinalAnswer:
+		return f.engine.ContinueAfterCheckpoint(ctx, runID)
+	case checkpointKindToolApproval:
+		nodeID := variableJSONString(snapshot.Variables, checkpointWorkflowNodeVar)
+		if nodeID == "" {
+			return f.engine.ContinueAfterCheckpoint(ctx, runID)
+		}
+		return f.continueWorkflowAgentCheckpoint(ctx, runID, nodeID)
+	default:
+		return f.continueWorkflowRun(ctx, runID)
+	}
+}
+
+func (f *Framework) continueWorkflowAgentCheckpoint(ctx context.Context, runID, nodeID string) (RunResult, error) {
+	result, err := f.engine.ContinueAfterCheckpointPhase(ctx, runID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if result.Status == runstate.RunStatusPaused {
+		return result, nil
+	}
+	runner := f.newWorkflowRunner()
+	if err := runner.SaveStepOutput(ctx, f.scenario, runID, nodeID, core.AgentOutput{RunID: runID, Text: result.Output}); err != nil {
+		f.markWorkflowFailed(ctx, runID, err)
+		return RunResult{}, err
+	}
+	return f.finishWorkflowRun(ctx, runID, true)
 }
 
 func (f *Framework) continueWorkflowRun(ctx context.Context, runID string) (RunResult, error) {

@@ -621,6 +621,11 @@ func (r *WorkflowRunner) nodeAlreadyDone(ctx context.Context, runID string, n co
 }
 
 func (r *WorkflowRunner) saveStepOutput(ctx context.Context, scenario core.Scenario, runID, nodeID string, value any) error {
+	return r.SaveStepOutput(ctx, scenario, runID, nodeID, value)
+}
+
+// SaveStepOutput persists a workflow node output and advances CurrentNodeID.
+func (r *WorkflowRunner) SaveStepOutput(ctx context.Context, scenario core.Scenario, runID, nodeID string, value any) error {
 	if r.runs == nil {
 		return fmt.Errorf("orchestration: run-state repository is required to save step output")
 	}

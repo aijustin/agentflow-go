@@ -25,6 +25,7 @@ const (
 	checkpointOutputModeVar     = "checkpoint_output_mode"
 	checkpointStepsConsumedVar  = "checkpoint_steps_consumed"
 	checkpointReplanAttemptsVar = "checkpoint_replan_attempts"
+	checkpointWorkflowNodeVar   = "checkpoint_workflow_node"
 	humanAmendmentVar           = "human_amendment"
 )
 
@@ -41,6 +42,18 @@ func (e RunPausedError) Error() string {
 
 // ContinueAfterCheckpoint resumes execution for a run that was approved at a checkpoint.
 func (e *Engine) ContinueAfterCheckpoint(ctx context.Context, runID string) (RunResult, error) {
+	return e.continueAfterCheckpoint(ctx, runID, true)
+}
+
+// ContinueAfterCheckpointPhase resumes a checkpointed agent phase without
+// marking the run Completed. Callers embedding the runtime inside a workflow
+// must persist the returned output as a workflow step and finish the run
+// themselves.
+func (e *Engine) ContinueAfterCheckpointPhase(ctx context.Context, runID string) (RunResult, error) {
+	return e.continueAfterCheckpoint(ctx, runID, false)
+}
+
+func (e *Engine) continueAfterCheckpoint(ctx context.Context, runID string, completeRun bool) (RunResult, error) {
 	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
 	if err != nil {
 		return RunResult{}, err
@@ -51,15 +64,15 @@ func (e *Engine) ContinueAfterCheckpoint(ctx context.Context, runID string) (Run
 	kind := variableString(snapshot.Variables, checkpointKindVar)
 	switch kind {
 	case "before_final_answer":
-		return e.continueBeforeFinalAnswer(ctx, snapshot)
+		return e.continueBeforeFinalAnswer(ctx, snapshot, completeRun)
 	case "tool_approval":
-		return e.continueToolApproval(ctx, snapshot)
+		return e.continueToolApproval(ctx, snapshot, completeRun)
 	default:
 		return RunResult{}, fmt.Errorf("runtime: unknown checkpoint kind %q", kind)
 	}
 }
 
-func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstate.RunSnapshot) (RunResult, error) {
+func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstate.RunSnapshot, completeRun bool) (RunResult, error) {
 	prompt := applyHumanAmendment(snapshot.Variables, variableString(snapshot.Variables, checkpointPromptVar))
 	req := RunRequest{
 		RunID:   snapshot.RunID,
@@ -76,7 +89,10 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 			e.markRunFailedOrCancelled(ctx, req.RunID, err)
 			return RunResult{}, err
 		}
-		return e.completeStructuredRun(ctx, req.RunID, raw)
+		if completeRun {
+			return e.completeStructuredRun(ctx, req.RunID, raw)
+		}
+		return RunResult{RunID: req.RunID, Status: runstate.RunStatusRunning, Output: string(raw), StructuredOutput: raw}, nil
 	}
 	output, err := e.answer(ctx, req)
 	if err != nil {
@@ -87,10 +103,13 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 		e.markRunFailedOrCancelled(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	return e.completeRun(ctx, req.RunID, output)
+	if completeRun {
+		return e.completeRun(ctx, req.RunID, output)
+	}
+	return RunResult{RunID: req.RunID, Status: runstate.RunStatusRunning, Output: output}, nil
 }
 
-func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.RunSnapshot) (RunResult, error) {
+func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.RunSnapshot, completeRun bool) (RunResult, error) {
 	agentName := variableString(snapshot.Variables, checkpointAgentVar)
 	agent, err := e.resolveAgent(agentName)
 	if err != nil {
@@ -157,7 +176,10 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		e.markRunFailedOrCancelled(ctx, snapshot.RunID, err)
 		return RunResult{}, err
 	}
-	return e.completeRun(ctx, snapshot.RunID, output)
+	if completeRun {
+		return e.completeRun(ctx, snapshot.RunID, output)
+	}
+	return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusRunning, Output: output}, nil
 }
 
 func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string, amendment string, stepsConsumed int, replanAttempts int) (string, error) {
@@ -441,6 +463,9 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		checkpointToolCountsVar:     countsRaw,
 		checkpointStepsConsumedVar:  json.RawMessage(fmt.Sprintf("%d", stepsConsumed)),
 		checkpointReplanAttemptsVar: json.RawMessage(fmt.Sprintf("%d", replanAttempts)),
+	}
+	if nodeID := core.WorkflowNodeFromContext(ctx); nodeID != "" {
+		vars[checkpointWorkflowNodeVar] = json.RawMessage(fmt.Sprintf("%q", nodeID))
 	}
 	if err := e.saveCheckpointVariables(ctx, &snapshot, vars); err != nil {
 		return nil, err
