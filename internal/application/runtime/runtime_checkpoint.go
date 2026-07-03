@@ -64,22 +64,42 @@ func (e *Engine) saveCheckpointVariables(ctx context.Context, snapshot *runstate
 	})
 }
 
-func (e *Engine) markCheckpointResumed(ctx context.Context, snapshot *runstate.RunSnapshot) error {
+func checkpointVariableKeys() []string {
+	return []string{
+		checkpointKindVar,
+		checkpointPromptVar,
+		checkpointAgentVar,
+		checkpointContextVar,
+		checkpointToolCallsVar,
+		checkpointMessagesVar,
+		checkpointToolCountsVar,
+		checkpointOutputModeVar,
+		checkpointStepsConsumedVar,
+		checkpointReplanAttemptsVar,
+		checkpointWorkflowNodeVar,
+	}
+}
+
+func clearCheckpointVariables(vars map[string]json.RawMessage) {
+	if vars == nil {
+		return
+	}
+	for _, key := range checkpointVariableKeys() {
+		delete(vars, key)
+	}
+	delete(vars, checkpointResumedVar)
+}
+
+func (e *Engine) clearCheckpointState(ctx context.Context, snapshot *runstate.RunSnapshot, kind string) error {
 	return e.saveSnapshotWithRetry(ctx, snapshot.RunID, func(loaded *runstate.RunSnapshot) error {
 		if loaded.Variables == nil {
 			loaded.Variables = make(map[string]json.RawMessage)
 		}
-		loaded.Variables[checkpointResumedVar] = json.RawMessage(`true`)
 		clearHumanAmendment(loaded)
-		// Drop the tool-approval checkpoint state now that this resume has
-		// decoded it: the serialized conversation is the largest thing on
-		// the snapshot and would otherwise be carried (and re-written) by
-		// every subsequent snapshot save for the rest of the run. Any blob
-		// it referenced becomes orphaned and reclaimable by blob GC.
-		delete(loaded.Variables, checkpointMessagesVar)
-		delete(loaded.Variables, checkpointToolCallsVar)
-		delete(loaded.Variables, checkpointToolCountsVar)
-		delete(loaded.Variables, checkpointWorkflowNodeVar)
+		clearCheckpointVariables(loaded.Variables)
+		if kind == "before_final_answer" {
+			loaded.Variables[beforeFinalResumedVar] = json.RawMessage(`true`)
+		}
 		return nil
 	})
 }

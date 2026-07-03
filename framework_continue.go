@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
+	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
@@ -246,6 +247,7 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 	if snapshot.Variables != nil {
 		delete(snapshot.Variables, "run_error_message")
 	}
+	appexec.ClearOrphanedCheckpointState(&snapshot)
 	saveCtx := runstate.ContextWithStatusTransitionOverride(ctx)
 	if err := f.runs.Save(saveCtx, &snapshot, snapshot.Version); err != nil {
 		return RunResult{}, err

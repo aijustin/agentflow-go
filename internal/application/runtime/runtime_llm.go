@@ -10,6 +10,7 @@ import (
 	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	"github.com/aijustin/agentflow-go/pkg/memory"
 )
 
 func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
@@ -264,8 +265,8 @@ func (e *Engine) structuredAnswer(ctx context.Context, req RunRequest) (json.Raw
 		return nil, fmt.Errorf("runtime: structured output was not valid JSON")
 	}
 	if err := e.writeMemory(ctx, req.RunID, agent, []memoryMessage{
-		{Role: string(llm.RoleUser), Content: req.Prompt},
-		{Role: string(llm.RoleAssistant), Content: string(raw)},
+		runTurnMemoryMessage(string(llm.RoleUser), req.Prompt),
+		memoryMessageFromLLMWithProvenance(llm.Message{Role: llm.RoleAssistant, Content: string(raw)}, memory.ProvenanceRunTurn),
 	}); err != nil {
 		return nil, err
 	}

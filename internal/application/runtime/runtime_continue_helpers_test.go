@@ -9,25 +9,55 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
-func TestEngineIsCheckpointResumed(t *testing.T) {
+func TestEngineIsBeforeFinalResumed(t *testing.T) {
 	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: runstateinmem.NewRepository()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if engine.isCheckpointResumed(runstate.RunSnapshot{}) {
+	if engine.isBeforeFinalResumed(runstate.RunSnapshot{}) {
 		t.Fatal("expected false for missing variable")
 	}
-	if engine.isCheckpointResumed(runstate.RunSnapshot{
+	if !engine.isBeforeFinalResumed(runstate.RunSnapshot{
+		Variables: map[string]json.RawMessage{beforeFinalResumedVar: json.RawMessage(`true`)},
+	}) {
+		t.Fatal("expected true for before_final_resumed flag")
+	}
+	if !engine.isBeforeFinalResumed(runstate.RunSnapshot{
 		Variables: map[string]json.RawMessage{checkpointResumedVar: json.RawMessage(`true`)},
 	}) {
-		// ok
-	} else {
-		t.Fatal("expected true for resumed flag")
+		t.Fatal("expected true for legacy checkpoint_resumed flag")
 	}
-	if engine.isCheckpointResumed(runstate.RunSnapshot{
-		Variables: map[string]json.RawMessage{checkpointResumedVar: json.RawMessage(`not-json`)},
+	if engine.isBeforeFinalResumed(runstate.RunSnapshot{
+		Variables: map[string]json.RawMessage{beforeFinalResumedVar: json.RawMessage(`not-json`)},
 	}) {
 		t.Fatal("expected false for invalid json")
+	}
+}
+
+func TestClearOrphanedCheckpointState(t *testing.T) {
+	snapshot := runstate.RunSnapshot{
+		Variables: map[string]json.RawMessage{
+			checkpointKindVar:     json.RawMessage(`"tool_approval"`),
+			checkpointMessagesVar: json.RawMessage(`[]`),
+		},
+	}
+	ClearOrphanedCheckpointState(&snapshot)
+	if _, ok := snapshot.Variables[checkpointKindVar]; !ok {
+		t.Fatal("expected intact checkpoint when messages are still present")
+	}
+
+	snapshot = runstate.RunSnapshot{
+		Variables: map[string]json.RawMessage{
+			checkpointKindVar:      json.RawMessage(`"tool_approval"`),
+			checkpointToolCallsVar: json.RawMessage(`[]`),
+			checkpointPromptVar:    json.RawMessage(`"go"`),
+		},
+	}
+	ClearOrphanedCheckpointState(&snapshot)
+	for _, key := range checkpointVariableKeys() {
+		if _, ok := snapshot.Variables[key]; ok {
+			t.Fatalf("expected orphaned checkpoint key %q cleared", key)
+		}
 	}
 }
 

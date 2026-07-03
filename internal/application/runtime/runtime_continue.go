@@ -18,7 +18,9 @@ const (
 	checkpointPromptVar         = "checkpoint_prompt"
 	checkpointAgentVar          = "checkpoint_agent"
 	checkpointContextVar        = "checkpoint_context"
-	checkpointResumedVar        = "checkpoint_resumed"
+	beforeFinalResumedVar       = "before_final_resumed"
+	// checkpointResumedVar is deprecated; reads accept it for backward compatibility.
+	checkpointResumedVar = "checkpoint_resumed"
 	checkpointToolCallsVar      = "checkpoint_tool_calls"
 	checkpointMessagesVar       = "checkpoint_messages"
 	checkpointToolCountsVar     = "checkpoint_tool_counts"
@@ -80,17 +82,29 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 		Prompt:  prompt,
 		Context: snapshot.Variables[checkpointContextVar],
 	}
-	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
-		return RunResult{}, err
-	}
 	if variableString(snapshot.Variables, checkpointOutputModeVar) == "structured" {
 		raw, err := e.structuredAnswer(ctx, req)
 		if err != nil {
-			e.markRunFailedOrCancelled(ctx, req.RunID, err)
+			var paused RunPausedError
+			if errorsAsRunPaused(err, &paused) {
+				return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
+			}
+			// Checkpoint vars stay intact; keep the run Running so the caller
+			// can retry ContinueAfterCheckpoint after a transient error.
 			return RunResult{}, err
 		}
 		if completeRun {
-			return e.completeStructuredRun(ctx, req.RunID, raw)
+			result, err := e.completeStructuredRun(ctx, req.RunID, raw)
+			if err != nil {
+				return RunResult{}, err
+			}
+			if err := e.clearCheckpointState(ctx, &snapshot, "before_final_answer"); err != nil {
+				return RunResult{}, err
+			}
+			return result, nil
+		}
+		if err := e.clearCheckpointState(ctx, &snapshot, "before_final_answer"); err != nil {
+			return RunResult{}, err
 		}
 		return RunResult{RunID: req.RunID, Status: runstate.RunStatusRunning, Output: string(raw), StructuredOutput: raw}, nil
 	}
@@ -100,11 +114,22 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		e.markRunFailedOrCancelled(ctx, req.RunID, err)
+		// Checkpoint vars stay intact; keep the run Running so the caller
+		// can retry ContinueAfterCheckpoint after a transient error.
 		return RunResult{}, err
 	}
 	if completeRun {
-		return e.completeRun(ctx, req.RunID, output)
+		result, err := e.completeRun(ctx, req.RunID, output)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if err := e.clearCheckpointState(ctx, &snapshot, "before_final_answer"); err != nil {
+			return RunResult{}, err
+		}
+		return result, nil
+	}
+	if err := e.clearCheckpointState(ctx, &snapshot, "before_final_answer"); err != nil {
+		return RunResult{}, err
 	}
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusRunning, Output: output}, nil
 }
@@ -141,12 +166,12 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		// A tool_approval checkpoint always persists the conversation up to
 		// and including the paused assistant turn. Missing messages mean the
 		// checkpoint state was already consumed by a prior resume (it is
-		// cleared by markCheckpointResumed); continuing with an empty
+		// cleared by clearCheckpointState); continuing with an empty
 		// conversation would silently re-run the tool loop from nothing.
 		return RunResult{}, fmt.Errorf("runtime: checkpoint messages for run %q are missing; the checkpoint may already have been consumed by a prior resume", snapshot.RunID)
 	}
 	prompt := applyHumanAmendment(snapshot.Variables, variableString(snapshot.Variables, checkpointPromptVar))
-	// Capture the amendment text before markCheckpointResumed clears it; it
+	// Capture the amendment text before clearCheckpointState clears it; it
 	// is injected as a user message only after every pending tool call of the
 	// paused assistant turn has produced its tool result, because providers
 	// reject a user message wedged between an assistant tool_calls message
@@ -174,11 +199,18 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		// caller can retry ContinueAfterCheckpoint after a transient error.
 		return RunResult{}, err
 	}
-	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
-		return RunResult{}, err
-	}
 	if completeRun {
-		return e.completeRun(ctx, snapshot.RunID, output)
+		result, err := e.completeRun(ctx, snapshot.RunID, output)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if err := e.clearCheckpointState(ctx, &snapshot, "tool_approval"); err != nil {
+			return RunResult{}, err
+		}
+		return result, nil
+	}
+	if err := e.clearCheckpointState(ctx, &snapshot, "tool_approval"); err != nil {
+		return RunResult{}, err
 	}
 	return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusRunning, Output: output}, nil
 }
@@ -377,16 +409,42 @@ func (e *Engine) resolveCheckpointVar(ctx context.Context, raw json.RawMessage) 
 	return e.blobs.Get(ctx, *ref.Blob)
 }
 
-func (e *Engine) isCheckpointResumed(snapshot runstate.RunSnapshot) bool {
-	raw, ok := snapshot.Variables[checkpointResumedVar]
+func (e *Engine) isBeforeFinalResumed(snapshot runstate.RunSnapshot) bool {
+	if checkpointBoolVar(snapshot.Variables, beforeFinalResumedVar) {
+		return true
+	}
+	// Accept the legacy global flag written by older releases.
+	return checkpointBoolVar(snapshot.Variables, checkpointResumedVar)
+}
+
+func checkpointBoolVar(vars map[string]json.RawMessage, key string) bool {
+	if vars == nil {
+		return false
+	}
+	raw, ok := vars[key]
 	if !ok || len(raw) == 0 {
 		return false
 	}
-	var resumed bool
-	if err := json.Unmarshal(raw, &resumed); err != nil {
+	var value bool
+	if err := json.Unmarshal(raw, &value); err != nil {
 		return false
 	}
-	return resumed
+	return value
+}
+
+// ClearOrphanedCheckpointState removes tool_approval checkpoint metadata when
+// the serialized conversation was already consumed and cannot be resumed.
+func ClearOrphanedCheckpointState(snapshot *runstate.RunSnapshot) {
+	if snapshot == nil || snapshot.Variables == nil {
+		return
+	}
+	if variableString(snapshot.Variables, checkpointKindVar) != "tool_approval" {
+		return
+	}
+	if len(snapshot.Variables[checkpointMessagesVar]) > 0 {
+		return
+	}
+	clearCheckpointVariables(snapshot.Variables)
 }
 
 func errorsAsRunPaused(err error, target *RunPausedError) bool {

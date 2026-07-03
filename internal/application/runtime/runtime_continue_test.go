@@ -595,10 +595,13 @@ func TestEngineToolApprovalCheckpointExternalizesMessagesAndCleansUp(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{checkpointMessagesVar, checkpointToolCallsVar, checkpointToolCountsVar} {
+	for _, key := range []string{checkpointMessagesVar, checkpointToolCallsVar, checkpointToolCountsVar, checkpointKindVar} {
 		if _, ok := snapshot.Variables[key]; ok {
 			t.Fatalf("expected checkpoint variable %q to be cleared after resume", key)
 		}
+	}
+	if _, ok := snapshot.Variables[beforeFinalResumedVar]; ok {
+		t.Fatal("tool_approval resume must not set before_final_resumed")
 	}
 }
 
@@ -739,3 +742,84 @@ func TestEngineRunAgentHonorsAgentHumanCheckpoint(t *testing.T) {
 		t.Fatalf("expected before_final pause, got %v", err)
 	}
 }
+
+func TestEngineContinueBeforeFinalPreservesCheckpointOnFailure(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat)
+	scenario := core.Scenario{
+		Name: "before-final-retry",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode:        core.OrchestrationAutonomous,
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true, Checkpoints: []string{"before_final_answer"}},
+		},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway, HumanGate: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-bf-retry", Agent: "assistant", Prompt: "hello"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.ContinueAfterCheckpoint(context.Background(), "run-bf-retry")
+	if err == nil {
+		t.Fatal("expected llm failure when no queued response after resume")
+	}
+	snapshot, err := repo.Load(context.Background(), "run-bf-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if variableString(snapshot.Variables, checkpointKindVar) != "before_final_answer" {
+		t.Fatalf("expected before_final checkpoint preserved, got %+v", snapshot.Variables)
+	}
+	if engine.isBeforeFinalResumed(snapshot) {
+		t.Fatal("before_final_resumed must not be set before successful continue")
+	}
+	gateway.QueueChat("default", llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "final"}})
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-bf-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || result.Output != "final" {
+		t.Fatalf("unexpected retry result: %+v", result)
+	}
+	snapshot, err = repo.Load(context.Background(), "run-bf-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !engine.isBeforeFinalResumed(snapshot) {
+		t.Fatal("expected before_final_resumed after successful continue")
+	}
+	if _, ok := snapshot.Variables[checkpointKindVar]; ok {
+		t.Fatal("expected checkpoint_kind cleared after successful continue")
+	}
+}
+
+func TestEngineRunStructuredRejectsTools(t *testing.T) {
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs: runstateinmem.NewRepository(),
+		LLM:  mock.NewGateway(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.RunStructured(context.Background(), RunRequest{RunID: "run-structured-tools", Agent: "assistant", Prompt: "go"})
+	if err == nil || !strings.Contains(err.Error(), "RunStructured does not execute tool loops") {
+		t.Fatalf("expected tools rejection, got %v", err)
+	}
+}
+

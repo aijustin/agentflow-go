@@ -169,7 +169,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return failRun(err)
 	}
-	if e.hasBeforeFinalCheckpoint(agent) && !e.isCheckpointResumed(snapshot) {
+	if e.hasBeforeFinalCheckpoint(agent) && !e.isBeforeFinalResumed(snapshot) {
 		if e.gate == nil {
 			return failRun(fmt.Errorf("runtime: human gate required for configured checkpoint"))
 		}
@@ -215,6 +215,11 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
+	if len(agent.Tools)+len(agent.SubAgents) > 0 {
+		err := fmt.Errorf("runtime: agent %q has tools/sub-agents configured; RunStructured does not execute tool loops; use Run instead", agent.Name)
+		e.markRunFailed(ctx, req.RunID, err)
+		return RunResult{}, err
+	}
 	if e.hasBeforeFinalCheckpoint(agent) {
 		if e.gate == nil {
 			err := fmt.Errorf("runtime: human gate required for configured checkpoint")
@@ -226,7 +231,7 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 			e.markRunFailed(ctx, req.RunID, err)
 			return RunResult{}, err
 		}
-		if !e.isCheckpointResumed(snapshot) {
+		if !e.isBeforeFinalResumed(snapshot) {
 			result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &snapshot, checkpointPauseOptions{outputMode: "structured"})
 			if err != nil {
 				e.markRunFailed(ctx, req.RunID, err)
@@ -374,7 +379,7 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 	if err != nil {
 		return core.AgentOutput{}, err
 	}
-	if e.hasBeforeFinalCheckpoint(agent) && !e.isCheckpointResumed(snapshot) {
+	if e.hasBeforeFinalCheckpoint(agent) && !e.isBeforeFinalResumed(snapshot) {
 		if e.gate == nil {
 			return core.AgentOutput{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
 		}
@@ -454,7 +459,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	if e.hasBeforeFinalCheckpoint(agent) && !e.isCheckpointResumed(loaded) {
+	if e.hasBeforeFinalCheckpoint(agent) && !e.isBeforeFinalResumed(loaded) {
 		if e.gate == nil {
 			err := fmt.Errorf("runtime: human gate required for configured checkpoint")
 			e.markRunFailed(ctx, req.RunID, err)
