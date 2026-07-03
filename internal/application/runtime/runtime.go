@@ -169,7 +169,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return failRun(err)
 	}
-	if e.shouldPauseBeforeFinal() && !e.isCheckpointResumed(snapshot) {
+	if e.hasBeforeFinalCheckpoint(agent) && !e.isCheckpointResumed(snapshot) {
 		if e.gate == nil {
 			return failRun(fmt.Errorf("runtime: human gate required for configured checkpoint"))
 		}
@@ -215,7 +215,7 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	if e.shouldPauseBeforeFinal() {
+	if e.hasBeforeFinalCheckpoint(agent) {
 		if e.gate == nil {
 			err := fmt.Errorf("runtime: human gate required for configured checkpoint")
 			e.markRunFailed(ctx, req.RunID, err)
@@ -260,10 +260,13 @@ func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw js
 }
 
 func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
-	// This is a static scenario configuration check, not a property of any
-	// particular run, so reject it before beginRun creates (and immediately
-	// has to fail) a run snapshot for a request that can never succeed.
-	if e.shouldPauseBeforeFinal() {
+	agent, err := e.resolveAgent(req.Agent)
+	if err != nil {
+		return nil, err
+	}
+	// Reject before beginRun creates (and immediately has to fail) a run
+	// snapshot for a request that can never succeed.
+	if e.hasBeforeFinalCheckpoint(agent) {
 		return nil, fmt.Errorf("runtime: streaming does not support before_final_answer checkpoint; use Run or RunStructured")
 	}
 	var cancel context.CancelFunc
@@ -363,6 +366,30 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 	if err := e.ensureRunActive(ctx, input.RunID); err != nil {
 		return core.AgentOutput{}, err
 	}
+	agent, err := e.resolveAgent(agentName)
+	if err != nil {
+		return core.AgentOutput{}, err
+	}
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, input.RunID)
+	if err != nil {
+		return core.AgentOutput{}, err
+	}
+	if e.hasBeforeFinalCheckpoint(agent) && !e.isCheckpointResumed(snapshot) {
+		if e.gate == nil {
+			return core.AgentOutput{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
+		}
+		req := RunRequest{
+			RunID:   input.RunID,
+			Agent:   agentName,
+			Prompt:  input.Prompt,
+			Context: input.Context,
+		}
+		result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &snapshot, checkpointPauseOptions{})
+		if err != nil {
+			return core.AgentOutput{}, err
+		}
+		return core.AgentOutput{}, RunPausedError{RunID: result.RunID, Token: result.Token, Kind: "before_final_answer"}
+	}
 	output, err := e.answer(ctx, RunRequest{
 		RunID:   input.RunID,
 		Agent:   agentName,
@@ -427,7 +454,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		e.markRunFailed(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
-	if e.shouldPauseBeforeFinal() && !e.isCheckpointResumed(loaded) {
+	if e.hasBeforeFinalCheckpoint(agent) && !e.isCheckpointResumed(loaded) {
 		if e.gate == nil {
 			err := fmt.Errorf("runtime: human gate required for configured checkpoint")
 			e.markRunFailed(ctx, req.RunID, err)

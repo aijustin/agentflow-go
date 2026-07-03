@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -633,5 +634,108 @@ func TestEngineContinueToolApprovalRejectsCorruptToolCounts(t *testing.T) {
 	_, err = engine.ContinueAfterCheckpoint(context.Background(), "run-corrupt")
 	if err == nil || !strings.Contains(err.Error(), "decode checkpoint tool counts") {
 		t.Fatalf("expected decode error, got %v", err)
+	}
+}
+
+func TestEngineContinueToolApprovalPreservesCheckpointOnFailure(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"retry"}`)}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Tools["echo"] = core.Tool{
+		Name:        "echo",
+		Type:        "builtin.echo",
+		Description: "Echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Approval:    core.ApprovalPause,
+		SideEffect:  core.SideEffectWrite,
+	}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"echo": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-retry", Agent: "assistant", Prompt: "go"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.ContinueAfterCheckpoint(context.Background(), "run-retry")
+	if err == nil {
+		t.Fatal("expected llm failure when no queued response after resume")
+	}
+	snapshot, err := repo.Load(context.Background(), "run-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusRunning {
+		t.Fatalf("failed resume should keep run running for retry, got %q", snapshot.Status)
+	}
+	if len(snapshot.Variables[checkpointMessagesVar]) == 0 {
+		t.Fatal("checkpoint messages should remain after failed resume")
+	}
+	if len(snapshot.Variables[checkpointToolCallsVar]) == 0 {
+		t.Fatal("checkpoint tool calls should remain after failed resume")
+	}
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "recovered"}},
+	})
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || result.Output != "recovered" {
+		t.Fatalf("unexpected retry result: %+v", result)
+	}
+}
+
+func TestEngineRunAgentHonorsAgentHumanCheckpoint(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat)
+	scenario := core.Scenario{
+		Name: "agent-hitl",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {
+				Name:   "assistant",
+				LLM:    "default",
+				Policy: core.AgentPolicy{HumanCheckpoints: []string{core.CheckpointBeforeFinalAnswer}},
+			},
+		},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway, HumanGate: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-agent-hitl", ScenarioName: scenario.Name, Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.RunAgent(context.Background(), "assistant", core.AgentInput{RunID: "run-agent-hitl", Prompt: "hello"})
+	var paused RunPausedError
+	if !errors.As(err, &paused) || paused.Kind != "before_final_answer" {
+		t.Fatalf("expected before_final pause, got %v", err)
 	}
 }

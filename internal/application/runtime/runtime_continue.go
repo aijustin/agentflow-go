@@ -152,9 +152,6 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	// reject a user message wedged between an assistant tool_calls message
 	// and its tool responses.
 	amendment := humanAmendmentText(snapshot.Variables)
-	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
-		return RunResult{}, err
-	}
 	profile, err := e.llmProfile(agent.LLM)
 	if err != nil {
 		return RunResult{}, err
@@ -173,7 +170,11 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		e.markRunFailedOrCancelled(ctx, snapshot.RunID, err)
+		// Checkpoint vars are still intact; keep the run Running so the
+		// caller can retry ContinueAfterCheckpoint after a transient error.
+		return RunResult{}, err
+	}
+	if err := e.markCheckpointResumed(ctx, &snapshot); err != nil {
 		return RunResult{}, err
 	}
 	if completeRun {
@@ -408,7 +409,7 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	}
 	call := pending[0]
 	tool, ok := e.scenario.Tools[call.Name]
-	if !ok || !approvalPauseRequired(tool) {
+	if !ok || !core.ToolApprovalPauseRequired(tool) {
 		return nil, nil
 	}
 	if e.gate == nil {

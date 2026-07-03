@@ -604,16 +604,16 @@ func mustMarshal(value any) json.RawMessage {
 	return raw
 }
 
-func (e *Engine) shouldPauseBeforeFinal() bool {
-	if !e.scenario.Orchestration.HumanInLoop.Enabled {
-		return false
+func (e *Engine) hasBeforeFinalCheckpoint(agent core.Agent) bool {
+	hitl := e.scenario.Orchestration.HumanInLoop
+	if hitl.Enabled && core.HasHumanCheckpoint(hitl.Checkpoints, core.CheckpointBeforeFinalAnswer) {
+		return true
 	}
-	for _, checkpoint := range e.scenario.Orchestration.HumanInLoop.Checkpoints {
-		if checkpoint == "before_final_answer" {
-			return true
-		}
-	}
-	return false
+	return core.HasHumanCheckpoint(agent.Policy.HumanCheckpoints, core.CheckpointBeforeFinalAnswer)
+}
+
+func (e *Engine) shouldPauseBeforeFinal(agent core.Agent) bool {
+	return e.gate != nil && e.hasBeforeFinalCheckpoint(agent)
 }
 
 func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {

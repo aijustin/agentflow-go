@@ -421,6 +421,21 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 		return err
 	}
 	ctx = core.ContextWithWorkflowNode(ctx, storageNodeID(ctx, node.ID))
+	if reason := core.ToolApprovalDenialReason(tool); reason != "" {
+		return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
+	}
+	if core.ToolApprovalPauseRequired(tool) {
+		if approvedInput, ok, err := r.workflowToolApprovalInput(ctx, runID, node.ID); err != nil {
+			return err
+		} else if ok {
+			input = approvedInput
+			if err := r.clearWorkflowToolApprovalCheckpoint(ctx, runID); err != nil {
+				return err
+			}
+		} else {
+			return r.pauseForWorkflowToolApproval(ctx, scenario, node, runID, tool, input)
+		}
+	}
 	if r.toolGov != nil {
 		if err := r.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
 			RunID:      runID,

@@ -67,7 +67,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		tool.Name = call.Name
 	}
 	if !options.approved {
-		if reason := approvalDenialReason(tool); reason != "" {
+		if reason := core.ToolApprovalDenialReason(tool); reason != "" {
 			result := core.ToolResult{Tool: call.Name, Error: reason}
 			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
 			return result, nil
@@ -330,42 +330,6 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 		}
 	}
 	return core.ToolResult{}, lastErr
-}
-
-func approvalDenialReason(tool core.Tool) string {
-	switch tool.Approval {
-	case "", core.ApprovalNever, core.ApprovalPause:
-		return ""
-	case core.ApprovalAlways:
-		return "tool requires approval"
-	case core.ApprovalRisky:
-		switch tool.SideEffect {
-		case core.SideEffectWrite, core.SideEffectExternal, core.SideEffectDangerous:
-			return "risky tool requires approval"
-		default:
-			return ""
-		}
-	default:
-		return fmt.Sprintf("unsupported approval policy %q", tool.Approval)
-	}
-}
-
-func approvalPauseRequired(tool core.Tool) bool {
-	switch tool.Approval {
-	case core.ApprovalPause:
-		return true
-	case core.ApprovalAlways:
-		return true
-	case core.ApprovalRisky:
-		switch tool.SideEffect {
-		case core.SideEffectWrite, core.SideEffectExternal, core.SideEffectDangerous:
-			return true
-		default:
-			return false
-		}
-	default:
-		return false
-	}
 }
 
 func agentAllowsTool(agent core.Agent, tool string) bool {

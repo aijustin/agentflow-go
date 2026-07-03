@@ -182,11 +182,20 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent,
 	if profile, ok := e.scenario.LLMs[agent.LLM]; ok {
 		recallLimit = profile.Context.Normalize().MemoryRecallLimit
 		if recallLimit > 0 && len(messages) > recallLimit {
-			messages = messages[len(messages)-recallLimit:]
+			messages = trimRecallMessages(messages, recallLimit)
 		}
 	}
 	e.emitJSON(ctx, core.EventMemoryRead, runID, memoryReadPayload(agent, stored, storedCount, len(messages), recallLimit))
 	return messages, nil
+}
+
+// trimRecallMessages keeps at most limit recent messages while preserving a
+// valid assistant/tool_call pairing contract for the recalled slice.
+func trimRecallMessages(messages []llm.Message, limit int) []llm.Message {
+	if limit <= 0 || len(messages) <= limit {
+		return messages
+	}
+	return enforceToolCallPairing(messages[len(messages)-limit:])
 }
 
 func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent, messages []memoryMessage) error {
@@ -317,7 +326,7 @@ func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Ag
 	if profile, ok := e.scenario.LLMs[agent.LLM]; ok {
 		recallLimit = profile.Context.Normalize().MemoryRecallLimit
 		if recallLimit > 0 && len(messages) > recallLimit {
-			messages = messages[len(messages)-recallLimit:]
+			messages = trimRecallMessages(messages, recallLimit)
 		}
 	}
 	payload := memoryReadPayload(agent, stored, len(stored), len(messages), recallLimit)
