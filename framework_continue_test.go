@@ -622,6 +622,49 @@ func TestFrameworkResumeRunByIDWithoutContinue(t *testing.T) {
 	}
 }
 
+// TestFrameworkResumeRunByIDWithoutContinueClearsCheckpoint verifies the H3
+// fix: approving a paused run without continuing execution must consume the
+// checkpoint metadata so a later Run() on the same ID cannot re-enter or act on
+// the already-approved checkpoint.
+func TestFrameworkResumeRunByIDWithoutContinueClearsCheckpoint(t *testing.T) {
+	fw, err := agentflow.New(
+		builder.MinimalHumanInLoop("assistant"),
+		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-clear-ckpt", Agent: "assistant", Prompt: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	repo := fw.RunStateRepository()
+	paused, err := repo.Load(context.Background(), "run-clear-ckpt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused run, got %q", paused.Status)
+	}
+	if _, ok := paused.Variables["checkpoint_kind"]; !ok {
+		t.Fatal("expected checkpoint_kind present while paused")
+	}
+	if _, err := fw.ResumeRunByID(context.Background(), "run-clear-ckpt", core.DecisionApprove, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := repo.Load(context.Background(), "run-clear-ckpt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Status != runstate.RunStatusRunning {
+		t.Fatalf("expected running after resume without continue, got %q", resumed.Status)
+	}
+	for _, key := range []string{"checkpoint_kind", "checkpoint_prompt", "checkpoint_agent", "human_amendment"} {
+		if _, ok := resumed.Variables[key]; ok {
+			t.Fatalf("expected checkpoint variable %q cleared after resume without continue", key)
+		}
+	}
+}
+
 func TestFrameworkResumeRunByIDRejectsNonPaused(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalAutonomous("assistant"),

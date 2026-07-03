@@ -808,6 +808,56 @@ func TestEngineContinueBeforeFinalPreservesCheckpointOnFailure(t *testing.T) {
 	}
 }
 
+// failingPauseGate always fails to pause, exercising the rollback path where a
+// checkpoint's metadata was written to the snapshot but the gate never moved the
+// run to Paused. The returned error is not ErrStaleSnapshot, so pauseWithRetry
+// gives up after a single attempt instead of retrying.
+type failingPauseGate struct{}
+
+func (failingPauseGate) Pause(context.Context, core.CheckpointState) (string, error) {
+	return "", errors.New("pause unavailable")
+}
+
+func (failingPauseGate) Resume(context.Context, string, core.Decision, json.RawMessage) error {
+	return nil
+}
+
+func TestEngineBeforeFinalRollsBackCheckpointWhenPauseFails(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat)
+	scenario := core.Scenario{
+		Name: "before-final-pause-fail",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode:        core.OrchestrationAutonomous,
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true, Checkpoints: []string{"before_final_answer"}},
+		},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway, HumanGate: failingPauseGate{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(context.Background(), RunRequest{RunID: "run-bf-pause-fail", Agent: "assistant", Prompt: "hello"}); err == nil {
+		t.Fatal("expected pause failure to propagate")
+	}
+	snapshot, err := repo.Load(context.Background(), "run-bf-pause-fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range checkpointVariableKeys() {
+		if _, ok := snapshot.Variables[key]; ok {
+			t.Fatalf("checkpoint variable %q must be rolled back after pause failure, got %s", key, snapshot.Variables[key])
+		}
+	}
+	if engine.isBeforeFinalResumed(snapshot) {
+		t.Fatal("before_final_resumed must not be set when the pause never happened")
+	}
+}
+
 func TestEngineRunStructuredRejectsTools(t *testing.T) {
 	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
 	engine, err := NewEngine(scenario, Dependencies{
