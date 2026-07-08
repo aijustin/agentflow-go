@@ -21,6 +21,7 @@ scenario:
     session:
       type: in_memory
       scope: session
+      namespace: roundtrip-session
   tools:
     echo:
       type: builtin.echo

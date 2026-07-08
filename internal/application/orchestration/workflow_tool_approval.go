@@ -10,11 +10,12 @@ import (
 )
 
 const (
-	workflowCheckpointKindVar       = "checkpoint_kind"
-	workflowCheckpointNodeVar       = "checkpoint_workflow_node"
-	workflowCheckpointToolInputVar  = "checkpoint_tool_input"
-	workflowCheckpointToolRefVar    = "checkpoint_tool_ref"
-	workflowToolApprovalKind        = "workflow_tool_approval"
+	workflowCheckpointKindVar      = "checkpoint_kind"
+	workflowCheckpointNodeVar      = "checkpoint_workflow_node"
+	workflowCheckpointToolInputVar = "checkpoint_tool_input"
+	workflowCheckpointToolRefVar   = "checkpoint_tool_ref"
+	workflowToolApprovalKind       = "workflow_tool_approval"
+	workflowToolCallCountsVar      = "workflow_tool_call_counts"
 )
 
 func (r *WorkflowRunner) workflowToolApprovalInput(ctx context.Context, runID, nodeID string) (json.RawMessage, bool, error) {
@@ -112,4 +113,62 @@ func variableString(vars map[string]json.RawMessage, key string) string {
 		return string(raw)
 	}
 	return value
+}
+
+// toolCallCount returns how many successful executions of toolRef have been
+// recorded for this run (used for RateCap). Counts persist across pauses so
+// resume cannot reset a per-run budget.
+func (r *WorkflowRunner) toolCallCount(ctx context.Context, runID, toolRef string) (int, error) {
+	if r.runs == nil {
+		return 0, nil
+	}
+	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
+	if err != nil {
+		return 0, err
+	}
+	counts, err := decodeToolCallCounts(snapshot.Variables)
+	if err != nil {
+		return 0, err
+	}
+	return counts[toolRef], nil
+}
+
+func (r *WorkflowRunner) incrementToolCallCount(ctx context.Context, runID, toolRef string) error {
+	if r.runs == nil {
+		return nil
+	}
+	return r.saveSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
+		if snapshot.Variables == nil {
+			snapshot.Variables = make(map[string]json.RawMessage)
+		}
+		counts, err := decodeToolCallCounts(snapshot.Variables)
+		if err != nil {
+			return err
+		}
+		if counts == nil {
+			counts = map[string]int{}
+		}
+		counts[toolRef]++
+		raw, err := json.Marshal(counts)
+		if err != nil {
+			return err
+		}
+		snapshot.Variables[workflowToolCallCountsVar] = raw
+		return nil
+	})
+}
+
+func decodeToolCallCounts(vars map[string]json.RawMessage) (map[string]int, error) {
+	if vars == nil {
+		return nil, nil
+	}
+	raw, ok := vars[workflowToolCallCountsVar]
+	if !ok || len(raw) == 0 {
+		return nil, nil
+	}
+	var counts map[string]int
+	if err := json.Unmarshal(raw, &counts); err != nil {
+		return nil, fmt.Errorf("orchestration: decode tool call counts: %w", err)
+	}
+	return counts, nil
 }

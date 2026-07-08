@@ -145,7 +145,7 @@ func (f *Framework) RunStudioGraph(ctx context.Context, edited graph.ScenarioGra
 	if err := ValidateScenario(scenario); err != nil {
 		return RunResult{}, err
 	}
-	release, err := f.acquireRunLease(ctx, &req)
+	ctx, release, err := f.acquireRunLease(ctx, &req)
 	if err != nil {
 		return RunResult{}, err
 	}

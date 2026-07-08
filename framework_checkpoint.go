@@ -100,7 +100,9 @@ func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (R
 		return RunResult{}, fmt.Errorf("agentflow: ResumeFromStep requires a configured workflow")
 	}
 	if f.runLocker != nil {
-		release, err := f.holdRunLease(ctx, runID)
+		var release func()
+		var err error
+		ctx, release, err = f.holdRunLease(ctx, runID)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -183,7 +185,9 @@ func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, vers
 		return RunResult{}, fmt.Errorf("agentflow: checkpoint history is not configured")
 	}
 	if f.runLocker != nil {
-		release, err := f.holdRunLease(ctx, runID)
+		var release func()
+		var err error
+		ctx, release, err = f.holdRunLease(ctx, runID)
 		if err != nil {
 			return RunResult{}, err
 		}

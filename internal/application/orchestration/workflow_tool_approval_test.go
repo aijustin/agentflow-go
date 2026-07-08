@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
 	"github.com/aijustin/agentflow-go/internal/adapter/registry"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
+	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
 type staticTool struct{}
@@ -197,5 +201,143 @@ func TestWorkflowRunnerPausesToolNodeApproval(t *testing.T) {
 	}
 	if _, ok := snapshot.StepOutputs["call"]; !ok {
 		t.Fatalf("expected tool output saved: %+v", snapshot.StepOutputs)
+	}
+}
+
+// F1: security.Policy.Authorize must deny workflow tool nodes the same way
+// the autonomous dispatch path does.
+func TestWorkflowRunnerAuthorizesToolViaSecurityPolicy(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	reg := registry.New()
+	if err := reg.RegisterTool("risky", staticTool{}); err != nil {
+		t.Fatal(err)
+	}
+	policy := security.PolicyFunc(func(context.Context, identity.Principal, security.Action, security.Resource) error {
+		return security.ErrUnauthorized
+	})
+	runner := NewWorkflowRunner(reg, repo, nil, WithSecurityPolicy(policy))
+	scenario := core.Scenario{
+		Name: "wf-sec",
+		Tools: map[string]core.Tool{
+			"risky": {Name: "risky", Type: "builtin.static", Approval: core.ApprovalNever},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "call", Kind: core.NodeTool, Ref: "risky"},
+			}},
+		},
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-sec", ScenarioName: "wf-sec", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	principal := identity.Principal{ID: "svc", Type: identity.PrincipalService, Roles: []identity.Role{identity.RoleService}}
+	err := runner.Run(identity.WithPrincipal(context.Background(), principal), scenario, "run-sec")
+	if err == nil || !strings.Contains(err.Error(), "unauthorized") {
+		t.Fatalf("expected security denial, got %v", err)
+	}
+}
+
+func TestWorkflowRunnerEnforcesRateCap(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	reg := registry.New()
+	if err := reg.RegisterTool("risky", staticTool{}); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewWorkflowRunner(reg, repo, nil)
+	scenario := core.Scenario{
+		Name: "wf-rate",
+		Tools: map[string]core.Tool{
+			"risky": {Name: "risky", Type: "builtin.static", Approval: core.ApprovalNever, RateCap: 1},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "first", Kind: core.NodeTool, Ref: "risky"},
+				{ID: "second", Kind: core.NodeTool, Ref: "risky", DependsOn: []string{"first"}},
+			}},
+		},
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-rate", ScenarioName: "wf-rate", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	err := runner.Run(context.Background(), scenario, "run-rate")
+	if err == nil || !strings.Contains(err.Error(), "rate cap exceeded") {
+		t.Fatalf("expected rate cap denial, got %v", err)
+	}
+}
+
+func TestWorkflowRunnerValidatesToolInputWhenEnabled(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	reg := registry.New()
+	if err := reg.RegisterTool("risky", staticTool{}); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewWorkflowRunner(reg, repo, nil)
+	scenario := core.Scenario{
+		Name: "wf-validate",
+		Tools: map[string]core.Tool{
+			"risky": {
+				Name: "risky", Type: "builtin.static", Approval: core.ApprovalNever,
+				InputSchema: json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string"}}}`),
+			},
+		},
+		Runtime: core.RuntimePolicy{ValidateToolInput: true},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "call", Kind: core.NodeTool, Ref: "risky", Input: json.RawMessage(`{}`)},
+			}},
+		},
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-validate", ScenarioName: "wf-validate", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	err := runner.Run(context.Background(), scenario, "run-validate")
+	if err == nil || !strings.Contains(err.Error(), "invalid tool input") {
+		t.Fatalf("expected input validation denial, got %v", err)
+	}
+}
+
+type hangTool struct{}
+
+func (hangTool) Execute(ctx context.Context, _ core.ToolCall) (core.ToolResult, error) {
+	<-ctx.Done()
+	return core.ToolResult{}, ctx.Err()
+}
+
+func TestWorkflowRunnerAppliesPerToolTimeout(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	reg := registry.New()
+	if err := reg.RegisterTool("hang", hangTool{}); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewWorkflowRunner(reg, repo, nil)
+	scenario := core.Scenario{
+		Name: "wf-timeout",
+		Tools: map[string]core.Tool{
+			"hang": {Name: "hang", Type: "builtin.hang", Approval: core.ApprovalNever, Timeout: 20 * time.Millisecond},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "call", Kind: core.NodeTool, Ref: "hang"},
+			}},
+		},
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-timeout", ScenarioName: "wf-timeout", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	err := runner.Run(context.Background(), scenario, "run-timeout")
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded from per-tool timeout, got %v", err)
 	}
 }

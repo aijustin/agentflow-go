@@ -12,11 +12,15 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
+	"github.com/aijustin/agentflow-go/internal/toolinvoke"
+	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/retry"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
+	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
 type ToolRegistry interface {
@@ -63,6 +67,22 @@ func WithWorkflowToolPolicy(policy governance.ToolPolicy) RunnerOption {
 	}
 }
 
+// WithSecurityPolicy wires the same authorization policy used by the
+// autonomous tool loop, so NodeTool executions cannot bypass RBAC.
+func WithSecurityPolicy(policy security.Policy) RunnerOption {
+	return func(r *WorkflowRunner) {
+		r.policy = policy
+	}
+}
+
+// WithAuditSink wires the audit sink used when a security policy denies a
+// workflow tool invocation.
+func WithAuditSink(sink audit.Sink) RunnerOption {
+	return func(r *WorkflowRunner) {
+		r.audit = sink
+	}
+}
+
 // WithOutputRedactor wires an output redactor for persisted workflow step outputs.
 func WithOutputRedactor(redactor governance.OutputRedactor) RunnerOption {
 	return func(r *WorkflowRunner) {
@@ -85,6 +105,8 @@ type WorkflowRunner struct {
 	runs     runstate.Repository
 	blobs    runstate.BlobStore
 	events   core.EventSink
+	policy   security.Policy
+	audit    audit.Sink
 	toolGov  governance.ToolPolicy
 	redactor governance.OutputRedactor
 	memory   ConversationMemoryRewinder
@@ -355,12 +377,7 @@ func nodeAutoRetrySafe(scenario core.Scenario, node core.WorkflowNode) bool {
 	if !ok {
 		return true
 	}
-	switch tool.SideEffect {
-	case core.SideEffectWrite, core.SideEffectExternal, core.SideEffectDangerous:
-		return false
-	default:
-		return true
-	}
+	return toolinvoke.AutoRetrySafe(tool)
 }
 
 func (r *WorkflowRunner) runNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
@@ -442,27 +459,43 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	// that requires approval (pause / always / risky-with-side-effect)
 	// pauses for a human decision rather than failing the node. Only when no
 	// gate is available do we fall back to a hard denial.
+	approvedResume := false
 	if core.ToolApprovalPauseRequired(tool) {
 		if r.gate == nil {
-			if reason := core.ToolApprovalDenialReason(tool); reason != "" {
+			if reason := toolinvoke.DenialWithoutGate(tool, false, false); reason != "" {
 				return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
 			}
-			return fmt.Errorf("orchestration: tool %q requires human gate for pause approval", node.Ref)
 		}
 		if approvedInput, ok, err := r.workflowToolApprovalInput(ctx, runID, node.ID); err != nil {
 			return err
 		} else if ok {
 			input = approvedInput
+			approvedResume = true
 			if err := r.clearWorkflowToolApprovalCheckpoint(ctx, runID); err != nil {
 				return err
 			}
-		} else {
+		} else if r.gate != nil {
 			return r.pauseForWorkflowToolApproval(ctx, scenario, node, runID, tool, input)
 		}
-	} else if reason := core.ToolApprovalDenialReason(tool); reason != "" {
-		// Unsupported/unknown approval policies are not pausable but must
-		// still be rejected rather than executed.
+	}
+	if reason := toolinvoke.DenialWithoutGate(tool, r.gate != nil, approvedResume); reason != "" {
 		return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
+	}
+	if err := toolinvoke.ValidateInput(scenario.Runtime.ValidateToolInput, tool, input); err != nil {
+		return fmt.Errorf("orchestration: tool %q: %w", node.Ref, err)
+	}
+	if tool.RateCap > 0 {
+		count, err := r.toolCallCount(ctx, runID, node.Ref)
+		if err != nil {
+			return err
+		}
+		if count >= tool.RateCap {
+			return fmt.Errorf("orchestration: tool %q rate cap exceeded: %d call(s) per run", node.Ref, tool.RateCap)
+		}
+	}
+	resource := toolinvoke.SecurityResource(node.Ref, tool, map[string]string{"node_id": node.ID})
+	if err := r.authorizeTool(ctx, runID, resource); err != nil {
+		return fmt.Errorf("orchestration: tool %q unauthorized: %w", node.Ref, err)
 	}
 	if r.toolGov != nil {
 		if err := r.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
@@ -482,9 +515,12 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 		return fmt.Errorf("orchestration: tool %q not found", node.Ref)
 	}
 	// Node-level retry (including the side-effect safety gate) is applied by
-	// runNodeWithRetry, so a single execution here is correct.
+	// runNodeWithRetry, so a single execution here is correct. A per-tool
+	// Timeout mirrors the autonomous executeToolWithRetry bound.
+	execCtx, cancelTimeout := workflowTimeout(ctx, tool.Timeout)
+	defer cancelTimeout()
 	result, err := safecall.Invoke("orchestration: tool execute", func() (core.ToolResult, error) {
-		return executor.Execute(ctx, core.ToolCall{RunID: runID, Tool: node.Ref, Input: input})
+		return executor.Execute(execCtx, core.ToolCall{RunID: runID, Tool: node.Ref, Input: input})
 	})
 	if err != nil {
 		return err
@@ -494,6 +530,11 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	// step output.
 	if result.Error != "" {
 		return fmt.Errorf("orchestration: tool %q failed: %s", node.Ref, result.Error)
+	}
+	if tool.RateCap > 0 {
+		if err := r.incrementToolCallCount(ctx, runID, node.Ref); err != nil {
+			return err
+		}
 	}
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, result)
 }
@@ -1050,4 +1091,46 @@ func (r *WorkflowRunner) emit(ctx context.Context, typ core.EventType, scenarioN
 		event.ParentSpanID = parentSpanID
 	}
 	_ = r.events.Emit(ctx, event)
+}
+
+// authorizeTool mirrors the autonomous runtime's security.Policy check so a
+// workflow NodeTool cannot bypass RBAC that would deny the same tool in a
+// tool loop. When no policy is configured this is a no-op.
+func (r *WorkflowRunner) authorizeTool(ctx context.Context, runID string, resource security.Resource) error {
+	if r.policy == nil {
+		return nil
+	}
+	principal, err := identity.RequirePrincipal(ctx)
+	if err != nil {
+		r.recordAudit(ctx, audit.Event{
+			Type:      audit.EventPolicyDenied,
+			Principal: identity.Principal{},
+			Action:    security.ActionToolInvoke,
+			Resource:  resource,
+			RunID:     runID,
+			Outcome:   "denied",
+			Reason:    security.ErrUnauthenticated.Error(),
+		})
+		return security.ErrUnauthenticated
+	}
+	if err := r.policy.Authorize(ctx, principal, security.ActionToolInvoke, resource); err != nil {
+		r.recordAudit(ctx, audit.Event{
+			Type:      audit.EventPolicyDenied,
+			Principal: principal,
+			Action:    security.ActionToolInvoke,
+			Resource:  resource,
+			RunID:     runID,
+			Outcome:   "denied",
+			Reason:    err.Error(),
+		})
+		return err
+	}
+	return nil
+}
+
+func (r *WorkflowRunner) recordAudit(ctx context.Context, event audit.Event) {
+	if r.audit == nil {
+		return
+	}
+	_ = r.audit.Record(ctx, event.WithDefaults(time.Now().UTC()))
 }

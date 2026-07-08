@@ -240,13 +240,15 @@ for chunk := range chunks {
 }
 ```
 
-当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 对分类后的临时 LLM/工具错误做指数退避重试，执行注册的 ToolExecutor，将受限后的工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。`Stream` 也支持带工具的 Agent：它会运行同一套受治理工具循环，并把最终答案作为流式 chunk 输出。
+当 Agent 配置了工具，并且 LLM Gateway 支持 `CapToolCall` 时，Runtime 会执行自主工具调用循环：向 LLM 发送工具规格，校验返回的工具调用是否在 Agent 白名单中，执行审批策略和每次运行的 `rate_cap`，按 `retry_limit`/`max_retries` 对分类后的临时 LLM/工具错误做指数退避重试（`write`/`external`/`dangerous` 工具默认不自动重试），执行注册的 ToolExecutor，将受限后的工具结果回填给 LLM，直到 LLM 返回最终答案或达到 `max_steps`。
+
+`Stream` 也支持带工具的 Agent，但语义是**阻塞跑完整套受治理 tool loop，再把最终答案作为单个 `Done` chunk 发出**，并非逐 token / 逐 tool 事件流。若 Agent 配置了 `before_final_answer` HITL checkpoint，`Stream` 会直接拒绝（请改用 `Run` / `RunStructured`）；工具级 `approval: pause` 仍可通过流结束时的 `Paused` chunk 暴露。固定工作流若含 `agent` 节点，`RunStructured` / `Stream` 会拒绝，以免 agent 被完整执行后再二次跑自主/结构化阶段。
 
 配置 `orchestration.planning.enabled: true` 后，Runtime 会在自主工具循环前先执行规划 pass。规划默认使用当前执行 Agent，也可以通过 `orchestration.planning.agent` 指定专门规划 Agent；生成的简短 JSON 计划会注入后续执行上下文。设置 `orchestration.planning.execute: true` 可在 tool loop 中跟踪 plan step 完成状态（见 `builder.MultiExpertResearch()`）。
 
 固定工作流支持 `tool`、`agent`、`skill`、`human_gate`、`transform`、`parallel_group` 和 `loop` 节点。`condition` 可使用 `exists(...)`、`missing(...)`、`eq(...)`、`ne(...)` 读取 `steps.<node_id>` 路径，`transform` 节点可用 `set`/`copy` 从前序步骤构造结构化输出。
 
-当 Agent 绑定 `memory` 时，Runtime 会在上下文准备前读取 conversation/session 记忆并注入 LLM 上下文，执行后追加用户输入、助手回复和工具观察结果。根门面会自动为 `in_memory` 类型创建内存仓库，除非调用方显式传入自定义仓库。
+当 Agent 绑定 `memory` 时，Runtime 会在上下文准备前读取 conversation/session 记忆并注入 LLM 上下文，执行后追加用户输入、助手回复和工具观察结果。根门面会自动为 `in_memory` 类型创建内存仓库，除非调用方显式传入自定义仓库。`session` / `long_term` 作用域必须显式配置 `namespace`（否则 Validate/New 失败），避免默认落到 `scenario:agent` 导致跨调用方串会话。
 
 启用内置 HMAC Token 的 HITL Gate：
 
@@ -894,7 +896,7 @@ internal/
 - `RunStateRepository` 与 Memory 分离，专门处理可恢复的运行快照。
 - 上下文治理按 LLM Profile 生效：不同 Agent/Tool 可以路由到具有不同窗口、输出、thinking 和压缩策略的 LLM Profile。
 - 自主执行支持可选 planning pass、LLM 工具调用循环、工具白名单、审批拒绝、每次运行 rate cap、分类重试、受限工具结果回填和生命周期事件。
-- 结构化输出使用 Agent 级 `output_schema` 和 Provider 的 `StructuredOutputter`；普通流式输出使用 `Streamer`，带工具 Agent 的流式输出会复用受治理工具循环，并在结束后持久化累积的最终答案。
+- 结构化输出使用 Agent 级 `output_schema` 和 Provider 的 `StructuredOutputter`；普通流式输出使用 `Streamer`；带工具 Agent 的 `Stream` 会阻塞跑完受治理工具循环后以单个 `Done` chunk 交付最终答案（并持久化）。`before_final_answer` 与带 `agent` 节点的 `fixed_workflow` 不被 `Stream`/`RunStructured` 支持。
 - Memory 绑定已接入 Runtime 读写，用于 conversation/session 历史。
 - 固定工作流按图依赖和边执行，支持有限并行、`parallel_group`/`loop` 节点、条件跳过、重试、transform/agent/human-gate 节点和 CAS 安全输出保存。
 - Workflow human-gate 节点会持久化 `CurrentNodeID`/`PendingGate`，审批后可继续执行下游图；`ResumeAndContinue` 还支持自主、工作流和工具审批暂停路径的续跑。

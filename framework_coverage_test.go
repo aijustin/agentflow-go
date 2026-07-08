@@ -159,9 +159,10 @@ func TestFrameworkMemoryAndTierOptions(t *testing.T) {
 	scenario := builder.MinimalAutonomous("assistant")
 	scenario.Memories = map[string]core.MemoryRef{
 		"session": {
-			Type:  "custom",
-			Scope: string(memory.ScopeSession),
-			Tiers: &core.MemoryTierSettings{Enabled: true, HotCapacity: 2},
+			Type:      "custom",
+			Scope:     string(memory.ScopeSession),
+			Namespace: "tier-opt-session",
+			Tiers:     &core.MemoryTierSettings{Enabled: true, HotCapacity: 2},
 		},
 	}
 	scenario.Agents["assistant"] = core.Agent{

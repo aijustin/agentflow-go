@@ -15,6 +15,8 @@ func MockLLM() LLMOption {
 }
 
 // SessionInMemory configures in_memory memory scoped to session.
+// Callers must also set MemoryNamespace(...): session/long_term memory
+// requires an explicit namespace so history is not shared across callers.
 func SessionInMemory() MemoryOption {
 	return InMemoryMemory(MemoryScopeSession)
 }
@@ -69,7 +71,14 @@ func (b *ScenarioBuilder) DefaultMockLLM() *ScenarioBuilder {
 
 // SessionMemory registers the conventional session-scoped in_memory profile.
 func (b *ScenarioBuilder) SessionMemory() *ScenarioBuilder {
-	return b.Memory(NameSessionMemory, SessionInMemory())
+	// Explicit namespace (= scenario name) is required for session scope;
+	// callers that need multi-tenant/session isolation should set
+	// MemoryNamespace themselves after SessionMemory or use Memory(...).
+	ns := b.s.Name
+	if ns == "" {
+		ns = NameSessionMemory
+	}
+	return b.Memory(NameSessionMemory, SessionInMemory(), MemoryNamespace(ns))
 }
 
 // EchoTool registers the conventional echo tool declaration.

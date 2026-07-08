@@ -47,9 +47,9 @@ func TestWriteMemoryEnforcesStoreLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ns, ok := engine.memoryNamespace("run-cap", a)
-	if !ok {
-		t.Fatal("expected namespace")
+	ns, ok, err := engine.memoryNamespace("run-cap", a)
+	if err != nil || !ok {
+		t.Fatalf("expected namespace, ok=%v err=%v", ok, err)
 	}
 	raw, err := memRepo.Get(ctx, ns, "messages")
 	if err != nil {
@@ -94,7 +94,10 @@ func TestWriteMemoryDefaultIsUnbounded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ns, _ := engine.memoryNamespace("run-unb", a)
+	ns, ok, err := engine.memoryNamespace("run-unb", a)
+	if err != nil || !ok {
+		t.Fatalf("expected namespace, ok=%v err=%v", ok, err)
+	}
 	raw, err := memRepo.Get(ctx, ns, "messages")
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +228,10 @@ func TestRewindConversationMemoryTruncatesStoredMessages(t *testing.T) {
 	if err := engine.RewindConversationMemory(ctx, "run-rw", "assistant", 2); err != nil {
 		t.Fatal(err)
 	}
-	ns, _ := engine.memoryNamespace("run-rw", a)
+	ns, ok, err := engine.memoryNamespace("run-rw", a)
+	if err != nil || !ok {
+		t.Fatalf("expected namespace, ok=%v err=%v", ok, err)
+	}
 	raw, err := memRepo.Get(ctx, ns, "messages")
 	if err != nil {
 		t.Fatal(err)

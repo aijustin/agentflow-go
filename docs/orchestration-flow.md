@@ -212,7 +212,8 @@ flowchart LR
     CAP --> CHAT["Gateway.Chat<br/>普通对话"]
     CAP --> TOOLS["ToolCaller.ChatWithTools<br/>tool loop"]
     CAP --> STRUCT["StructuredOutputter.StructuredChat<br/>RunStructured / planning"]
-    CAP --> STREAM["Streamer.StreamChat<br/>Framework.Stream"]
+    CAP --> STREAM["Streamer.StreamChat<br/>无工具 Stream"]
+    CAP --> STREAM_TOOL["answerWithTools<br/>阻塞后单 chunk Done"]
 
     subgraph PROVIDERS["Provider 实现"]
         OAI["OpenAI-compatible"]
@@ -225,7 +226,15 @@ flowchart LR
     TOOLS --> PROVIDERS
     STRUCT --> PROVIDERS
     STREAM --> PROVIDERS
+    STREAM_TOOL --> TOOLS
 ```
+
+**Stream 语义限制：**
+
+- 无工具：走 `Streamer.StreamChat`，增量 token chunk。
+- 有工具：阻塞跑完与 `Run` 相同的受治理 tool loop，再发一个 `Done` chunk（非逐 tool 事件流）。
+- `before_final_answer`：`Stream` 硬拒绝；`tool_approval` pause 可通过终端 `Paused` chunk 暴露。
+- `fixed_workflow` 含 `agent` 节点时，`RunStructured` / `Stream` 拒绝，避免 agent 双重执行。
 
 **消息组装顺序**（`prepareContext`）：
 

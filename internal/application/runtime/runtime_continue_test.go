@@ -858,6 +858,35 @@ func TestEngineBeforeFinalRollsBackCheckpointWhenPauseFails(t *testing.T) {
 	}
 }
 
+func TestEngineRunAgentHonorsOutputSchema(t *testing.T) {
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapStructuredOutput)
+	gateway.QueueStructured("default", json.RawMessage(`{"answer":"structured"}`))
+	scenario := baseScenario(false)
+	agent := scenario.Agents["assistant"]
+	agent.Policy.OutputSchema = json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)
+	scenario.Agents["assistant"] = agent
+	repo := runstateinmem.NewRepository()
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-agent-schema", ScenarioName: "scenario", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := engine.RunAgent(context.Background(), "assistant", core.AgentInput{
+		RunID: "run-agent-schema", Prompt: "json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out.Raw) != `{"answer":"structured"}` {
+		t.Fatalf("expected structured Raw, got %+v", out)
+	}
+}
+
 func TestEngineRunStructuredRejectsTools(t *testing.T) {
 	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
 	engine, err := NewEngine(scenario, Dependencies{

@@ -149,7 +149,10 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent,
 	if manager, settings, ok := e.tierManager(agent); ok {
 		return e.readTierMemory(ctx, runID, agent, manager, settings, query)
 	}
-	repo, ns, ok := e.memoryRepository(runID, agent)
+	repo, ns, ok, err := e.memoryRepository(runID, agent)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -209,7 +212,10 @@ func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent
 	if manager, _, ok := e.tierManager(agent); ok {
 		return e.writeTierMemory(ctx, runID, agent, manager, messages)
 	}
-	repo, ns, ok := e.memoryRepository(runID, agent)
+	repo, ns, ok, err := e.memoryRepository(runID, agent)
+	if err != nil {
+		return err
+	}
 	if !ok || len(messages) == 0 {
 		return nil
 	}
@@ -360,7 +366,10 @@ func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Ag
 	defer span.End()
 	start := time.Now()
 
-	ns, ok := e.scopedMemoryNamespace(ctx, runID, agent)
+	ns, ok, err := e.scopedMemoryNamespace(ctx, runID, agent)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -411,7 +420,10 @@ func (e *Engine) writeTierMemory(ctx context.Context, runID string, agent core.A
 	if len(messages) == 0 {
 		return nil
 	}
-	ns, ok := e.scopedMemoryNamespace(ctx, runID, agent)
+	ns, ok, err := e.scopedMemoryNamespace(ctx, runID, agent)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
@@ -470,7 +482,10 @@ func (e *Engine) rememberCognitive(ctx context.Context, runID string, agent core
 	if !ok || repo == nil || strings.TrimSpace(msg.Content) == "" {
 		return nil
 	}
-	ns, ok := e.scopedMemoryNamespace(ctx, runID, agent)
+	ns, ok, err := e.scopedMemoryNamespace(ctx, runID, agent)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
@@ -505,41 +520,43 @@ func newTierRecordID() (string, error) {
 	return hex.EncodeToString(buf[:]), nil
 }
 
-func (e *Engine) memoryNamespace(runID string, agent core.Agent) (memory.Namespace, bool) {
+func (e *Engine) memoryNamespace(runID string, agent core.Agent) (memory.Namespace, bool, error) {
 	if agent.Memory == "" {
-		return memory.Namespace{}, false
+		return memory.Namespace{}, false, nil
 	}
 	ref, ok := e.scenario.Memories[agent.Memory]
 	if !ok {
-		return memory.Namespace{}, false
+		return memory.Namespace{}, false, nil
 	}
 	scope := memory.Scope(ref.Scope)
 	ns := memory.Namespace{Agent: agent.Name, Scope: scope}
 	switch scope {
 	case memory.ScopeConversation, memory.ScopeAudit:
 		ns.RunID = runID
-	case memory.ScopeSession:
-		sessionID := firstNonEmpty(ref.Namespace, e.scenario.Name)
-		ns.SessionID = sessionID + ":" + agent.Name
+	case memory.ScopeSession, memory.ScopeLongTerm:
+		if strings.TrimSpace(ref.Namespace) == "" {
+			return memory.Namespace{}, false, fmt.Errorf("runtime: memory %q scope %q requires an explicit namespace so session history is not shared across callers", agent.Memory, scope)
+		}
+		ns.SessionID = ref.Namespace + ":" + agent.Name
 	default:
 		ns.SessionID = firstNonEmpty(ref.Namespace, e.scenario.Name)
 	}
-	return ns, true
+	return ns, true, nil
 }
 
-func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Repository, memory.Namespace, bool) {
+func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Repository, memory.Namespace, bool, error) {
 	if agent.Memory == "" || e.memory == nil {
-		return nil, memory.Namespace{}, false
+		return nil, memory.Namespace{}, false, nil
 	}
 	repo, ok := e.memory[agent.Memory]
 	if !ok || repo == nil {
-		return nil, memory.Namespace{}, false
+		return nil, memory.Namespace{}, false, nil
 	}
-	ns, ok := e.memoryNamespace(runID, agent)
-	if !ok {
-		return nil, memory.Namespace{}, false
+	ns, ok, err := e.memoryNamespace(runID, agent)
+	if err != nil || !ok {
+		return nil, memory.Namespace{}, false, err
 	}
-	return repo, ns, true
+	return repo, ns, true, nil
 }
 
 func (e *Engine) redactMemoryMessage(ctx context.Context, runID string, msg memoryMessage) (string, error) {

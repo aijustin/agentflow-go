@@ -23,7 +23,7 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 
 func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.Agent) (string, error) {
 	if e.llm == nil {
-		return req.Prompt, nil
+		return "", fmt.Errorf("runtime: llm gateway is required; wire WithLLMGateway or use WithRequireLLM at construction")
 	}
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	defer cancel()

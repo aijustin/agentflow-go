@@ -51,9 +51,10 @@ func TestEngineTierReconcileEnqueueFailureIsLogged(t *testing.T) {
 	scenario.LLMs = map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}}
 	scenario.Memories = map[string]core.MemoryRef{
 		"session": {
-			Type:  "custom",
-			Scope: string(memory.ScopeSession),
-			Tiers: &core.MemoryTierSettings{Enabled: true, HotCapacity: 100},
+			Type:      "custom",
+			Scope:     string(memory.ScopeSession),
+			Namespace: "tier-session",
+			Tiers:     &core.MemoryTierSettings{Enabled: true, HotCapacity: 100},
 		},
 	}
 	agent := scenario.Agents["assistant"]
@@ -113,8 +114,9 @@ func TestEngineTierMemoryRecallBudget(t *testing.T) {
 	}
 	scenario.Memories = map[string]core.MemoryRef{
 		"session": {
-			Type:  "custom",
-			Scope: string(memory.ScopeSession),
+			Type:      "custom",
+			Scope:     string(memory.ScopeSession),
+			Namespace: "tier-session",
 			Tiers: &core.MemoryTierSettings{
 				Enabled:     true,
 				HotCapacity: 100,

@@ -31,25 +31,15 @@ func TestNewEngineRequiresRunStateRepository(t *testing.T) {
 	}
 }
 
-func TestEngineRunEchoesPromptWithoutLLM(t *testing.T) {
+func TestEngineRunRequiresLLM(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := engine.Run(context.Background(), RunRequest{RunID: "run-1", Prompt: "hello"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != runstate.RunStatusCompleted || result.Output != "hello" {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-	loaded, err := repo.Load(context.Background(), "run-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Status != runstate.RunStatusCompleted {
-		t.Fatalf("snapshot not completed: %+v", loaded)
+	_, err = engine.Run(context.Background(), RunRequest{RunID: "run-1", Prompt: "hello"})
+	if err == nil || !strings.Contains(err.Error(), "llm gateway is required") {
+		t.Fatalf("expected llm-required error, got %v", err)
 	}
 }
 
@@ -733,11 +723,14 @@ func TestEngineRunExternalizesLargeFinalOutput(t *testing.T) {
 	blobs := blobinmem.NewStore()
 	scenario := baseScenario(false)
 	scenario.Runtime.StepOutputThreshold = 16
-	engine, err := NewEngine(scenario, Dependencies{Runs: repo, Blobs: blobs})
+	large := strings.Repeat("x", 64)
+	gateway := llmmock.NewGateway()
+	gateway.QueueChat("default", llm.ChatResponse{Message: llm.Message{Content: large}})
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, Blobs: blobs, LLM: gateway})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := engine.Run(context.Background(), RunRequest{RunID: "run-blob", Prompt: strings.Repeat("x", 64)}); err != nil {
+	if _, err := engine.Run(context.Background(), RunRequest{RunID: "run-blob", Prompt: "prompt"}); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := repo.Load(context.Background(), "run-blob")
@@ -751,11 +744,13 @@ func TestEngineRunExternalizesLargeFinalOutput(t *testing.T) {
 
 func TestEngineRunRedactsPersistedFinalOutput(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, OutputRedactor: governance.NewJSONFieldRedactor("text")})
+	gateway := llmmock.NewGateway()
+	gateway.QueueChat("default", llm.ChatResponse{Message: llm.Message{Content: "classified"}})
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo, LLM: gateway, OutputRedactor: governance.NewJSONFieldRedactor("text")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := engine.Run(context.Background(), RunRequest{RunID: "run-redact", Prompt: "classified"})
+	result, err := engine.Run(context.Background(), RunRequest{RunID: "run-redact", Prompt: "ask"})
 	if err != nil {
 		t.Fatal(err)
 	}

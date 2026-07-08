@@ -773,19 +773,21 @@ func WithHITLTokenTTL(ttl time.Duration) Option {
 
 // Run executes the framework scenario.
 func (f *Framework) Run(ctx context.Context, req RunRequest) (RunResult, error) {
-	release, err := f.acquireRunLease(ctx, &req)
+	ctx, release, err := f.acquireRunLease(ctx, &req)
 	if err != nil {
 		return RunResult{}, err
 	}
 	defer release()
+	var result RunResult
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		return f.runWorkflow(ctx, req)
+		result, err = f.runWorkflow(ctx, req)
 	case core.OrchestrationHybrid:
-		return f.runHybrid(ctx, req)
+		result, err = f.runHybrid(ctx, req)
 	default:
-		return f.engine.Run(ctx, req)
+		result, err = f.engine.Run(ctx, req)
 	}
+	return result, mapLeaseLostError(ctx, err)
 }
 
 func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult, error) {
@@ -1022,16 +1024,20 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 // RunStructured executes an agent using its configured output_schema and a
 // gateway that implements llm.StructuredOutputter.
 func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResult, error) {
-	release, err := f.acquireRunLease(ctx, &req)
+	ctx, release, err := f.acquireRunLease(ctx, &req)
 	if err != nil {
 		return RunResult{}, err
 	}
 	defer release()
+	var result RunResult
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		result, err := f.runWorkflow(ctx, req)
+		if workflowContainsAgentNode(f.scenario) {
+			return RunResult{}, fmt.Errorf("agentflow: RunStructured on fixed_workflow with agent nodes would re-execute agents; use hybrid mode or call Run")
+		}
+		result, err = f.runWorkflow(ctx, req)
 		if err != nil {
-			return RunResult{}, err
+			return RunResult{}, mapLeaseLostError(ctx, err)
 		}
 		if result.Status == runstate.RunStatusPaused {
 			return result, nil
@@ -1040,33 +1046,37 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 		if err != nil {
 			return RunResult{}, err
 		}
-		return f.engine.RunStructured(ctx, req)
+		result, err = f.engine.RunStructured(ctx, req)
 	case core.OrchestrationHybrid:
 		if f.scenario.Orchestration.Workflow == nil {
-			return f.engine.RunStructured(ctx, req)
+			result, err = f.engine.RunStructured(ctx, req)
+			break
 		}
-		ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
+		var cancel context.CancelFunc
+		ctx, cancel = withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
 		defer cancel()
-		req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
+		var paused RunResult
+		req, paused, err = f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
 		if err != nil || paused.Status != "" {
-			return paused, err
+			return paused, mapLeaseLostError(ctx, err)
 		}
-		return f.engine.RunStructured(ctx, req)
+		result, err = f.engine.RunStructured(ctx, req)
 	default:
-		return f.engine.RunStructured(ctx, req)
+		result, err = f.engine.RunStructured(ctx, req)
 	}
+	return result, mapLeaseLostError(ctx, err)
 }
 
 // Stream executes an agent using a gateway that implements llm.Streamer.
 func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
-	release, err := f.acquireRunLease(ctx, &req)
+	ctx, release, err := f.acquireRunLease(ctx, &req)
 	if err != nil {
 		return nil, err
 	}
 	source, err := f.streamScenario(ctx, req)
 	if err != nil {
 		release()
-		return nil, err
+		return nil, mapLeaseLostError(ctx, err)
 	}
 	return f.releaseLeaseOnStreamClose(ctx, source, release), nil
 }
@@ -1074,6 +1084,9 @@ func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.Chat
 func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
 	switch f.scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
+		if workflowContainsAgentNode(f.scenario) {
+			return nil, fmt.Errorf("agentflow: Stream on fixed_workflow with agent nodes would re-execute agents; use hybrid mode or call Run")
+		}
 		result, err := f.runWorkflow(ctx, req)
 		if err != nil {
 			return nil, err

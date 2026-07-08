@@ -36,6 +36,12 @@ func Validate(s core.Scenario) error {
 		if !containsString(supportedMemoryScopes, mem.Scope) {
 			return fmt.Errorf("config: memories.%s.scope %q is unsupported", name, mem.Scope)
 		}
+		// session/long_term namespaces are shared across runs: without an
+		// explicit Namespace the runtime would default to scenario:agent and
+		// silently mix conversation history across callers/tenants.
+		if (mem.Scope == "session" || mem.Scope == "long_term") && strings.TrimSpace(mem.Namespace) == "" {
+			return fmt.Errorf("config: memories.%s.namespace is required for scope %q", name, mem.Scope)
+		}
 		if mem.Tiers != nil && mem.Tiers.Enabled {
 			if mem.Type != "custom" && mem.Type != "in_memory" {
 				return fmt.Errorf("config: memories.%s.tiers.enabled requires type custom or in_memory", name)

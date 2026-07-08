@@ -20,6 +20,7 @@ scenario:
     session:
       type: in_memory
       scope: session
+      namespace: test-session
   tools:
     echo:
       type: builtin.echo
@@ -76,6 +77,7 @@ scenario:
     session:
       type: in_memory
       scope: session
+      namespace: tiered-session
       tiers:
         enabled: true
         hot_ttl: 1h

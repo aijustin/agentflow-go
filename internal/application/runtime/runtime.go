@@ -408,19 +408,23 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 	if err := e.recordConversationWatermark(ctx, input.RunID, agent); err != nil {
 		return core.AgentOutput{}, err
 	}
-	output, err := e.answer(ctx, RunRequest{
+	req := RunRequest{
 		RunID:   input.RunID,
 		Agent:   agentName,
 		Prompt:  input.Prompt,
 		Context: input.Context,
-	})
+	}
+	if len(agent.Policy.OutputSchema) > 0 {
+		raw, err := e.structuredAnswer(ctx, req)
+		if err != nil {
+			return core.AgentOutput{}, err
+		}
+		return core.AgentOutput{RunID: input.RunID, Text: string(raw), Raw: raw}, nil
+	}
+	output, err := e.answer(ctx, req)
 	if err != nil {
 		return core.AgentOutput{}, err
 	}
-	// answer() only produces a text response, so there is no distinct raw
-	// structured output to report; Raw previously echoed input.Context
-	// (the caller's own input, not anything the agent generated), which
-	// misled callers into treating the input as if it were the output.
 	return core.AgentOutput{RunID: input.RunID, Text: output}, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
+	"github.com/aijustin/agentflow-go/internal/toolinvoke"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
@@ -16,7 +17,6 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/security"
-	"github.com/aijustin/agentflow-go/pkg/toolschema"
 )
 
 type toolDispatchOptions struct {
@@ -67,23 +67,14 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	if tool.Name == "" {
 		tool.Name = call.Name
 	}
-	if e.scenario.Runtime.ValidateToolInput && len(tool.InputSchema) > 0 {
-		if err := toolschema.Validate(tool.InputSchema, call.Input); err != nil {
-			result := core.ToolResult{Tool: call.Name, Error: "invalid tool input: " + err.Error()}
-			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-			return result, nil
-		}
-	}
-	if !options.approved {
-		if reason := core.ToolApprovalDenialReason(tool); reason != "" {
-			result := core.ToolResult{Tool: call.Name, Error: reason}
-			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
-			return result, nil
-		}
-	}
-	if tool.Approval == core.ApprovalPause && e.gate == nil && !options.approved {
-		result := core.ToolResult{Tool: call.Name, Error: "tool requires human gate for pause approval"}
+	if err := toolinvoke.ValidateInput(e.scenario.Runtime.ValidateToolInput, tool, call.Input); err != nil {
+		result := core.ToolResult{Tool: call.Name, Error: err.Error()}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
+		return result, nil
+	}
+	if reason := toolinvoke.DenialWithoutGate(tool, e.gate != nil, options.approved); reason != "" {
+		result := core.ToolResult{Tool: call.Name, Error: reason}
+		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
 		return result, nil
 	}
 	if tool.RateCap > 0 && callCounts[call.Name] >= tool.RateCap {
@@ -234,12 +225,10 @@ func principalFromContext(ctx context.Context) identity.Principal {
 }
 
 func toolResource(agent core.Agent, call llm.ToolCall, tool *core.Tool) security.Resource {
-	resource := security.Resource{Type: "tool", ID: call.Name, Metadata: map[string]string{"agent": agent.Name}}
-	if tool != nil {
-		resource.Metadata["tool_type"] = tool.Type
-		resource.Metadata["side_effect"] = string(tool.SideEffect)
+	if tool == nil {
+		return security.Resource{Type: "tool", ID: call.Name, Metadata: map[string]string{"agent": agent.Name}}
 	}
-	return resource
+	return toolinvoke.SecurityResource(call.Name, *tool, map[string]string{"agent": agent.Name})
 }
 
 func toolOutcome(result core.ToolResult) string {
@@ -304,6 +293,12 @@ func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core
 
 func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, executor core.ToolExecutor) (core.ToolResult, error) {
 	attempts := e.maxAttempts(agent)
+	// Align with workflow nodeAutoRetrySafe: write/external/dangerous tools
+	// are never auto-retried. A failed attempt may already have committed
+	// its side effect; re-running would duplicate it.
+	if !toolinvoke.AutoRetrySafe(tool) {
+		attempts = 1
+	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := ctx.Err(); err != nil {

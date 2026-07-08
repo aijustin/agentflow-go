@@ -17,7 +17,7 @@ func TestBuildMapsProfilesAndMemory(t *testing.T) {
 			"default": {Provider: "mock", Model: "test", Capabilities: []string{"chat", "embed", "unknown"}},
 		},
 		Memories: map[string]core.MemoryRef{
-			"session": {Scope: string(memory.ScopeSession), Type: "in_memory"},
+			"session": {Scope: string(memory.ScopeSession), Type: "in_memory", Namespace: "ns"},
 		},
 		Agents: map[string]core.Agent{"assistant": {Name: "assistant"}},
 	})

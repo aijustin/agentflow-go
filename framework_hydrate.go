@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -103,4 +104,32 @@ func isEmptyOrNullJSON(raw json.RawMessage) bool {
 		return true
 	}
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
+// workflowContainsAgentNode reports whether the scenario's primary workflow
+// (or any named subgraph) includes an agent node. Used to reject
+// RunStructured/Stream on fixed_workflow graphs that would otherwise
+// complete the workflow (running agents) and then re-execute the agent.
+func workflowContainsAgentNode(scenario core.Scenario) bool {
+	if containsAgentNode(scenario.Orchestration.Workflow) {
+		return true
+	}
+	for _, wf := range scenario.Orchestration.Workflows {
+		if containsAgentNode(&wf) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAgentNode(workflow *core.Workflow) bool {
+	if workflow == nil {
+		return false
+	}
+	for _, node := range workflow.Nodes {
+		if node.Kind == core.NodeAgent || node.Kind == core.NodeParallelGroup || node.Kind == core.NodeSupervisor {
+			return true
+		}
+	}
+	return false
 }

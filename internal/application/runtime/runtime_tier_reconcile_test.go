@@ -21,9 +21,10 @@ func TestEngineReconcileTierMemory(t *testing.T) {
 	scenario := baseScenario(false)
 	scenario.Memories = map[string]core.MemoryRef{
 		"session": {
-			Type:  "custom",
-			Scope: string(memory.ScopeSession),
-			Tiers: &core.MemoryTierSettings{Enabled: true, HotCapacity: 1, WarmCapacity: 5},
+			Type:      "custom",
+			Scope:     string(memory.ScopeSession),
+			Namespace: "tier-session",
+			Tiers:     &core.MemoryTierSettings{Enabled: true, HotCapacity: 1, WarmCapacity: 5},
 		},
 	}
 	agent := scenario.Agents["assistant"]

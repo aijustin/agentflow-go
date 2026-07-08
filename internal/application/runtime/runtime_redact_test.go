@@ -37,7 +37,7 @@ func TestEngineRedactMemoryMessageRejectsInvalidRedactedJSON(t *testing.T) {
 	agent.Memory = "session"
 	scenario.Agents["assistant"] = agent
 	scenario.Memories = map[string]core.MemoryRef{
-		"session": {Type: "custom", Scope: "session"},
+		"session": {Type: "custom", Scope: "session", Namespace: "redact-session"},
 	}
 	engine, err := NewEngine(scenario, Dependencies{
 		Runs:           repo,

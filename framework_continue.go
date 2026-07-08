@@ -42,13 +42,15 @@ func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decisio
 		return RunResult{RunID: runID, Status: runstate.RunStatusCancelled}, nil
 	}
 	if f.runLocker != nil {
-		release, err := f.holdRunLease(ctx, runID)
+		var release func()
+		ctx, release, err = f.holdRunLease(ctx, runID)
 		if err != nil {
 			return RunResult{}, err
 		}
 		defer release()
 	}
-	return f.continueRun(ctx, runID)
+	result, err := f.continueRun(ctx, runID)
+	return result, mapLeaseLostError(ctx, err)
 }
 
 // ResumeRunByID resumes a paused run by signing a HITL token from the current snapshot.
@@ -243,7 +245,8 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 		return RunResult{}, fmt.Errorf("agentflow: run %q is not failed (status=%s)", runID, snapshot.Status)
 	}
 	if f.runLocker != nil {
-		release, err := f.holdRunLease(ctx, runID)
+		var release func()
+		ctx, release, err = f.holdRunLease(ctx, runID)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -351,6 +354,8 @@ func (f *Framework) newWorkflowRunner() *orchestration.WorkflowRunner {
 		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: f.scenario.Agents, engine: f.engine}),
 		orchestration.WithHumanGate(f.gate),
 		orchestration.WithBlobStore(f.blobs),
+		orchestration.WithSecurityPolicy(f.policy),
+		orchestration.WithAuditSink(f.audit),
 		orchestration.WithWorkflowToolPolicy(f.toolGov),
 		orchestration.WithOutputRedactor(f.redactor),
 		orchestration.WithMemoryRewinder(f.engine),

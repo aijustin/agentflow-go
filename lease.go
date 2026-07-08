@@ -16,6 +16,11 @@ import (
 
 const defaultRunLeaseTTL = 30 * time.Second
 
+// ErrRunLeaseLost reports that this worker no longer holds the run lease
+// (renewal returned not-held or failed) and must stop executing before
+// another worker reaps or takes over the run.
+var ErrRunLeaseLost = errors.New("agentflow: run lease lost")
+
 // WithRunLease enables distributed run-lease coordination: every Run,
 // RunStructured, ResumeAndContinue, and RetryFailedRun holds (and renews) a
 // lease on the run for as long as it executes. A run left in Running whose
@@ -46,14 +51,33 @@ func runLeaseKey(runID string) string {
 	return "run:" + runID
 }
 
+// mapLeaseLostError remaps a context cancellation caused by lease renewal
+// failure back to ErrRunLeaseLost so callers can distinguish worker-lease
+// aborts from ordinary cancellations.
+func mapLeaseLostError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	cause := context.Cause(ctx)
+	if cause != nil && errors.Is(cause, ErrRunLeaseLost) {
+		return cause
+	}
+	if errors.Is(err, ErrRunLeaseLost) {
+		return err
+	}
+	return err
+}
+
 // acquireRunLease takes the run's lease and starts a background renewal loop.
-// The returned release function stops renewal and frees the lease; it is a
-// no-op when run-lease coordination is not configured. The run ID is
-// generated here when the request left it empty, so the lease and the run
-// snapshot always use the same ID.
-func (f *Framework) acquireRunLease(ctx context.Context, req *RunRequest) (func(), error) {
+// The returned context is canceled with ErrRunLeaseLost when renewal fails so
+// the in-flight Run/Stream aborts instead of continuing without ownership.
+// The release function stops renewal and frees the lease; it is a no-op when
+// run-lease coordination is not configured. The run ID is generated here when
+// the request left it empty, so the lease and the run snapshot always use the
+// same ID.
+func (f *Framework) acquireRunLease(ctx context.Context, req *RunRequest) (context.Context, func(), error) {
 	if f.runLocker == nil {
-		return func() {}, nil
+		return ctx, func() {}, nil
 	}
 	if req.RunID == "" {
 		req.RunID = generateRunID()
@@ -61,17 +85,22 @@ func (f *Framework) acquireRunLease(ctx context.Context, req *RunRequest) (func(
 	return f.holdRunLease(ctx, req.RunID)
 }
 
-func (f *Framework) holdRunLease(ctx context.Context, runID string) (func(), error) {
+func (f *Framework) holdRunLease(ctx context.Context, runID string) (context.Context, func(), error) {
 	lease, ok, err := f.runLocker.Acquire(ctx, runLeaseKey(runID), f.runLeaseOwner, f.runLeaseTTL)
 	if err != nil {
-		return nil, fmt.Errorf("agentflow: acquire run lease for %q: %w", runID, err)
+		return ctx, nil, fmt.Errorf("agentflow: acquire run lease for %q: %w", runID, err)
 	}
 	if !ok {
-		return nil, fmt.Errorf("agentflow: run %q is leased by another worker: %w", runID, ErrRunInProgress)
+		return ctx, nil, fmt.Errorf("agentflow: run %q is leased by another worker: %w", runID, ErrRunInProgress)
 	}
 	var mu sync.Mutex
 	current := lease
-	renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	// Child of the caller ctx so caller cancel still stops the run; renewal
+	// uses a WithoutCancel parent so a brief call-site cancel does not stop
+	// lease heartbeats while release is still running. On renewal loss we
+	// cancel this runCtx so execution cannot race a reaper.
+	runCtx, cancelRun := context.WithCancelCause(ctx)
+	renewCtx, cancelRenew := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -88,9 +117,10 @@ func (f *Framework) holdRunLease(ctx context.Context, runID string) (func(), err
 				renewed, ok, err := f.runLocker.Renew(renewCtx, held, f.runLeaseTTL)
 				if err != nil || !ok {
 					if f.logger != nil {
-						f.logger.Warn(renewCtx, "agentflow: run lease renewal failed", "run_id", runID, "renewed", ok, "error", err)
+						f.logger.Warn(renewCtx, "agentflow: run lease renewal failed; aborting run", "run_id", runID, "renewed", ok, "error", err)
 					}
-					continue
+					cancelRun(fmt.Errorf("%w: run %q", ErrRunLeaseLost, runID))
+					return
 				}
 				mu.Lock()
 				current = renewed
@@ -99,7 +129,7 @@ func (f *Framework) holdRunLease(ctx context.Context, runID string) (func(), err
 		}
 	}()
 	release := func() {
-		cancel()
+		cancelRenew()
 		<-done
 		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer releaseCancel()
@@ -109,8 +139,9 @@ func (f *Framework) holdRunLease(ctx context.Context, runID string) (func(), err
 		if err := f.runLocker.Release(releaseCtx, held); err != nil && f.logger != nil {
 			f.logger.Warn(releaseCtx, "agentflow: run lease release failed", "run_id", runID, "error", err)
 		}
+		cancelRun(nil)
 	}
-	return release, nil
+	return runCtx, release, nil
 }
 
 // MarkAbandonedRuns scans this scenario's Running runs and marks as Failed

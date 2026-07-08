@@ -45,10 +45,20 @@ func TestValidateRejectsMissingLLMProvider(t *testing.T) {
 func TestValidateRejectsUnsupportedMemoryType(t *testing.T) {
 	s := validScenario()
 	s.Memories = map[string]core.MemoryRef{
-		"session": {Type: "bogus", Scope: "session"},
+		"session": {Type: "bogus", Scope: "session", Namespace: "ns"},
 	}
 	if err := Validate(s); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("expected unsupported memory type error, got %v", err)
+	}
+}
+
+func TestValidateRejectsSessionMemoryWithoutNamespace(t *testing.T) {
+	s := validScenario()
+	s.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: "session"},
+	}
+	if err := Validate(s); err == nil || !strings.Contains(err.Error(), "namespace is required") {
+		t.Fatalf("expected namespace required error, got %v", err)
 	}
 }
 
@@ -56,9 +66,10 @@ func TestValidateRejectsMemoryTiersOnWrongType(t *testing.T) {
 	s := validScenario()
 	s.Memories = map[string]core.MemoryRef{
 		"session": {
-			Type:  "file",
-			Scope: "session",
-			Tiers: &core.MemoryTierSettings{Enabled: true},
+			Type:      "file",
+			Scope:     "session",
+			Namespace: "ns",
+			Tiers:     &core.MemoryTierSettings{Enabled: true},
 		},
 	}
 	if err := Validate(s); err == nil || !strings.Contains(err.Error(), "requires type custom or in_memory") {
@@ -70,9 +81,10 @@ func TestValidateRejectsNegativeMemoryTierCapacity(t *testing.T) {
 	s := validScenario()
 	s.Memories = map[string]core.MemoryRef{
 		"session": {
-			Type:  "in_memory",
-			Scope: "session",
-			Tiers: &core.MemoryTierSettings{Enabled: true, HotCapacity: -1},
+			Type:      "in_memory",
+			Scope:     "session",
+			Namespace: "ns",
+			Tiers:     &core.MemoryTierSettings{Enabled: true, HotCapacity: -1},
 		},
 	}
 	if err := Validate(s); err == nil || !strings.Contains(err.Error(), "capacities must be >= 0") {

@@ -17,8 +17,9 @@ func TestDocumentFromCoreExportsSkillWorkflowAndTierMemory(t *testing.T) {
 		},
 		Memories: map[string]core.MemoryRef{
 			"session": {
-				Type:  "in_memory",
-				Scope: "session",
+				Type:      "in_memory",
+				Scope:     "session",
+				Namespace: "export-session",
 				Tiers: &core.MemoryTierSettings{
 					Enabled:      true,
 					HotCapacity:  10,

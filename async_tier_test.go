@@ -17,9 +17,10 @@ func TestMemoryReconcileJobHandler(t *testing.T) {
 		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
 		Memories: map[string]core.MemoryRef{
 			"session": {
-				Type:  "custom",
-				Scope: string(memory.ScopeSession),
-				Tiers: &core.MemoryTierSettings{Enabled: true, HotCapacity: 1},
+				Type:      "custom",
+				Scope:     string(memory.ScopeSession),
+				Namespace: "tier-session",
+				Tiers:     &core.MemoryTierSettings{Enabled: true, HotCapacity: 1},
 			},
 		},
 		Agents: map[string]core.Agent{

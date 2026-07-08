@@ -21,7 +21,11 @@ func testAutonomousScenario() core.Scenario {
 }
 
 func TestNewRunWithDefaults(t *testing.T) {
-	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}))
+	fw, err := agentflow.New(
+		testAutonomousScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "hello"}),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +56,7 @@ func TestFrameworkWithLLMGateway(t *testing.T) {
 func TestFrameworkRunExecutesFixedWorkflow(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalFixedWorkflowReview("reviewer"),
+		agentflow.WithLLMGateway(fakeGateway{content: "review ok"}),
 		agentflow.WithToolExecutor("repo_search", noopTool{}),
 	)
 	if err != nil {
@@ -279,7 +284,11 @@ func TestAsyncRunHTTPHandlerConstructorRejectsInvalidInputs(t *testing.T) {
 }
 
 func TestFrameworkRunJobHandlerExecutesRunPayload(t *testing.T) {
-	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithToolExecutor("echo", noopTool{}))
+	fw, err := agentflow.New(
+		testAutonomousScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "hello"}),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +625,6 @@ func TestFrameworkRunStructuredAfterFixedWorkflow(t *testing.T) {
 			Workflow: &core.Workflow{
 				Nodes: []core.WorkflowNode{
 					{ID: "prep", Kind: core.NodeTool, Ref: "echo", Input: json.RawMessage(`{"message":"prep"}`)},
-					{ID: "finish", Kind: core.NodeAgent, Ref: "assistant", DependsOn: []string{"prep"}},
 				},
 			},
 		},
@@ -647,6 +655,40 @@ func TestFrameworkRunStructuredAfterFixedWorkflow(t *testing.T) {
 	}
 	if _, ok := snapshot.StepOutputs["prep"]; !ok {
 		t.Fatal("workflow step output should be preserved")
+	}
+}
+
+func TestFrameworkRunStructuredRejectsFixedWorkflowWithAgentNodes(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "structured-wf-agent",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {
+				Name: "assistant",
+				LLM:  "default",
+				Policy: core.AgentPolicy{
+					OutputSchema: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`),
+				},
+			},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "finish", Kind: core.NodeAgent, Ref: "assistant"},
+				},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(structuredFakeGateway{payload: json.RawMessage(`{"answer":"x"}`)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.RunStructured(context.Background(), agentflow.RunRequest{
+		RunID: "run-reject-double", Agent: "assistant", Prompt: "go",
+	})
+	if err == nil || !strings.Contains(err.Error(), "re-execute agents") {
+		t.Fatalf("expected rejection of double agent execution, got %v", err)
 	}
 }
 

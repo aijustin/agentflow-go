@@ -4,16 +4,42 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	llmmock "github.com/aijustin/agentflow-go/pkg/llm/mock"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
+
+// renewFailLocker acquires normally, then fails Renew so the Framework must
+// cancel the in-flight run with ErrRunLeaseLost instead of continuing.
+type renewFailLocker struct {
+	inner     coordination.Locker
+	renews    atomic.Int32
+	failAfter int32
+}
+
+func (l *renewFailLocker) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (coordination.Lease, bool, error) {
+	return l.inner.Acquire(ctx, key, owner, ttl)
+}
+
+func (l *renewFailLocker) Renew(ctx context.Context, lease coordination.Lease, ttl time.Duration) (coordination.Lease, bool, error) {
+	n := l.renews.Add(1)
+	if n > l.failAfter {
+		return coordination.Lease{}, false, nil
+	}
+	return l.inner.Renew(ctx, lease, ttl)
+}
+
+func (l *renewFailLocker) Release(ctx context.Context, lease coordination.Lease) error {
+	return l.inner.Release(ctx, lease)
+}
 
 func TestFrameworkRunLeaseBlocksConcurrentWorker(t *testing.T) {
 	locker := agentflow.NewInMemoryLocker()
@@ -383,5 +409,24 @@ func TestFrameworkHoldRunLeaseRenewal(t *testing.T) {
 	<-done
 	if _, ok, err := locker.Acquire(context.Background(), "run:run-renew", "worker-b", time.Minute); err != nil || !ok {
 		t.Fatalf("lease should be free after run: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestFrameworkAbortsWhenLeaseRenewalFails(t *testing.T) {
+	inner := agentflow.NewInMemoryLocker()
+	locker := &renewFailLocker{inner: inner, failAfter: 0}
+	fw, err := agentflow.New(
+		retryWorkflowScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
+		agentflow.WithToolExecutor("stepA", slowTool{delay: 250 * time.Millisecond}),
+		agentflow.WithToolExecutor("stepB", noopTool{}),
+		agentflow.WithRunLease(locker, "worker-a", 60*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-lease-lost", Prompt: "go"})
+	if err == nil || !errors.Is(err, agentflow.ErrRunLeaseLost) {
+		t.Fatalf("expected ErrRunLeaseLost after renew failure, got %v", err)
 	}
 }

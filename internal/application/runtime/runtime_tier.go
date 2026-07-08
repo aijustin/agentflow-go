@@ -45,15 +45,15 @@ func (e *Engine) tierRecallBudget(agent core.Agent, settings tier.Settings) tier
 	return budget
 }
 
-func (e *Engine) scopedMemoryNamespace(ctx context.Context, runID string, agent core.Agent) (memory.Namespace, bool) {
-	ns, ok := e.memoryNamespace(runID, agent)
-	if !ok {
-		return memory.Namespace{}, false
+func (e *Engine) scopedMemoryNamespace(ctx context.Context, runID string, agent core.Agent) (memory.Namespace, bool, error) {
+	ns, ok, err := e.memoryNamespace(runID, agent)
+	if err != nil || !ok {
+		return memory.Namespace{}, false, err
 	}
 	if principal, ok := identity.PrincipalFromContext(ctx); ok {
 		ns = memory.TenantScopedNamespace(ns, principal.Scope.TenantID)
 	}
-	return ns, true
+	return ns, true, nil
 }
 
 func (e *Engine) ReconcileTierMemory(ctx context.Context, runID, memoryName, agentName string) error {
@@ -68,7 +68,10 @@ func (e *Engine) ReconcileTierMemory(ctx context.Context, runID, memoryName, age
 	if !ok {
 		return fmt.Errorf("runtime: memory %q is not tier-enabled", memoryName)
 	}
-	ns, ok := e.scopedMemoryNamespace(ctx, runID, agent)
+	ns, ok, err := e.scopedMemoryNamespace(ctx, runID, agent)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return fmt.Errorf("runtime: memory namespace unavailable for agent %q", agentName)
 	}
@@ -77,7 +80,7 @@ func (e *Engine) ReconcileTierMemory(ctx context.Context, runID, memoryName, age
 		observability.Attribute{Key: "agent", Value: agentName},
 	)
 	defer span.End()
-	_, err := manager.Reconcile(tier.WithMigrationRunID(ctx, runID), ns, time.Now().UTC())
+	_, err = manager.Reconcile(tier.WithMigrationRunID(ctx, runID), ns, time.Now().UTC())
 	return err
 }
 
