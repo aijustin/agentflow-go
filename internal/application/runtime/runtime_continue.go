@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	checkpointKindVar     = "checkpoint_kind"
-	checkpointPromptVar   = "checkpoint_prompt"
+	checkpointKindVar           = "checkpoint_kind"
+	checkpointKindToolApproval  = "tool_approval"
+	checkpointPromptVar         = "checkpoint_prompt"
 	checkpointAgentVar    = "checkpoint_agent"
 	checkpointContextVar  = "checkpoint_context"
 	beforeFinalResumedVar = "before_final_resumed"
@@ -528,8 +529,8 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err != nil {
 		return nil, err
 	}
-	vars := map[string]json.RawMessage{
-		checkpointKindVar:           json.RawMessage(`"tool_approval"`),
+		vars := map[string]json.RawMessage{
+		checkpointKindVar:           json.RawMessage(fmt.Sprintf("%q", checkpointKindToolApproval)),
 		checkpointAgentVar:          json.RawMessage(fmt.Sprintf("%q", agent.Name)),
 		checkpointPromptVar:         json.RawMessage(fmt.Sprintf("%q", prompt)),
 		checkpointToolCallsVar:      toolCallsRaw,

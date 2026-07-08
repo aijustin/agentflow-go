@@ -48,5 +48,6 @@ func LoadAuthorized(ctx context.Context, repo Repository, runID string) (RunSnap
 	if err := AuthorizeTenant(ctx, snapshot); err != nil {
 		return RunSnapshot{}, err
 	}
+	NormalizeSnapshot(&snapshot)
 	return snapshot, nil
 }

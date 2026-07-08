@@ -336,9 +336,16 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 				return
 			}
 			if chunk.Paused {
+				if err := e.ensureRunPaused(ctx, req.RunID); err != nil {
+					e.logWarn(ctx, "runtime: failed to persist paused status after stream pause", "run_id", req.RunID, "error", err)
+				}
 				return
 			}
 			if chunk.Error != "" {
+				var paused RunPausedError
+				if errorsAsRunPaused(errors.New(chunk.Error), &paused) {
+					return
+				}
 				e.markRunFailed(ctx, req.RunID, errors.New(chunk.Error))
 				return
 			}

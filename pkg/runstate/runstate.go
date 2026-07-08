@@ -123,6 +123,19 @@ func (s RunSnapshot) Validate() error {
 	return nil
 }
 
+// NormalizeSnapshot ensures maps are non-nil after JSON deserialize omitempty.
+func NormalizeSnapshot(snapshot *RunSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	if snapshot.Variables == nil {
+		snapshot.Variables = make(map[string]json.RawMessage)
+	}
+	if snapshot.StepOutputs == nil {
+		snapshot.StepOutputs = make(map[string]StepOutputRef)
+	}
+}
+
 type Repository interface {
 	Save(ctx context.Context, snapshot *RunSnapshot, expectedVersion int64) error
 	Load(ctx context.Context, runID string) (RunSnapshot, error)

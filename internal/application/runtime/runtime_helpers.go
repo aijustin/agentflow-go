@@ -512,6 +512,9 @@ func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 			e.emit(persistCtx, core.EventRunCancelled, runID, nil)
 			return
 		}
+		if snapshot.Status == runstate.RunStatusPaused || snapshotHasToolApprovalCheckpoint(&snapshot) {
+			return
+		}
 		if snapshot.Status != runstate.RunStatusFailed && !snapshot.Status.CanTransitionTo(runstate.RunStatusFailed) {
 			e.logWarn(persistCtx, "runtime: refusing invalid failure status transition", "run_id", runID, "status", snapshot.Status)
 			return
@@ -680,4 +683,19 @@ func generateRunID() string {
 		return fmt.Sprintf("run-%d", time.Now().UnixNano())
 	}
 	return "run-" + hex.EncodeToString(b[:])
+}
+
+func snapshotHasToolApprovalCheckpoint(snapshot *runstate.RunSnapshot) bool {
+	if snapshot == nil || snapshot.Variables == nil {
+		return false
+	}
+	raw, ok := snapshot.Variables[checkpointKindVar]
+	if !ok {
+		return false
+	}
+	var kind string
+	if err := json.Unmarshal(raw, &kind); err != nil {
+		return false
+	}
+	return kind == checkpointKindToolApproval
 }

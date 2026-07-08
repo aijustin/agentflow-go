@@ -1228,6 +1228,82 @@ func TestEngineStreamPausesOnToolApproval(t *testing.T) {
 	}
 }
 
+func TestEngineStreamDoesNotPauseApprovalNever(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall, llm.CapStream)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"auto"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:  repo,
+		LLM:   gateway,
+		Tools: mapToolRegistry{"echo": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := engine.Stream(context.Background(), RunRequest{RunID: "run-stream-never", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for chunk := range ch {
+		if chunk.Paused {
+			t.Fatalf("ApprovalNever tool should not pause, got %+v", chunk)
+		}
+		if chunk.Error != "" {
+			t.Fatalf("unexpected stream error: %s", chunk.Error)
+		}
+	}
+	loaded, err := repo.Load(context.Background(), "run-stream-never")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected completed snapshot, got status=%s", loaded.Status)
+	}
+}
+
+func TestEngineStreamPauseSurvivesPauseErrorString(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall, llm.CapStream)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"needs approval"}`)}},
+	})
+	scenario := toolScenario(core.ApprovalPause, core.SideEffectWrite, 4)
+	gate := &capturingGate{repo: repo}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"echo": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := engine.Stream(context.Background(), RunRequest{RunID: "run-stream-pause-err", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
+	loaded, err := repo.Load(context.Background(), "run-stream-pause-err")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusPaused {
+		t.Fatalf("pause must not be overwritten by failed, got status=%s vars=%v", loaded.Status, loaded.Variables)
+	}
+	if !snapshotHasToolApprovalCheckpoint(&loaded) {
+		t.Fatal("expected tool_approval checkpoint preserved")
+	}
+}
+
 func TestEngineRunRecoversToolPanic(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
