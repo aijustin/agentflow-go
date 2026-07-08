@@ -296,6 +296,13 @@ type HumanGate interface {
 	Resume(ctx context.Context, token string, decision Decision, amendment json.RawMessage) error
 }
 
+// ToolApprovalEvaluator allows hosts to require human approval for tool calls
+// beyond static scenario Tool.Approval policies (for example MCP invoke proxies
+// that delegate to remote tools discovered at runtime).
+type ToolApprovalEvaluator interface {
+	PauseRequired(ctx context.Context, runID string, tool Tool, call llm.ToolCall) (bool, error)
+}
+
 // PauseTokenDecoder is an optional HumanGate extension for deployments that
 // do not use HMAC-signed pause tokens. ResumeAndContinue uses it to resolve
 // the run ID before calling Resume.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/aijustin/agentflow-go/internal/toolinvoke"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -483,7 +484,14 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	}
 	call := pending[0]
 	tool, ok := e.scenario.Tools[call.Name]
-	if !ok || !core.ToolApprovalPauseRequired(tool) {
+	if !ok {
+		return nil, nil
+	}
+	pauseRequired, err := toolinvoke.EvaluatePauseRequired(ctx, tool, e.approvalEvaluator, runID, call)
+	if err != nil {
+		return nil, err
+	}
+	if !pauseRequired {
 		return nil, nil
 	}
 	if e.gate == nil {

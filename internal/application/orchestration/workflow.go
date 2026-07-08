@@ -17,6 +17,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/identity"
+	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/retry"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -49,6 +50,12 @@ func WithAgentRegistry(agents AgentRegistry) RunnerOption {
 func WithHumanGate(gate core.HumanGate) RunnerOption {
 	return func(r *WorkflowRunner) {
 		r.gate = gate
+	}
+}
+
+func WithToolApprovalEvaluator(evaluator core.ToolApprovalEvaluator) RunnerOption {
+	return func(r *WorkflowRunner) {
+		r.approvalEvaluator = evaluator
 	}
 }
 
@@ -99,10 +106,11 @@ func WithMemoryRewinder(memory ConversationMemoryRewinder) RunnerOption {
 }
 
 type WorkflowRunner struct {
-	tools    ToolRegistry
-	agents   AgentRegistry
-	gate     core.HumanGate
-	runs     runstate.Repository
+	tools               ToolRegistry
+	agents              AgentRegistry
+	gate                core.HumanGate
+	approvalEvaluator   core.ToolApprovalEvaluator
+	runs                runstate.Repository
 	blobs    runstate.BlobStore
 	events   core.EventSink
 	policy   security.Policy
@@ -460,7 +468,12 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	// pauses for a human decision rather than failing the node. Only when no
 	// gate is available do we fall back to a hard denial.
 	approvedResume := false
-	if core.ToolApprovalPauseRequired(tool) {
+	call := llm.ToolCall{Name: node.Ref, Input: input}
+	pauseRequired, err := toolinvoke.EvaluatePauseRequired(ctx, tool, r.approvalEvaluator, runID, call)
+	if err != nil {
+		return err
+	}
+	if pauseRequired {
 		if r.gate == nil {
 			if reason := toolinvoke.DenialWithoutGate(tool, false, false); reason != "" {
 				return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
@@ -470,6 +483,7 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 			return err
 		} else if ok {
 			input = approvedInput
+			call.Input = approvedInput
 			approvedResume = true
 			if err := r.clearWorkflowToolApprovalCheckpoint(ctx, runID); err != nil {
 				return err
@@ -478,7 +492,7 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 			return r.pauseForWorkflowToolApproval(ctx, scenario, node, runID, tool, input)
 		}
 	}
-	if reason := toolinvoke.DenialWithoutGate(tool, r.gate != nil, approvedResume); reason != "" {
+	if reason := toolinvoke.DenialWithoutGateWithEvaluator(ctx, tool, r.gate != nil, approvedResume, r.approvalEvaluator, runID, call); reason != "" {
 		return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
 	}
 	if err := toolinvoke.ValidateInput(scenario.Runtime.ValidateToolInput, tool, input); err != nil {

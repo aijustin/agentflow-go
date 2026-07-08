@@ -83,6 +83,7 @@ type Framework struct {
 	blobs             runstate.BlobStore
 	events            core.EventSink
 	gate              core.HumanGate
+	approvalEvaluator core.ToolApprovalEvaluator
 	tokenSigner       *runstate.TokenSigner
 	tokenTTL          time.Duration
 	llm               llm.Gateway
@@ -108,6 +109,7 @@ type options struct {
 	blobs               runstate.BlobStore
 	events              core.EventSink
 	gate                core.HumanGate
+	approvalEvaluator   core.ToolApprovalEvaluator
 	tools               map[string]core.ToolExecutor
 	resolver            core.ToolResolver
 	memory              map[string]memory.Repository
@@ -360,12 +362,13 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		}
 	}
 	engine, err := appexec.NewEngine(scenario, appexec.Dependencies{
-		LLM:                    cfg.llm,
-		Runs:                   cfg.runs,
-		Blobs:                  cfg.blobs,
-		Events:                 cfg.events,
-		HumanGate:              cfg.gate,
-		Tools:                  tools,
+		LLM:                   cfg.llm,
+		Runs:                  cfg.runs,
+		Blobs:                 cfg.blobs,
+		Events:                cfg.events,
+		HumanGate:             cfg.gate,
+		ToolApprovalEvaluator: cfg.approvalEvaluator,
+		Tools:                 tools,
 		Memory:                 cfg.memory,
 		TierMemory:             cfg.tierMemory,
 		Cognitive:              cfg.cognitive,
@@ -389,6 +392,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		blobs:             cfg.blobs,
 		events:            cfg.events,
 		gate:              cfg.gate,
+		approvalEvaluator: cfg.approvalEvaluator,
 		tokenSigner:       tokenSigner,
 		tokenTTL:          cfg.tokenTTL,
 		llm:               cfg.llm,
@@ -550,6 +554,15 @@ func WithHumanGate(gate core.HumanGate) Option {
 			return fmt.Errorf("agentflow: human gate is nil")
 		}
 		o.gate = gate
+		return nil
+	}
+}
+
+// WithToolApprovalEvaluator wires dynamic tool approval evaluation beyond static
+// scenario Tool.Approval policies.
+func WithToolApprovalEvaluator(evaluator core.ToolApprovalEvaluator) Option {
+	return func(o *options) error {
+		o.approvalEvaluator = evaluator
 		return nil
 	}
 }

@@ -31,6 +31,7 @@ type Engine struct {
 	blobs                  runstate.BlobStore
 	events                 core.EventSink
 	gate                   core.HumanGate
+	approvalEvaluator      core.ToolApprovalEvaluator
 	policy                 security.Policy
 	audit                  audit.Sink
 	toolGov                governance.ToolPolicy
@@ -57,8 +58,9 @@ type Dependencies struct {
 	Runs           runstate.Repository
 	Blobs          runstate.BlobStore
 	Events         core.EventSink
-	HumanGate      core.HumanGate
-	Policy         security.Policy
+	HumanGate           core.HumanGate
+	ToolApprovalEvaluator core.ToolApprovalEvaluator
+	Policy              security.Policy
 	Audit          audit.Sink
 	ToolPolicy     governance.ToolPolicy
 	OutputRedactor governance.OutputRedactor
@@ -99,6 +101,7 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		blobs:                  deps.Blobs,
 		events:                 deps.Events,
 		gate:                   deps.HumanGate,
+		approvalEvaluator:      deps.ToolApprovalEvaluator,
 		policy:                 deps.Policy,
 		audit:                  deps.Audit,
 		toolGov:                deps.ToolPolicy,

@@ -353,6 +353,7 @@ func (f *Framework) newWorkflowRunner() *orchestration.WorkflowRunner {
 		f.events,
 		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: f.scenario.Agents, engine: f.engine}),
 		orchestration.WithHumanGate(f.gate),
+		orchestration.WithToolApprovalEvaluator(f.approvalEvaluator),
 		orchestration.WithBlobStore(f.blobs),
 		orchestration.WithSecurityPolicy(f.policy),
 		orchestration.WithAuditSink(f.audit),
