@@ -142,7 +142,7 @@ func TestEngineReplanOrFailReturnsErrorWhenBudgetExhausted(t *testing.T) {
 	}
 	agent := scenario.Agents["assistant"]
 	profile := scenario.LLMs["default"]
-	_, err = engine.replanOrFail(context.Background(), "run-replan", agent, profile, llm.ChatRequest{}, nil, nil, nil, nil, 1, "prompt", maxReplanAttempts, 0, false)
+	_, err = engine.replanOrFail(context.Background(), "run-replan", agent, profile, llm.ChatRequest{}, nil, nil, nil, nil, 1, "prompt", maxReplanAttempts, 0, false, nil)
 	if err == nil {
 		t.Fatal("expected max steps error")
 	}

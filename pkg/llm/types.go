@@ -96,14 +96,37 @@ type ChatResponse struct {
 	Raw          json.RawMessage `json:"raw,omitempty"`
 }
 
+// ChunkKind discriminates Stream progress events. Empty Kind is treated as
+// answer content for backward compatibility with provider token streams.
+type ChunkKind string
+
+const (
+	ChunkKindContent    ChunkKind = ""
+	ChunkKindToolCall   ChunkKind = "tool_call"
+	ChunkKindToolResult ChunkKind = "tool_result"
+	ChunkKindToolDenied ChunkKind = "tool_denied"
+)
+
 type ChatChunk struct {
-	Content    string     `json:"content,omitempty"`
-	Done       bool       `json:"done,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	Usage      TokenUsage `json:"usage,omitempty"`
-	Paused     bool       `json:"paused,omitempty"`
-	PauseToken string     `json:"pause_token,omitempty"`
-	PauseKind  string     `json:"pause_kind,omitempty"`
+	Kind       ChunkKind       `json:"kind,omitempty"`
+	Content    string          `json:"content,omitempty"`
+	Done       bool            `json:"done,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	Usage      TokenUsage      `json:"usage,omitempty"`
+	Paused     bool            `json:"paused,omitempty"`
+	PauseToken string          `json:"pause_token,omitempty"`
+	PauseKind  string          `json:"pause_kind,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolName   string          `json:"tool_name,omitempty"`
+	ToolInput  json.RawMessage `json:"tool_input,omitempty"`
+	ToolOutput json.RawMessage `json:"tool_output,omitempty"`
+	ToolError  string          `json:"tool_error,omitempty"`
+}
+
+// IsAnswerContent reports whether this chunk contributes to the final answer
+// text aggregated by Engine.Stream. Tool progress events must not.
+func (c ChatChunk) IsAnswerContent() bool {
+	return c.Kind == ChunkKindContent
 }
 
 type TokenUsage struct {

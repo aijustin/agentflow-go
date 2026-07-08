@@ -213,7 +213,7 @@ flowchart LR
     CAP --> TOOLS["ToolCaller.ChatWithTools<br/>tool loop"]
     CAP --> STRUCT["StructuredOutputter.StructuredChat<br/>RunStructured / planning"]
     CAP --> STREAM["Streamer.StreamChat<br/>无工具 Stream"]
-    CAP --> STREAM_TOOL["answerWithTools<br/>阻塞后单 chunk Done"]
+    CAP --> STREAM_TOOL["answerWithTools + emit<br/>tool_call/result 增量 + Done"]
 
     subgraph PROVIDERS["Provider 实现"]
         OAI["OpenAI-compatible"]
@@ -229,10 +229,11 @@ flowchart LR
     STREAM_TOOL --> TOOLS
 ```
 
-**Stream 语义限制：**
+**Stream 语义：**
 
 - 无工具：走 `Streamer.StreamChat`，增量 token chunk。
-- 有工具：阻塞跑完与 `Run` 相同的受治理 tool loop，再发一个 `Done` chunk（非逐 tool 事件流）。
+- 有工具：跑与 `Run` 相同的受治理 tool loop；循环中按序发出 `kind=tool_call` → `kind=tool_result`（或 `tool_denied`）进度 chunk，最终答案仍以终端 `Done` chunk（`kind` 为空）交付。进度 chunk 不计入持久化最终输出。
+- 说明：本阶段仍对每轮 LLM 使用阻塞 `ChatWithTools`（非 provider 级 token/`tool_calls` 流）；增量是 **tool 调度事件**，不是逐 token 的 tool_call 增量。
 - `before_final_answer`：`Stream` 硬拒绝；`tool_approval` pause 可通过终端 `Paused` chunk 暴露。
 - `fixed_workflow` 含 `agent` 节点时，`RunStructured` / `Stream` 拒绝，避免 agent 双重执行。
 

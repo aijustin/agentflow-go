@@ -246,7 +246,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 				e.logWarn(ctx, "runtime: failed to update plan progress after successful tool call", "run_id", runID, "tool", approved.Name, "error", err)
 			}
 		}
-		messages, _, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false, stepsConsumed, replanAttempts, false)
+		messages, _, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false, stepsConsumed, replanAttempts, false, nil)
 		if err != nil {
 			return "", err
 		}
@@ -279,9 +279,9 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		// here (e.g. the pause happened on the very last allowed step).
 		// Try to replan instead of always failing hard, matching the
 		// budget-exhaustion behavior of the non-paused tool loop.
-		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumed, true)
+		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumed, true, nil)
 	}
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, remainingSteps, prompt, replanAttempts, stepsConsumed, true)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, remainingSteps, prompt, replanAttempts, stepsConsumed, true, nil)
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {
