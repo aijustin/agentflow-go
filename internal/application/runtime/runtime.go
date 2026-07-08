@@ -324,7 +324,10 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		}
 		var b strings.Builder
 		for chunk := range source {
-			if chunk.Content != "" {
+			// Only answer-content chunks feed the persisted final output.
+			// Tool progress (tool_call / tool_result / tool_denied) is
+			// forwarded to Stream consumers but must not corrupt final.
+			if chunk.IsAnswerContent() && chunk.Content != "" {
 				b.WriteString(chunk.Content)
 			}
 			if !send(chunk) {

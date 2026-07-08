@@ -63,7 +63,7 @@ func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.
 			// never calls any tools".
 			return "", fmt.Errorf("runtime: agent %q has tools/sub-agents configured but llm profile %q does not support tool calling", agent.Name, agent.LLM)
 		}
-		return e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt)
+		return e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt, nil)
 	}
 	e.emitContextPrepared(ctx, req.RunID, stats)
 	resp, err := e.chatWithRetry(ctx, req.RunID, agent, profile, baseReq)
@@ -321,7 +321,9 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 			cancel()
 			return nil, core.Agent{}, nil, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM)
 		}
-		ch := make(chan llm.ChatChunk, 1)
+		// Buffer tool/call progress separately from the terminal Done chunk so a
+		// slow Stream consumer still observes incremental tool events.
+		ch := make(chan llm.ChatChunk, 16)
 		go func() {
 			defer close(ch)
 			defer func() {
@@ -329,7 +331,13 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 					ch <- llm.ChatChunk{Done: true, Error: fmt.Sprintf("runtime: panic recovered: %v", r)}
 				}
 			}()
-			output, err := e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt)
+			emit := func(chunk llm.ChatChunk) {
+				select {
+				case ch <- chunk:
+				case <-ctx.Done():
+				}
+			}
+			output, err := e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt, emit)
 			if err != nil {
 				var paused RunPausedError
 				if errorsAsRunPaused(err, &paused) {
@@ -362,15 +370,54 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 // unbounded recursion and runaway cost.
 const maxReplanAttempts = 3
 
-func (e *Engine) answerWithTools(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, prompt string) (string, error) {
+// streamChunkSink receives incremental Stream progress (tool_call / tool_result /
+// tool_denied) while the governed tool loop runs. Nil means non-streaming callers.
+type streamChunkSink func(llm.ChatChunk)
+
+func emitStreamChunk(emit streamChunkSink, chunk llm.ChatChunk) {
+	if emit == nil {
+		return
+	}
+	emit(chunk)
+}
+
+func (e *Engine) answerWithTools(
+	ctx context.Context,
+	runID string,
+	agent core.Agent,
+	profile core.LLMProfileRef,
+	req llm.ChatRequest,
+	caller llm.ToolCaller,
+	prompt string,
+	emit streamChunkSink,
+) (string, error) {
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
 	toolSpecs := e.toolSpecs(ctx, runID, agent)
 	messages := append([]llm.Message(nil), req.Messages...)
 	toolCounts := make(map[string]int)
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, 0, 0, false)
+	return e.answerWithToolsFrom(
+		ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts,
+		maxSteps, prompt, 0, 0, false, emit,
+	)
 }
 
-func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int, stepsConsumedBase int, userPromptPersisted bool) (string, error) {
+func (e *Engine) answerWithToolsFrom(
+	ctx context.Context,
+	runID string,
+	agent core.Agent,
+	profile core.LLMProfileRef,
+	req llm.ChatRequest,
+	caller llm.ToolCaller,
+	toolSpecs []llm.ToolSpec,
+	messages []llm.Message,
+	toolCounts map[string]int,
+	maxSteps int,
+	prompt string,
+	replanAttempts int,
+	stepsConsumedBase int,
+	userPromptPersisted bool,
+	emit streamChunkSink,
+) (string, error) {
 	if hint := e.planningToolHint(ctx, runID); hint != "" {
 		messages = appendPlanningHint(messages, hint)
 	}
@@ -426,12 +473,18 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 			return resp.Message.Content, nil
 		}
 		var dispatchErr error
-		messages, userPromptPersisted, dispatchErr = e.dispatchToolCalls(ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts, prompt, true, stepsConsumedBase+step+1, replanAttempts, userPromptPersisted)
+		messages, userPromptPersisted, dispatchErr = e.dispatchToolCalls(
+			ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts,
+			prompt, true, stepsConsumedBase+step+1, replanAttempts, userPromptPersisted, emit,
+		)
 		if dispatchErr != nil {
 			return "", dispatchErr
 		}
 	}
-	return e.replanOrFail(ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumedBase, userPromptPersisted)
+	return e.replanOrFail(
+		ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts,
+		maxSteps, prompt, replanAttempts, stepsConsumedBase, userPromptPersisted, emit,
+	)
 }
 
 // replanOrFail is called once the tool loop has exhausted its step budget,
@@ -441,7 +494,23 @@ func (e *Engine) answerWithToolsFrom(ctx context.Context, runID string, agent co
 // replans across the whole run, including any that happened before a pause
 // and resume, so pausing cannot reset the maxReplanAttempts budget and drive
 // unbounded replanning across checkpoints.
-func (e *Engine) replanOrFail(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest, caller llm.ToolCaller, toolSpecs []llm.ToolSpec, messages []llm.Message, toolCounts map[string]int, maxSteps int, prompt string, replanAttempts int, stepsConsumedBase int, userPromptPersisted bool) (string, error) {
+func (e *Engine) replanOrFail(
+	ctx context.Context,
+	runID string,
+	agent core.Agent,
+	profile core.LLMProfileRef,
+	req llm.ChatRequest,
+	caller llm.ToolCaller,
+	toolSpecs []llm.ToolSpec,
+	messages []llm.Message,
+	toolCounts map[string]int,
+	maxSteps int,
+	prompt string,
+	replanAttempts int,
+	stepsConsumedBase int,
+	userPromptPersisted bool,
+	emit streamChunkSink,
+) (string, error) {
 	if replanAttempts < maxReplanAttempts {
 		complete, err := e.planningComplete(ctx, runID)
 		if err != nil {
@@ -453,7 +522,10 @@ func (e *Engine) replanOrFail(ctx context.Context, runID string, agent core.Agen
 				return "", err
 			}
 			if len(replanned) > len(messages) {
-				return e.answerWithToolsFrom(ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts, maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps, userPromptPersisted)
+				return e.answerWithToolsFrom(
+					ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts,
+					maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps, userPromptPersisted, emit,
+				)
 			}
 		}
 	}
@@ -468,10 +540,31 @@ func (e *Engine) replanOrFail(ctx context.Context, runID string, agent core.Agen
 // persistTurnMemory is true and every call in the batch completes, the
 // assistant turn and tool results are written to memory together so a mid-turn
 // pause never leaves partial assistant/tool_call pairings in memory.
-func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, turnAssistant llm.Message, calls []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, persistTurnMemory bool, stepsConsumed int, replanAttempts int, userPromptPersisted bool) ([]llm.Message, bool, error) {
+func (e *Engine) dispatchToolCalls(
+	ctx context.Context,
+	runID string,
+	agent core.Agent,
+	profile core.LLMProfileRef,
+	turnAssistant llm.Message,
+	calls []llm.ToolCall,
+	messages []llm.Message,
+	toolCounts map[string]int,
+	prompt string,
+	persistTurnMemory bool,
+	stepsConsumed int,
+	replanAttempts int,
+	userPromptPersisted bool,
+	emit streamChunkSink,
+) ([]llm.Message, bool, error) {
 	toolMem := make([]memoryMessage, 0, len(calls))
 	for index := range calls {
 		toolCall := calls[index]
+		emitStreamChunk(emit, llm.ChatChunk{
+			Kind:       llm.ChunkKindToolCall,
+			ToolCallID: toolCall.ID,
+			ToolName:   toolCall.Name,
+			ToolInput:  toolCall.Input,
+		})
 		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, toolCounts, prompt, stepsConsumed, replanAttempts); err != nil {
 			return messages, userPromptPersisted, err
 		} else if paused != nil {
@@ -480,6 +573,22 @@ func (e *Engine) dispatchToolCalls(ctx context.Context, runID string, agent core
 		result, err := e.dispatchTool(ctx, runID, agent, toolCall, toolCounts, true)
 		if err != nil {
 			return messages, userPromptPersisted, err
+		}
+		if result.Error != "" {
+			emitStreamChunk(emit, llm.ChatChunk{
+				Kind:       llm.ChunkKindToolDenied,
+				ToolCallID: toolCall.ID,
+				ToolName:   toolCall.Name,
+				ToolError:  result.Error,
+				ToolOutput: result.Output,
+			})
+		} else {
+			emitStreamChunk(emit, llm.ChatChunk{
+				Kind:       llm.ChunkKindToolResult,
+				ToolCallID: toolCall.ID,
+				ToolName:   toolCall.Name,
+				ToolOutput: result.Output,
+			})
 		}
 		// Persist the same compacted result the model sees so a later memory
 		// recall/replay never surfaces tool output the model never received.

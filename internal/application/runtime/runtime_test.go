@@ -1148,16 +1148,32 @@ func TestEngineStreamSupportsAutonomousToolLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got string
+	var kinds []llm.ChunkKind
 	done := false
 	for chunk := range ch {
 		if chunk.Error != "" {
 			t.Fatal(chunk.Error)
+		}
+		if chunk.Kind != llm.ChunkKindContent {
+			kinds = append(kinds, chunk.Kind)
+			if chunk.Kind == llm.ChunkKindToolCall {
+				if chunk.ToolName != "echo" || chunk.ToolCallID != "call-1" {
+					t.Fatalf("unexpected tool_call chunk %+v", chunk)
+				}
+			}
+			if chunk.Kind == llm.ChunkKindToolResult && chunk.ToolName != "echo" {
+				t.Fatalf("unexpected tool_result chunk %+v", chunk)
+			}
+			continue
 		}
 		got += chunk.Content
 		done = done || chunk.Done
 	}
 	if got != "final answer" || !done {
 		t.Fatalf("unexpected tool stream got=%q done=%v", got, done)
+	}
+	if len(kinds) < 2 || kinds[0] != llm.ChunkKindToolCall || kinds[1] != llm.ChunkKindToolResult {
+		t.Fatalf("expected incremental tool_call then tool_result before final answer, got %v", kinds)
 	}
 	requests := gateway.ToolRequests("default")
 	foundPlan := false
@@ -1203,13 +1219,23 @@ func TestEngineStreamPausesOnToolApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	var pausedChunk llm.ChatChunk
+	var sawToolCall bool
 	for chunk := range ch {
+		if chunk.Kind == llm.ChunkKindToolCall {
+			sawToolCall = true
+			if chunk.ToolName != "echo" || chunk.ToolCallID != "call-1" {
+				t.Fatalf("unexpected tool_call before pause %+v", chunk)
+			}
+		}
 		if chunk.Paused {
 			pausedChunk = chunk
 		}
 		if chunk.Error != "" {
 			t.Fatalf("unexpected stream error: %s", chunk.Error)
 		}
+	}
+	if !sawToolCall {
+		t.Fatal("expected tool_call progress chunk before pause")
 	}
 	if !pausedChunk.Paused || pausedChunk.PauseToken != "token" || pausedChunk.PauseKind != "tool_approval" {
 		t.Fatalf("unexpected pause chunk %+v", pausedChunk)
