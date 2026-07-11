@@ -36,6 +36,7 @@ const (
 	EventMemoryEvicted     EventType = "MemoryEvicted"
 	EventContextPrepared   EventType = "ContextPrepared"
 	EventContextIncomplete EventType = "ContextIncomplete"
+	EventSkillApplied      EventType = "SkillApplied"
 )
 
 type Event struct {
@@ -46,6 +47,8 @@ type Event struct {
 	TraceID      string          `json:"trace_id,omitempty"`
 	SpanID       string          `json:"span_id,omitempty"`
 	ParentSpanID string          `json:"parent_span_id,omitempty"`
+	Category     string          `json:"category,omitempty"`
+	DisplayLabel string          `json:"display_label,omitempty"`
 	Payload      json.RawMessage `json:"payload,omitempty"`
 }
 

@@ -164,27 +164,38 @@ llms:
 ### agentflow-go（框架）— 已完成
 
 - [x] AF-012：catalog manifest snake_case 字段加载
-- [x] AF-002 / AF-008：OpenAI 兼容网关正文 tool-call 归一化
-- [x] AF-014：MemoryRead 增加 `messages_by_provenance` / `messages_by_role` / `stored_messages`
+- [x] AF-002 / AF-008：OpenAI 兼容网关正文 tool-call 归一化（含 `StreamChatWithTools`）
+- [x] AF-014：MemoryRead 增加 `messages_by_provenance` / `messages_by_role` / `stored_messages`；hydrate 契约见 `docs/session-memory-hydrate.md`
 - [x] AF-015：ContextPrepared 增加 `dropped_user_messages` + 默认 pin user + `ContextIncomplete` 事件
-- [ ] AF-003：提供 `MultiNamespaceRetriever` API（可选增强）
+- [x] AF-003 / AF-019：`knowledge.NewMultiNamespaceRetriever`（global_rank / balanced，metadata `namespace`/`kb_id`）
+- [x] AF-004：`Framework.StreamRun` 统一 `StreamFrame`（token/event/done）
+- [x] AF-005：`EventCategory` / `DisplayLabel` / `EventFilterPresetProductUI`
+- [x] AF-007：`SkillKind` + `EventSkillApplied` + `pkg/skill.ScriptRuntime` 接口
+- [x] AF-009：Postgres `WithExpectedDimension` + `ReindexRequiredError`；Indexer 向量长度一致性校验
+- [x] AF-010：`NewProductionHTTPHandler` 已提供（文档状态更正）
+- [x] AF-011：`policy_source` / `fallback_applied` 可观测
+- [x] AF-013：MemoryWrite `message_bytes`/`tier`/`tool_name`/`transformed`；`ToolOutputMaxBytes`
+- [x] AF-016：`RunRequest.TrustMode=full_trust` 跳过 tool approval pause
+- [x] AF-020：`ToolOutputTransform` + JSON-aware truncate（`WithToolOutputTransform`）
+- [x] AF-021：Stale 窗口默认排除 denied/empty；`stale_dropped_tool_turns` 等字段
 
 ### agent-base（平台）— 建议优先
 
-1. **P0 — Profile 接线**：确认 `ContextWindowTokens=900000` 写入 `core.LLMProfileRef` 并注册到 Framework
-2. **P0 — Context Policy**：配置 `strategy`、`tool_result_max_tokens`、`compression.enabled` 等
-3. **P1 — hydrate 门控**：`session_memory_hydrate.go` 指纹同步（报告已列）
-4. **P1 — 多 KB 检索**：修复 `buildMultiNamespaceRetriever` 只查第一个 namespace
-5. **P2 — 保留 trace_executor cap** 作为双保险（框架 policy 启用后仍可选）
+1. **P0 — Profile 接线**：确认 `ContextWindowTokens` 写入 `core.LLMProfileRef` 并注册到 Framework
+2. **P0 — Context Policy**：配置 `strategy`、`tool_result_max_tokens`、`stale_tool_turns`、`compression.enabled` 等
+3. **P0 — TrustMode**：full_trust 会话传 `RunRequest.TrustMode = "full_trust"`
+4. **P1 — hydrate 门控**：指纹同步（见 `docs/session-memory-hydrate.md`）
+5. **P1 — 多 KB**：可改用框架 `NewMultiNamespaceRetriever` 或保留平台 orchestrator
+6. **P2 — 注册** `WithToolOutputTransform("knowledge_retrieve", CompactRetrieveResponseForLLM)`
 
 ### 联调验收建议
 
 升级框架到含上述修复的版本后，在 agent-base 侧：
 
-1. 确认 `ContextPrepared.max_input_tokens` ≈ `900000 - max_output_tokens`（非 8192）
-2. 相同 POS 诊断脚本 replay：`before_tokens` 峰值应显著下降（policy 启用后）
-3. Prompt Skill manifest 加载后 `prompt_fragments` 非空
-4. Qwen/DashScope 兼容模式下 tool-call 能正常触发
+1. 确认 `ContextPrepared.max_input_tokens` ≈ `ContextWindowTokens - max_output_tokens`（非 8192）；检查 `policy_source`
+2. Replay `c9aa6e2f`：budget denial 后 LLM context 仍含最近 successful retrieve（AF-021）
+3. 大 JSON tool result + `tool_result_max_tokens`：LLM 侧仍为可解析 JSON（AF-020）
+4. Prompt Skill / Qwen tool-call / StreamRun 事件合并
 
 ---
 
@@ -192,14 +203,14 @@ llms:
 
 | 主题 | 文件 |
 |------|------|
-| Profile → Context Policy 继承 | `internal/application/runtime/runtime_context.go:143-151` |
-| 8192 兜底逻辑 | `pkg/contextwindow/policy.go:39-48` |
-| StrategyNone 超预算截断 | `pkg/contextwindow/manager.go:80-93` |
-| Tool 结果压缩 | `internal/application/runtime/runtime_context.go:13-66` |
-| Memory 全量写入 | `internal/application/runtime/runtime_memory.go:43-49` |
-| catalog manifest 修复 | `pkg/catalog/document.go`, `pkg/catalog/manifest.go` |
-| tool-call 归一化 | `internal/adapter/llm/openai/toolcall_normalize.go` |
-| yaml 配置示例 | `internal/adapter/config/yaml/config_test.go:140-171` |
+| Profile → Context Policy 继承 | `internal/application/runtime/runtime_context.go` |
+| 8192 兜底 + policy_source | `pkg/contextwindow/policy.go` |
+| JSON-aware truncate | `pkg/contextwindow/transform.go` |
+| Stale 分类 | `internal/application/runtime/runtime_context_governance.go` |
+| TrustMode | `internal/application/runtime/runtime.go` / `runtime_continue.go` |
+| StreamRun | `framework_stream.go` |
+| MultiNamespaceRetriever | `pkg/knowledge/multi_namespace.go` |
+| Hydrate 契约 | `docs/session-memory-hydrate.md` |
 
 ---
 
@@ -208,3 +219,4 @@ llms:
 | 日期 | 说明 |
 |------|------|
 | 2026-07-02 | 初版：逐条核实 AF-001～AF-015，标注框架已修复项与 agent-base 待办 |
+| 2026-07-11 | 全量落地 AF-003/004/005/007/008/009/011/013/016/019/020/021；更正 AF-010 状态 |

@@ -20,8 +20,9 @@ var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 type Option func(*Store) error
 
 type Store struct {
-	db    *sql.DB
-	table string
+	db                *sql.DB
+	table             string
+	expectedDimension int
 }
 
 func NewStore(db *sql.DB, opts ...Option) (*Store, error) {
@@ -46,6 +47,18 @@ func WithTableName(name string) Option {
 			return fmt.Errorf("postgres vector store: invalid table name %q", name)
 		}
 		store.table = name
+		return nil
+	}
+}
+
+// WithExpectedDimension configures Upsert to reject vectors whose length
+// does not match n. A non-positive n disables validation.
+func WithExpectedDimension(n int) Option {
+	return func(store *Store) error {
+		if n < 0 {
+			return fmt.Errorf("postgres vector store: expected dimension must be >= 0")
+		}
+		store.expectedDimension = n
 		return nil
 	}
 }
@@ -82,6 +95,13 @@ func (s *Store) Upsert(ctx context.Context, documents []knowledge.DocumentEmbedd
 	for _, document := range documents {
 		if strings.TrimSpace(document.Document.ID) == "" {
 			return fmt.Errorf("postgres vector store: document id is required")
+		}
+		if s.expectedDimension > 0 && len(document.Vector) != s.expectedDimension {
+			return &ReindexRequiredError{
+				DocumentID: document.Document.ID,
+				Expected:   s.expectedDimension,
+				Actual:     len(document.Vector),
+			}
 		}
 		vector, err := vectorLiteral(document.Vector)
 		if err != nil {

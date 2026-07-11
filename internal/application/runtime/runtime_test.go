@@ -1289,6 +1289,44 @@ func TestEngineStreamDoesNotPauseApprovalNever(t *testing.T) {
 	}
 }
 
+func TestEngineFullTrustSkipsToolApprovalPause(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"write"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalPause, core.SideEffectWrite, 4)
+	gate := &capturingGate{repo: repo}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		Tools:     mapToolRegistry{"echo": echoTool{}},
+		HumanGate: gate,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Run(context.Background(), RunRequest{
+		RunID:     "run-full-trust",
+		Agent:     "assistant",
+		Prompt:    "use echo",
+		TrustMode: TrustModeFullTrust,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected completed under full_trust, got %+v", result)
+	}
+	if gate.state.RunID != "" {
+		t.Fatalf("full_trust must not open human gate, got checkpoint %+v", gate.state)
+	}
+}
+
 func TestEngineStreamPauseSurvivesPauseErrorString(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()

@@ -10,71 +10,71 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
 
-func compactToolResultForContext(result core.ToolResult, maxTokens int) core.ToolResult {
-	if maxTokens <= 0 {
-		return result
+func (e *Engine) compactToolResultForContext(result core.ToolResult, maxTokens int) (core.ToolResult, contextwindow.TransformMeta) {
+	meta := contextwindow.TransformMeta{Strategy: contextwindow.TransformStrategyNone, OriginalBytes: len(result.Output)}
+	if maxTokens <= 0 && (e == nil || len(e.toolTransforms) == 0) {
+		meta.TruncatedBytes = len(result.Output)
+		return result, meta
 	}
-	raw, err := json.Marshal(result)
-	if err != nil {
-		return result
+	content := result.Output
+	if len(content) == 0 && result.Error != "" {
+		content = json.RawMessage(strconv.Quote(result.Error))
 	}
-	originalTokens := contextwindow.EstimateTokens(string(raw))
-	if originalTokens <= maxTokens {
-		return result
+	toolName := result.Tool
+	var transforms map[string]contextwindow.ToolOutputTransform
+	if e != nil {
+		transforms = e.toolTransforms
 	}
-	content := string(result.Output)
-	if result.Error != "" {
-		if content != "" {
-			content = content + "\nerror: " + result.Error
-		} else {
-			content = result.Error
+	// Prefer transforming the tool Output payload (JSON body) so knowledge_retrieve
+	// and MCP tools keep a parseable structure. Fall back to wrapping the full
+	// ToolResult only when the output alone still exceeds the budget after transform.
+	out, meta := contextwindow.ApplyToolOutputTransform(toolName, content, maxTokens, transforms)
+	if maxTokens > 0 {
+		raw, err := json.Marshal(core.ToolResult{Tool: result.Tool, Output: out, Error: result.Error})
+		if err == nil && contextwindow.EstimateTokens(string(raw)) <= maxTokens {
+			return core.ToolResult{Tool: result.Tool, Output: out, Error: result.Error}, meta
 		}
+	} else {
+		return core.ToolResult{Tool: result.Tool, Output: out, Error: result.Error}, meta
 	}
-	// Shrink the content budget until the fully serialized compacted
-	// payload - not just the raw content substring - actually fits within
-	// maxTokens. Truncating only the content string and leaving the
-	// "truncated"/"original_tokens"/"max_tokens" metadata fields and JSON
-	// structural overhead unaccounted for can otherwise still push the
-	// final message back over the caller's budget.
+	// Full ToolResult serialization still over budget: wrap with truncated marker.
+	originalTokens := contextwindow.EstimateTokens(string(mustMarshal(result)))
 	budget := maxTokens
 	for attempt := 0; attempt < 8; attempt++ {
-		// truncateForTokenBudget treats a non-positive budget as "no
-		// limit" (pass content through unchanged), so once the shrinking
-		// budget bottoms out at 0 it must be treated as "keep nothing"
-		// here instead of calling into that helper with 0 and getting the
-		// full, untruncated content back.
-		truncated := ""
-		if budget > 0 {
-			truncated = truncateForTokenBudget(content, budget)
+		payload := out
+		if budget > 0 && contextwindow.EstimateTokens(string(payload)) > budget {
+			payload, meta = contextwindow.ApplyToolOutputTransform(toolName, content, budget, transforms)
 		}
 		compact := map[string]any{
 			"truncated":       true,
 			"original_tokens": originalTokens,
 			"max_tokens":      maxTokens,
-			"content":         truncated,
+			"strategy":        meta.Strategy,
+			"content":         json.RawMessage(payload),
 		}
-		output, err := json.Marshal(compact)
+		// If payload is not valid JSON, store as string.
+		if !json.Valid(payload) {
+			compact["content"] = string(payload)
+		}
+		encoded, err := json.Marshal(compact)
 		if err != nil {
-			return result
+			return result, meta
 		}
-		if contextwindow.EstimateTokens(string(output)) <= maxTokens || budget <= 0 {
-			return core.ToolResult{Tool: result.Tool, Output: output}
+		if contextwindow.EstimateTokens(string(encoded)) <= maxTokens || budget <= 0 {
+			meta.Truncated = true
+			meta.TruncatedBytes = len(encoded)
+			if meta.Strategy == contextwindow.TransformStrategyNone {
+				meta.Strategy = contextwindow.TransformStrategyByteCut
+			}
+			return core.ToolResult{Tool: result.Tool, Output: encoded}, meta
 		}
 		budget /= 2
 	}
-	return core.ToolResult{Tool: result.Tool, Output: json.RawMessage(`{"truncated":true}`)}
-}
-
-func truncateForTokenBudget(content string, maxTokens int) string {
-	if maxTokens <= 0 || contextwindow.EstimateTokens(content) <= maxTokens {
-		return content
-	}
-	limit := maxTokens * 3
-	runes := []rune(content)
-	if limit <= 0 || len(runes) <= limit {
-		return content
-	}
-	return string(runes[:limit]) + "..."
+	meta.Truncated = true
+	meta.Strategy = contextwindow.TransformStrategyByteCut
+	fallback := json.RawMessage(`{"truncated":true}`)
+	meta.TruncatedBytes = len(fallback)
+	return core.ToolResult{Tool: result.Tool, Output: fallback}, meta
 }
 
 func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile core.LLMProfileRef, req RunRequest, history []llm.Message) ([]llm.Message, contextwindow.Stats) {
@@ -181,7 +181,28 @@ func (e *Engine) emitPairingIncomplete(ctx context.Context, runID string, drops 
 }
 
 func (e *Engine) emitContextPrepared(ctx context.Context, runID string, stats contextwindow.Stats) {
-	e.emitJSON(ctx, core.EventContextPrepared, runID, stats)
+	payload := map[string]any{
+		"strategy":                   stats.Strategy,
+		"before_tokens":              stats.BeforeTokens,
+		"after_tokens":               stats.AfterTokens,
+		"max_input_tokens":           stats.MaxInputTokens,
+		"dropped_messages":           stats.DroppedMessages,
+		"dropped_user_messages":      stats.DroppedUserMessages,
+		"dropped_assistant_messages": stats.DroppedAssistantMessages,
+		"dropped_tool_messages":      stats.DroppedToolMessages,
+		"context_incomplete":         stats.ContextIncomplete,
+		"summarized":                 stats.Summarized,
+		"summary_tokens":             stats.SummaryTokens,
+		"policy_source":              stats.PolicySource,
+		"fallback_applied":           stats.FallbackApplied,
+		"stale_dropped_tool_turns":   stats.StaleDroppedToolTurns,
+		"denial_occupied_slots":      stats.DenialOccupiedSlots,
+		"stale_excluded_turns":       stats.StaleExcludedTurns,
+	}
+	if stats.FallbackApplied {
+		payload["warning"] = "context max_input_tokens fell back to 8192; set LLMProfileRef.ContextWindowTokens or Context.MaxInputTokens"
+	}
+	e.emitJSON(ctx, core.EventContextPrepared, runID, payload)
 	if stats.DroppedUserMessages > 0 {
 		e.emitJSON(ctx, core.EventContextIncomplete, runID, map[string]any{
 			"dropped_user_messages":      stats.DroppedUserMessages,

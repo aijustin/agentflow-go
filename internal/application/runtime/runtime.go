@@ -9,6 +9,7 @@ import (
 
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
+	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -40,6 +41,7 @@ type Engine struct {
 	tracer                 observability.Tracer
 	logger                 log.Logger
 	enqueueMemoryReconcile func(context.Context, async.Job) error
+	toolTransforms         map[string]contextwindow.ToolOutputTransform
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -73,6 +75,8 @@ type Dependencies struct {
 	Logger log.Logger
 	// EnqueueMemoryReconcile enqueues async tier reconcile jobs after tier writes.
 	EnqueueMemoryReconcile func(context.Context, async.Job) error
+	// ToolOutputTransforms are optional per-tool reshapers applied before LLM/memory.
+	ToolOutputTransforms map[string]contextwindow.ToolOutputTransform
 }
 
 func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
@@ -110,14 +114,36 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		tracer:                 tracer,
 		logger:                 deps.Logger,
 		enqueueMemoryReconcile: deps.EnqueueMemoryReconcile,
+		toolTransforms:         deps.ToolOutputTransforms,
 	}, nil
 }
 
+// TrustMode controls run-scoped tool approval overrides.
+type TrustMode string
+
+const (
+	TrustModeDefault   TrustMode = ""
+	TrustModeFullTrust TrustMode = "full_trust"
+)
+
 type RunRequest struct {
-	RunID   string          `json:"run_id"`
-	Agent   string          `json:"agent,omitempty"`
-	Prompt  string          `json:"prompt,omitempty"`
-	Context json.RawMessage `json:"context,omitempty"`
+	RunID     string          `json:"run_id"`
+	Agent     string          `json:"agent,omitempty"`
+	Prompt    string          `json:"prompt,omitempty"`
+	Context   json.RawMessage `json:"context,omitempty"`
+	TrustMode TrustMode       `json:"trust_mode,omitempty"`
+}
+
+// SetToolOutputTransform registers or replaces a per-tool output transform.
+func (e *Engine) SetToolOutputTransform(tool string, fn contextwindow.ToolOutputTransform) {
+	if e.toolTransforms == nil {
+		e.toolTransforms = map[string]contextwindow.ToolOutputTransform{}
+	}
+	if fn == nil {
+		delete(e.toolTransforms, tool)
+		return
+	}
+	e.toolTransforms[tool] = fn
 }
 
 type RunResult struct {
@@ -143,6 +169,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err := e.beginRun(ctx, &req); err != nil {
 		return RunResult{}, err
 	}
+	ctx = ContextWithTrustMode(ctx, req.TrustMode)
 	failRun := func(err error) (RunResult, error) {
 		runSpan.RecordError(err)
 		eventType := core.EventRunFailed
@@ -213,6 +240,7 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 	if err := e.beginRun(ctx, &req); err != nil {
 		return RunResult{}, err
 	}
+	ctx = ContextWithTrustMode(ctx, req.TrustMode)
 	agent, err := e.resolveAgent(req.Agent)
 	if err != nil {
 		e.markRunFailed(ctx, req.RunID, err)
@@ -287,6 +315,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		cancel()
 		return nil, err
 	}
+	ctx = ContextWithTrustMode(ctx, req.TrustMode)
 	source, agent, streamCancel, err := e.streamAnswer(ctx, req)
 	if err != nil {
 		e.markRunFailed(ctx, req.RunID, err)

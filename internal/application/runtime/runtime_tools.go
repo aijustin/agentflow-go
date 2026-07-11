@@ -72,7 +72,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil
 	}
-	if reason := toolinvoke.DenialWithoutGate(tool, e.gate != nil, options.approved); reason != "" {
+	if reason := toolinvoke.DenialWithoutGate(tool, e.gate != nil, options.approved || TrustModeFromContext(ctx) == TrustModeFullTrust); reason != "" {
 		result := core.ToolResult{Tool: call.Name, Error: reason}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
 		return result, nil

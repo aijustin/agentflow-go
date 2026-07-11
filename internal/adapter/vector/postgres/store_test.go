@@ -102,6 +102,32 @@ func TestStoreUpsertChunksLargeBatch(t *testing.T) {
 	}
 }
 
+func TestStoreUpsertRejectsDimensionMismatch(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	store, err := NewStore(db, WithExpectedDimension(3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Upsert(ctx, []knowledge.DocumentEmbedding{{
+		Document: knowledge.Document{ID: "doc-1", Namespace: "tenant-a", Content: "hello"},
+		Vector:   []float32{0.1, 0.2},
+	}})
+	if err == nil {
+		t.Fatal("expected dimension mismatch error")
+	}
+	if !errors.Is(err, ErrDimensionMismatch) {
+		t.Fatalf("expected ErrDimensionMismatch, got %v", err)
+	}
+	var reindex *ReindexRequiredError
+	if !errors.As(err, &reindex) {
+		t.Fatalf("expected ReindexRequiredError, got %T", err)
+	}
+	if reindex.Expected != 3 || reindex.Actual != 2 || reindex.DocumentID != "doc-1" {
+		t.Fatalf("unexpected reindex error: %+v", reindex)
+	}
+}
+
 func TestNewStoreValidatesInputs(t *testing.T) {
 	if _, err := NewStore(nil); err == nil {
 		t.Fatal("expected nil db error")
@@ -112,6 +138,9 @@ func TestNewStoreValidatesInputs(t *testing.T) {
 	}
 	if _, err := NewStore(db, WithTableName("bad;drop")); err == nil {
 		t.Fatal("expected invalid table name error")
+	}
+	if _, err := NewStore(db, WithExpectedDimension(-1)); err == nil {
+		t.Fatal("expected negative dimension error")
 	}
 }
 

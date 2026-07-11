@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
+	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -27,6 +28,7 @@ func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.
 	}
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	defer cancel()
+	e.emitSkillApplied(ctx, req.RunID, agent)
 	profile, err := e.llmProfile(agent.LLM)
 	if err != nil {
 		return "", err
@@ -226,6 +228,7 @@ func (e *Engine) structuredAnswer(ctx context.Context, req RunRequest) (json.Raw
 	if err != nil {
 		return nil, err
 	}
+	e.emitSkillApplied(ctx, req.RunID, agent)
 	if len(agent.Policy.OutputSchema) == 0 {
 		return nil, fmt.Errorf("runtime: agent %q output_schema is required for structured output", agent.Name)
 	}
@@ -287,6 +290,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 	} else {
 		cancel = func() {}
 	}
+	e.emitSkillApplied(ctx, req.RunID, agent)
 	profile, err := e.llmProfile(agent.LLM)
 	if err != nil {
 		cancel()
@@ -425,8 +429,13 @@ func (e *Engine) answerWithToolsFrom(
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		var staleStats staleEvictionStats
 		if profile.Context.StaleToolTurns > 0 {
-			messages = evictStaleToolMessages(messages, profile.Context.StaleToolTurns)
+			messages, staleStats = evictStaleToolMessagesWithPolicy(
+				messages,
+				profile.Context.StaleToolTurns,
+				profile.Context.ExcludeFromStaleWindowOrDefault(),
+			)
 		}
 		// Recompute on every turn (not just once before the loop) so
 		// plan-driven schema pruning reflects progress made by the tool
@@ -434,6 +443,9 @@ func (e *Engine) answerWithToolsFrom(
 		// the plan state as of the very first turn.
 		toolSpecs := e.toolSpecs(ctx, runID, agent)
 		prepared, stats := e.prepareMessages(ctx, runID, agent, messages, profile)
+		stats.StaleDroppedToolTurns = staleStats.DroppedToolTurns
+		stats.DenialOccupiedSlots = staleStats.DenialOccupiedSlots
+		stats.StaleExcludedTurns = staleStats.ExcludedTurns
 		e.emitContextPrepared(ctx, runID, stats)
 		toolReq := llm.ToolCallRequest{
 			ChatRequest: llm.ChatRequest{
@@ -594,17 +606,36 @@ func (e *Engine) dispatchToolCalls(
 		// recall/replay never surfaces tool output the model never received.
 		// The full, uncompacted result stays in StepOutputs["tool.<id>"] for
 		// audit. With ToolResultMaxTokens==0 (default) this is a no-op.
-		contextResult := compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
-		toolMem = append(toolMem, memoryMessageFromToolResult(toolCall, contextResult))
+		contextResult, transformMeta := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
+		if maxBytes := profile.Context.ToolOutputMaxBytes; maxBytes > 0 && len(contextResult.Output) > maxBytes {
+			truncated, meta := contextwindow.ApplyToolOutputTransform(toolCall.Name, contextResult.Output, maxBytes/3, e.toolTransforms)
+			contextResult.Output = truncated
+			transformMeta = meta
+			transformMeta.Truncated = true
+		}
+		toolMsg := memoryMessageFromToolResult(toolCall, contextResult)
+		if transformMeta.Truncated || transformMeta.Strategy != contextwindow.TransformStrategyNone {
+			if toolMsg.Metadata == nil {
+				toolMsg.Metadata = map[string]string{}
+			}
+			toolMsg.Metadata["transformed"] = "true"
+			toolMsg.Metadata["truncate_strategy"] = transformMeta.Strategy
+		}
+		toolMem = append(toolMem, toolMsg)
 		raw, err := json.Marshal(contextResult)
 		if err != nil {
 			return messages, userPromptPersisted, err
 		}
+		class := classifyToolResultMessage(llm.Message{Role: llm.RoleTool, Content: string(raw), Name: toolCall.Name})
 		messages = append(messages, llm.Message{
 			Role:       llm.RoleTool,
 			Content:    string(raw),
 			Name:       toolCall.Name,
 			ToolCallID: toolCall.ID,
+			Metadata: map[string]string{
+				"tool_result_class":  string(class),
+				"truncate_strategy":  transformMeta.Strategy,
+			},
 		})
 		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
 			// markPlanStepDone only updates plan-progress bookkeeping; the

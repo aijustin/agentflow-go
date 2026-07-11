@@ -42,8 +42,30 @@ func withMemoryProvenance(msg memoryMessage, provenance string) memoryMessage {
 	return msg
 }
 
+func memoryMessageFromToolResult(call llm.ToolCall, result core.ToolResult) memoryMessage {
+	msg := withMemoryProvenance(memoryMessage{
+		Role:       string(llm.RoleTool),
+		Content:    string(mustMarshal(result)),
+		Tool:       call.Name,
+		ToolCallID: call.ID,
+	}, memory.ProvenanceToolLoop)
+	if msg.Metadata == nil {
+		msg.Metadata = map[string]string{}
+	}
+	msg.Metadata["tier"] = "tool_trace"
+	msg.Metadata["tool_name"] = call.Name
+	class := classifyToolResultMessage(llm.Message{Role: llm.RoleTool, Content: msg.Content, Name: call.Name, Metadata: msg.Metadata})
+	msg.Metadata["tool_result_class"] = string(class)
+	return msg
+}
+
 func runTurnMemoryMessage(role, content string) memoryMessage {
-	return withMemoryProvenance(memoryMessage{Role: role, Content: content}, memory.ProvenanceRunTurn)
+	msg := withMemoryProvenance(memoryMessage{Role: role, Content: content}, memory.ProvenanceRunTurn)
+	if msg.Metadata == nil {
+		msg.Metadata = map[string]string{}
+	}
+	msg.Metadata["tier"] = "conversation"
+	return msg
 }
 
 func memoryMessageFromLLM(msg llm.Message) memoryMessage {
@@ -51,22 +73,25 @@ func memoryMessageFromLLM(msg llm.Message) memoryMessage {
 }
 
 func memoryMessageFromLLMWithProvenance(msg llm.Message, provenance string) memoryMessage {
-	return withMemoryProvenance(memoryMessage{
+	out := withMemoryProvenance(memoryMessage{
 		Role:       string(msg.Role),
 		Content:    msg.Content,
 		ToolCalls:  append([]llm.ToolCall(nil), msg.ToolCalls...),
 		Tool:       msg.Name,
 		ToolCallID: msg.ToolCallID,
 	}, provenance)
-}
-
-func memoryMessageFromToolResult(call llm.ToolCall, result core.ToolResult) memoryMessage {
-	return withMemoryProvenance(memoryMessage{
-		Role:       string(llm.RoleTool),
-		Content:    string(mustMarshal(result)),
-		Tool:       call.Name,
-		ToolCallID: call.ID,
-	}, memory.ProvenanceToolLoop)
+	if out.Metadata == nil {
+		out.Metadata = map[string]string{}
+	}
+	if msg.Role == llm.RoleTool {
+		out.Metadata["tier"] = "tool_trace"
+		if msg.Name != "" {
+			out.Metadata["tool_name"] = msg.Name
+		}
+	} else {
+		out.Metadata["tier"] = "conversation"
+	}
+	return out
 }
 
 func lastAssistantWithToolCallsIndex(messages []llm.Message) int {
@@ -113,7 +138,8 @@ func (e *Engine) persistToolTurnFromStepOutputs(ctx context.Context, runID strin
 		if err := json.Unmarshal(raw, &result); err != nil {
 			return fmt.Errorf("runtime: decode tool output %q: %w", call.ID, err)
 		}
-		tools = append(tools, memoryMessageFromToolResult(call, compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)))
+		compacted, _ := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
+		tools = append(tools, memoryMessageFromToolResult(call, compacted))
 	}
 	if len(tools) == 0 {
 		return nil
@@ -322,12 +348,43 @@ func memoryReadPayload(agent core.Agent, stored []memoryMessage, storedCount, re
 }
 
 func memoryWritePayload(agent core.Agent, messages []memoryMessage) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"agent":                  agent.Name,
 		"memory":                 agent.Memory,
 		"messages":               len(messages),
 		"messages_by_provenance": summarizeMemoryProvenance(messages),
 	}
+	if len(messages) == 1 {
+		msg := messages[0]
+		payload["message_bytes"] = len(msg.Content)
+		if msg.Tool != "" {
+			payload["tool_name"] = msg.Tool
+		}
+		if msg.Metadata != nil {
+			if tier := msg.Metadata["tier"]; tier != "" {
+				payload["tier"] = tier
+			}
+			if transformed := msg.Metadata["transformed"]; transformed != "" {
+				payload["transformed"] = transformed == "true"
+			}
+		}
+	} else {
+		totalBytes := 0
+		tiers := map[string]int{}
+		for _, msg := range messages {
+			totalBytes += len(msg.Content)
+			if msg.Metadata != nil {
+				if tier := msg.Metadata["tier"]; tier != "" {
+					tiers[tier]++
+				}
+			}
+		}
+		payload["message_bytes"] = totalBytes
+		if len(tiers) > 0 {
+			payload["tiers"] = tiers
+		}
+	}
+	return payload
 }
 
 func summarizeMemoryRoles(messages []memoryMessage) map[string]int {

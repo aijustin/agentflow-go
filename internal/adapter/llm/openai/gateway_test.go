@@ -316,6 +316,52 @@ func TestGatewayStreamChat(t *testing.T) {
 	}
 }
 
+func TestGatewayStreamChatWithToolsNormalizesContentToolCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req["stream"] != true {
+			t.Fatalf("stream flag not sent: %+v", req)
+		}
+		if _, ok := req["tools"]; !ok {
+			t.Fatalf("expected tools in stream request: %+v", req)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"name\\\":\\\"echo\\\",\\\"arguments\\\":{\\\"query\\\":\\\"hi\\\"}}\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	ch, err := gateway.StreamChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "call echo"}}},
+		Tools:       []llm.ToolSpec{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toolCalls []llm.ChatChunk
+	done := false
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatal(chunk.Error)
+		}
+		if chunk.Kind == llm.ChunkKindToolCall {
+			toolCalls = append(toolCalls, chunk)
+		}
+		done = done || chunk.Done
+	}
+	if !done {
+		t.Fatal("expected done chunk")
+	}
+	if len(toolCalls) != 1 || toolCalls[0].ToolName != "echo" || string(toolCalls[0].ToolInput) != `{"query":"hi"}` {
+		t.Fatalf("unexpected normalized stream tool calls: %+v", toolCalls)
+	}
+}
+
 // TestGatewayStreamChatCancelStopsGoroutine verifies that cancelling the
 // context unblocks and tears down the streaming goroutine (and its response
 // body) even when the consumer abandons the channel mid-stream.

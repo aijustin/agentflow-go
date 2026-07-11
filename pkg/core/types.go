@@ -80,10 +80,19 @@ type SkillToolPolicy struct {
 	RateCap    int             `json:"rate_cap,omitempty"`
 }
 
+// SkillKind distinguishes prompt-fragment skills from script skills.
+type SkillKind string
+
+const (
+	SkillKindPrompt SkillKind = "prompt"
+	SkillKindScript SkillKind = "script"
+)
+
 type Skill struct {
 	Name             string            `json:"name"`
 	Description      string            `json:"description,omitempty"`
 	Version          string            `json:"version,omitempty"`
+	Kind             SkillKind         `json:"kind,omitempty"`
 	CompatibleAgents []string          `json:"compatible_agents,omitempty"`
 	PromptFragments  []PromptFragment  `json:"prompt_fragments,omitempty"`
 	AgentPolicy      AgentPolicy       `json:"agent_policy,omitempty"`

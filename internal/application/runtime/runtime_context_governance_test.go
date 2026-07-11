@@ -10,6 +10,30 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
 
+func TestEvictStaleToolMessagesExcludesDeniedAndEmpty(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s1", Name: "knowledge_retrieve"}}},
+		{Role: llm.RoleTool, ToolCallID: "s1", Name: "knowledge_retrieve", Content: `{"tool":"knowledge_retrieve","output":{"summary":"ok","chunks":[{"content":"/dev-api/login"}]}}`, Metadata: map[string]string{"tool_result_class": "success"}},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "e1", Name: "knowledge_retrieve"}}},
+		{Role: llm.RoleTool, ToolCallID: "e1", Name: "knowledge_retrieve", Content: ``, Metadata: map[string]string{"tool_result_class": "empty"}},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "d1", Name: "knowledge_retrieve"}}},
+		{Role: llm.RoleTool, ToolCallID: "d1", Name: "knowledge_retrieve", Content: `{"tool":"knowledge_retrieve","error":"run_tool_budget_exceeded"}`, Metadata: map[string]string{"tool_result_class": "denied"}},
+	}
+	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil)
+	foundSuccess := false
+	for _, msg := range evicted {
+		if msg.Role == llm.RoleTool && strings.Contains(msg.Content, "/dev-api/login") {
+			foundSuccess = true
+		}
+	}
+	if !foundSuccess {
+		t.Fatalf("expected successful retrieve to remain, got %+v stats=%+v", evicted, stats)
+	}
+	if stats.ExcludedTurns < 2 {
+		t.Fatalf("expected denied/empty excluded from stale accounting, got %+v", stats)
+	}
+}
+
 func TestEvictStaleToolMessagesRemovesOrphanedToolCalls(t *testing.T) {
 	messages := []llm.Message{
 		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "old-1", Name: "echo"}, {ID: "old-2", Name: "echo"}}},
@@ -51,11 +75,12 @@ func TestEvictStaleToolMessagesHandlesEmptyToolCallID(t *testing.T) {
 }
 
 func TestCompactToolResultForContextRespectsFinalTokenBudget(t *testing.T) {
+	engine := &Engine{}
 	result := core.ToolResult{
 		Tool:   "echo",
 		Output: json.RawMessage(`{"data":"` + strings.Repeat("x", 5000) + `"}`),
 	}
-	compacted := compactToolResultForContext(result, 20)
+	compacted, _ := engine.compactToolResultForContext(result, 20)
 	raw, err := json.Marshal(compacted)
 	if err != nil {
 		t.Fatal(err)
@@ -90,12 +115,13 @@ func TestContextwindowSummaryFallbackRespectsBudget(t *testing.T) {
 }
 
 func TestCompactToolResultForContextFoldsErrorIntoContent(t *testing.T) {
+	engine := &Engine{}
 	result := core.ToolResult{
 		Tool:   "echo",
 		Output: json.RawMessage(`"` + strings.Repeat("a", 200) + `"`),
 		Error:  strings.Repeat("boom ", 200),
 	}
-	compacted := compactToolResultForContext(result, 10)
+	compacted, _ := engine.compactToolResultForContext(result, 10)
 	if compacted.Error != "" {
 		t.Fatalf("expected the returned ToolResult to not carry an unbounded Error field, got %q", compacted.Error)
 	}

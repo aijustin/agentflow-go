@@ -24,17 +24,22 @@ type Message struct {
 }
 
 type Stats struct {
-	Strategy        Strategy `json:"strategy"`
-	BeforeTokens    int      `json:"before_tokens"`
-	AfterTokens     int      `json:"after_tokens"`
-	MaxInputTokens  int      `json:"max_input_tokens"`
-	DroppedMessages          int  `json:"dropped_messages"`
-	DroppedUserMessages      int  `json:"dropped_user_messages,omitempty"`
-	DroppedAssistantMessages int  `json:"dropped_assistant_messages,omitempty"`
-	DroppedToolMessages      int  `json:"dropped_tool_messages,omitempty"`
-	ContextIncomplete        bool `json:"context_incomplete,omitempty"`
-	Summarized               bool `json:"summarized"`
-	SummaryTokens            int  `json:"summary_tokens,omitempty"`
+	Strategy                 Strategy `json:"strategy"`
+	BeforeTokens             int      `json:"before_tokens"`
+	AfterTokens              int      `json:"after_tokens"`
+	MaxInputTokens           int      `json:"max_input_tokens"`
+	DroppedMessages          int      `json:"dropped_messages"`
+	DroppedUserMessages      int      `json:"dropped_user_messages,omitempty"`
+	DroppedAssistantMessages int      `json:"dropped_assistant_messages,omitempty"`
+	DroppedToolMessages      int      `json:"dropped_tool_messages,omitempty"`
+	ContextIncomplete        bool     `json:"context_incomplete,omitempty"`
+	Summarized               bool     `json:"summarized"`
+	SummaryTokens            int      `json:"summary_tokens,omitempty"`
+	PolicySource             string   `json:"policy_source,omitempty"`
+	FallbackApplied          bool     `json:"fallback_applied,omitempty"`
+	StaleDroppedToolTurns    int      `json:"stale_dropped_tool_turns,omitempty"`
+	DenialOccupiedSlots      int      `json:"denial_occupied_slots,omitempty"`
+	StaleExcludedTurns       int      `json:"stale_excluded_turns,omitempty"`
 }
 
 type Result struct {
@@ -43,15 +48,17 @@ type Result struct {
 }
 
 type Manager struct {
-	policy     Policy
-	summarizer Summarizer
+	policy       Policy
+	summarizer   Summarizer
+	policySource string
+	fallback8192 bool
 }
 
 type Summarizer func(messages []Message, budget int) string
 
 func New(policy Policy) *Manager {
-	normalized := policy.Normalize()
-	return &Manager{policy: normalized}
+	detailed := policy.NormalizeDetailed()
+	return &Manager{policy: detailed.Policy, policySource: detailed.PolicySource, fallback8192: detailed.Fallback8192}
 }
 
 func NewWithSummarizer(policy Policy, summarizer Summarizer) *Manager {
@@ -65,9 +72,11 @@ func (m *Manager) Prepare(messages []Message) Result {
 	messages = applyRoleBudgets(messages, m.policy.RoleBudgets)
 	before := CountMessages(messages)
 	stats := Stats{
-		Strategy:       m.policy.Strategy,
-		BeforeTokens:   before,
-		MaxInputTokens: m.policy.MaxInputTokens,
+		Strategy:        m.policy.Strategy,
+		BeforeTokens:    before,
+		MaxInputTokens:  m.policy.MaxInputTokens,
+		PolicySource:    m.policySource,
+		FallbackApplied: m.fallback8192,
 	}
 	if m.policy.Compression.Enabled && m.policy.MaxInputTokens > 0 {
 		trigger := int(float64(m.policy.MaxInputTokens) * m.policy.Compression.TriggerRatio)
@@ -298,11 +307,15 @@ func compressToolMessages(messages []Message, maxToolTokens int) []Message {
 		if EstimateTokens(msg.Content) <= maxToolTokens {
 			continue
 		}
-		out[i].Content = compact(msg.Content, maxToolTokens*3)
+		truncated, meta := ApplyToolOutputTransform(msg.Name, []byte(msg.Content), maxToolTokens, nil)
+		out[i].Content = string(truncated)
 		if out[i].Metadata == nil {
 			out[i].Metadata = map[string]string{}
 		}
 		out[i].Metadata["context_window"] = "compressed"
+		if meta.Strategy != "" {
+			out[i].Metadata["truncate_strategy"] = meta.Strategy
+		}
 	}
 	return out
 }

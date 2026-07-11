@@ -195,34 +195,135 @@ func enforceToolCallPairingWithStats(messages []llm.Message) ([]llm.Message, pai
 	return out, drops
 }
 
-func evictStaleToolMessages(messages []llm.Message, keepTurns int) []llm.Message {
-	if keepTurns <= 0 || len(messages) == 0 {
-		return messages
+type staleEvictionStats struct {
+	DroppedToolTurns   int
+	DenialOccupiedSlots int
+	ExcludedTurns      int
+}
+
+func classifyToolResultMessage(msg llm.Message) contextwindow.ToolResultClass {
+	content := strings.TrimSpace(msg.Content)
+	if content == "" || content == "{}" || content == "null" || content == `""` {
+		return contextwindow.ToolResultClassEmpty
 	}
-	toolIndices := make([]int, 0)
-	for index, msg := range messages {
-		if msg.Role == llm.RoleTool {
-			toolIndices = append(toolIndices, index)
+	lower := strings.ToLower(content)
+	if strings.Contains(lower, "denied") ||
+		strings.Contains(lower, "tool_denied") ||
+		strings.Contains(lower, "run_tool_budget_exceeded") ||
+		strings.Contains(lower, "requires approval") ||
+		strings.Contains(lower, "rate cap") ||
+		strings.Contains(lower, `"error"`) && (strings.Contains(lower, "budget") || strings.Contains(lower, "denied") || strings.Contains(lower, "governance")) {
+		return contextwindow.ToolResultClassDenied
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(content), &parsed); err == nil {
+		if errText, ok := parsed["error"].(string); ok && strings.TrimSpace(errText) != "" {
+			return contextwindow.ToolResultClassDenied
+		}
+		if output, ok := parsed["output"]; ok {
+			switch v := output.(type) {
+			case nil:
+				return contextwindow.ToolResultClassEmpty
+			case string:
+				if strings.TrimSpace(v) == "" {
+					return contextwindow.ToolResultClassEmpty
+				}
+			case map[string]any:
+				if len(v) == 0 {
+					return contextwindow.ToolResultClassEmpty
+				}
+			}
 		}
 	}
-	if len(toolIndices) <= keepTurns {
-		return messages
+	if msg.Metadata != nil {
+		switch msg.Metadata["tool_result_class"] {
+		case string(contextwindow.ToolResultClassDenied):
+			return contextwindow.ToolResultClassDenied
+		case string(contextwindow.ToolResultClassEmpty):
+			return contextwindow.ToolResultClassEmpty
+		case string(contextwindow.ToolResultClassSuccess):
+			return contextwindow.ToolResultClassSuccess
+		}
 	}
-	dropUntil := toolIndices[len(toolIndices)-keepTurns]
-	// Track the tool_call IDs whose result messages are being evicted so the
-	// matching assistant tool_calls can be removed too. Leaving an assistant
-	// tool_call without its tool response breaks providers that require every
-	// tool_call_id to be answered. A tool message with no ToolCallID can't be
-	// correlated to a specific call by ID, so droppedUnidentified is set
-	// whenever one is evicted and every unidentified (empty-ID) tool_call is
-	// conservatively stripped too, rather than risk leaving an unanswerable
-	// call in the trimmed history.
-	dropped := make(map[string]struct{})
-	droppedUnidentified := false
+	return contextwindow.ToolResultClassSuccess
+}
+
+func staleClassExcluded(class contextwindow.ToolResultClass, exclude []contextwindow.ToolResultClass) bool {
+	return slices.Contains(exclude, class)
+}
+
+func evictStaleToolMessages(messages []llm.Message, keepTurns int) []llm.Message {
+	out, _ := evictStaleToolMessagesWithPolicy(messages, keepTurns, nil)
+	return out
+}
+
+func evictStaleToolMessagesWithPolicy(messages []llm.Message, keepTurns int, exclude []contextwindow.ToolResultClass) ([]llm.Message, staleEvictionStats) {
+	var stats staleEvictionStats
+	if keepTurns <= 0 || len(messages) == 0 {
+		return messages, stats
+	}
+	if exclude == nil {
+		exclude = contextwindow.Policy{}.ExcludeFromStaleWindowOrDefault()
+	}
+	type toolSlot struct {
+		index   int
+		class   contextwindow.ToolResultClass
+		counted bool
+	}
+	slots := make([]toolSlot, 0)
 	for index, msg := range messages {
-		if msg.Role != llm.RoleTool || index >= dropUntil {
+		if msg.Role != llm.RoleTool {
 			continue
 		}
+		class := classifyToolResultMessage(msg)
+		counted := !staleClassExcluded(class, exclude)
+		if !counted {
+			stats.ExcludedTurns++
+			if class == contextwindow.ToolResultClassDenied {
+				stats.DenialOccupiedSlots++
+			}
+		}
+		slots = append(slots, toolSlot{index: index, class: class, counted: counted})
+	}
+	counted := 0
+	for _, slot := range slots {
+		if slot.counted {
+			counted++
+		}
+	}
+	if counted <= keepTurns {
+		return messages, stats
+	}
+	// Keep the newest keepTurns counted (success) tool results; older counted
+	// results are dropped. Excluded (denied/empty) messages that sit between
+	// kept successes remain so pairing stays intact for recent turns, but
+	// excluded messages older than the oldest kept success are also dropped.
+	keepCountedFrom := 0
+	seenCounted := 0
+	for i := len(slots) - 1; i >= 0; i-- {
+		if !slots[i].counted {
+			continue
+		}
+		seenCounted++
+		if seenCounted == keepTurns {
+			keepCountedFrom = slots[i].index
+			break
+		}
+	}
+	dropped := make(map[string]struct{})
+	droppedUnidentified := false
+	dropIndex := make(map[int]struct{})
+	for _, slot := range slots {
+		if slot.index >= keepCountedFrom {
+			continue
+		}
+		// Drop older counted successes, and also older excluded messages so
+		// they cannot linger ahead of the retained success window.
+		dropIndex[slot.index] = struct{}{}
+		if slot.counted {
+			stats.DroppedToolTurns++
+		}
+		msg := messages[slot.index]
 		if msg.ToolCallID != "" {
 			dropped[msg.ToolCallID] = struct{}{}
 		} else {
@@ -231,7 +332,7 @@ func evictStaleToolMessages(messages []llm.Message, keepTurns int) []llm.Message
 	}
 	out := make([]llm.Message, 0, len(messages))
 	for index, msg := range messages {
-		if msg.Role == llm.RoleTool && index < dropUntil {
+		if _, drop := dropIndex[index]; drop {
 			continue
 		}
 		if len(msg.ToolCalls) > 0 && (len(dropped) > 0 || droppedUnidentified) {
@@ -253,5 +354,5 @@ func evictStaleToolMessages(messages []llm.Message, keepTurns int) []llm.Message
 		}
 		out = append(out, msg)
 	}
-	return out
+	return out, stats
 }

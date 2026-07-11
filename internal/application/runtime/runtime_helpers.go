@@ -340,6 +340,7 @@ const (
 	runErrorMessageVar = "run_error_message"
 	resumePromptVar    = "resume_prompt"
 	resumeAgentVar     = "resume_agent"
+	resumeTrustModeVar = "resume_trust_mode"
 )
 
 func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
@@ -352,6 +353,25 @@ func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
 	if req.Agent != "" {
 		snapshot.Variables[resumeAgentVar] = json.RawMessage(fmt.Sprintf("%q", req.Agent))
 	}
+	if req.TrustMode != "" {
+		snapshot.Variables[resumeTrustModeVar] = json.RawMessage(fmt.Sprintf("%q", req.TrustMode))
+	}
+}
+
+type trustModeContextKey struct{}
+
+func ContextWithTrustMode(ctx context.Context, mode TrustMode) context.Context {
+	if mode == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, trustModeContextKey{}, mode)
+}
+
+func TrustModeFromContext(ctx context.Context) TrustMode {
+	if mode, ok := ctx.Value(trustModeContextKey{}).(TrustMode); ok {
+		return mode
+	}
+	return TrustModeDefault
 }
 
 func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) error {
@@ -626,6 +646,8 @@ func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, pay
 		RunID:        runID,
 		ScenarioName: e.scenario.Name,
 		Timestamp:    time.Now().UTC(),
+		Category:     core.EventCategory(typ),
+		DisplayLabel: core.DisplayLabel(typ),
 		Payload:      payload,
 	}
 	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
@@ -636,6 +658,9 @@ func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, pay
 		event.ParentSpanID = parentSpanID
 	}
 	_ = e.events.Emit(ctx, event)
+	if tee := eventTeeFromContext(ctx); tee != nil {
+		_ = tee.Emit(ctx, event)
+	}
 }
 
 // logWarn logs a warning message if a Logger is configured; otherwise it is
@@ -653,6 +678,31 @@ func (e *Engine) emitJSON(ctx context.Context, typ core.EventType, runID string,
 		raw = []byte(fmt.Sprintf(`{"error":%q}`, err.Error()))
 	}
 	e.emit(ctx, typ, runID, raw)
+}
+
+// emitSkillApplied notifies observers which skills shaped the agent's
+// instructions for this turn. Prompt fragments are merged at scenario build
+// time; this event is the runtime signal that those skills are in effect.
+func (e *Engine) emitSkillApplied(ctx context.Context, runID string, agent core.Agent) {
+	if len(agent.Skills) == 0 {
+		return
+	}
+	for _, skillName := range agent.Skills {
+		skill, ok := e.scenario.Skills[skillName]
+		kind := skill.Kind
+		if kind == "" {
+			kind = core.SkillKindPrompt
+		}
+		payload := map[string]any{
+			"agent": agent.Name,
+			"skill": skillName,
+			"kind":  kind,
+		}
+		if ok && skill.Description != "" {
+			payload["description"] = skill.Description
+		}
+		e.emitJSON(ctx, core.EventSkillApplied, runID, payload)
+	}
 }
 
 func enrichEventPayload(ctx context.Context, payload any) any {

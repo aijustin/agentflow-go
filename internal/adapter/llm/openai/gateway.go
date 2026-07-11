@@ -83,6 +83,18 @@ func (g *Gateway) StructuredChat(ctx context.Context, profileName string, schema
 }
 
 func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.ChatRequest) (<-chan llm.ChatChunk, error) {
+	return g.streamChat(ctx, profileName, req, nil)
+}
+
+// StreamChatWithTools streams a completion with tools enabled. When the
+// provider emits tool calls as plain text content instead of structured
+// tool_calls deltas, the aggregated content is normalized via
+// normalizeContentToolCalls before the terminal chunk is sent.
+func (g *Gateway) StreamChatWithTools(ctx context.Context, profileName string, req llm.ToolCallRequest) (<-chan llm.ChatChunk, error) {
+	return g.streamChat(ctx, profileName, req.ChatRequest, req.Tools)
+}
+
+func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.ChatRequest, tools []llm.ToolSpec) (<-chan llm.ChatChunk, error) {
 	profile, ok := g.profiles[profileName]
 	if !ok {
 		return nil, fmt.Errorf("openai: profile %q not found", profileName)
@@ -93,7 +105,7 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 		req.ExtraBody = cloneExtraBody(req.ExtraBody)
 	}
 	req.ExtraBody["stream"] = true
-	httpReq, err := g.chatRequest(ctx, profile, req, nil)
+	httpReq, err := g.chatRequest(ctx, profile, req, tools)
 	if err != nil {
 		return nil, err
 	}
@@ -119,8 +131,47 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 				return false
 			}
 		}
+		var aggregated strings.Builder
+		var usage llm.TokenUsage
+		normalizeTools := len(tools) > 0
+		finish := func(doneChunk llm.ChatChunk) {
+			if normalizeTools {
+				if doneChunk.Error != "" {
+					send(llm.ChatChunk{Done: true, Error: doneChunk.Error, Usage: usage})
+					return
+				}
+				normalized := normalizeContentToolCalls(llm.ToolCallResponse{
+					ChatResponse: llm.ChatResponse{
+						Message:      llm.Message{Role: llm.RoleAssistant, Content: aggregated.String()},
+						Usage:        usage,
+						FinishReason: "stop",
+					},
+				}, tools)
+				if len(normalized.ToolCalls) > 0 {
+					for _, call := range normalized.ToolCalls {
+						if !send(llm.ChatChunk{
+							Kind:       llm.ChunkKindToolCall,
+							ToolCallID: call.ID,
+							ToolName:   call.Name,
+							ToolInput:  call.Input,
+						}) {
+							return
+						}
+					}
+					send(llm.ChatChunk{Done: true, Usage: usage})
+					return
+				}
+				if content := aggregated.String(); content != "" {
+					if !send(llm.ChatChunk{Content: content, Usage: usage}) {
+						return
+					}
+				}
+				send(llm.ChatChunk{Done: true, Usage: usage})
+				return
+			}
+			send(doneChunk)
+		}
 		scanner := bufio.NewScanner(resp.Body)
-		sentDone := false
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, ":") {
@@ -131,15 +182,26 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 			}
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
-				if !sentDone {
-					send(llm.ChatChunk{Done: true})
-				}
+				finish(llm.ChatChunk{Done: true, Usage: usage})
 				return
 			}
 			chunk, err := decodeStreamChunk([]byte(data))
 			if err != nil {
-				send(llm.ChatChunk{Done: true, Error: err.Error()})
+				finish(llm.ChatChunk{Done: true, Error: err.Error(), Usage: usage})
 				return
+			}
+			if chunk.Usage.TotalTokens > 0 || chunk.Usage.InputTokens > 0 || chunk.Usage.OutputTokens > 0 {
+				usage = chunk.Usage
+			}
+			if normalizeTools {
+				if chunk.Content != "" {
+					aggregated.WriteString(chunk.Content)
+				}
+				if chunk.Done {
+					finish(llm.ChatChunk{Done: true, Usage: usage})
+					return
+				}
+				continue
 			}
 			if chunk.Content != "" || chunk.Done || chunk.Usage.TotalTokens > 0 {
 				if !send(chunk) {
@@ -151,7 +213,11 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			send(llm.ChatChunk{Done: true, Error: err.Error()})
+			finish(llm.ChatChunk{Done: true, Error: err.Error(), Usage: usage})
+			return
+		}
+		if normalizeTools {
+			finish(llm.ChatChunk{Done: true, Usage: usage})
 		}
 	}()
 	return ch, nil

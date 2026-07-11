@@ -38,6 +38,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/catalog"
+	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
@@ -52,6 +53,14 @@ import (
 
 // RunRequest is the input passed to Framework.Run.
 type RunRequest = appexec.RunRequest
+
+// TrustMode controls run-scoped tool approval overrides (e.g. full_trust).
+type TrustMode = appexec.TrustMode
+
+const (
+	TrustModeDefault   = appexec.TrustModeDefault
+	TrustModeFullTrust = appexec.TrustModeFullTrust
+)
 
 // RunResult is the result returned from Framework.Run.
 type RunResult = appexec.RunResult
@@ -136,6 +145,7 @@ type options struct {
 	runLeaseOwner       string
 	runLeaseTTL         time.Duration
 	closers             []func(context.Context) error
+	toolTransforms      map[string]contextwindow.ToolOutputTransform
 }
 
 type toolRegistry struct {
@@ -380,6 +390,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		Tracer:                 cfg.tracer,
 		Logger:                 cfg.logger,
 		EnqueueMemoryReconcile: enqueueMemoryReconcile,
+		ToolOutputTransforms:   cfg.toolTransforms,
 	})
 	if err != nil {
 		return nil, err
@@ -563,6 +574,24 @@ func WithHumanGate(gate core.HumanGate) Option {
 func WithToolApprovalEvaluator(evaluator core.ToolApprovalEvaluator) Option {
 	return func(o *options) error {
 		o.approvalEvaluator = evaluator
+		return nil
+	}
+}
+
+// WithToolOutputTransform registers a per-tool reshaper applied before LLM and
+// memory persistence when ToolResultMaxTokens / ToolOutputMaxBytes apply.
+func WithToolOutputTransform(tool string, fn contextwindow.ToolOutputTransform) Option {
+	return func(o *options) error {
+		if tool == "" {
+			return fmt.Errorf("agentflow: tool output transform name is required")
+		}
+		if fn == nil {
+			return fmt.Errorf("agentflow: tool output transform for %q is nil", tool)
+		}
+		if o.toolTransforms == nil {
+			o.toolTransforms = make(map[string]contextwindow.ToolOutputTransform)
+		}
+		o.toolTransforms[tool] = fn
 		return nil
 	}
 }
@@ -1206,6 +1235,8 @@ func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, 
 		RunID:        runID,
 		ScenarioName: f.scenario.Name,
 		Timestamp:    time.Now().UTC(),
+		Category:     core.EventCategory(typ),
+		DisplayLabel: core.DisplayLabel(typ),
 		Payload:      payload,
 	})
 }

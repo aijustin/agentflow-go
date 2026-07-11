@@ -97,8 +97,15 @@ func (i *Indexer) indexBatch(ctx context.Context, chunks []Document) error {
 		return fmt.Errorf("knowledge indexer: embedding response count %d did not match chunk count %d", len(vectors), len(chunks))
 	}
 	embeddings := make([]DocumentEmbedding, len(chunks))
+	var expectedDim int
 	for index, chunk := range chunks {
-		embeddings[index] = DocumentEmbedding{Document: chunk, Vector: append([]float32(nil), vectors[index]...)}
+		vector := append([]float32(nil), vectors[index]...)
+		if index == 0 {
+			expectedDim = len(vector)
+		} else if len(vector) != expectedDim {
+			return fmt.Errorf("knowledge indexer: inconsistent embedding dimensions: got %d and %d", expectedDim, len(vector))
+		}
+		embeddings[index] = DocumentEmbedding{Document: chunk, Vector: vector}
 	}
 	if err := i.store.Upsert(ctx, embeddings); err != nil {
 		return fmt.Errorf("knowledge indexer: upsert batch: %w", err)

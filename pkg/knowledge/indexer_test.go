@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -47,6 +48,28 @@ func TestIndexerFailsWhenEmbeddingCountDoesNotMatchChunks(t *testing.T) {
 	}
 	if len(store.documents) != 0 {
 		t.Fatalf("store should not be called on mismatch: %+v", store.documents)
+	}
+}
+
+func TestIndexerFailsWhenEmbeddingDimensionsDiffer(t *testing.T) {
+	embedder := &recordingEmbedder{vectors: [][][]float32{{{0.1}, {0.2, 0.3}}}}
+	store := &recordingStore{}
+	indexer, err := NewIndexer(IndexerConfig{
+		Embedder:  embedder,
+		Store:     store,
+		Profile:   "embed",
+		BatchSize: 2,
+		Chunker:   mustSplitter(t, TextSplitterConfig{MaxRunes: 5}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = indexer.Index(context.Background(), []Document{{ID: "doc-1", Content: "abcdefghij"}})
+	if err == nil || !strings.Contains(err.Error(), "inconsistent embedding dimensions") {
+		t.Fatalf("expected dimension consistency error, got %v", err)
+	}
+	if len(store.documents) != 0 {
+		t.Fatalf("store should not be called on dimension mismatch: %+v", store.documents)
 	}
 }
 

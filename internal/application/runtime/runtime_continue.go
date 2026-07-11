@@ -65,6 +65,9 @@ func (e *Engine) continueAfterCheckpoint(ctx context.Context, runID string, comp
 	if snapshot.Status != runstate.RunStatusRunning {
 		return RunResult{}, fmt.Errorf("runtime: continue requires running snapshot, got %s", snapshot.Status)
 	}
+	if mode := TrustMode(variableString(snapshot.Variables, resumeTrustModeVar)); mode != "" {
+		ctx = ContextWithTrustMode(ctx, mode)
+	}
 	kind := variableString(snapshot.Variables, checkpointKindVar)
 	switch kind {
 	case "before_final_answer":
@@ -228,7 +231,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		if err != nil {
 			return "", err
 		}
-		contextResult := compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
+		contextResult, _ := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
 		raw, err := json.Marshal(contextResult)
 		if err != nil {
 			return "", err
@@ -480,6 +483,9 @@ func (e *Engine) persistUserPromptIfNeeded(ctx context.Context, runID string, ag
 
 func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, stepsConsumed int, replanAttempts int) (*RunPausedError, error) {
 	if len(pending) == 0 {
+		return nil, nil
+	}
+	if TrustModeFromContext(ctx) == TrustModeFullTrust {
 		return nil, nil
 	}
 	call := pending[0]
