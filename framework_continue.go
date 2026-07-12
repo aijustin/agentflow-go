@@ -16,6 +16,7 @@ import (
 const (
 	resumePromptVar                 = "resume_prompt"
 	resumeAgentVar                  = "resume_agent"
+	resumeTrustModeVar              = "resume_trust_mode"
 	executionPhaseVar               = "execution_phase"
 	executionPhaseWorkflow          = "workflow"
 	executionPhaseAutonomous        = "autonomous"
@@ -199,6 +200,11 @@ func (f *Framework) applyWorkflowAmendment(ctx context.Context, runID string) er
 }
 
 func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCompleted bool) (RunResult, error) {
+	if snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID); err == nil {
+		if mode := TrustMode(variableJSONString(snapshot.Variables, resumeTrustModeVar)); mode != "" {
+			ctx = core.ContextWithTrustMode(ctx, string(mode))
+		}
+	}
 	runner := f.newWorkflowRunner()
 	if err := runner.Resume(ctx, f.scenario, runID); err != nil {
 		var paused orchestration.WorkflowPausedError
@@ -339,10 +345,11 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 
 func hybridRunRequest(snapshot runstate.RunSnapshot) RunRequest {
 	return RunRequest{
-		RunID:   snapshot.RunID,
-		Agent:   variableJSONString(snapshot.Variables, resumeAgentVar),
-		Prompt:  variableJSONString(snapshot.Variables, resumePromptVar),
-		Context: snapshot.Variables["input"],
+		RunID:     snapshot.RunID,
+		Agent:     variableJSONString(snapshot.Variables, resumeAgentVar),
+		Prompt:    variableJSONString(snapshot.Variables, resumePromptVar),
+		Context:   snapshot.Variables["input"],
+		TrustMode: TrustMode(variableJSONString(snapshot.Variables, resumeTrustModeVar)),
 	}
 }
 
@@ -376,6 +383,9 @@ func saveRunResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest, resol
 	}
 	if agentName != "" {
 		snapshot.Variables[resumeAgentVar] = json.RawMessage(fmt.Sprintf("%q", agentName))
+	}
+	if req.TrustMode != "" {
+		snapshot.Variables[resumeTrustModeVar] = json.RawMessage(fmt.Sprintf("%q", req.TrustMode))
 	}
 }
 

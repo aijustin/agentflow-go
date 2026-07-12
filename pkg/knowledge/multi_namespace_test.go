@@ -98,7 +98,7 @@ func TestMultiNamespaceRetrieverBalanced(t *testing.T) {
 	}
 }
 
-func TestMultiNamespaceRetrieverContinuesOnPartialFailure(t *testing.T) {
+func TestMultiNamespaceRetrieverFailsOnPartialFailureByDefault(t *testing.T) {
 	store := &stubMultiStore{
 		byNamespace: map[string][]knowledge.SearchResult{
 			"kb-ok": {{Document: knowledge.Document{ID: "ok"}, Score: 0.7}},
@@ -111,12 +111,42 @@ func TestMultiNamespaceRetrieverContinuesOnPartialFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	results, err := retriever.Query(context.Background(), knowledge.Query{Vector: []float32{0.1}, Limit: 5})
+	_, err = retriever.Query(context.Background(), knowledge.Query{Vector: []float32{0.1}, Limit: 5})
+	if err == nil {
+		t.Fatal("expected error when any namespace fails by default")
+	}
+}
+
+func TestMultiNamespaceRetrieverAllowPartialReturnsErrorAndResults(t *testing.T) {
+	store := &stubMultiStore{
+		byNamespace: map[string][]knowledge.SearchResult{
+			"kb-ok": {{Document: knowledge.Document{ID: "ok"}, Score: 0.7}},
+		},
+		errs: map[string]error{
+			"kb-bad": errors.New("boom"),
+		},
+	}
+	retriever, err := knowledge.NewMultiNamespaceRetriever(
+		store,
+		[]string{"kb-bad", "kb-ok"},
+		knowledge.WithAllowPartialNamespaces(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	results, err := retriever.Query(context.Background(), knowledge.Query{Vector: []float32{0.1}, Limit: 5})
+	var partial *knowledge.PartialNamespaceError
+	if !errors.As(err, &partial) {
+		t.Fatalf("expected PartialNamespaceError, got %v", err)
+	}
 	if len(results) != 1 || results[0].Document.ID != "ok" {
 		t.Fatalf("expected surviving namespace result, got %+v", results)
+	}
+	if len(partial.Results) != 1 || partial.Results[0].Document.ID != "ok" {
+		t.Fatalf("expected partial.Results to mirror query results, got %+v", partial.Results)
+	}
+	if len(partial.Failed) != 1 {
+		t.Fatalf("expected one failed namespace, got %+v", partial.Failed)
 	}
 }
 

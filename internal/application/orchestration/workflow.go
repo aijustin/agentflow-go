@@ -469,27 +469,31 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	// gate is available do we fall back to a hard denial.
 	approvedResume := false
 	call := llm.ToolCall{Name: node.Ref, Input: input}
-	pauseRequired, err := toolinvoke.EvaluatePauseRequired(ctx, tool, r.approvalEvaluator, runID, call)
-	if err != nil {
-		return err
-	}
-	if pauseRequired {
-		if r.gate == nil {
-			if reason := toolinvoke.DenialWithoutGate(tool, false, false); reason != "" {
-				return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
-			}
-		}
-		if approvedInput, ok, err := r.workflowToolApprovalInput(ctx, runID, node.ID); err != nil {
+	if core.TrustModeFromContext(ctx) == core.TrustModeFullTrust {
+		approvedResume = true
+	} else {
+		pauseRequired, err := toolinvoke.EvaluatePauseRequired(ctx, tool, r.approvalEvaluator, runID, call)
+		if err != nil {
 			return err
-		} else if ok {
-			input = approvedInput
-			call.Input = approvedInput
-			approvedResume = true
-			if err := r.clearWorkflowToolApprovalCheckpoint(ctx, runID); err != nil {
-				return err
+		}
+		if pauseRequired {
+			if r.gate == nil {
+				if reason := toolinvoke.DenialWithoutGate(tool, false, false); reason != "" {
+					return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
+				}
 			}
-		} else if r.gate != nil {
-			return r.pauseForWorkflowToolApproval(ctx, scenario, node, runID, tool, input)
+			if approvedInput, ok, err := r.workflowToolApprovalInput(ctx, runID, node.ID); err != nil {
+				return err
+			} else if ok {
+				input = approvedInput
+				call.Input = approvedInput
+				approvedResume = true
+				if err := r.clearWorkflowToolApprovalCheckpoint(ctx, runID); err != nil {
+					return err
+				}
+			} else if r.gate != nil {
+				return r.pauseForWorkflowToolApproval(ctx, scenario, node, runID, tool, input)
+			}
 		}
 	}
 	if reason := toolinvoke.DenialWithoutGateWithEvaluator(ctx, tool, r.gate != nil, approvedResume, r.approvalEvaluator, runID, call); reason != "" {

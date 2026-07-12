@@ -358,20 +358,12 @@ func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
 	}
 }
 
-type trustModeContextKey struct{}
-
 func ContextWithTrustMode(ctx context.Context, mode TrustMode) context.Context {
-	if mode == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, trustModeContextKey{}, mode)
+	return core.ContextWithTrustMode(ctx, string(mode))
 }
 
 func TrustModeFromContext(ctx context.Context) TrustMode {
-	if mode, ok := ctx.Value(trustModeContextKey{}).(TrustMode); ok {
-		return mode
-	}
-	return TrustModeDefault
+	return TrustMode(core.TrustModeFromContext(ctx))
 }
 
 func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) error {

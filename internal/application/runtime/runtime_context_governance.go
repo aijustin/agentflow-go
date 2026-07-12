@@ -202,18 +202,19 @@ type staleEvictionStats struct {
 }
 
 func classifyToolResultMessage(msg llm.Message) contextwindow.ToolResultClass {
+	if msg.Metadata != nil {
+		switch msg.Metadata["tool_result_class"] {
+		case string(contextwindow.ToolResultClassDenied):
+			return contextwindow.ToolResultClassDenied
+		case string(contextwindow.ToolResultClassEmpty):
+			return contextwindow.ToolResultClassEmpty
+		case string(contextwindow.ToolResultClassSuccess):
+			return contextwindow.ToolResultClassSuccess
+		}
+	}
 	content := strings.TrimSpace(msg.Content)
 	if content == "" || content == "{}" || content == "null" || content == `""` {
 		return contextwindow.ToolResultClassEmpty
-	}
-	lower := strings.ToLower(content)
-	if strings.Contains(lower, "denied") ||
-		strings.Contains(lower, "tool_denied") ||
-		strings.Contains(lower, "run_tool_budget_exceeded") ||
-		strings.Contains(lower, "requires approval") ||
-		strings.Contains(lower, "rate cap") ||
-		strings.Contains(lower, `"error"`) && (strings.Contains(lower, "budget") || strings.Contains(lower, "denied") || strings.Contains(lower, "governance")) {
-		return contextwindow.ToolResultClassDenied
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(content), &parsed); err == nil {
@@ -234,16 +235,19 @@ func classifyToolResultMessage(msg llm.Message) contextwindow.ToolResultClass {
 				}
 			}
 		}
-	}
-	if msg.Metadata != nil {
-		switch msg.Metadata["tool_result_class"] {
-		case string(contextwindow.ToolResultClassDenied):
-			return contextwindow.ToolResultClassDenied
-		case string(contextwindow.ToolResultClassEmpty):
-			return contextwindow.ToolResultClassEmpty
-		case string(contextwindow.ToolResultClassSuccess):
+		// Structured ToolResult JSON without an error is treated as success.
+		if _, hasTool := parsed["tool"]; hasTool {
 			return contextwindow.ToolResultClassSuccess
 		}
+		if _, hasOutput := parsed["output"]; hasOutput {
+			return contextwindow.ToolResultClassSuccess
+		}
+	}
+	lower := strings.ToLower(content)
+	if strings.Contains(lower, "run_tool_budget_exceeded") ||
+		strings.Contains(lower, "tool_denied") ||
+		strings.Contains(lower, "rate cap exceeded") {
+		return contextwindow.ToolResultClassDenied
 	}
 	return contextwindow.ToolResultClassSuccess
 }

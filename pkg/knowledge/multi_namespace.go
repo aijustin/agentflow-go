@@ -28,11 +28,44 @@ func WithMergeStrategy(strategy MergeStrategy) MultiNamespaceOption {
 	}
 }
 
+// WithAllowPartialNamespaces allows Query to return merged hits when some
+// namespaces fail. Failures are still returned as a PartialNamespaceError so
+// callers can observe them. Without this option, any namespace failure fails
+// the whole Query (no silent skip).
+func WithAllowPartialNamespaces() MultiNamespaceOption {
+	return func(r *MultiNamespaceRetriever) {
+		r.allowPartial = true
+	}
+}
+
+// PartialNamespaceError reports that one or more namespaces failed while others
+// produced results. Callers that opt into WithAllowPartialNamespaces should use
+// errors.As to detect it and decide whether to proceed with Results.
+type PartialNamespaceError struct {
+	Failed  []error
+	Results []SearchResult
+}
+
+func (e *PartialNamespaceError) Error() string {
+	if e == nil {
+		return "knowledge: partial namespace failure"
+	}
+	return fmt.Sprintf("knowledge: %d namespace(s) failed: %v", len(e.Failed), errors.Join(e.Failed...))
+}
+
+func (e *PartialNamespaceError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	return e.Failed
+}
+
 // MultiNamespaceRetriever fans a Query out across namespaces and merges hits.
 type MultiNamespaceRetriever struct {
-	store      VectorStore
-	namespaces []string
-	strategy   MergeStrategy
+	store        VectorStore
+	namespaces   []string
+	strategy     MergeStrategy
+	allowPartial bool
 }
 
 // NewMultiNamespaceRetriever wraps store.Query with multi-namespace fan-out.
@@ -66,7 +99,8 @@ func NewMultiNamespaceRetriever(store VectorStore, namespaces []string, opts ...
 }
 
 // Query runs the query against each configured namespace and merges results.
-// A single namespace failure is skipped; if every namespace fails, the joined error is returned.
+// By default any namespace failure fails the call. WithAllowPartialNamespaces
+// returns merged hits plus a PartialNamespaceError when some namespaces fail.
 func (r *MultiNamespaceRetriever) Query(ctx context.Context, query Query) ([]SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -118,13 +152,21 @@ func (r *MultiNamespaceRetriever) Query(ctx context.Context, query Query) ([]Sea
 		}
 		return nil, fmt.Errorf("knowledge: all namespaces failed: %w", errors.Join(errs...))
 	}
+	if len(errs) > 0 && !r.allowPartial {
+		return nil, fmt.Errorf("knowledge: namespace query failed: %w", errors.Join(errs...))
+	}
 
+	var merged []SearchResult
 	switch r.strategy {
 	case MergeStrategyBalanced:
-		return mergeBalanced(lists, limit), nil
+		merged = mergeBalanced(lists, limit)
 	default:
-		return mergeGlobalRank(lists, limit), nil
+		merged = mergeGlobalRank(lists, limit)
 	}
+	if len(errs) > 0 {
+		return merged, &PartialNamespaceError{Failed: errs, Results: merged}
+	}
+	return merged, nil
 }
 
 func injectNamespaceMetadata(result SearchResult, namespace string) SearchResult {

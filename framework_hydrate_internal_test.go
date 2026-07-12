@@ -59,12 +59,16 @@ func TestHybridRunRequestReadsResumeVariables(t *testing.T) {
 	req := hybridRunRequest(runstate.RunSnapshot{
 		RunID: "run-1",
 		Variables: map[string]json.RawMessage{
-			resumeAgentVar:  json.RawMessage(`"assistant"`),
-			resumePromptVar: json.RawMessage(`"continue"`),
-			"input":           json.RawMessage(`{"topic":"billing"}`),
+			resumeAgentVar:     json.RawMessage(`"assistant"`),
+			resumePromptVar:    json.RawMessage(`"continue"`),
+			resumeTrustModeVar: json.RawMessage(`"full_trust"`),
+			"input":            json.RawMessage(`{"topic":"billing"}`),
 		},
 	})
 	if req.Agent != "assistant" || req.Prompt != "continue" || string(req.Context) != `{"topic":"billing"}` {
 		t.Fatalf("req=%+v", req)
+	}
+	if req.TrustMode != TrustModeFullTrust {
+		t.Fatalf("expected TrustModeFullTrust, got %q", req.TrustMode)
 	}
 }

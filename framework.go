@@ -839,6 +839,7 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scenario, req RunRequest) (RunResult, error) {
 	ctx, cancel := withScenarioTimeout(ctx, scenario.Runtime.Timeout)
 	defer cancel()
+	ctx = core.ContextWithTrustMode(ctx, string(req.TrustMode))
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
@@ -923,7 +924,8 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 	}
 	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
 	runner := f.newWorkflowRunner()
-	if err := runner.Run(ctx, scenario, req.RunID); err != nil {
+	workflowCtx := core.ContextWithTrustMode(ctx, string(req.TrustMode))
+	if err := runner.Run(workflowCtx, scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
 			return req, RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil

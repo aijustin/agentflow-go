@@ -34,6 +34,41 @@ func TestEvictStaleToolMessagesExcludesDeniedAndEmpty(t *testing.T) {
 	}
 }
 
+func TestClassifyToolResultMessagePrefersMetadataOverContent(t *testing.T) {
+	msg := llm.Message{
+		Role:    llm.RoleTool,
+		Content: `{"tool":"search","error":"run_tool_budget_exceeded"}`,
+		Metadata: map[string]string{
+			"tool_result_class": string(contextwindow.ToolResultClassSuccess),
+		},
+	}
+	if got := classifyToolResultMessage(msg); got != contextwindow.ToolResultClassSuccess {
+		t.Fatalf("metadata must win over error field, got %q", got)
+	}
+}
+
+func TestClassifyToolResultMessageDoesNotFalsePositiveOnSubstring(t *testing.T) {
+	// Content mentions a denial phrase inside a successful payload; without
+	// metadata or a top-level error field this must stay success.
+	msg := llm.Message{
+		Role:    llm.RoleTool,
+		Content: `{"tool":"docs","output":{"text":"see docs about tool_denied handling"}}`,
+	}
+	if got := classifyToolResultMessage(msg); got != contextwindow.ToolResultClassSuccess {
+		t.Fatalf("expected success for structured output mentioning denial phrase, got %q", got)
+	}
+}
+
+func TestClassifyToolResultMessageUsesStructuredError(t *testing.T) {
+	msg := llm.Message{
+		Role:    llm.RoleTool,
+		Content: `{"tool":"risky","error":"policy denied"}`,
+	}
+	if got := classifyToolResultMessage(msg); got != contextwindow.ToolResultClassDenied {
+		t.Fatalf("expected denied from structured error, got %q", got)
+	}
+}
+
 func TestEvictStaleToolMessagesRemovesOrphanedToolCalls(t *testing.T) {
 	messages := []llm.Message{
 		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "old-1", Name: "echo"}, {ID: "old-2", Name: "echo"}}},

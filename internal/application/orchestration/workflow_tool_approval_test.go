@@ -61,6 +61,51 @@ func TestWorkflowRunnerAlwaysApprovalPausesWhenGateConfigured(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunnerFullTrustSkipsToolApprovalPause(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	reg := registry.New()
+	if err := reg.RegisterTool("risky", staticTool{}); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewWorkflowRunner(reg, repo, nil, WithHumanGate(gate))
+	scenario := core.Scenario{
+		Name: "wf-full-trust",
+		Tools: map[string]core.Tool{
+			"risky": {Name: "risky", Type: "builtin.static", Approval: core.ApprovalAlways},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "call", Kind: core.NodeTool, Ref: "risky"},
+			}},
+		},
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-full-trust", ScenarioName: "wf-full-trust", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	ctx := core.ContextWithTrustMode(context.Background(), core.TrustModeFullTrust)
+	if err := runner.Run(ctx, scenario, "run-full-trust"); err != nil {
+		t.Fatalf("full_trust must skip approval pause, got %v", err)
+	}
+	snapshot, err := repo.Load(context.Background(), "run-full-trust")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.PendingGate != nil {
+		t.Fatalf("full_trust must not open human gate, got %+v", snapshot.PendingGate)
+	}
+	if _, ok := snapshot.StepOutputs["call"]; !ok {
+		t.Fatalf("expected tool node output under full_trust, got %+v", snapshot.StepOutputs)
+	}
+}
+
 // H1: without a gate, an approval=always tool node is denied (not executed).
 func TestWorkflowRunnerAlwaysApprovalDeniedWithoutGate(t *testing.T) {
 	repo := runstateinmem.NewRepository()

@@ -11,6 +11,9 @@ import (
 )
 
 func (f *Framework) hydrateRunRequest(ctx context.Context, req RunRequest, snapshot runstate.RunSnapshot) (RunRequest, error) {
+	if req.TrustMode == "" {
+		req.TrustMode = TrustMode(variableJSONString(snapshot.Variables, resumeTrustModeVar))
+	}
 	if len(snapshot.StepOutputs) == 0 {
 		return req, nil
 	}
