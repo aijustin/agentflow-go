@@ -1327,6 +1327,49 @@ func TestEngineFullTrustSkipsToolApprovalPause(t *testing.T) {
 	}
 }
 
+type alwaysPauseEvaluator struct{}
+
+func (alwaysPauseEvaluator) PauseRequired(context.Context, string, core.Tool, llm.ToolCall) (bool, error) {
+	return true, nil
+}
+
+func TestEngineFullTrustStillHonorsApprovalEvaluator(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{"query":"need user"}`)}},
+	})
+	// ApprovalNever so only the evaluator can require a pause.
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	gate := &capturingGate{repo: repo}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:                  repo,
+		LLM:                   gateway,
+		Tools:                 mapToolRegistry{"echo": echoTool{}},
+		HumanGate:             gate,
+		ToolApprovalEvaluator: alwaysPauseEvaluator{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Run(context.Background(), RunRequest{
+		RunID:     "run-full-trust-eval",
+		Agent:     "assistant",
+		Prompt:    "use echo",
+		TrustMode: TrustModeFullTrust,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused under full_trust when evaluator requires pause, got %+v", result)
+	}
+	if gate.state.RunID == "" {
+		t.Fatal("full_trust must still open human gate when evaluator requires pause")
+	}
+}
+
 func TestEngineStreamPauseSurvivesPauseErrorString(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()

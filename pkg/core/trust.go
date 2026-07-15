@@ -20,5 +20,7 @@ func TrustModeFromContext(ctx context.Context) string {
 	return mode
 }
 
-// TrustModeFullTrust is the run-scoped mode that skips tool-approval pauses.
+// TrustModeFullTrust is the run-scoped mode that skips static tool-approval
+// pauses (ApprovalPause / ApprovalAlways). Dynamic ToolApprovalEvaluator
+// decisions (for example MCP auth or mandatory user-input tools) still apply.
 const TrustModeFullTrust = "full_trust"

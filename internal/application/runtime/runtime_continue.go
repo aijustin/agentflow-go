@@ -485,15 +485,22 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if len(pending) == 0 {
 		return nil, nil
 	}
-	if TrustModeFromContext(ctx) == TrustModeFullTrust {
-		return nil, nil
-	}
 	call := pending[0]
 	tool, ok := e.scenario.Tools[call.Name]
 	if !ok {
 		return nil, nil
 	}
-	pauseRequired, err := toolinvoke.EvaluatePauseRequired(ctx, tool, e.approvalEvaluator, runID, call)
+	// full_trust skips static ApprovalPause / ApprovalAlways, but still honors
+	// a dynamic ToolApprovalEvaluator (MCP auth, mandatory user-input tools).
+	var pauseRequired bool
+	var err error
+	if TrustModeFromContext(ctx) == TrustModeFullTrust {
+		if e.approvalEvaluator != nil {
+			pauseRequired, err = e.approvalEvaluator.PauseRequired(ctx, runID, tool, call)
+		}
+	} else {
+		pauseRequired, err = toolinvoke.EvaluatePauseRequired(ctx, tool, e.approvalEvaluator, runID, call)
+	}
 	if err != nil {
 		return nil, err
 	}
