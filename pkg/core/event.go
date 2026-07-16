@@ -43,6 +43,9 @@ type Event struct {
 	Type         EventType       `json:"type"`
 	RunID        string          `json:"run_id"`
 	ScenarioName string          `json:"scenario_name,omitempty"`
+	EpisodeID    string          `json:"episode_id,omitempty"`
+	SessionID    string          `json:"session_id,omitempty"`
+	TriggerKind  string          `json:"trigger_kind,omitempty"`
 	Timestamp    time.Time       `json:"timestamp"`
 	TraceID      string          `json:"trace_id,omitempty"`
 	SpanID       string          `json:"span_id,omitempty"`

@@ -133,3 +133,39 @@ func (store *Store) ListEvents(ctx context.Context, runID string, query obspkg.E
 	}
 	return events, nil
 }
+
+func (store *Store) ListScopedEvents(ctx context.Context, query obspkg.ScopedEventQuery) ([]obspkg.EventRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	query = obspkg.NormalizeScopedEventQuery(query)
+	if query.EpisodeID == "" && query.SessionID == "" {
+		return nil, fmt.Errorf("observability inmem: episode_id or session_id is required")
+	}
+	if query.EpisodeID != "" && query.SessionID != "" {
+		return nil, fmt.Errorf("observability inmem: episode_id and session_id are mutually exclusive")
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	events := make([]obspkg.EventRecord, 0)
+	for _, record := range store.records {
+		if record.ID <= query.AfterID {
+			continue
+		}
+		if query.EpisodeID != "" && record.Event.EpisodeID != query.EpisodeID {
+			continue
+		}
+		if query.SessionID != "" && record.Event.SessionID != query.SessionID {
+			continue
+		}
+		if !obspkg.EventAllowedByPreset(record.Event.Type, query.Preset) {
+			continue
+		}
+		events = append(events, obspkg.CloneEventRecord(record))
+		if len(events) >= query.Limit {
+			break
+		}
+	}
+	return events, nil
+}
+

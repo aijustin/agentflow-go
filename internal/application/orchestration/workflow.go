@@ -1104,12 +1104,21 @@ func (r *WorkflowRunner) emitJSON(ctx context.Context, typ core.EventType, scena
 }
 
 func (r *WorkflowRunner) emit(ctx context.Context, typ core.EventType, scenarioName, runID string, payload json.RawMessage) {
+	corr := core.EpisodeCorrelationFromContext(ctx)
+	if core.IsLifecycleEvent(typ) {
+		payload = core.BuildLifecyclePayload(typ, payload, corr)
+	}
 	payload = governance.RedactEventPayload(ctx, r.redactor, runID, typ, payload)
 	event := core.Event{
 		Type:         typ,
 		RunID:        runID,
 		ScenarioName: scenarioName,
+		EpisodeID:    corr.EpisodeID,
+		SessionID:    corr.SessionID,
+		TriggerKind:  corr.TriggerKind,
 		Timestamp:    time.Now().UTC(),
+		Category:     core.EventCategory(typ),
+		DisplayLabel: core.DisplayLabel(typ),
 		Payload:      payload,
 	}
 	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {

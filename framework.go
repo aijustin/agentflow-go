@@ -840,6 +840,11 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 	ctx, cancel := withScenarioTimeout(ctx, scenario.Runtime.Timeout)
 	defer cancel()
 	ctx = core.ContextWithTrustMode(ctx, string(req.TrustMode))
+	ctx = core.ContextWithEpisodeCorrelation(ctx, core.EpisodeCorrelation{
+		EpisodeID:   req.EpisodeID,
+		TriggerKind: req.TriggerKind,
+		SessionID:   req.SessionID,
+	})
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
@@ -1231,11 +1236,18 @@ func (f *Framework) BlobStore() runstate.BlobStore {
 }
 
 func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {
+	corr := core.EpisodeCorrelationFromContext(ctx)
+	if core.IsLifecycleEvent(typ) {
+		payload = core.BuildLifecyclePayload(typ, payload, corr)
+	}
 	payload = governance.RedactEventPayload(ctx, f.redactor, runID, typ, payload)
 	_ = f.events.Emit(ctx, core.Event{
 		Type:         typ,
 		RunID:        runID,
 		ScenarioName: f.scenario.Name,
+		EpisodeID:    corr.EpisodeID,
+		SessionID:    corr.SessionID,
+		TriggerKind:  corr.TriggerKind,
 		Timestamp:    time.Now().UTC(),
 		Category:     core.EventCategory(typ),
 		DisplayLabel: core.DisplayLabel(typ),

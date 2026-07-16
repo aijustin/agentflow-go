@@ -17,6 +17,9 @@ const (
 	resumePromptVar                 = "resume_prompt"
 	resumeAgentVar                  = "resume_agent"
 	resumeTrustModeVar              = "resume_trust_mode"
+	resumeEpisodeIDVar              = "resume_episode_id"
+	resumeTriggerKindVar            = "resume_trigger_kind"
+	resumeSessionIDVar              = "resume_session_id"
 	executionPhaseVar               = "execution_phase"
 	executionPhaseWorkflow          = "workflow"
 	executionPhaseAutonomous        = "autonomous"
@@ -345,11 +348,14 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 
 func hybridRunRequest(snapshot runstate.RunSnapshot) RunRequest {
 	return RunRequest{
-		RunID:     snapshot.RunID,
-		Agent:     variableJSONString(snapshot.Variables, resumeAgentVar),
-		Prompt:    variableJSONString(snapshot.Variables, resumePromptVar),
-		Context:   snapshot.Variables["input"],
-		TrustMode: TrustMode(variableJSONString(snapshot.Variables, resumeTrustModeVar)),
+		RunID:       snapshot.RunID,
+		Agent:       variableJSONString(snapshot.Variables, resumeAgentVar),
+		Prompt:      variableJSONString(snapshot.Variables, resumePromptVar),
+		Context:     snapshot.Variables["input"],
+		TrustMode:   TrustMode(variableJSONString(snapshot.Variables, resumeTrustModeVar)),
+		EpisodeID:   variableJSONString(snapshot.Variables, resumeEpisodeIDVar),
+		TriggerKind: variableJSONString(snapshot.Variables, resumeTriggerKindVar),
+		SessionID:   variableJSONString(snapshot.Variables, resumeSessionIDVar),
 	}
 }
 
@@ -386,6 +392,15 @@ func saveRunResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest, resol
 	}
 	if req.TrustMode != "" {
 		snapshot.Variables[resumeTrustModeVar] = json.RawMessage(fmt.Sprintf("%q", req.TrustMode))
+	}
+	if req.EpisodeID != "" {
+		snapshot.Variables[resumeEpisodeIDVar] = json.RawMessage(fmt.Sprintf("%q", req.EpisodeID))
+	}
+	if req.TriggerKind != "" {
+		snapshot.Variables[resumeTriggerKindVar] = json.RawMessage(fmt.Sprintf("%q", req.TriggerKind))
+	}
+	if req.SessionID != "" {
+		snapshot.Variables[resumeSessionIDVar] = json.RawMessage(fmt.Sprintf("%q", req.SessionID))
 	}
 }
 

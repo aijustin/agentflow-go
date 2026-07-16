@@ -68,6 +68,7 @@ func (e *Engine) continueAfterCheckpoint(ctx context.Context, runID string, comp
 	if mode := TrustMode(variableString(snapshot.Variables, resumeTrustModeVar)); mode != "" {
 		ctx = ContextWithTrustMode(ctx, mode)
 	}
+	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromSnapshot(snapshot))
 	kind := variableString(snapshot.Variables, checkpointKindVar)
 	switch kind {
 	case "before_final_answer":

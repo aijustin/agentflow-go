@@ -177,6 +177,8 @@ func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/api/studio/save", handler.handleStudioSave)
 	handler.mux.HandleFunc("/api/runs", handler.handleRuns)
 	handler.mux.HandleFunc("/api/runs/", handler.handleRunResource)
+	handler.mux.HandleFunc("/api/episodes/", handler.handleEpisodeResource)
+	handler.mux.HandleFunc("/api/sessions/", handler.handleSessionResource)
 }
 
 func (handler *Handler) handleGraph(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -625,6 +627,54 @@ func (handler *Handler) handleRunFork(w nethttp.ResponseWriter, r *nethttp.Reque
 	writeJSON(w, nethttp.StatusOK, result)
 }
 
+
+func (handler *Handler) handleEpisodeResource(w nethttp.ResponseWriter, r *nethttp.Request) {
+	episodeID, segments, ok := parseScopedResource(r.URL.Path, "/api/episodes/")
+	if !ok {
+		nethttp.NotFound(w, r)
+		return
+	}
+	if len(segments) == 1 && segments[0] == "events" {
+		handler.handleScopedEvents(w, r, obspkg.ScopedEventQuery{EpisodeID: episodeID})
+		return
+	}
+	nethttp.NotFound(w, r)
+}
+
+func (handler *Handler) handleSessionResource(w nethttp.ResponseWriter, r *nethttp.Request) {
+	sessionID, segments, ok := parseScopedResource(r.URL.Path, "/api/sessions/")
+	if !ok {
+		nethttp.NotFound(w, r)
+		return
+	}
+	if len(segments) == 1 && segments[0] == "events" {
+		handler.handleScopedEvents(w, r, obspkg.ScopedEventQuery{SessionID: sessionID})
+		return
+	}
+	nethttp.NotFound(w, r)
+}
+
+func (handler *Handler) handleScopedEvents(w nethttp.ResponseWriter, r *nethttp.Request, base obspkg.ScopedEventQuery) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	query, err := scopedEventQueryFromURL(r.URL.Query(), base)
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	events, err := handler.store.ListScopedEvents(r.Context(), query)
+	if err != nil {
+		writeError(w, nethttp.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]any{
+		"events": events,
+		"preset": query.Preset,
+	})
+}
+
 func decodeScenarioGraph(body io.Reader) (any, error) {
 	var graph any
 	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&graph); err != nil {
@@ -761,6 +811,30 @@ func eventQueryFromURL(values url.Values) (obspkg.EventQuery, error) {
 		Limit:         parseInt(values.Get("limit"), obspkg.DefaultEventQueryLimit),
 		Preset:        preset,
 	}), nil
+}
+
+func scopedEventQueryFromURL(values url.Values, base obspkg.ScopedEventQuery) (obspkg.ScopedEventQuery, error) {
+	preset, err := core.ParseEventFilterPreset(values.Get("preset"))
+	if err != nil {
+		return obspkg.ScopedEventQuery{}, err
+	}
+	base.AfterID = int64(parseInt(values.Get("after_id"), 0))
+	base.Limit = parseInt(values.Get("limit"), obspkg.DefaultEventQueryLimit)
+	base.Preset = preset
+	return obspkg.NormalizeScopedEventQuery(base), nil
+}
+
+func parseScopedResource(path, prefix string) (string, []string, bool) {
+	suffix := strings.TrimPrefix(path, prefix)
+	parts := strings.Split(strings.Trim(suffix, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", nil, false
+	}
+	id, err := url.PathUnescape(parts[0])
+	if err != nil || id == "" {
+		return "", nil, false
+	}
+	return id, parts[1:], true
 }
 
 func parseInt(value string, fallback int) int {

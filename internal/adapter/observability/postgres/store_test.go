@@ -46,6 +46,11 @@ func TestNewStoreAutoMigratesSchema(t *testing.T) {
 		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_run_sequence_idx",
 		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_run_updated_idx",
 		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_type_time_idx",
+		"ADD COLUMN IF NOT EXISTS episode_id",
+		"ADD COLUMN IF NOT EXISTS session_id",
+		"ADD COLUMN IF NOT EXISTS trigger_kind",
+		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_episode_id_idx",
+		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_session_id_idx",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected auto migration query containing %q, got:\n%s", want, joined)
@@ -181,6 +186,9 @@ type testRow struct {
 	eventType    string
 	runID        string
 	scenarioName string
+	episodeID    string
+	sessionID    string
+	triggerKind  string
 	traceID      string
 	spanID       string
 	parentSpanID string
@@ -225,6 +233,10 @@ func (c *testConn) QueryContext(ctx context.Context, query string, args []driver
 		return c.nextSequence(args)
 	case strings.HasPrefix(normalized, "INSERT INTO"):
 		return c.insertEvent(args)
+	case strings.HasPrefix(normalized, "SELECT ID, SEQUENCE") && strings.Contains(normalized, "EPISODE_ID = $1"):
+		return c.listScopedEvents(args, "episode")
+	case strings.HasPrefix(normalized, "SELECT ID, SEQUENCE") && strings.Contains(normalized, "SESSION_ID = $1"):
+		return c.listScopedEvents(args, "session")
 	case strings.HasPrefix(normalized, "SELECT ID, SEQUENCE"):
 		return c.listEvents(args)
 	case strings.HasPrefix(normalized, "WITH SUMMARIZED"):
@@ -258,11 +270,14 @@ func (c *testConn) insertEvent(args []driver.NamedValue) (driver.Rows, error) {
 		sequence:     namedInt64(args[1].Value),
 		eventType:    namedString(args[2]),
 		scenarioName: namedString(args[3]),
-		traceID:      namedString(args[4]),
-		spanID:       namedString(args[5]),
-		parentSpanID: namedString(args[6]),
-		occurredAt:   args[7].Value.(time.Time),
-		payload:      valueBytes(args[8].Value),
+		episodeID:    namedString(args[4]),
+		sessionID:    namedString(args[5]),
+		triggerKind:  namedString(args[6]),
+		traceID:      namedString(args[7]),
+		spanID:       namedString(args[8]),
+		parentSpanID: namedString(args[9]),
+		occurredAt:   args[10].Value.(time.Time),
+		payload:      valueBytes(args[11].Value),
 		createdAt:    createdAt,
 	}
 	c.state.rows = append(c.state.rows, row)
@@ -280,6 +295,36 @@ func (c *testConn) listEvents(args []driver.NamedValue) (driver.Rows, error) {
 	for _, row := range rows {
 		if row.runID != runID || row.sequence <= afterSequence {
 			continue
+		}
+		values = append(values, row.values())
+		if len(values) >= limit {
+			break
+		}
+	}
+	return newTestRows(eventColumns(), values), nil
+}
+
+func (c *testConn) listScopedEvents(args []driver.NamedValue, kind string) (driver.Rows, error) {
+	scopeValue := namedString(args[0])
+	afterID := namedInt64(args[1].Value)
+	limit := int(namedInt64(args[2].Value))
+	c.state.mu.Lock()
+	rows := append([]testRow(nil), c.state.rows...)
+	c.state.mu.Unlock()
+	values := make([][]driver.Value, 0)
+	for _, row := range rows {
+		if row.id <= afterID {
+			continue
+		}
+		switch kind {
+		case "episode":
+			if row.episodeID != scopeValue {
+				continue
+			}
+		case "session":
+			if row.sessionID != scopeValue {
+				continue
+			}
 		}
 		values = append(values, row.values())
 		if len(values) >= limit {
@@ -340,7 +385,11 @@ func (c *testConn) listRuns(args []driver.NamedValue) (driver.Rows, error) {
 }
 
 func (row testRow) values() []driver.Value {
-	return []driver.Value{row.id, row.sequence, row.eventType, row.runID, row.scenarioName, row.traceID, row.spanID, row.parentSpanID, row.occurredAt, cloneBytes(row.payload), row.createdAt}
+	return []driver.Value{
+		row.id, row.sequence, row.eventType, row.runID, row.scenarioName,
+		row.episodeID, row.sessionID, row.triggerKind,
+		row.traceID, row.spanID, row.parentSpanID, row.occurredAt, cloneBytes(row.payload), row.createdAt,
+	}
 }
 
 type testRows struct {
@@ -365,7 +414,11 @@ func (rows *testRows) Next(dest []driver.Value) error {
 }
 
 func eventColumns() []string {
-	return []string{"id", "sequence", "event_type", "run_id", "scenario_name", "trace_id", "span_id", "parent_span_id", "occurred_at", "payload_json", "created_at"}
+	return []string{
+		"id", "sequence", "event_type", "run_id", "scenario_name",
+		"episode_id", "session_id", "trigger_kind",
+		"trace_id", "span_id", "parent_span_id", "occurred_at", "payload_json", "created_at",
+	}
 }
 
 func runColumns() []string {

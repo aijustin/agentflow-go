@@ -25,6 +25,7 @@ const (
 	RunStatusPaused    RunStatus = "paused"
 	RunStatusCompleted RunStatus = "completed"
 	RunStatusFailed    RunStatus = "failed"
+	RunStatusCancelled RunStatus = "cancelled"
 )
 
 type EventRecord struct {
@@ -59,10 +60,22 @@ type EventQuery struct {
 	Preset core.EventFilterPreset
 }
 
+// ScopedEventQuery lists events across runs that share an Episode or Session.
+// Exactly one of EpisodeID or SessionID must be set. AfterID is a global
+// store cursor (EventRecord.ID), not a per-run sequence.
+type ScopedEventQuery struct {
+	EpisodeID string
+	SessionID string
+	AfterID   int64
+	Limit     int
+	Preset    core.EventFilterPreset
+}
+
 type EventStore interface {
 	Append(ctx context.Context, event core.Event) (EventRecord, error)
 	ListRuns(ctx context.Context, query RunQuery) ([]RunSummary, error)
 	ListEvents(ctx context.Context, runID string, query EventQuery) ([]EventRecord, error)
+	ListScopedEvents(ctx context.Context, query ScopedEventQuery) ([]EventRecord, error)
 }
 
 type EventPublisher interface {
@@ -122,8 +135,10 @@ func (sink *fanoutSink) Emit(ctx context.Context, event core.Event) error {
 }
 
 type EventSubscriptionFilter struct {
-	RunID  string
-	Buffer int
+	RunID     string
+	EpisodeID string
+	SessionID string
+	Buffer    int
 }
 
 type EventSubscription struct {
@@ -199,6 +214,12 @@ func (hub *EventHub) PublishEvent(ctx context.Context, record EventRecord) error
 		if subscriber.filter.RunID != "" && subscriber.filter.RunID != record.Event.RunID {
 			continue
 		}
+		if subscriber.filter.EpisodeID != "" && subscriber.filter.EpisodeID != record.Event.EpisodeID {
+			continue
+		}
+		if subscriber.filter.SessionID != "" && subscriber.filter.SessionID != record.Event.SessionID {
+			continue
+		}
 		select {
 		case subscriber.events <- CloneEventRecord(record):
 		default:
@@ -234,6 +255,20 @@ func NormalizeEventQuery(query EventQuery) EventQuery {
 	return query
 }
 
+func NormalizeScopedEventQuery(query ScopedEventQuery) ScopedEventQuery {
+	if query.Limit <= 0 {
+		query.Limit = DefaultEventQueryLimit
+	}
+	if query.Limit > MaxEventQueryLimit {
+		query.Limit = MaxEventQueryLimit
+	}
+	if query.AfterID < 0 {
+		query.AfterID = 0
+	}
+	query.Preset = core.NormalizeEventFilterPreset(query.Preset)
+	return query
+}
+
 // EventAllowedByPreset reports whether an event type belongs in the query view.
 func EventAllowedByPreset(typ core.EventType, preset core.EventFilterPreset) bool {
 	return core.NormalizeEventFilterPreset(preset).Allows(typ)
@@ -257,6 +292,8 @@ func StatusAfterEvent(current RunStatus, eventType core.EventType) RunStatus {
 		return RunStatusCompleted
 	case core.EventRunFailed:
 		return RunStatusFailed
+	case core.EventRunCancelled:
+		return RunStatusCancelled
 	case core.EventRunPaused:
 		return RunStatusPaused
 	case core.EventRunStarted, core.EventRunResumed:

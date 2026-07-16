@@ -81,8 +81,23 @@ ON %s (event_type, occurred_at DESC)`, indexPrefix, store.table),
 			return fmt.Errorf("postgres observability: ensure schema: %w", err)
 		}
 	}
-	if _, err := store.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS parent_span_id text NOT NULL DEFAULT ''`, store.table)); err != nil {
-		return fmt.Errorf("postgres observability: ensure parent_span_id column: %w", err)
+	for _, column := range []string{
+		`parent_span_id text NOT NULL DEFAULT ''`,
+		`episode_id text NOT NULL DEFAULT ''`,
+		`session_id text NOT NULL DEFAULT ''`,
+		`trigger_kind text NOT NULL DEFAULT ''`,
+	} {
+		if _, err := store.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s`, store.table, column)); err != nil {
+			return fmt.Errorf("postgres observability: ensure column %s: %w", column, err)
+		}
+	}
+	for _, index := range []string{
+		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_episode_id_idx ON %s (episode_id, id)`, indexPrefix, store.table),
+		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_session_id_idx ON %s (session_id, id)`, indexPrefix, store.table),
+	} {
+		if _, err := store.db.ExecContext(ctx, index); err != nil {
+			return fmt.Errorf("postgres observability: ensure scoped index: %w", err)
+		}
 	}
 	return nil
 }
@@ -112,12 +127,12 @@ func (store *Store) Append(ctx context.Context, event core.Event) (obspkg.EventR
 	if err := tx.QueryRowContext(ctx, sequenceQuery, event.RunID).Scan(&sequence); err != nil {
 		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: next sequence for run %q: %w", event.RunID, err)
 	}
-	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, sequence, event_type, scenario_name, trace_id, span_id, parent_span_id, occurred_at, payload_json)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, sequence, event_type, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING id, created_at`, store.table)
 	var id int64
 	var createdAt time.Time
-	if err := tx.QueryRowContext(ctx, insertQuery, event.RunID, sequence, string(event.Type), event.ScenarioName, event.TraceID, event.SpanID, event.ParentSpanID, event.Timestamp, payload).Scan(&id, &createdAt); err != nil {
+	if err := tx.QueryRowContext(ctx, insertQuery, event.RunID, sequence, string(event.Type), event.ScenarioName, event.EpisodeID, event.SessionID, event.TriggerKind, event.TraceID, event.SpanID, event.ParentSpanID, event.Timestamp, payload).Scan(&id, &createdAt); err != nil {
 		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: append event for run %q: %w", event.RunID, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -138,6 +153,7 @@ func (store *Store) ListRuns(ctx context.Context, query obspkg.RunQuery) ([]obsp
 		CASE (array_agg(event_type ORDER BY sequence DESC))[1]
 			WHEN 'RunCompleted' THEN 'completed'
 			WHEN 'RunFailed' THEN 'failed'
+			WHEN 'RunCancelled' THEN 'cancelled'
 			WHEN 'RunPaused' THEN 'paused'
 			ELSE 'running'
 		END AS status,
@@ -213,7 +229,7 @@ func (store *Store) ListEvents(ctx context.Context, runID string, query obspkg.E
 }
 
 func (store *Store) listEventsRaw(ctx context.Context, runID string, afterSequence int64, limit int) ([]obspkg.EventRecord, error) {
-	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, scenario_name, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
+	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
 FROM %s
 WHERE run_id = $1 AND sequence > $2
 ORDER BY sequence ASC
@@ -237,11 +253,98 @@ LIMIT $3`, store.table)
 	return records, nil
 }
 
+func (store *Store) ListScopedEvents(ctx context.Context, query obspkg.ScopedEventQuery) ([]obspkg.EventRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	query = obspkg.NormalizeScopedEventQuery(query)
+	if query.EpisodeID == "" && query.SessionID == "" {
+		return nil, fmt.Errorf("postgres observability: episode_id or session_id is required")
+	}
+	if query.EpisodeID != "" && query.SessionID != "" {
+		return nil, fmt.Errorf("postgres observability: episode_id and session_id are mutually exclusive")
+	}
+	scopeColumn := "episode_id"
+	scopeValue := query.EpisodeID
+	if query.SessionID != "" {
+		scopeColumn = "session_id"
+		scopeValue = query.SessionID
+	}
+	if query.Preset == core.EventFilterDiagnostic {
+		return store.listScopedEventsRaw(ctx, scopeColumn, scopeValue, query.AfterID, query.Limit)
+	}
+	out := make([]obspkg.EventRecord, 0, query.Limit)
+	after := query.AfterID
+	for len(out) < query.Limit {
+		batch, err := store.listScopedEventsRaw(ctx, scopeColumn, scopeValue, after, obspkg.MaxEventQueryLimit)
+		if err != nil {
+			return nil, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, record := range batch {
+			after = record.ID
+			if !obspkg.EventAllowedByPreset(record.Event.Type, query.Preset) {
+				continue
+			}
+			out = append(out, record)
+			if len(out) >= query.Limit {
+				break
+			}
+		}
+		if len(batch) < obspkg.MaxEventQueryLimit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (store *Store) listScopedEventsRaw(ctx context.Context, scopeColumn, scopeValue string, afterID int64, limit int) ([]obspkg.EventRecord, error) {
+	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
+FROM %s
+WHERE %s = $1 AND id > $2
+ORDER BY id ASC
+LIMIT $3`, store.table, scopeColumn)
+	rows, err := store.db.QueryContext(ctx, listQuery, scopeValue, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres observability: list scoped events: %w", err)
+	}
+	defer rows.Close()
+	records := make([]obspkg.EventRecord, 0)
+	for rows.Next() {
+		record, err := scanRecord(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres observability: scan scoped event: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres observability: list scoped events rows: %w", err)
+	}
+	return records, nil
+}
+
 func scanRecord(row interface{ Scan(dest ...any) error }) (obspkg.EventRecord, error) {
 	var record obspkg.EventRecord
 	var eventType string
 	var payload []byte
-	if err := row.Scan(&record.ID, &record.Sequence, &eventType, &record.Event.RunID, &record.Event.ScenarioName, &record.Event.TraceID, &record.Event.SpanID, &record.Event.ParentSpanID, &record.Event.Timestamp, &payload, &record.CreatedAt); err != nil {
+	if err := row.Scan(
+		&record.ID,
+		&record.Sequence,
+		&eventType,
+		&record.Event.RunID,
+		&record.Event.ScenarioName,
+		&record.Event.EpisodeID,
+		&record.Event.SessionID,
+		&record.Event.TriggerKind,
+		&record.Event.TraceID,
+		&record.Event.SpanID,
+		&record.Event.ParentSpanID,
+		&record.Event.Timestamp,
+		&payload,
+		&record.CreatedAt,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return obspkg.EventRecord{}, err
 		}

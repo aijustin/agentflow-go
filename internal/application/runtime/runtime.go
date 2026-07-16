@@ -132,6 +132,13 @@ type RunRequest struct {
 	Prompt    string          `json:"prompt,omitempty"`
 	Context   json.RawMessage `json:"context,omitempty"`
 	TrustMode TrustMode       `json:"trust_mode,omitempty"`
+	// EpisodeID identifies a platform Episode (one QA test run) that may span
+	// multiple Runs or HITL resumes. Distinct from thread_id (Fork only).
+	EpisodeID string `json:"episode_id,omitempty"`
+	// TriggerKind describes how the run was started (for example manual, webhook, resume).
+	TriggerKind string `json:"trigger_kind,omitempty"`
+	// SessionID optionally groups Episodes under a longer-lived product session.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // SetToolOutputTransform registers or replaces a per-tool output transform.
@@ -166,10 +173,12 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	)
 	defer runSpan.End()
 
+	ctx = ContextWithTrustMode(ctx, req.TrustMode)
+	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromRequest(req))
 	if err := e.beginRun(ctx, &req); err != nil {
 		return RunResult{}, err
 	}
-	ctx = ContextWithTrustMode(ctx, req.TrustMode)
+	ctx = e.withEpisodeCorrelation(ctx, req)
 	failRun := func(err error) (RunResult, error) {
 		runSpan.RecordError(err)
 		eventType := core.EventRunFailed
@@ -237,10 +246,12 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 		observability.Attribute{Key: "structured", Value: "true"},
 	)
 	defer runSpan.End()
+	ctx = ContextWithTrustMode(ctx, req.TrustMode)
+	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromRequest(req))
 	if err := e.beginRun(ctx, &req); err != nil {
 		return RunResult{}, err
 	}
-	ctx = ContextWithTrustMode(ctx, req.TrustMode)
+	ctx = e.withEpisodeCorrelation(ctx, req)
 	agent, err := e.resolveAgent(req.Agent)
 	if err != nil {
 		e.markRunFailed(ctx, req.RunID, err)
@@ -311,11 +322,13 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 	} else {
 		cancel = func() {}
 	}
+	ctx = ContextWithTrustMode(ctx, req.TrustMode)
+	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromRequest(req))
 	if err := e.beginRun(ctx, &req); err != nil {
 		cancel()
 		return nil, err
 	}
-	ctx = ContextWithTrustMode(ctx, req.TrustMode)
+	ctx = e.withEpisodeCorrelation(ctx, req)
 	source, agent, streamCancel, err := e.streamAnswer(ctx, req)
 	if err != nil {
 		e.markRunFailed(ctx, req.RunID, err)
@@ -473,6 +486,8 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		ctx, cancel = e.withTimeout(ctx, e.scenario.Runtime.Timeout)
 		defer cancel()
 	}
+	ctx = ContextWithTrustMode(ctx, req.TrustMode)
+	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromRequest(req))
 	loaded, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
@@ -491,6 +506,9 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	}
 	if loaded.Status == runstate.RunStatusFailed {
 		return RunResult{}, ErrRunFailed
+	}
+	if episodeCorrelationFromRequest(req).Empty() {
+		ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromSnapshot(loaded))
 	}
 	ctx, runSpan := e.startSpan(ctx, observability.SpanRun,
 		observability.Attribute{Key: "run_id", Value: req.RunID},

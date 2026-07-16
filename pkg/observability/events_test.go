@@ -33,6 +33,10 @@ func (s *memoryEventStore) ListEvents(context.Context, string, EventQuery) ([]Ev
 	return nil, nil
 }
 
+func (s *memoryEventStore) ListScopedEvents(context.Context, ScopedEventQuery) ([]EventRecord, error) {
+	return nil, nil
+}
+
 func TestEventStoreSinkAndFanout(t *testing.T) {
 	ctx := context.Background()
 	store := &memoryEventStore{}

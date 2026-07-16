@@ -337,10 +337,13 @@ func shouldRetry(ctx context.Context, err error) bool {
 
 const (
 	runStartedAtVar    = "run_started_at"
-	runErrorMessageVar = "run_error_message"
-	resumePromptVar    = "resume_prompt"
-	resumeAgentVar     = "resume_agent"
-	resumeTrustModeVar = "resume_trust_mode"
+	runErrorMessageVar   = "run_error_message"
+	resumePromptVar      = "resume_prompt"
+	resumeAgentVar       = "resume_agent"
+	resumeTrustModeVar   = "resume_trust_mode"
+	resumeEpisodeIDVar   = "resume_episode_id"
+	resumeTriggerKindVar = "resume_trigger_kind"
+	resumeSessionIDVar   = "resume_session_id"
 )
 
 func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
@@ -356,6 +359,41 @@ func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
 	if req.TrustMode != "" {
 		snapshot.Variables[resumeTrustModeVar] = json.RawMessage(fmt.Sprintf("%q", req.TrustMode))
 	}
+	if req.EpisodeID != "" {
+		snapshot.Variables[resumeEpisodeIDVar] = json.RawMessage(fmt.Sprintf("%q", req.EpisodeID))
+	}
+	if req.TriggerKind != "" {
+		snapshot.Variables[resumeTriggerKindVar] = json.RawMessage(fmt.Sprintf("%q", req.TriggerKind))
+	}
+	if req.SessionID != "" {
+		snapshot.Variables[resumeSessionIDVar] = json.RawMessage(fmt.Sprintf("%q", req.SessionID))
+	}
+}
+
+func episodeCorrelationFromRequest(req RunRequest) core.EpisodeCorrelation {
+	return core.EpisodeCorrelation{
+		EpisodeID:   req.EpisodeID,
+		TriggerKind: req.TriggerKind,
+		SessionID:   req.SessionID,
+	}
+}
+
+func episodeCorrelationFromSnapshot(snapshot runstate.RunSnapshot) core.EpisodeCorrelation {
+	return core.EpisodeCorrelation{
+		EpisodeID:   variableString(snapshot.Variables, resumeEpisodeIDVar),
+		TriggerKind: variableString(snapshot.Variables, resumeTriggerKindVar),
+		SessionID:   variableString(snapshot.Variables, resumeSessionIDVar),
+	}
+}
+
+func (e *Engine) withEpisodeCorrelation(ctx context.Context, req RunRequest) context.Context {
+	corr := episodeCorrelationFromRequest(req)
+	if corr.Empty() && req.RunID != "" {
+		if snapshot, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID); err == nil {
+			corr = episodeCorrelationFromSnapshot(snapshot)
+		}
+	}
+	return core.ContextWithEpisodeCorrelation(ctx, corr)
 }
 
 func ContextWithTrustMode(ctx context.Context, mode TrustMode) context.Context {
@@ -632,11 +670,18 @@ func (e *Engine) shouldPauseBeforeFinal(agent core.Agent) bool {
 }
 
 func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {
+	corr := core.EpisodeCorrelationFromContext(ctx)
+	if core.IsLifecycleEvent(typ) {
+		payload = core.BuildLifecyclePayload(typ, payload, corr)
+	}
 	payload = governance.RedactEventPayload(ctx, e.redactor, runID, typ, payload)
 	event := core.Event{
 		Type:         typ,
 		RunID:        runID,
 		ScenarioName: e.scenario.Name,
+		EpisodeID:    corr.EpisodeID,
+		SessionID:    corr.SessionID,
+		TriggerKind:  corr.TriggerKind,
 		Timestamp:    time.Now().UTC(),
 		Category:     core.EventCategory(typ),
 		DisplayLabel: core.DisplayLabel(typ),
