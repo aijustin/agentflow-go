@@ -1,5 +1,7 @@
 package core
 
+import "fmt"
+
 // EventCategory returns a coarse product-facing category for an event type:
 // tool, knowledge, skill, llm, memory, or run.
 func EventCategory(typ EventType) string {
@@ -84,6 +86,49 @@ func DisplayLabel(typ EventType) string {
 	}
 }
 
+// EventFilterPreset names a read-side event view for StreamRun / ListEvents.
+// Storage always keeps the full event stream; presets only project it.
+type EventFilterPreset string
+
+const (
+	// EventFilterProductUI hides high-frequency internal noise for chat UIs.
+	EventFilterProductUI EventFilterPreset = "product_ui"
+	// EventFilterDiagnostic keeps internal events (MemoryRead, ContextPrepared, …)
+	// for Debug / export / SSE trace views.
+	EventFilterDiagnostic EventFilterPreset = "diagnostic"
+)
+
+// ParseEventFilterPreset accepts API values. Empty means diagnostic (full stream).
+func ParseEventFilterPreset(value string) (EventFilterPreset, error) {
+	switch EventFilterPreset(value) {
+	case "", EventFilterDiagnostic:
+		return EventFilterDiagnostic, nil
+	case EventFilterProductUI:
+		return EventFilterProductUI, nil
+	default:
+		return "", fmt.Errorf("core: unknown event filter preset %q", value)
+	}
+}
+
+// NormalizeEventFilterPreset maps empty to diagnostic; unknown values stay as-is
+// so callers can reject them explicitly via ParseEventFilterPreset.
+func NormalizeEventFilterPreset(preset EventFilterPreset) EventFilterPreset {
+	if preset == "" {
+		return EventFilterDiagnostic
+	}
+	return preset
+}
+
+// Allows reports whether typ is included in this preset's view.
+func (p EventFilterPreset) Allows(typ EventType) bool {
+	switch NormalizeEventFilterPreset(p) {
+	case EventFilterProductUI:
+		return EventFilterPresetProductUI(typ)
+	default:
+		return EventFilterPresetDiagnostic(typ)
+	}
+}
+
 // EventFilterPresetProductUI is a preset predicate for product-facing event
 // streams. It hides high-frequency internal noise (memory reads and context
 // preparation) while keeping tool/LLM/skill/run lifecycle signals visible.
@@ -93,6 +138,12 @@ func DisplayLabel(typ EventType) string {
 //	if EventFilterPresetProductUI(event.Type) { publish(event) }
 func EventFilterPresetProductUI(typ EventType) bool {
 	return ShouldEmitToProductUI(typ)
+}
+
+// EventFilterPresetDiagnostic keeps the full event stream, including internal
+// MemoryRead / ContextPrepared signals used by Debug and export views.
+func EventFilterPresetDiagnostic(typ EventType) bool {
+	return true
 }
 
 // ShouldEmitToProductUI reports whether an event type belongs on a product UI
@@ -105,3 +156,15 @@ func ShouldEmitToProductUI(typ EventType) bool {
 		return true
 	}
 }
+
+// IsLifecycleEvent reports whether typ is a run-lifecycle event that should
+// carry Episode/Session correlation in its payload.
+func IsLifecycleEvent(typ EventType) bool {
+	switch typ {
+	case EventRunStarted, EventRunCompleted, EventRunFailed, EventRunCancelled, EventRunPaused, EventRunResumed:
+		return true
+	default:
+		return false
+	}
+}
+

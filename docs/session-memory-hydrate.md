@@ -54,6 +54,12 @@ context:
 
 优先使用 `Framework.StreamRun` 获取统一的 `StreamFrame`（token / event / done），避免自行 merge `Stream` + EventHub 并猜测 drain 时长。
 
+事件视图用预设显式选择（读侧投影，EventStore 仍存全量）：
+
+- 聊天 SSE：`WithStreamEventFilterPreset(core.EventFilterProductUI)`（隐藏 `MemoryRead` / `ContextPrepared`）
+- Debug / 导出：`EventFilterDiagnostic`（默认；保留内部事件）
+- `EventStore.ListEvents` / observability HTTP：`EventQuery.Preset` 或 `?preset=product_ui|diagnostic`
+
 ## Production HTTP（AF-010）
 
 `agentflow.NewProductionHTTPHandler` 已提供健康检查、异步 job、HITL resume 等生产路由；详见 [async-runtime.md](./async-runtime.md)。

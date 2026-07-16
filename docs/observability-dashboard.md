@@ -138,8 +138,17 @@ The handler serves both the UI and JSON/SSE APIs. When mounted under `/observabi
 
 - `GET /observability/` serves the dashboard.
 - `GET /observability/api/runs?status=running&limit=50` lists session summaries.
-- `GET /observability/api/runs/{run_id}/events?after_sequence=10&limit=200` lists timeline events.
-- `GET /observability/api/runs/{run_id}/stream?after_sequence=10` streams new events as Server-Sent Events.
+- `GET /observability/api/runs/{run_id}/events?after_sequence=10&limit=200&preset=diagnostic` lists timeline events.
+- `GET /observability/api/runs/{run_id}/stream?after_sequence=10&preset=diagnostic` streams new events as Server-Sent Events.
+
+`preset` selects a read-side event view (storage always keeps the full stream):
+
+| Value | Behavior |
+|-------|----------|
+| `diagnostic` (default, or omit) | Full stream, including `MemoryRead` / `ContextPrepared` for Debug / export |
+| `product_ui` | Hides `MemoryRead` / `ContextPrepared`; use for chat-facing timelines |
+
+`Framework.StreamRun` accepts the same choice via `WithStreamEventFilterPreset(core.EventFilterProductUI)` / `EventFilterDiagnostic`. `EventStore.ListEvents` takes `EventQuery.Preset`.
 
 When `ObservabilityHTTPHandlerConfig.Framework` is set, Studio endpoints are also available:
 

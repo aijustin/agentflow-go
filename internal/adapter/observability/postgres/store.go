@@ -181,12 +181,44 @@ func (store *Store) ListEvents(ctx context.Context, runID string, query obspkg.E
 		return nil, err
 	}
 	query = obspkg.NormalizeEventQuery(query)
+	if query.Preset == core.EventFilterDiagnostic {
+		return store.listEventsRaw(ctx, runID, query.AfterSequence, query.Limit)
+	}
+	// Preset projection: page raw rows until Limit matching events are collected.
+	out := make([]obspkg.EventRecord, 0, query.Limit)
+	after := query.AfterSequence
+	for len(out) < query.Limit {
+		batch, err := store.listEventsRaw(ctx, runID, after, obspkg.MaxEventQueryLimit)
+		if err != nil {
+			return nil, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, record := range batch {
+			after = record.Sequence
+			if !obspkg.EventAllowedByPreset(record.Event.Type, query.Preset) {
+				continue
+			}
+			out = append(out, record)
+			if len(out) >= query.Limit {
+				break
+			}
+		}
+		if len(batch) < obspkg.MaxEventQueryLimit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (store *Store) listEventsRaw(ctx context.Context, runID string, afterSequence int64, limit int) ([]obspkg.EventRecord, error) {
 	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, scenario_name, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
 FROM %s
 WHERE run_id = $1 AND sequence > $2
 ORDER BY sequence ASC
 LIMIT $3`, store.table)
-	rows, err := store.db.QueryContext(ctx, listQuery, runID, query.AfterSequence, query.Limit)
+	rows, err := store.db.QueryContext(ctx, listQuery, runID, afterSequence, limit)
 	if err != nil {
 		return nil, fmt.Errorf("postgres observability: list events for run %q: %w", runID, err)
 	}

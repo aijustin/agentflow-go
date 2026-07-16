@@ -123,6 +123,9 @@ func (store *Store) ListEvents(ctx context.Context, runID string, query obspkg.E
 		if record.Event.RunID != runID || record.Sequence <= query.AfterSequence {
 			continue
 		}
+		if !obspkg.EventAllowedByPreset(record.Event.Type, query.Preset) {
+			continue
+		}
 		events = append(events, obspkg.CloneEventRecord(record))
 		if len(events) >= query.Limit {
 			break

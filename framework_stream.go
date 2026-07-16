@@ -11,6 +11,31 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
+// StreamRunOption configures StreamRun read-side behavior.
+type StreamRunOption func(*streamRunOptions)
+
+type streamRunOptions struct {
+	eventPreset core.EventFilterPreset
+}
+
+// Event filter presets for StreamRun / EventStore.ListEvents read-side views.
+const (
+	EventFilterProductUI  = core.EventFilterProductUI
+	EventFilterDiagnostic = core.EventFilterDiagnostic
+)
+
+// EventFilterPreset is a named read-side event view (product_ui | diagnostic).
+type EventFilterPreset = core.EventFilterPreset
+
+// WithStreamEventFilterPreset selects the event view for StreamFrameEvent frames.
+// EventStore / WithEventSink still receive the full stream. Empty defaults to
+// diagnostic (all events, including MemoryRead and ContextPrepared).
+func WithStreamEventFilterPreset(preset EventFilterPreset) StreamRunOption {
+	return func(opts *streamRunOptions) {
+		opts.eventPreset = preset
+	}
+}
+
 // StreamFrameKind discriminates unified StreamRun frames.
 type StreamFrameKind string
 
@@ -57,7 +82,18 @@ func (t *streamEventTee) Emit(_ context.Context, event core.Event) error {
 // Events are teed via a context-scoped sink for the duration of the stream so
 // callers do not need an EventHub. Done is emitted only after the token stream
 // closes and pending teed events have been flushed into the frame channel.
-func (f *Framework) StreamRun(ctx context.Context, req RunRequest) (<-chan StreamFrame, error) {
+//
+// Use WithStreamEventFilterPreset to project events for product_ui vs diagnostic
+// views. Default is diagnostic (full stream).
+func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...StreamRunOption) (<-chan StreamFrame, error) {
+	options := streamRunOptions{eventPreset: core.EventFilterDiagnostic}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
+	options.eventPreset = core.NormalizeEventFilterPreset(options.eventPreset)
+
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
@@ -93,6 +129,9 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest) (<-chan Strea
 			for {
 				select {
 				case event := <-tee.events:
+					if !options.eventPreset.Allows(event.Type) {
+						continue
+					}
 					cloned := event
 					if !send(StreamFrame{Kind: StreamFrameEvent, Event: &cloned}) {
 						return

@@ -169,7 +169,7 @@ llms:
 - [x] AF-015：ContextPrepared 增加 `dropped_user_messages` + 默认 pin user + `ContextIncomplete` 事件
 - [x] AF-003 / AF-019：`knowledge.NewMultiNamespaceRetriever`（global_rank / balanced，metadata `namespace`/`kb_id`）
 - [x] AF-004：`Framework.StreamRun` 统一 `StreamFrame`（token/event/done）
-- [x] AF-005：`EventCategory` / `DisplayLabel` / `EventFilterPresetProductUI`
+- [x] AF-005：`EventCategory` / `DisplayLabel` / `EventFilterPresetProductUI`；另补 `EventFilterDiagnostic`，并接到 `StreamRun` / `ListEvents` / observability `?preset=`
 - [x] AF-007：`SkillKind` + `EventSkillApplied` + `pkg/skill.ScriptRuntime` 接口
 - [x] AF-009：Postgres `WithExpectedDimension` + `ReindexRequiredError`；Indexer 向量长度一致性校验
 - [x] AF-010：`NewProductionHTTPHandler` 已提供（文档状态更正）

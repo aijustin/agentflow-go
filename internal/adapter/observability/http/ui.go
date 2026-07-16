@@ -2219,7 +2219,7 @@ const indexHTML = `<!doctype html>
       state.selectedRun = runID;
       state.selectedEvent = null;
       closeStream();
-      const res = await fetch(apiURL('runs/' + encodeURIComponent(runID) + '/events?limit=500'));
+      const res = await fetch(apiURL('runs/' + encodeURIComponent(runID) + '/events?limit=500&preset=product_ui'));
       const body = await res.json();
       state.events = body.events || [];
       await loadSteps(runID);
@@ -2233,7 +2233,7 @@ const indexHTML = `<!doctype html>
     function openStream() {
       if (!state.selectedRun || state.stream) return;
       const last = state.events.length ? state.events[state.events.length - 1].sequence : 0;
-      state.stream = new EventSource(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/stream?after_sequence=' + last));
+      state.stream = new EventSource(apiURL('runs/' + encodeURIComponent(state.selectedRun) + '/stream?after_sequence=' + last + '&preset=product_ui'));
       state.stream.addEventListener('runtime_event', (message) => {
         const record = JSON.parse(message.data);
         if (state.events.some((item) => item.id === record.id)) return;

@@ -82,6 +82,15 @@ func TestNormalizeQueriesAndEvents(t *testing.T) {
 	if eventQuery.Limit != MaxEventQueryLimit || eventQuery.AfterSequence != 0 {
 		t.Fatalf("unexpected event query: %+v", eventQuery)
 	}
+	if eventQuery.Preset != core.EventFilterDiagnostic {
+		t.Fatalf("expected default diagnostic preset, got %q", eventQuery.Preset)
+	}
+	if !EventAllowedByPreset(core.EventMemoryRead, core.EventFilterDiagnostic) {
+		t.Fatal("diagnostic should allow MemoryRead")
+	}
+	if EventAllowedByPreset(core.EventMemoryRead, core.EventFilterProductUI) {
+		t.Fatal("product_ui should hide MemoryRead")
+	}
 	now := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	normalized := NormalizeEvent(core.Event{Type: core.EventRunCompleted}, now)
 	if normalized.Timestamp != now {

@@ -58,6 +58,41 @@ func TestShouldEmitToProductUI(t *testing.T) {
 	}
 }
 
+func TestEventFilterPresetDiagnosticKeepsInternalEvents(t *testing.T) {
+	if !core.EventFilterPresetDiagnostic(core.EventMemoryRead) {
+		t.Fatal("Diagnostic should keep MemoryRead")
+	}
+	if !core.EventFilterPresetDiagnostic(core.EventContextPrepared) {
+		t.Fatal("Diagnostic should keep ContextPrepared")
+	}
+	if !core.EventFilterDiagnostic.Allows(core.EventMemoryRead) {
+		t.Fatal("EventFilterDiagnostic.Allows should keep MemoryRead")
+	}
+	if core.EventFilterProductUI.Allows(core.EventMemoryRead) {
+		t.Fatal("EventFilterProductUI.Allows should hide MemoryRead")
+	}
+	if !core.EventFilterProductUI.Allows(core.EventToolCalled) {
+		t.Fatal("EventFilterProductUI.Allows should keep ToolCalled")
+	}
+}
+
+func TestParseEventFilterPreset(t *testing.T) {
+	preset, err := core.ParseEventFilterPreset("")
+	if err != nil || preset != core.EventFilterDiagnostic {
+		t.Fatalf("empty preset: got %q err=%v", preset, err)
+	}
+	preset, err = core.ParseEventFilterPreset("product_ui")
+	if err != nil || preset != core.EventFilterProductUI {
+		t.Fatalf("product_ui: got %q err=%v", preset, err)
+	}
+	if _, err := core.ParseEventFilterPreset("nope"); err == nil {
+		t.Fatal("expected unknown preset error")
+	}
+	if core.NormalizeEventFilterPreset("") != core.EventFilterDiagnostic {
+		t.Fatal("empty should normalize to diagnostic")
+	}
+}
+
 func TestEventStructCarriesCategoryFields(t *testing.T) {
 	event := core.Event{
 		Type:         core.EventToolCalled,

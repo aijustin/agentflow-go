@@ -60,6 +60,50 @@ func TestHandlerEventsAndRunsFilters(t *testing.T) {
 	}
 }
 
+func TestHandlerEventsPresetProductUI(t *testing.T) {
+	ctx := context.Background()
+	store := obsinmem.NewStore()
+	handler, err := NewHandler(Config{Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	for _, event := range []core.Event{
+		{Type: core.EventRunStarted, RunID: "run-preset", Timestamp: ts},
+		{Type: core.EventMemoryRead, RunID: "run-preset", Timestamp: ts.Add(time.Second)},
+		{Type: core.EventToolCalled, RunID: "run-preset", Timestamp: ts.Add(2 * time.Second)},
+	} {
+		if _, err := store.Append(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	product := httptest.NewRecorder()
+	handler.ServeHTTP(product, httptest.NewRequest(http.MethodGet, "/api/runs/run-preset/events?preset=product_ui", nil))
+	if product.Code != http.StatusOK {
+		t.Fatalf("product_ui code=%d body=%s", product.Code, product.Body.String())
+	}
+	var productBody struct {
+		Events []obspkg.EventRecord   `json:"events"`
+		Preset core.EventFilterPreset `json:"preset"`
+	}
+	if err := json.Unmarshal(product.Body.Bytes(), &productBody); err != nil {
+		t.Fatal(err)
+	}
+	if productBody.Preset != core.EventFilterProductUI {
+		t.Fatalf("preset=%q", productBody.Preset)
+	}
+	if len(productBody.Events) != 2 {
+		t.Fatalf("expected 2 product events, got %d", len(productBody.Events))
+	}
+
+	bad := httptest.NewRecorder()
+	handler.ServeHTTP(bad, httptest.NewRequest(http.MethodGet, "/api/runs/run-preset/events?preset=nope", nil))
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown preset, got %d", bad.Code)
+	}
+}
+
 func TestHandlerRunsFilterByStatus(t *testing.T) {
 	ctx := context.Background()
 	store := obsinmem.NewStore()

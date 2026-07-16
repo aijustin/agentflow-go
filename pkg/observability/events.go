@@ -53,6 +53,10 @@ type RunQuery struct {
 type EventQuery struct {
 	AfterSequence int64
 	Limit         int
+	// Preset selects a read-side event view (product_ui or diagnostic).
+	// Empty defaults to diagnostic (full stream). Filtering is projection-only;
+	// Append always stores every event.
+	Preset core.EventFilterPreset
 }
 
 type EventStore interface {
@@ -226,7 +230,13 @@ func NormalizeEventQuery(query EventQuery) EventQuery {
 	if query.AfterSequence < 0 {
 		query.AfterSequence = 0
 	}
+	query.Preset = core.NormalizeEventFilterPreset(query.Preset)
 	return query
+}
+
+// EventAllowedByPreset reports whether an event type belongs in the query view.
+func EventAllowedByPreset(typ core.EventType, preset core.EventFilterPreset) bool {
+	return core.NormalizeEventFilterPreset(preset).Allows(typ)
 }
 
 func NormalizeEvent(event core.Event, now time.Time) core.Event {

@@ -638,12 +638,20 @@ func (handler *Handler) handleEvents(w nethttp.ResponseWriter, r *nethttp.Reques
 		methodNotAllowed(w, nethttp.MethodGet)
 		return
 	}
-	events, err := handler.store.ListEvents(r.Context(), runID, eventQueryFromURL(r.URL.Query()))
+	query, err := eventQueryFromURL(r.URL.Query())
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	events, err := handler.store.ListEvents(r.Context(), runID, query)
 	if err != nil {
 		writeError(w, nethttp.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, map[string]any{"events": events})
+	writeJSON(w, nethttp.StatusOK, map[string]any{
+		"events": events,
+		"preset": query.Preset,
+	})
 }
 
 func (handler *Handler) handleStream(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
@@ -656,17 +664,22 @@ func (handler *Handler) handleStream(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeError(w, nethttp.StatusInternalServerError, fmt.Errorf("streaming is not supported"))
 		return
 	}
+	query, err := eventQueryFromURL(r.URL.Query())
+	if err != nil {
+		writeError(w, nethttp.StatusBadRequest, err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(nethttp.StatusOK)
 	_, _ = w.Write([]byte("retry: 2000\n\n"))
 	flusher.Flush()
-	lastSequence := eventQueryFromURL(r.URL.Query()).AfterSequence
+	lastSequence := query.AfterSequence
 	if handler.hub != nil {
 		subscription := handler.hub.Subscribe(r.Context(), obspkg.EventSubscriptionFilter{RunID: runID, Buffer: 128})
 		defer subscription.Cancel()
-		if !handler.writeBacklog(w, flusher, r, runID, &lastSequence) {
+		if !handler.writeBacklog(w, flusher, r, runID, &lastSequence, query.Preset) {
 			return
 		}
 		for {
@@ -682,7 +695,7 @@ func (handler *Handler) handleStream(w nethttp.ResponseWriter, r *nethttp.Reques
 				}
 				for record.Sequence > lastSequence+1 {
 					previous := lastSequence
-					if !handler.writeBacklog(w, flusher, r, runID, &lastSequence) {
+					if !handler.writeBacklog(w, flusher, r, runID, &lastSequence, query.Preset) {
 						return
 					}
 					if lastSequence == previous {
@@ -692,6 +705,10 @@ func (handler *Handler) handleStream(w nethttp.ResponseWriter, r *nethttp.Reques
 				if record.Sequence <= lastSequence {
 					continue
 				}
+				if !obspkg.EventAllowedByPreset(record.Event.Type, query.Preset) {
+					lastSequence = record.Sequence
+					continue
+				}
 				if !writeSSE(w, flusher, record) {
 					return
 				}
@@ -699,11 +716,15 @@ func (handler *Handler) handleStream(w nethttp.ResponseWriter, r *nethttp.Reques
 			}
 		}
 	}
-	_ = handler.writeBacklog(w, flusher, r, runID, &lastSequence)
+	_ = handler.writeBacklog(w, flusher, r, runID, &lastSequence, query.Preset)
 }
 
-func (handler *Handler) writeBacklog(w nethttp.ResponseWriter, flusher nethttp.Flusher, r *nethttp.Request, runID string, lastSequence *int64) bool {
-	events, err := handler.store.ListEvents(r.Context(), runID, obspkg.EventQuery{AfterSequence: *lastSequence, Limit: obspkg.MaxEventQueryLimit})
+func (handler *Handler) writeBacklog(w nethttp.ResponseWriter, flusher nethttp.Flusher, r *nethttp.Request, runID string, lastSequence *int64, preset core.EventFilterPreset) bool {
+	events, err := handler.store.ListEvents(r.Context(), runID, obspkg.EventQuery{
+		AfterSequence: *lastSequence,
+		Limit:         obspkg.MaxEventQueryLimit,
+		Preset:        preset,
+	})
 	if err != nil {
 		writeSSEError(w, flusher, err)
 		return false
@@ -730,11 +751,16 @@ func parseRunResource(path string) (string, []string, bool) {
 	return runID, parts[1:], true
 }
 
-func eventQueryFromURL(values url.Values) obspkg.EventQuery {
-	return obspkg.EventQuery{
+func eventQueryFromURL(values url.Values) (obspkg.EventQuery, error) {
+	preset, err := core.ParseEventFilterPreset(values.Get("preset"))
+	if err != nil {
+		return obspkg.EventQuery{}, err
+	}
+	return obspkg.NormalizeEventQuery(obspkg.EventQuery{
 		AfterSequence: int64(parseInt(values.Get("after_sequence"), 0)),
 		Limit:         parseInt(values.Get("limit"), obspkg.DefaultEventQueryLimit),
-	}
+		Preset:        preset,
+	}), nil
 }
 
 func parseInt(value string, fallback int) int {

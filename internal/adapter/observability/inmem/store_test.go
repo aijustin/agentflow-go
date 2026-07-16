@@ -73,6 +73,53 @@ func TestStoreAppendsListsRunsAndEvents(t *testing.T) {
 	}
 }
 
+func TestStoreListEventsProductUIPreset(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore()
+	base := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	events := []core.Event{
+		{Type: core.EventRunStarted, RunID: "run-preset", Timestamp: base},
+		{Type: core.EventMemoryRead, RunID: "run-preset", Timestamp: base.Add(time.Second)},
+		{Type: core.EventContextPrepared, RunID: "run-preset", Timestamp: base.Add(2 * time.Second)},
+		{Type: core.EventToolCalled, RunID: "run-preset", Timestamp: base.Add(3 * time.Second)},
+		{Type: core.EventRunCompleted, RunID: "run-preset", Timestamp: base.Add(4 * time.Second)},
+	}
+	for _, event := range events {
+		if _, err := store.Append(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := store.ListEvents(ctx, "run-preset", obspkg.EventQuery{Preset: core.EventFilterDiagnostic, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 5 {
+		t.Fatalf("diagnostic expected 5 events, got %d", len(all))
+	}
+
+	product, err := store.ListEvents(ctx, "run-preset", obspkg.EventQuery{Preset: core.EventFilterProductUI, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(product) != 3 {
+		t.Fatalf("product_ui expected 3 events, got %d", len(product))
+	}
+	for _, record := range product {
+		if record.Event.Type == core.EventMemoryRead || record.Event.Type == core.EventContextPrepared {
+			t.Fatalf("product_ui leaked internal event: %s", record.Event.Type)
+		}
+	}
+
+	limited, err := store.ListEvents(ctx, "run-preset", obspkg.EventQuery{Preset: core.EventFilterProductUI, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 1 || limited[0].Event.Type != core.EventRunStarted {
+		t.Fatalf("product_ui limit should count matching events only: %+v", limited)
+	}
+}
+
 func TestStoreRejectsEventsWithoutRunID(t *testing.T) {
 	_, err := NewStore().Append(context.Background(), core.Event{Type: core.EventRunStarted})
 	if err == nil {
