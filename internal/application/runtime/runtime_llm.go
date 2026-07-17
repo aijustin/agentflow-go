@@ -360,7 +360,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		cancel()
 		return nil, core.Agent{}, nil, fmt.Errorf("runtime: llm profile %q does not support streaming", agent.LLM)
 	}
-	e.emitJSON(ctx, core.EventLLMCalled, req.RunID, map[string]any{"profile": agent.LLM, "stream": true})
+	e.emitJSON(ctx, core.EventLLMCalled, req.RunID, llmCalledPayload(map[string]any{"profile": agent.LLM, "stream": true}, baseReq.Messages))
 	ch, err := streamer.StreamChat(ctx, agent.LLM, baseReq)
 	if err != nil {
 		cancel()
@@ -670,7 +670,11 @@ func (e *Engine) chatWithRetry(ctx context.Context, runID string, agent core.Age
 			return llm.ChatResponse{}, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, map[string]any{"profile": agent.LLM, "tools": false, "attempt": attempt})
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(map[string]any{
+			"profile": agent.LLM,
+			"tools":   false,
+			"attempt": attempt,
+		}, req.Messages))
 		resp, err := safecall.Invoke("runtime: llm chat", func() (llm.ChatResponse, error) {
 			return e.llm.Chat(callCtx, agent.LLM, req)
 		})
@@ -702,7 +706,12 @@ func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent
 			return llm.ToolCallResponse{}, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, map[string]any{"profile": agent.LLM, "tools": true, "step": step, "attempt": attempt})
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(map[string]any{
+			"profile": agent.LLM,
+			"tools":   true,
+			"step":    step,
+			"attempt": attempt,
+		}, req.Messages))
 		resp, err := safecall.Invoke("runtime: llm chat with tools", func() (llm.ToolCallResponse, error) {
 			return caller.ChatWithTools(callCtx, agent.LLM, req)
 		})
@@ -740,7 +749,11 @@ func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent co
 			return nil, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, map[string]any{"profile": agent.LLM, "structured": true, "attempt": attempt})
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(map[string]any{
+			"profile":    agent.LLM,
+			"structured": true,
+			"attempt":    attempt,
+		}, req.Messages))
 		raw, err := safecall.Invoke("runtime: llm structured chat", func() (json.RawMessage, error) {
 			return outputter.StructuredChat(callCtx, agent.LLM, schema, req)
 		})
@@ -764,6 +777,44 @@ func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent co
 	return nil, lastErr
 }
 
+// maxLLMCalledMessageChars caps each message content in LLMCalled payloads so
+// EventStore / diagnostic drawers stay usable without unbounded tool dumps.
+const maxLLMCalledMessageChars = 8000
+
+// llmCalledPayload attaches the messages actually sent to the model so Debug
+// drawers can show LLM 入参 (messages / prompt) instead of metadata-only cards.
+func llmCalledPayload(base map[string]any, messages []llm.Message) map[string]any {
+	if base == nil {
+		base = map[string]any{}
+	}
+	if len(messages) == 0 {
+		return base
+	}
+	obs := make([]map[string]any, 0, len(messages))
+	for _, m := range messages {
+		entry := map[string]any{"role": string(m.Role)}
+		if c := strings.TrimSpace(m.Content); c != "" {
+			entry["content"] = truncateObservabilityText(c, maxLLMCalledMessageChars)
+		}
+		if id := strings.TrimSpace(m.ToolCallID); id != "" {
+			entry["tool_call_id"] = id
+		}
+		if name := strings.TrimSpace(m.Name); name != "" {
+			entry["name"] = name
+		}
+		if names := toolCallNames(m.ToolCalls); len(names) > 0 {
+			entry["tool_names"] = names
+		}
+		obs = append(obs, entry)
+	}
+	base["messages"] = obs
+	base["message_count"] = len(obs)
+	if prompt := lastUserMessageContent(messages); prompt != "" {
+		base["prompt"] = truncateObservabilityText(prompt, maxLLMCalledMessageChars)
+	}
+	return base
+}
+
 // llmReturnedPayload attaches assistant text for Debug/EventStore consumers.
 // Older emitters omitted text; ProductUI and diagnostic drawers need it.
 func llmReturnedPayload(base map[string]any, text string) map[string]any {
@@ -774,6 +825,30 @@ func llmReturnedPayload(base map[string]any, text string) map[string]any {
 		base["text"] = trimmed
 	}
 	return base
+}
+
+func lastUserMessageContent(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != llm.RoleUser {
+			continue
+		}
+		if c := strings.TrimSpace(messages[i].Content); c != "" {
+			return c
+		}
+	}
+	return ""
+}
+
+func truncateObservabilityText(text string, maxChars int) string {
+	if maxChars <= 0 || len(text) <= maxChars {
+		return text
+	}
+	// Prefer rune-safe cut when the limit lands mid-codepoint.
+	runes := []rune(text)
+	if len(runes) <= maxChars {
+		return text
+	}
+	return string(runes[:maxChars]) + "…"
 }
 
 func toolCallNames(calls []llm.ToolCall) []string {
