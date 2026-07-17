@@ -676,7 +676,11 @@ func (e *Engine) chatWithRetry(ctx context.Context, runID string, agent core.Age
 		})
 		cancel()
 		if err == nil {
-			e.emitJSON(ctx, core.EventLLMReturned, runID, map[string]any{"profile": agent.LLM, "finish_reason": resp.FinishReason, "attempt": attempt})
+			e.emitJSON(ctx, core.EventLLMReturned, runID, llmReturnedPayload(map[string]any{
+				"profile":       agent.LLM,
+				"finish_reason": resp.FinishReason,
+				"attempt":       attempt,
+			}, resp.Message.Content))
 			return resp, nil
 		}
 		lastErr = err
@@ -704,7 +708,17 @@ func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent
 		})
 		cancel()
 		if err == nil {
-			e.emitJSON(ctx, core.EventLLMReturned, runID, map[string]any{"profile": agent.LLM, "finish_reason": resp.FinishReason, "tool_calls": len(resp.ToolCalls), "step": step, "attempt": attempt})
+			payload := map[string]any{
+				"profile":       agent.LLM,
+				"finish_reason": resp.FinishReason,
+				"tool_calls":    len(resp.ToolCalls),
+				"step":          step,
+				"attempt":       attempt,
+			}
+			if names := toolCallNames(resp.ToolCalls); len(names) > 0 {
+				payload["tool_names"] = names
+			}
+			e.emitJSON(ctx, core.EventLLMReturned, runID, llmReturnedPayload(payload, resp.Message.Content))
 			return resp, nil
 		}
 		lastErr = err
@@ -732,7 +746,11 @@ func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent co
 		})
 		cancel()
 		if err == nil {
-			e.emitJSON(ctx, core.EventLLMReturned, runID, map[string]any{"profile": agent.LLM, "structured": true, "attempt": attempt})
+			e.emitJSON(ctx, core.EventLLMReturned, runID, llmReturnedPayload(map[string]any{
+				"profile":    agent.LLM,
+				"structured": true,
+				"attempt":    attempt,
+			}, string(raw)))
 			return raw, nil
 		}
 		lastErr = err
@@ -744,4 +762,29 @@ func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent co
 		}
 	}
 	return nil, lastErr
+}
+
+// llmReturnedPayload attaches assistant text for Debug/EventStore consumers.
+// Older emitters omitted text; ProductUI and diagnostic drawers need it.
+func llmReturnedPayload(base map[string]any, text string) map[string]any {
+	if base == nil {
+		base = map[string]any{}
+	}
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		base["text"] = trimmed
+	}
+	return base
+}
+
+func toolCallNames(calls []llm.ToolCall) []string {
+	if len(calls) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(calls))
+	for _, tc := range calls {
+		if name := strings.TrimSpace(tc.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
