@@ -24,15 +24,16 @@ type toolDispatchOptions struct {
 	approved   bool
 }
 
-func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int, skipMemory bool) (core.ToolResult, error) {
-	return e.dispatchToolWithOptions(ctx, runID, agent, call, callCounts, toolDispatchOptions{skipMemory: skipMemory})
+func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker, skipMemory bool) (core.ToolResult, error) {
+	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{skipMemory: skipMemory})
 }
 
-func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int) (core.ToolResult, error) {
-	return e.dispatchToolWithOptions(ctx, runID, agent, call, callCounts, toolDispatchOptions{skipMemory: true, approved: true})
+func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker) (core.ToolResult, error) {
+	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{skipMemory: true, approved: true})
 }
 
-func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, callCounts map[string]int, options toolDispatchOptions) (core.ToolResult, error) {
+func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker, options toolDispatchOptions) (core.ToolResult, error) {
+	tracker = tracker.ensure()
 	if subAgentName, ok := e.delegateTarget(agent, call.Name); ok {
 		if delegationDepthFromContext(ctx) >= maxDelegationDepth {
 			result := core.ToolResult{Tool: call.Name, Error: fmt.Sprintf("delegation depth limit (%d) exceeded", maxDelegationDepth)}
@@ -46,11 +47,13 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 			return result, nil
 		}
 		delegateTool := core.Tool{Name: call.Name, SideEffect: core.SideEffectRead}
-		if err := e.authorizeGovernanceTool(ctx, runID, agent, delegateTool, call, callCounts); err != nil {
-			result := core.ToolResult{Tool: call.Name, Error: "tool invocation blocked by governance"}
+		if err := e.authorizeGovernanceTool(ctx, runID, agent, delegateTool, call, tracker); err != nil {
+			tracker.recordAttempt(call.Name, call.Input)
+			result := core.ToolResult{Tool: call.Name, Error: governanceBlockError(err)}
 			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
 			return result, nil
 		}
+		tracker.recordAttempt(call.Name, call.Input)
 		return e.dispatchSubAgent(ctx, runID, agent, subAgentName, call)
 	}
 	if !agentAllowsTool(agent, call.Name) {
@@ -77,7 +80,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
 		return result, nil
 	}
-	if tool.RateCap > 0 && callCounts[call.Name] >= tool.RateCap {
+	if tool.RateCap > 0 && tracker.nameCount(call.Name) >= tool.RateCap {
 		result := core.ToolResult{Tool: call.Name, Error: fmt.Sprintf("tool rate cap exceeded: %d call(s) per run", tool.RateCap)}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil
@@ -93,8 +96,9 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
 		return result, nil
 	}
-	if err := e.authorizeGovernanceTool(ctx, runID, agent, tool, call, callCounts); err != nil {
-		result := core.ToolResult{Tool: call.Name, Error: "tool invocation blocked by governance"}
+	if err := e.authorizeGovernanceTool(ctx, runID, agent, tool, call, tracker); err != nil {
+		tracker.recordAttempt(call.Name, call.Input)
+		result := core.ToolResult{Tool: call.Name, Error: governanceBlockError(err)}
 		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
 		return result, nil
@@ -123,8 +127,9 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		}
 		result = core.ToolResult{Tool: call.Name, Error: err.Error()}
 	}
+	tracker.recordAttempt(call.Name, call.Input)
 	if result.Error == "" {
-		callCounts[call.Name]++
+		tracker.recordSuccess(call.Name)
 	}
 	if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil {
 		persistErr := err.Error()
@@ -170,28 +175,31 @@ func delegationDepthFromContext(ctx context.Context) int {
 	return depth
 }
 
-func (e *Engine) authorizeGovernanceTool(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, callCounts map[string]int) error {
+func (e *Engine) authorizeGovernanceTool(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, tracker *toolCallTracker) error {
 	if e.toolGov == nil {
 		return nil
 	}
+	tracker = tracker.ensure()
 	return e.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
-		RunID:      runID,
-		Agent:      agent.Name,
-		Tool:       call.Name,
-		SideEffect: tool.SideEffect,
-		Input:      call.Input,
-		CallCount:  callCounts[call.Name],
-		TotalCalls: totalToolCalls(callCounts),
-		Metadata:   cloneStringMap(tool.Metadata),
+		RunID:          runID,
+		Agent:          agent.Name,
+		Tool:           call.Name,
+		SideEffect:     tool.SideEffect,
+		Input:          call.Input,
+		CallCount:      tracker.nameCount(call.Name),
+		SameInputCalls: tracker.sameInputCount(call.Name, call.Input),
+		TotalCalls:     tracker.totalSuccesses(),
+		Metadata:       cloneStringMap(tool.Metadata),
 	})
 }
 
-func totalToolCalls(callCounts map[string]int) int {
-	total := 0
-	for _, count := range callCounts {
-		total += count
+func governanceBlockError(err error) string {
+	msg := err.Error()
+	const deniedPrefix = "governance: denied: "
+	if strings.HasPrefix(msg, deniedPrefix) {
+		return "tool invocation blocked by governance: " + strings.TrimPrefix(msg, deniedPrefix)
 	}
-	return total
+	return "tool invocation blocked by governance: " + msg
 }
 
 func (e *Engine) authorizeTool(ctx context.Context, runID string, resource security.Resource) error {

@@ -398,9 +398,9 @@ func (e *Engine) answerWithTools(
 	maxSteps := firstPositive(agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 8)
 	toolSpecs := e.toolSpecs(ctx, runID, agent)
 	messages := append([]llm.Message(nil), req.Messages...)
-	toolCounts := make(map[string]int)
+	tracker := newToolCallTracker()
 	return e.answerWithToolsFrom(
-		ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts,
+		ctx, runID, agent, profile, req, caller, toolSpecs, messages, tracker,
 		maxSteps, prompt, 0, 0, false, emit,
 	)
 }
@@ -414,7 +414,7 @@ func (e *Engine) answerWithToolsFrom(
 	caller llm.ToolCaller,
 	toolSpecs []llm.ToolSpec,
 	messages []llm.Message,
-	toolCounts map[string]int,
+	tracker *toolCallTracker,
 	maxSteps int,
 	prompt string,
 	replanAttempts int,
@@ -486,7 +486,7 @@ func (e *Engine) answerWithToolsFrom(
 		}
 		var dispatchErr error
 		messages, userPromptPersisted, dispatchErr = e.dispatchToolCalls(
-			ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, toolCounts,
+			ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, tracker,
 			prompt, true, stepsConsumedBase+step+1, replanAttempts, userPromptPersisted, emit,
 		)
 		if dispatchErr != nil {
@@ -494,7 +494,7 @@ func (e *Engine) answerWithToolsFrom(
 		}
 	}
 	return e.replanOrFail(
-		ctx, runID, agent, profile, req, caller, toolSpecs, messages, toolCounts,
+		ctx, runID, agent, profile, req, caller, toolSpecs, messages, tracker,
 		maxSteps, prompt, replanAttempts, stepsConsumedBase, userPromptPersisted, emit,
 	)
 }
@@ -515,7 +515,7 @@ func (e *Engine) replanOrFail(
 	caller llm.ToolCaller,
 	toolSpecs []llm.ToolSpec,
 	messages []llm.Message,
-	toolCounts map[string]int,
+	tracker *toolCallTracker,
 	maxSteps int,
 	prompt string,
 	replanAttempts int,
@@ -535,7 +535,7 @@ func (e *Engine) replanOrFail(
 			}
 			if len(replanned) > len(messages) {
 				return e.answerWithToolsFrom(
-					ctx, runID, agent, profile, req, caller, toolSpecs, replanned, toolCounts,
+					ctx, runID, agent, profile, req, caller, toolSpecs, replanned, tracker,
 					maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps, userPromptPersisted, emit,
 				)
 			}
@@ -560,7 +560,7 @@ func (e *Engine) dispatchToolCalls(
 	turnAssistant llm.Message,
 	calls []llm.ToolCall,
 	messages []llm.Message,
-	toolCounts map[string]int,
+	tracker *toolCallTracker,
 	prompt string,
 	persistTurnMemory bool,
 	stepsConsumed int,
@@ -577,12 +577,12 @@ func (e *Engine) dispatchToolCalls(
 			ToolName:   toolCall.Name,
 			ToolInput:  toolCall.Input,
 		})
-		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, toolCounts, prompt, stepsConsumed, replanAttempts); err != nil {
+		if paused, err := e.maybePauseToolCall(ctx, runID, agent, calls[index:], messages, tracker, prompt, stepsConsumed, replanAttempts); err != nil {
 			return messages, userPromptPersisted, err
 		} else if paused != nil {
 			return messages, userPromptPersisted, *paused
 		}
-		result, err := e.dispatchTool(ctx, runID, agent, toolCall, toolCounts, true)
+		result, err := e.dispatchTool(ctx, runID, agent, toolCall, tracker, true)
 		if err != nil {
 			return messages, userPromptPersisted, err
 		}

@@ -18,9 +18,15 @@ type ToolInvocation struct {
 	Tool       string
 	SideEffect core.SideEffectLevel
 	Input      json.RawMessage
-	CallCount  int
-	TotalCalls int
-	Metadata   map[string]string
+	// CallCount is the number of prior successful invocations of this tool
+	// name in the current autonomous tool loop (used by RateCap and per-tool budgets).
+	CallCount int
+	// SameInputCalls is the number of prior attempts (success, failure, or
+	// governance denial) with the same tool name and canonical input in the
+	// current autonomous tool loop. Loop-guard policies should use this field.
+	SameInputCalls int
+	TotalCalls     int
+	Metadata       map[string]string
 }
 
 type ToolPolicy interface {

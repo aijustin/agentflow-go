@@ -508,6 +508,67 @@ func TestEngineRunDeniesToolInvocationByGovernance(t *testing.T) {
 	}
 }
 
+func TestEngineRunSameInputLoopGuardSurfacesReasonToLLM(t *testing.T) {
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	sameInput := json.RawMessage(`{"query":"hello"}`)
+	for i := 0; i < 3; i++ {
+		gateway.QueueToolCall("default", llm.ToolCallResponse{
+			ToolCalls: []llm.ToolCall{{ID: fmt.Sprintf("call-%d", i+1), Name: "echo", Input: sameInput}},
+		})
+	}
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-4", Name: "echo", Input: sameInput}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "answered with existing results"}},
+	})
+	var seen []governance.ToolInvocation
+	policy := governance.ToolPolicyFunc(func(_ context.Context, inv governance.ToolInvocation) error {
+		seen = append(seen, inv)
+		if inv.SameInputCalls >= 3 {
+			return fmt.Errorf("%w: run_tool_loop_guard: tool=%s repeated=%d limit=3; stop retrying", governance.ErrDenied, inv.Tool, inv.SameInputCalls)
+		}
+		return nil
+	})
+	engine, err := NewEngine(toolScenario(core.ApprovalNever, core.SideEffectRead, 8), Dependencies{
+		Runs:       runstateinmem.NewRepository(),
+		LLM:        gateway,
+		Tools:      mapToolRegistry{"echo": echoTool{}},
+		ToolPolicy: policy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Run(context.Background(), RunRequest{RunID: "run-loop-guard", Agent: "assistant", Prompt: "use echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "answered with existing results" {
+		t.Fatalf("unexpected output %q", result.Output)
+	}
+	if len(seen) < 4 {
+		t.Fatalf("expected at least 4 governance checks, got %d", len(seen))
+	}
+	if seen[3].SameInputCalls != 3 {
+		t.Fatalf("4th SameInputCalls=%d want 3", seen[3].SameInputCalls)
+	}
+	reqs := gateway.ToolRequests("default")
+	if len(reqs) < 5 {
+		t.Fatalf("expected final LLM turn after denial, got %d tool requests", len(reqs))
+	}
+	found := false
+	for _, msg := range reqs[len(reqs)-1].Messages {
+		if msg.Role == llm.RoleTool && strings.Contains(msg.Content, "run_tool_loop_guard") && strings.Contains(msg.Content, "tool invocation blocked by governance") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected LLM-visible loop guard reason in final tool request messages, got %#v", reqs[len(reqs)-1].Messages)
+	}
+}
+
 func TestEngineRunAutonomousToolLoopDeniesApprovalRequiredTool(t *testing.T) {
 	gateway := llmmock.NewGateway()
 	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)

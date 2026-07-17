@@ -162,11 +162,13 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 			return RunResult{}, fmt.Errorf("runtime: decode checkpoint messages: %w", err)
 		}
 	}
-	toolCounts := map[string]int{}
+	tracker := newToolCallTracker()
 	if raw := snapshot.Variables[checkpointToolCountsVar]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &toolCounts); err != nil {
+		decoded, err := decodeToolCallTracker(raw)
+		if err != nil {
 			return RunResult{}, fmt.Errorf("runtime: decode checkpoint tool counts: %w", err)
 		}
+		tracker = decoded
 	}
 	if len(messages) == 0 {
 		// A tool_approval checkpoint always persists the conversation up to
@@ -195,7 +197,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	// Cumulative across the whole run (including replans before this pause)
 	// so pausing and resuming cannot reset the replan budget.
 	replanAttempts := checkpointIntVar(snapshot.Variables, checkpointReplanAttemptsVar)
-	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, toolCounts, caller, prompt, amendment, stepsConsumed, replanAttempts)
+	output, err := e.continueToolLoopFrom(ctx, snapshot.RunID, agent, profile, messages, pending, tracker, caller, prompt, amendment, stepsConsumed, replanAttempts)
 	if err != nil {
 		var paused RunPausedError
 		if errorsAsRunPaused(err, &paused) {
@@ -221,14 +223,14 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusRunning, Output: output}, nil
 }
 
-func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, toolCounts map[string]int, caller llm.ToolCaller, prompt string, amendment string, stepsConsumed int, replanAttempts int) (string, error) {
+func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, tracker *toolCallTracker, caller llm.ToolCaller, prompt string, amendment string, stepsConsumed int, replanAttempts int) (string, error) {
 	if len(pending) > 0 {
 		turnStart := lastAssistantWithToolCallsIndex(messages)
 		// pending[0] is the tool call the human just approved; execute it
 		// directly. The remaining calls from the same assistant turn still go
 		// through the normal approval/dispatch path and may pause again.
 		approved := pending[0]
-		result, err := e.dispatchApprovedTool(ctx, runID, agent, approved, toolCounts)
+		result, err := e.dispatchApprovedTool(ctx, runID, agent, approved, tracker)
 		if err != nil {
 			return "", err
 		}
@@ -251,7 +253,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 				e.logWarn(ctx, "runtime: failed to update plan progress after successful tool call", "run_id", runID, "tool", approved.Name, "error", err)
 			}
 		}
-		messages, _, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, toolCounts, prompt, false, stepsConsumed, replanAttempts, false, nil)
+		messages, _, err = e.dispatchToolCalls(ctx, runID, agent, profile, llm.Message{}, pending[1:], messages, tracker, prompt, false, stepsConsumed, replanAttempts, false, nil)
 		if err != nil {
 			return "", err
 		}
@@ -284,9 +286,9 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		// here (e.g. the pause happened on the very last allowed step).
 		// Try to replan instead of always failing hard, matching the
 		// budget-exhaustion behavior of the non-paused tool loop.
-		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, maxSteps, prompt, replanAttempts, stepsConsumed, true, nil)
+		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, tracker, maxSteps, prompt, replanAttempts, stepsConsumed, true, nil)
 	}
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, toolCounts, remainingSteps, prompt, replanAttempts, stepsConsumed, true, nil)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, tracker, remainingSteps, prompt, replanAttempts, stepsConsumed, true, nil)
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {
@@ -482,7 +484,7 @@ func (e *Engine) persistUserPromptIfNeeded(ctx context.Context, runID string, ag
 	return e.writeMemory(ctx, runID, agent, []memoryMessage{runTurnMemoryMessage(string(llm.RoleUser), prompt)})
 }
 
-func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, toolCounts map[string]int, prompt string, stepsConsumed int, replanAttempts int) (*RunPausedError, error) {
+func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent core.Agent, pending []llm.ToolCall, messages []llm.Message, tracker *toolCallTracker, prompt string, stepsConsumed int, replanAttempts int) (*RunPausedError, error) {
 	if len(pending) == 0 {
 		return nil, nil
 	}
@@ -547,11 +549,11 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err != nil {
 		return nil, err
 	}
-	countsRaw, err := json.Marshal(toolCounts)
+	countsRaw, err := json.Marshal(tracker.ensure())
 	if err != nil {
 		return nil, err
 	}
-		vars := map[string]json.RawMessage{
+	vars := map[string]json.RawMessage{
 		checkpointKindVar:           json.RawMessage(fmt.Sprintf("%q", checkpointKindToolApproval)),
 		checkpointAgentVar:          json.RawMessage(fmt.Sprintf("%q", agent.Name)),
 		checkpointPromptVar:         json.RawMessage(fmt.Sprintf("%q", prompt)),
