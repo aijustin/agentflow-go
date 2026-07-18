@@ -53,6 +53,10 @@ func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decisio
 		}
 		defer release()
 	}
+	if snapshot, loadErr := runstate.LoadAuthorized(ctx, f.runs, runID); loadErr == nil {
+		f.engine.EmitRunResumedForSnapshot(ctx, snapshot)
+		ctx = appexec.ContextWithRunResumedEmitted(ctx)
+	}
 	result, err := f.continueRun(ctx, runID)
 	return result, mapLeaseLostError(ctx, err)
 }
@@ -273,7 +277,20 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 	if err := f.runs.Save(saveCtx, &snapshot, snapshot.Version); err != nil {
 		return RunResult{}, err
 	}
-	f.emit(ctx, core.EventRunResumed, runID, nil)
+	corr := core.EpisodeCorrelation{
+		EpisodeID:   variableJSONString(snapshot.Variables, resumeEpisodeIDVar),
+		SessionID:   variableJSONString(snapshot.Variables, resumeSessionIDVar),
+		TriggerKind: variableJSONString(snapshot.Variables, resumeTriggerKindVar),
+	}
+	ctx = core.ContextWithEpisodeCorrelation(ctx, corr)
+	retryPayload := map[string]any{"checkpoint_kind": "retry_failed"}
+	if agent := variableJSONString(snapshot.Variables, resumeAgentVar); agent != "" {
+		retryPayload["agent"] = agent
+	}
+	for key, value := range core.FrameworkBuildFields() {
+		retryPayload[key] = value
+	}
+	f.emitJSON(ctx, core.EventRunResumed, runID, retryPayload)
 	if f.scenario.Orchestration.Mode == core.OrchestrationFixedWorkflow {
 		return f.finishWorkflowRun(ctx, runID, true)
 	}

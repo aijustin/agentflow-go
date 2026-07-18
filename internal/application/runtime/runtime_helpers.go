@@ -180,8 +180,22 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) error {
 		}
 		return err
 	}
-	e.emit(ctx, core.EventRunStarted, req.RunID, nil)
+	e.emitJSON(ctx, core.EventRunStarted, req.RunID, runStartedPayload(*req))
 	return nil
+}
+
+func runStartedPayload(req RunRequest) map[string]any {
+	payload := map[string]any{}
+	if req.Agent != "" {
+		payload["agent"] = req.Agent
+	}
+	if req.TrustMode != "" {
+		payload["trust_mode"] = string(req.TrustMode)
+	}
+	for key, value := range core.FrameworkBuildFields() {
+		payload[key] = value
+	}
+	return payload
 }
 
 // autonomousRunInProgress reports whether a Running snapshot looks like an

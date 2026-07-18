@@ -32,7 +32,22 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 	if err := e.saveCheckpointVariables(ctx, snapshot, checkpointVars); err != nil {
 		return RunResult{}, err
 	}
-	payload := []byte(fmt.Sprintf(`{"prompt":%q,"agent":%q}`, req.Prompt, agent.Name))
+	pausePayload := map[string]any{
+		"prompt":         req.Prompt,
+		"agent":          agent.Name,
+		"pause_required": true,
+		"pause_reason":   "before_final_answer",
+		"approval_kind":  "checkpoint",
+	}
+	if req.TrustMode != "" {
+		pausePayload["trust_mode"] = string(req.TrustMode)
+	} else if trust := string(TrustModeFromContext(ctx)); trust != "" {
+		pausePayload["trust_mode"] = trust
+	}
+	payload, err := json.Marshal(pausePayload)
+	if err != nil {
+		return RunResult{}, err
+	}
 	token, err := e.pauseWithRetry(ctx, req.RunID, func(version int64) core.CheckpointState {
 		return core.CheckpointState{RunID: req.RunID, Version: version, NodeID: "before_final_answer", Payload: payload}
 	})
@@ -49,7 +64,7 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 	if err := e.ensureRunPaused(ctx, req.RunID); err != nil {
 		e.logWarn(ctx, "runtime: failed to persist paused status", "run_id", req.RunID, "error", err)
 	}
-	e.emit(ctx, core.EventRunPaused, req.RunID, payload)
+	e.emitJSON(ctx, core.EventRunPaused, req.RunID, pausePayload)
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil
 }
 

@@ -49,6 +49,75 @@ func (e *Engine) ContinueAfterCheckpoint(ctx context.Context, runID string) (Run
 	return e.continueAfterCheckpoint(ctx, runID, true)
 }
 
+type runResumedEmittedKey struct{}
+
+// ContextWithRunResumedEmitted marks that RunResumed was already emitted for
+// this resume call so continueAfterCheckpoint does not double-emit.
+func ContextWithRunResumedEmitted(ctx context.Context) context.Context {
+	return context.WithValue(ctx, runResumedEmittedKey{}, true)
+}
+
+func runResumedAlreadyEmitted(ctx context.Context) bool {
+	v, _ := ctx.Value(runResumedEmittedKey{}).(bool)
+	return v
+}
+
+func (e *Engine) emitRunResumed(ctx context.Context, snapshot runstate.RunSnapshot, checkpointKind string) {
+	payload := map[string]any{
+		"trigger_kind":    core.TriggerKindHITLResume,
+		"checkpoint_kind": checkpointKind,
+	}
+	if agent := variableString(snapshot.Variables, resumeAgentVar); agent != "" {
+		payload["agent"] = agent
+	} else if agent := variableString(snapshot.Variables, checkpointAgentVar); agent != "" {
+		payload["agent"] = agent
+	}
+	if trust := variableString(snapshot.Variables, resumeTrustModeVar); trust != "" {
+		payload["trust_mode"] = trust
+	}
+	if checkpointKind == checkpointKindToolApproval {
+		if tool := firstPendingCheckpointTool(snapshot.Variables[checkpointToolCallsVar]); tool != "" {
+			payload["tool"] = tool
+		}
+	}
+	for key, value := range core.FrameworkBuildFields() {
+		payload[key] = value
+	}
+	e.emitJSON(ctx, core.EventRunResumed, snapshot.RunID, payload)
+	_ = e.persistResumeTriggerKind(ctx, snapshot.RunID, core.TriggerKindHITLResume)
+}
+
+// EmitRunResumedForSnapshot exposes RunResumed emission for Framework resume
+// entry points that may continue via workflow paths (AF-REQ-02/06).
+func (e *Engine) EmitRunResumedForSnapshot(ctx context.Context, snapshot runstate.RunSnapshot) {
+	kind := variableString(snapshot.Variables, checkpointKindVar)
+	corr := episodeCorrelationFromSnapshot(snapshot)
+	corr.TriggerKind = core.TriggerKindHITLResume
+	ctx = core.ContextWithEpisodeCorrelation(ctx, corr)
+	e.emitRunResumed(ctx, snapshot, kind)
+}
+
+func firstPendingCheckpointTool(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var calls []llm.ToolCall
+	if err := json.Unmarshal(raw, &calls); err != nil || len(calls) == 0 {
+		return ""
+	}
+	return calls[0].Name
+}
+
+func (e *Engine) persistResumeTriggerKind(ctx context.Context, runID, triggerKind string) error {
+	return e.saveSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
+		if snapshot.Variables == nil {
+			snapshot.Variables = make(map[string]json.RawMessage)
+		}
+		snapshot.Variables[resumeTriggerKindVar] = json.RawMessage(fmt.Sprintf("%q", triggerKind))
+		return nil
+	})
+}
+
 // ContinueAfterCheckpointPhase resumes a checkpointed agent phase without
 // marking the run Completed. Callers embedding the runtime inside a workflow
 // must persist the returned output as a workflow step and finish the run
@@ -68,8 +137,13 @@ func (e *Engine) continueAfterCheckpoint(ctx context.Context, runID string, comp
 	if mode := TrustMode(variableString(snapshot.Variables, resumeTrustModeVar)); mode != "" {
 		ctx = ContextWithTrustMode(ctx, mode)
 	}
-	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromSnapshot(snapshot))
+	corr := episodeCorrelationFromSnapshot(snapshot)
+	corr.TriggerKind = core.TriggerKindHITLResume
+	ctx = core.ContextWithEpisodeCorrelation(ctx, corr)
 	kind := variableString(snapshot.Variables, checkpointKindVar)
+	if !runResumedAlreadyEmitted(ctx) {
+		e.emitRunResumed(ctx, snapshot, kind)
+	}
 	switch kind {
 	case "before_final_answer":
 		return e.continueBeforeFinalAnswer(ctx, snapshot, completeRun)
@@ -575,12 +649,23 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err := e.persistUserPromptIfNeeded(ctx, runID, agent, prompt); err != nil {
 		return nil, err
 	}
-	payload, err := json.Marshal(map[string]any{
-		"tool":        call.Name,
-		"tool_call":   call.ID,
-		"agent":       agent.Name,
-		"side_effect": tool.SideEffect,
-	})
+	approvalKind, evaluatorName := e.toolPauseAttribution(ctx, tool)
+	pausePayload := map[string]any{
+		"tool":           call.Name,
+		"tool_call":      call.ID,
+		"agent":          agent.Name,
+		"side_effect":    tool.SideEffect,
+		"pause_required": true,
+		"pause_reason":   "tool_approval",
+		"approval_kind":  approvalKind,
+	}
+	if trust := string(TrustModeFromContext(ctx)); trust != "" {
+		pausePayload["trust_mode"] = trust
+	}
+	if evaluatorName != "" {
+		pausePayload["evaluator"] = evaluatorName
+	}
+	payload, err := json.Marshal(pausePayload)
 	if err != nil {
 		return nil, err
 	}
@@ -601,7 +686,27 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err := e.ensureRunPaused(ctx, runID); err != nil {
 		e.logWarn(ctx, "runtime: failed to persist paused status", "run_id", runID, "error", err)
 	}
-	e.emitJSON(ctx, core.EventRunPaused, runID, payload)
+	e.emitJSON(ctx, core.EventRunPaused, runID, pausePayload)
 	paused := RunPausedError{RunID: runID, Token: token, Kind: "tool_approval"}
 	return &paused, nil
+}
+
+// toolPauseAttribution reports whether the pause came from static policy or a
+// dynamic evaluator (AF-REQ-04).
+func (e *Engine) toolPauseAttribution(ctx context.Context, tool core.Tool) (approvalKind, evaluatorName string) {
+	if TrustModeFromContext(ctx) == TrustModeFullTrust {
+		approvalKind = "evaluator"
+	} else if core.ToolApprovalPauseRequired(tool) {
+		approvalKind = "static"
+	} else {
+		approvalKind = "evaluator"
+	}
+	if e.approvalEvaluator != nil {
+		if named, ok := e.approvalEvaluator.(core.NamedToolApprovalEvaluator); ok {
+			evaluatorName = named.Name()
+		} else if approvalKind == "evaluator" {
+			evaluatorName = fmt.Sprintf("%T", e.approvalEvaluator)
+		}
+	}
+	return approvalKind, evaluatorName
 }

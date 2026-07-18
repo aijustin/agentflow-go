@@ -11,16 +11,11 @@ func BuildLifecyclePayload(typ EventType, payload json.RawMessage, corr EpisodeC
 	}
 	switch typ {
 	case EventRunCompleted:
-		return mustJSON(RunTerminalPayload{
-			Status:      "completed",
-			Output:      cloneRaw(payload),
-			EpisodeID:   corr.EpisodeID,
-			TriggerKind: corr.TriggerKind,
-			SessionID:   corr.SessionID,
-		})
+		return mustJSON(buildRunCompletedPayload(payload, corr, nil))
 	case EventRunFailed:
 		return mustJSON(RunTerminalPayload{
 			Status:      "failed",
+			OutcomeKind: "error_only",
 			Error:       extractLifecycleError(payload),
 			EpisodeID:   corr.EpisodeID,
 			TriggerKind: corr.TriggerKind,
@@ -29,6 +24,7 @@ func BuildLifecyclePayload(typ EventType, payload json.RawMessage, corr EpisodeC
 	case EventRunCancelled:
 		return mustJSON(RunTerminalPayload{
 			Status:      "cancelled",
+			OutcomeKind: "error_only",
 			EpisodeID:   corr.EpisodeID,
 			TriggerKind: corr.TriggerKind,
 			SessionID:   corr.SessionID,
@@ -38,10 +34,49 @@ func BuildLifecyclePayload(typ EventType, payload json.RawMessage, corr EpisodeC
 	}
 }
 
-func mergeLifecycleCorrelation(payload json.RawMessage, corr EpisodeCorrelation) json.RawMessage {
-	if corr.Empty() && len(payload) == 0 {
-		return nil
+// BuildRunCompletedPayload builds an AF-REQ-03 terminal payload with optional usage.
+func BuildRunCompletedPayload(output json.RawMessage, corr EpisodeCorrelation, usage *RunUsage) json.RawMessage {
+	return mustJSON(buildRunCompletedPayload(output, corr, usage))
+}
+
+func buildRunCompletedPayload(output json.RawMessage, corr EpisodeCorrelation, usage *RunUsage) RunTerminalPayload {
+	finalText := FinalTextFromOutput(output)
+	ext := ExtractStructuredOutput(finalText)
+	payload := RunTerminalPayload{
+		Status:      "completed",
+		OutcomeKind: ext.OutcomeKind,
+		FinalText:   finalText,
+		Output:      cloneRaw(output),
+		Usage:       usage,
+		EpisodeID:   corr.EpisodeID,
+		TriggerKind: corr.TriggerKind,
+		SessionID:   corr.SessionID,
 	}
+	if ext.Block != nil {
+		payload.StructuredOutput = mustJSON(ext.Block)
+	}
+	if ext.Error != "" {
+		payload.StructuredOutputError = ext.Error
+		if payload.OutcomeKind == "error_only" {
+			payload.Status = "failed"
+		}
+	}
+	return payload
+}
+
+// BuildPausedOutcomePayload returns a terminal-shaped payload used when a run
+// ends paused (SSE end parity). EventStore still emits EventRunPaused separately.
+func BuildPausedOutcomePayload(corr EpisodeCorrelation) json.RawMessage {
+	return mustJSON(RunTerminalPayload{
+		Status:      "paused",
+		OutcomeKind: "paused",
+		EpisodeID:   corr.EpisodeID,
+		TriggerKind: corr.TriggerKind,
+		SessionID:   corr.SessionID,
+	})
+}
+
+func mergeLifecycleCorrelation(payload json.RawMessage, corr EpisodeCorrelation) json.RawMessage {
 	fields := map[string]json.RawMessage{}
 	if len(payload) > 0 && json.Valid(payload) && payload[0] == '{' {
 		_ = json.Unmarshal(payload, &fields)
@@ -57,8 +92,9 @@ func mergeLifecycleCorrelation(payload json.RawMessage, corr EpisodeCorrelation)
 	if corr.SessionID != "" {
 		fields["session_id"] = mustJSON(corr.SessionID)
 	}
+	// AF-REQ-06: lifecycle start/resume payloads must not be nil.
 	if len(fields) == 0 {
-		return nil
+		return json.RawMessage(`{}`)
 	}
 	return mustJSON(fields)
 }

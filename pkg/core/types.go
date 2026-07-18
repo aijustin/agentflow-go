@@ -312,6 +312,13 @@ type ToolApprovalEvaluator interface {
 	PauseRequired(ctx context.Context, runID string, tool Tool, call llm.ToolCall) (bool, error)
 }
 
+// NamedToolApprovalEvaluator is an optional extension that exposes a stable
+// evaluator name for RunPaused observability (AF-REQ-04).
+type NamedToolApprovalEvaluator interface {
+	ToolApprovalEvaluator
+	Name() string
+}
+
 // PauseTokenDecoder is an optional HumanGate extension for deployments that
 // do not use HMAC-signed pause tokens. ResumeAndContinue uses it to resolve
 // the run ID before calling Resume.

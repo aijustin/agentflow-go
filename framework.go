@@ -866,7 +866,7 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 		}
 		return RunResult{}, err
 	}
-	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
+	f.emitJSON(ctx, core.EventRunStarted, req.RunID, runStartedPayload(req))
 	runner := f.newWorkflowRunner()
 	if err := runner.Run(ctx, scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
@@ -927,7 +927,7 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 		}
 		return req, RunResult{}, err
 	}
-	f.emit(ctx, core.EventRunStarted, req.RunID, nil)
+	f.emitJSON(ctx, core.EventRunStarted, req.RunID, runStartedPayload(req))
 	runner := f.newWorkflowRunner()
 	workflowCtx := core.ContextWithTrustMode(ctx, string(req.TrustMode))
 	if err := runner.Run(workflowCtx, scenario, req.RunID); err != nil {
@@ -1253,6 +1253,28 @@ func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, 
 		DisplayLabel: core.DisplayLabel(typ),
 		Payload:      payload,
 	})
+}
+
+func (f *Framework) emitJSON(ctx context.Context, typ core.EventType, runID string, payload any) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		raw = []byte(fmt.Sprintf(`{"error":%q}`, err.Error()))
+	}
+	f.emit(ctx, typ, runID, raw)
+}
+
+func runStartedPayload(req RunRequest) map[string]any {
+	payload := map[string]any{}
+	if req.Agent != "" {
+		payload["agent"] = req.Agent
+	}
+	if req.TrustMode != "" {
+		payload["trust_mode"] = string(req.TrustMode)
+	}
+	for key, value := range core.FrameworkBuildFields() {
+		payload[key] = value
+	}
+	return payload
 }
 
 func withScenarioTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {

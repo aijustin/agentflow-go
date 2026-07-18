@@ -2,6 +2,15 @@ package core
 
 import "context"
 
+// TriggerKind values for RunRequest / lifecycle event attribution (AF-REQ-02).
+const (
+	TriggerKindUser          = "user"
+	TriggerKindHITLResume    = "hitl_resume"
+	TriggerKindTestHarness   = "test_harness"
+	TriggerKindMCPAuthResume = "mcp_auth_resume"
+	TriggerKindFork          = "fork"
+)
+
 // EpisodeCorrelation identifies a platform Episode (one QA test run) that may
 // span multiple Runs or HITL resumes. thread_id remains reserved for Fork.
 type EpisodeCorrelation struct {

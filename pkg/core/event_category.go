@@ -146,6 +146,11 @@ func EventFilterPresetDiagnostic(typ EventType) bool {
 	return true
 }
 
+// ShouldEmitToDiagnosticUI is an alias for EventFilterPresetDiagnostic (AF-REQ-05).
+func ShouldEmitToDiagnosticUI(typ EventType) bool {
+	return EventFilterPresetDiagnostic(typ)
+}
+
 // ShouldEmitToProductUI reports whether an event type belongs on a product UI
 // timeline. MemoryRead and ContextPrepared are treated as internal noise.
 func ShouldEmitToProductUI(typ EventType) bool {
