@@ -641,7 +641,7 @@ Webhook 事件在配置 `Framework` 时使用 `POST /v1/events`。详见 [docs/a
 | `builder.CodeReviewPipeline()` | Git 工具 + `parallel_group` |
 | `builder.MultiExpertResearch()` | Hybrid + planning |
 
-完整 catalog（19 条）：`make validate-builder`
+默认 CI catalog（`CoreCatalog`，autonomous）：`make validate-builder`；全量 19 条：`go run ./examples/go/validate -kind builder full`
 
 ## 库 API
 
@@ -965,7 +965,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 核心模块已可用：
 
-- **场景构造**：`pkg/builder`（19 条 catalog stack）、`ValidateScenario`、Studio YAML 互操作
+- **场景构造**：`pkg/builder`（`CoreCatalog` + legacy `ExampleCatalog`）、`ValidateScenario`、Studio YAML 互操作；三模式立场见 [docs/orchestration-modes.md](docs/orchestration-modes.md)
 - **运行时**：autonomous / fixed_workflow / hybrid、subgraph / map / loop / parallel、planning pass、Skill 展开
 - **治理**：工具白名单与审批、HITL、Identity/RBAC/Audit、timeout 与分类重试
 - **持久化**：File / Postgres / Redis RunState、S3 Blob、Checkpoint 历史、Memory Tier

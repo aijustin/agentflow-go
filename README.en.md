@@ -643,7 +643,7 @@ Network-delivered tokens are HMAC signed. In production, always set `AGENT_TOKEN
 - Orchestration flow: [docs/orchestration-flow.md](docs/orchestration-flow.md)
 - Studio: `Framework.ImportStudioScenarioYAML` · export via `GenerateStudioScenarioYAML` / `SaveStudioGraph`
 
-Example stacks (Go builder, not YAML files): see [builder-reference.md](docs/builder-reference.md). Validate all 19 catalog entries with `make validate-builder`.
+Example stacks (Go builder, not YAML files): see [builder-reference.md](docs/builder-reference.md). Default CI validates `CoreCatalog` (autonomous) via `make validate-builder`; full 19 entries: `go run ./examples/go/validate -kind builder full`.
 
 ## Library usage
 
@@ -967,7 +967,7 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 Core modules are production-ready:
 
-- **Scenarios**: `pkg/builder` (19 catalog stacks), `ValidateScenario`, Studio YAML interchange
+- **Scenarios**: `pkg/builder` (`CoreCatalog` + legacy `ExampleCatalog`), `ValidateScenario`, Studio YAML interchange; mode policy in [docs/orchestration-modes.md](docs/orchestration-modes.md)
 - **Runtime**: autonomous / fixed_workflow / hybrid, subgraph / map / loop / parallel, planning pass, skill expansion
 - **Governance**: tool whitelist & approval, HITL, identity/RBAC/audit, timeouts & classified retries
 - **Persistence**: file / Postgres / Redis run state, S3 blobs, checkpoint history, memory tier

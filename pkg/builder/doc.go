@@ -6,28 +6,16 @@
 //
 //	scenario := builder.MinimalAutonomous("assistant")
 //
-// Example stacks aligned with ExampleCatalog() IDs:
+// CoreCatalog (default CI / autonomous) and LegacyCatalog (workflow/hybrid/RAG,
+// expansion frozen) together form ExampleCatalog(). See docs/orchestration-modes.md.
 //
 //	scenario := builder.MinimalTicketHandling("support")
-//	scenario := builder.MinimalRAG("assistant")
-//	scenario := builder.TierMemoryAutonomous("assistant")
-//	scenario := builder.AdaptiveRAG("assistant")
-//	scenario := builder.CorrectiveRAG("assistant")
-//	scenario := builder.SelfRAG("assistant")
-//	scenario := builder.HybridResearch("analyst")
-//	scenario := builder.MinimalHumanInLoop("assistant")
-//	scenario := builder.MinimalDeclarativeInterrupt()
-//	scenario := builder.MultiExpertResearch()
-//	scenario := builder.CodeReviewPipeline()
-//	scenario := builder.WorkflowEnhancements()
 //	scenario := builder.ContextGovernance("assistant")
-//	scenario := builder.MinimalFixedWorkflowReview("reviewer")
-//	scenario := builder.MinimalHTTPTool("assistant")
-//	scenario := builder.MinimalSQLTool("assistant")
-//	scenario := builder.MinimalFilesystemTool("assistant")
-//	scenario := builder.MinimalMCPTool("assistant")
+//	scenario := builder.MinimalHumanInLoop("assistant")
+//	scenario := builder.MinimalRAG("assistant") // legacy surface
 //
-// Validate all stacks: go run ./examples/go/validate -kind builder all
+// Validate core:  go run ./examples/go/validate -kind builder core
+// Validate full:  go run ./examples/go/validate -kind builder full
 //
 // Full reference: docs/builder-reference.md
 //

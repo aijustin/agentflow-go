@@ -27,7 +27,7 @@ func main() {
 	case "builder":
 		validateBuilder(flag.Args())
 	default:
-		log.Fatal("usage: validate [-kind builder|tool|skill] [builder-id|all|manifest.yaml]")
+		log.Fatal("usage: validate [-kind builder|tool|skill] [builder-id|core|full|all|manifest.yaml]")
 	}
 }
 
@@ -48,26 +48,36 @@ func validateSkill(path string) {
 }
 
 func validateBuilder(args []string) {
-	target := "all"
+	// Default CI surface is CoreCatalog (autonomous). Use "full"/"all" for ExampleCatalog.
+	target := "core"
 	if len(args) > 0 {
 		target = strings.TrimSpace(args[0])
 	}
-	entries := builder.ExampleCatalog()
-	if target != "all" {
+	switch strings.ToLower(target) {
+	case "core", "":
+		validateCatalogEntries(builder.CoreCatalog(), "core")
+	case "full", "all":
+		validateCatalogEntries(builder.ExampleCatalog(), "full")
+	case "legacy":
+		validateCatalogEntries(builder.LegacyCatalog(), "legacy")
+	default:
+		entries := builder.ExampleCatalog()
 		entry, ok := builder.FindCatalogEntry(entries, target)
 		if !ok {
-			log.Fatalf("unknown builder target %q (use catalog id or all)", target)
+			log.Fatalf("unknown builder target %q (use catalog id, core, legacy, or full)", target)
 		}
 		if err := builder.ValidateCatalogEntry(entry); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Printf("ok: builder %s\n", entry.ID)
-		return
 	}
+}
+
+func validateCatalogEntries(entries []builder.CatalogEntry, label string) {
 	for _, entry := range entries {
 		if err := builder.ValidateCatalogEntry(entry); err != nil {
 			log.Fatalf("%s: %v", entry.ID, err)
 		}
 	}
-	fmt.Printf("ok: builder catalog (%d entries)\n", len(entries))
+	fmt.Printf("ok: builder %s catalog (%d entries)\n", label, len(entries))
 }

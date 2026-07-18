@@ -274,7 +274,7 @@ graph = builder.compile(checkpointer=checkpointer)
 ### agentflow-go 优势（非治理向）
 
 - Go 生产栈一体嵌入
-- Builder catalog（19 条 stack）与 `ValidateScenario` 对齐
+- Builder `CoreCatalog`（默认 CI）+ `ExampleCatalog`（含 legacy）与 `ValidateScenario` 对齐；三模式政策见 [orchestration-modes.md](./orchestration-modes.md)
 - hybrid + RAG workflow 节点开箱
 - Library-first，无 Platform lock-in
 

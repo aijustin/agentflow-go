@@ -32,9 +32,9 @@ security:
 	$(GOVULNCHECK) ./...
 
 validate-builder:
-	@echo "validating builder stacks"
+	@echo "validating builder CoreCatalog (autonomous)"
 	@go test ./pkg/builder/... -count=1
-	@go run ./examples/go/validate -kind builder all
+	@go run ./examples/go/validate -kind builder core
 
 validate-catalog:
 	@for file in examples/catalog/tools/*.yaml; do \

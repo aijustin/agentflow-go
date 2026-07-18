@@ -129,7 +129,7 @@ if err := agentflow.ValidateScenario(scenario); err != nil { /* ... */ }
 fw, err := agentflow.New(scenario, opts...)
 ```
 
-- Catalog stacks: [builder-reference.md](./builder-reference.md) · `make validate-builder`
+- Catalog stacks: [builder-reference.md](./builder-reference.md) · `make validate-builder`（`CoreCatalog`）· 三模式立场 [orchestration-modes.md](./orchestration-modes.md)
 - Studio round-trip YAML: `ImportStudioScenarioYAML` / `GenerateStudioScenarioYAML` (not for new scenario authoring)
 - Legacy YAML files: translate to builder once, or import in Studio and export Go via `GenerateStudioBuilderCode`
 

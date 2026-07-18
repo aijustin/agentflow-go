@@ -22,8 +22,9 @@ fw, err := agentflow.New(scenario, opts...)
 ## 校验
 
 ```sh
-make validate-builder
-go run ./examples/go/validate -kind builder all
+make validate-builder                                          # CoreCatalog（autonomous，默认 CI）
+go run ./examples/go/validate -kind builder core               # 同上
+go run ./examples/go/validate -kind builder full               # ExampleCatalog（含 legacy workflow/hybrid）
 go run ./examples/go/validate -kind builder autonomous-echo
 
 # catalog manifest（tool/skill）
@@ -31,7 +32,7 @@ go run ./examples/go/validate -kind tool examples/catalog/tools/echo.tool.yaml
 make validate-catalog
 ```
 
-`make release-check` 已包含 `validate-builder`。
+`make release-check` 已包含 `validate-builder`（仅 CoreCatalog）。Legacy 扩面冻结说明见 [orchestration-modes.md](./orchestration-modes.md)。
 
 ## Workflow 节点（subgraph / map）
 
@@ -112,7 +113,10 @@ routed := builder.NewWorkflow().
 | `filesystem-tool` | `MinimalFilesystemTool("assistant")` |
 | `mcp-tool` | `MinimalMCPTool("assistant")` |
 
-完整列表见 `builder.ExampleCatalog()`（[catalog.go](../pkg/builder/catalog.go)）。
+- 默认 CI：`builder.CoreCatalog()`（autonomous）
+- 完整示例：`builder.ExampleCatalog()` = Core + `LegacyCatalog()`（workflow/hybrid/RAG，扩面冻结）
+
+见 [catalog.go](../pkg/builder/catalog.go)、[orchestration-modes.md](./orchestration-modes.md)。
 
 ## API 分层
 

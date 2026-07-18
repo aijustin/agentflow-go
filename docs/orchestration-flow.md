@@ -339,6 +339,8 @@ flowchart TB
 
 本节从**业务场景**出发，说明三种编排模式与各类 workflow 节点分别适合什么任务。执行链路细节见上文第一至八节；字段定义见 [configuration-reference.md](./configuration-reference.md)。
 
+**架构立场与投资优先级**（默认深度 = autonomous；fixed/hybrid 冻结扩面与触发条件）见专文：[orchestration-modes.md](./orchestration-modes.md)。
+
 ### 9.1 一分钟选型
 
 ```mermaid
@@ -370,6 +372,8 @@ flowchart TD
 | 多 Agent 并行 | `fixed_workflow` | `parallel_group` / `supervisor` | `builder.CodeReviewPipeline()` |
 
 LangGraph 编排对齐路线图：[orchestration-parity.md](./orchestration-parity.md)。
+
+**何时升级到 hybrid / fixed_workflow**：见 [orchestration-modes.md §5 触发条件](./orchestration-modes.md#5-激活-fixed_workflow--hybrid-投入的触发条件)。无触发条件前勿为了用图而用图。
 
 ---
 

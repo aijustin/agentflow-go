@@ -77,8 +77,24 @@
 | Event `parent_span_id` 传播 | ✅ |
 | Editor subgraph 钻取（双击 / 属性面板 / 面包屑返回） | ✅ |
 
+## 编排扩面冻结（直到触发条件）
+
+三模式立场与触发条件：[orchestration-modes.md](./orchestration-modes.md)、[product-direction.md](./product-direction.md)。
+
+| 项 | 状态 |
+|----|------|
+| autonomous 深度（HITL / StreamRun / 治理 / context） | ✅ 当前主线 |
+| hybrid 骨架能跑通 + 选型文档 | ✅ 保持；不扩新组合栈 |
+| 新 workflow 节点 / 新 RAG·审批 catalog | 🧊 Frozen |
+| Studio 多场景体验扩面 | 🧊 Frozen |
+| 默认 CI catalog | ✅ 仅 `CoreCatalog`（`make validate-builder`） |
+
+命中触发条件后再把上表 Frozen 项重新开预算。
+
 ## 相关文档
 
+- [orchestration-modes.md](./orchestration-modes.md)
+- [product-direction.md](./product-direction.md)
 - [studio-roadmap.md](./studio-roadmap.md)
 - [enterprise-roadmap.md](./enterprise-roadmap.md)
 - [data-lifecycle.md](./data-lifecycle.md)
