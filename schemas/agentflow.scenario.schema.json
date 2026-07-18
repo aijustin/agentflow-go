@@ -813,6 +813,11 @@
           "minimum": 0,
           "description": "Deny a tool call when the same tool+input repeats this many times in one run (0 disables)."
         },
+        "hitl_deny_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Fail the run after this many consecutive approval denials (0 disables). Orthogonal to doom_loop_limit."
+        },
         "secrets": {
           "$ref": "#/$defs/stringMap"
         }

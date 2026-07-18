@@ -158,7 +158,20 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent cor
 		policy.ReservedOutputTokens = profile.MaxOutputTokens
 	}
 	result := e.contextManager(ctx, runID, agent, policy).Prepare(raw)
-	messages := make([]llm.Message, 0, len(result.Messages)+1)
+	if policy.InjectCompactReminder && result.Stats.NeedsReminder {
+		if reminder := e.compactReminder(ctx, runID); reminder != "" {
+			// Codex-aligned contract: reinject above the last user message so
+			// the reminder sits before the latest user turn (not at the tail).
+			result.Messages = contextwindow.InsertMessage(result.Messages, contextwindow.Message{
+				Role:    contextwindow.RoleSystem,
+				Content: reminder,
+				Metadata: map[string]string{
+					"context_window": "compact_reminder",
+				},
+			}, contextwindow.InsertBeforeLastUserMessage)
+		}
+	}
+	messages := make([]llm.Message, 0, len(result.Messages))
 	for _, msg := range result.Messages {
 		messages = append(messages, llm.Message{
 			Role:       llm.Role(msg.Role),
@@ -167,17 +180,6 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent cor
 			ToolCallID: msg.ToolCallID,
 			Metadata:   msg.Metadata,
 		})
-	}
-	if policy.InjectCompactReminder && result.Stats.NeedsReminder {
-		if reminder := e.compactReminder(ctx, runID); reminder != "" {
-			messages = append(messages, llm.Message{
-				Role:    llm.RoleSystem,
-				Content: reminder,
-				Metadata: map[string]string{
-					"context_window": "compact_reminder",
-				},
-			})
-		}
 	}
 	return messages, result.Stats
 }

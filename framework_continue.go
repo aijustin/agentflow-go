@@ -43,6 +43,7 @@ func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decisio
 		return RunResult{}, err
 	}
 	if decision == core.DecisionReject {
+		f.engine.RememberHITLReject(ctx, runID)
 		return RunResult{RunID: runID, Status: runstate.RunStatusCancelled}, nil
 	}
 	if f.runLocker != nil {

@@ -6,6 +6,7 @@
 
 - 能力差距与关闭进度：[competitive-analysis.md](./competitive-analysis.md)
 - LangGraph 深度对比：[competitive-analysis-langgraph.md](./competitive-analysis-langgraph.md)
+- Codex 对照（吸收 / 不吸收）：[competitive-notes-codex.md](./competitive-notes-codex.md)
 - 产品边界与裁剪：[product-direction.md](./product-direction.md)
 
 ---

@@ -259,7 +259,10 @@ type RuntimePolicy struct {
 	// DoomLoopLimit, when > 0, denies a tool call that repeats the same
 	// canonical input this many times within one autonomous run (including
 	// the current attempt). Zero disables the check.
-	DoomLoopLimit int               `json:"doom_loop_limit,omitempty"`
+	DoomLoopLimit int `json:"doom_loop_limit,omitempty"`
+	// HITLDenyLimit, when > 0, fails the run after this many consecutive
+	// approval denials (soft deny or cached deny). Orthogonal to DoomLoopLimit.
+	HITLDenyLimit int               `json:"hitl_deny_limit,omitempty"`
 	Secrets       map[string]string `json:"secrets,omitempty"`
 }
 
@@ -353,6 +356,25 @@ type HumanGate interface {
 type ToolApprovalEvaluator interface {
 	PauseRequired(ctx context.Context, runID string, tool Tool, call llm.ToolCall) (bool, error)
 }
+
+// TurnStopInfo is passed to TurnStopHook after the model produces a final
+// answer (no tool calls) and CompletionRequirement is satisfied.
+type TurnStopInfo struct {
+	RunID  string
+	Agent  string
+	Answer string
+}
+
+// TurnStopDecision lets a host veto turn completion (Codex stop-hooks style).
+// When Continue is true and ContinuationPrompt is non-empty, the runtime
+// appends the prompt as a user message and samples again.
+type TurnStopDecision struct {
+	Continue            bool
+	ContinuationPrompt  string
+}
+
+// TurnStopHook is an optional host callback after a candidate final answer.
+type TurnStopHook func(ctx context.Context, info TurnStopInfo) (TurnStopDecision, error)
 
 // NamedToolApprovalEvaluator is an optional extension that exposes a stable
 // evaluator name for RunPaused observability (AF-REQ-04).

@@ -10,8 +10,8 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
 
-// Interject queues a mid-turn user message for runID. The next safe drain
-// point in the autonomous tool loop appends it before the following LLM call.
+// Interject queues a mid-turn user message for runID. Drain timing follows
+// Engine.interjectDrain (Codex-style steer alignment).
 func (e *Engine) Interject(runID, text string) error {
 	if e == nil {
 		return fmt.Errorf("runtime: engine is nil")
@@ -29,6 +29,25 @@ func (e *Engine) Interject(runID, text string) error {
 	}
 	e.interjections.Push(runID, text)
 	return nil
+}
+
+// SetInterjectDrainPolicy overrides the drain policy (tests / late config).
+func (e *Engine) SetInterjectDrainPolicy(policy interjection.DrainPolicy) {
+	if e == nil {
+		return
+	}
+	e.interjectDrain = policy.Normalize()
+}
+
+func (e *Engine) drainInterjectionsIfAllowed(ctx context.Context, runID string, agent core.Agent, messages []llm.Message, phase interjection.DrainPhase, justCompacted bool) ([]llm.Message, error) {
+	if e == nil {
+		return messages, nil
+	}
+	policy := e.interjectDrain.Normalize()
+	if !policy.Allow(phase, justCompacted) {
+		return messages, nil
+	}
+	return e.drainInterjectionsInto(ctx, runID, agent, messages)
 }
 
 func (e *Engine) drainInterjectionsInto(ctx context.Context, runID string, agent core.Agent, messages []llm.Message) ([]llm.Message, error) {

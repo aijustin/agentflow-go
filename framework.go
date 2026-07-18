@@ -42,6 +42,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
+	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -49,6 +50,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
+	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
 // RunRequest is the input passed to Framework.Run.
@@ -146,6 +148,10 @@ type options struct {
 	runLeaseTTL         time.Duration
 	closers             []func(context.Context) error
 	toolTransforms      map[string]contextwindow.ToolOutputTransform
+	interjectDrain      interjection.DrainPolicy
+	toolOrchestrator    toolorch.ToolOrchestrator
+	approvalStore       toolorch.ApprovalStore
+	turnStopHook        core.TurnStopHook
 }
 
 type toolRegistry struct {
@@ -391,6 +397,10 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		Logger:                 cfg.logger,
 		EnqueueMemoryReconcile: enqueueMemoryReconcile,
 		ToolOutputTransforms:   cfg.toolTransforms,
+		InterjectDrain:         cfg.interjectDrain,
+		ToolOrchestrator:       cfg.toolOrchestrator,
+		ApprovalStore:          cfg.approvalStore,
+		TurnStopHook:           cfg.turnStopHook,
 	})
 	if err != nil {
 		return nil, err
@@ -574,6 +584,50 @@ func WithHumanGate(gate core.HumanGate) Option {
 func WithToolApprovalEvaluator(evaluator core.ToolApprovalEvaluator) Option {
 	return func(o *options) error {
 		o.approvalEvaluator = evaluator
+		return nil
+	}
+}
+
+// WithInterjectDrainPolicy controls when Framework.Interject messages enter the
+// autonomous tool loop (Codex-style steer drain alignment).
+func WithInterjectDrainPolicy(policy interjection.DrainPolicy) Option {
+	return func(o *options) error {
+		o.interjectDrain = policy.Normalize()
+		return nil
+	}
+}
+
+// WithToolOrchestrator wires approval-cache / post-attempt orchestration.
+// OS sandbox escalate remains host-owned via AttemptResult.
+func WithToolOrchestrator(orch toolorch.ToolOrchestrator) Option {
+	return func(o *options) error {
+		if orch == nil {
+			return fmt.Errorf("agentflow: tool orchestrator is nil")
+		}
+		o.toolOrchestrator = orch
+		return nil
+	}
+}
+
+// WithApprovalStore wires a session/run-scoped approval decision cache.
+func WithApprovalStore(store toolorch.ApprovalStore) Option {
+	return func(o *options) error {
+		if store == nil {
+			return fmt.Errorf("agentflow: approval store is nil")
+		}
+		o.approvalStore = store
+		return nil
+	}
+}
+
+// WithTurnStopHook registers a host callback that may veto turn completion
+// and inject a continuation prompt (Codex stop-hooks style).
+func WithTurnStopHook(hook core.TurnStopHook) Option {
+	return func(o *options) error {
+		if hook == nil {
+			return fmt.Errorf("agentflow: turn stop hook is nil")
+		}
+		o.turnStopHook = hook
 		return nil
 	}
 }

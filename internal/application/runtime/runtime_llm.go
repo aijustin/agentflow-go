@@ -9,8 +9,10 @@ import (
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
 func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
@@ -430,9 +432,12 @@ func (e *Engine) answerWithToolsFrom(
 			return "", err
 		}
 		var drainErr error
-		messages, drainErr = e.drainInterjectionsInto(ctx, runID, agent, messages)
-		if drainErr != nil {
-			return "", drainErr
+		policy := e.interjectDrain.Normalize()
+		if policy.Allow(interjection.DrainBeforeSample, false) && !policy.DeferUntilPostCompact {
+			messages, drainErr = e.drainInterjectionsIfAllowed(ctx, runID, agent, messages, interjection.DrainBeforeSample, false)
+			if drainErr != nil {
+				return "", drainErr
+			}
 		}
 		var staleStats staleEvictionStats
 		if profile.Context.StaleToolTurns > 0 {
@@ -447,7 +452,24 @@ func (e *Engine) answerWithToolsFrom(
 		// calls dispatched in prior iterations of this same loop, not just
 		// the plan state as of the very first turn.
 		toolSpecs := e.toolSpecs(ctx, runID, agent)
+		stepCtx := toolorch.FreezeSamplingStepContext(toolSpecs)
+		stepRunCtx := contextWithSamplingStep(ctx, stepCtx)
 		prepared, stats := e.prepareMessages(ctx, runID, agent, messages, profile)
+		if policy.DeferUntilPostCompact {
+			if policy.Allow(interjection.DrainPostCompact, stats.NeedsReminder) {
+				messages, drainErr = e.drainInterjectionsIfAllowed(ctx, runID, agent, messages, interjection.DrainPostCompact, stats.NeedsReminder)
+				if drainErr != nil {
+					return "", drainErr
+				}
+				prepared, stats = e.prepareMessages(ctx, runID, agent, messages, profile)
+			} else if policy.BeforeSample {
+				messages, drainErr = e.drainInterjectionsIfAllowed(ctx, runID, agent, messages, interjection.DrainBeforeSample, false)
+				if drainErr != nil {
+					return "", drainErr
+				}
+				prepared, stats = e.prepareMessages(ctx, runID, agent, messages, profile)
+			}
+		}
 		stats.StaleDroppedToolTurns = staleStats.DroppedToolTurns
 		stats.DenialOccupiedSlots = staleStats.DenialOccupiedSlots
 		stats.StaleExcludedTurns = staleStats.ExcludedTurns
@@ -464,7 +486,7 @@ func (e *Engine) answerWithToolsFrom(
 			},
 			Tools: toolSpecs,
 		}
-		resp, err := e.chatWithToolsWithRetry(ctx, runID, agent, profile, toolReq, caller, step+1)
+		resp, err := e.chatWithToolsWithRetry(stepRunCtx, runID, agent, profile, toolReq, caller, step+1)
 		if err != nil {
 			return "", err
 		}
@@ -489,6 +511,27 @@ func (e *Engine) answerWithToolsFrom(
 				messages = continued
 				continue
 			}
+			if e.turnStopHook != nil {
+				decision, hookErr := e.turnStopHook(ctx, core.TurnStopInfo{
+					RunID:  runID,
+					Agent:  agent.Name,
+					Answer: resp.Message.Content,
+				})
+				if hookErr != nil {
+					return "", hookErr
+				}
+				if decision.Continue {
+					promptText := strings.TrimSpace(decision.ContinuationPrompt)
+					if promptText == "" {
+						promptText = "Continue."
+					}
+					messages = append(messages, llm.Message{Role: llm.RoleUser, Content: promptText})
+					e.emitJSON(ctx, core.EventTurnStopContinued, runID, map[string]any{
+						"agent": agent.Name,
+					})
+					continue
+				}
+			}
 			mem := make([]memoryMessage, 0, 2)
 			if !userPromptPersisted && strings.TrimSpace(prompt) != "" {
 				mem = append(mem, runTurnMemoryMessage(string(llm.RoleUser), prompt))
@@ -501,13 +544,13 @@ func (e *Engine) answerWithToolsFrom(
 		}
 		var dispatchErr error
 		messages, userPromptPersisted, dispatchErr = e.dispatchToolCalls(
-			ctx, runID, agent, profile, assistant, resp.ToolCalls, messages, tracker,
+			stepRunCtx, runID, agent, profile, assistant, resp.ToolCalls, messages, tracker,
 			prompt, true, stepsConsumedBase+step+1, replanAttempts, userPromptPersisted, emit,
 		)
 		if dispatchErr != nil {
 			return "", dispatchErr
 		}
-		messages, drainErr = e.drainInterjectionsInto(ctx, runID, agent, messages)
+		messages, drainErr = e.drainInterjectionsIfAllowed(ctx, runID, agent, messages, interjection.DrainAfterToolBatch, false)
 		if drainErr != nil {
 			return "", drainErr
 		}

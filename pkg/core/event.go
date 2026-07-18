@@ -40,6 +40,8 @@ const (
 	EventCompletionRecovery       EventType = "CompletionRecovery"
 	EventCompletionRequirementFail EventType = "CompletionRequirementFail"
 	EventInterjectionDrained      EventType = "InterjectionDrained"
+	EventHITLDenyBreakerTripped   EventType = "HITLDenyBreakerTripped"
+	EventTurnStopContinued        EventType = "TurnStopContinued"
 )
 
 type Event struct {

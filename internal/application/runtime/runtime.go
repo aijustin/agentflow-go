@@ -20,6 +20,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
+	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
 type Engine struct {
@@ -44,6 +45,11 @@ type Engine struct {
 	enqueueMemoryReconcile func(context.Context, async.Job) error
 	toolTransforms         map[string]contextwindow.ToolOutputTransform
 	interjections          *interjection.Buffer
+	interjectDrain         interjection.DrainPolicy
+	orchestrator           toolorch.ToolOrchestrator
+	approvalStore          toolorch.ApprovalStore
+	denyBreaker            *toolorch.DenyBreaker
+	turnStopHook           core.TurnStopHook
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -79,6 +85,16 @@ type Dependencies struct {
 	EnqueueMemoryReconcile func(context.Context, async.Job) error
 	// ToolOutputTransforms are optional per-tool reshapers applied before LLM/memory.
 	ToolOutputTransforms map[string]contextwindow.ToolOutputTransform
+	// InterjectDrain controls when mid-turn interjections enter the tool loop.
+	InterjectDrain interjection.DrainPolicy
+	// ToolOrchestrator optional approval cache / post-attempt hooks (sandbox is host-owned).
+	ToolOrchestrator toolorch.ToolOrchestrator
+	// ApprovalStore caches allow/deny decisions; when nil and orchestrator is a
+	// StoreOrchestrator, that store is used. Otherwise a memory store is created
+	// when HITLDenyLimit or orchestrator needs it.
+	ApprovalStore toolorch.ApprovalStore
+	// TurnStopHook optional host veto after a candidate final answer.
+	TurnStopHook core.TurnStopHook
 }
 
 func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
@@ -95,6 +111,26 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 	tracer := deps.Tracer
 	if tracer == nil {
 		tracer = observability.NoopTracer{}
+	}
+	store := deps.ApprovalStore
+	orch := deps.ToolOrchestrator
+	if orch == nil && store != nil {
+		orch = toolorch.NewStoreOrchestrator(store)
+	}
+	if store == nil {
+		if so, ok := orch.(*toolorch.StoreOrchestrator); ok && so != nil && so.Store != nil {
+			store = so.Store
+		}
+	}
+	if store == nil && (scenario.Runtime.HITLDenyLimit > 0 || orch != nil) {
+		store = toolorch.NewMemoryApprovalStore()
+	}
+	if orch == nil && store != nil {
+		orch = toolorch.NewStoreOrchestrator(store)
+	}
+	var breaker *toolorch.DenyBreaker
+	if scenario.Runtime.HITLDenyLimit > 0 {
+		breaker = toolorch.NewDenyBreaker(scenario.Runtime.HITLDenyLimit)
 	}
 	return &Engine{
 		scenario:               scenario,
@@ -118,6 +154,11 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		enqueueMemoryReconcile: deps.EnqueueMemoryReconcile,
 		toolTransforms:         deps.ToolOutputTransforms,
 		interjections:          interjection.NewBuffer(),
+		interjectDrain:         deps.InterjectDrain.Normalize(),
+		orchestrator:           orch,
+		approvalStore:          store,
+		denyBreaker:            breaker,
+		turnStopHook:           deps.TurnStopHook,
 	}, nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
+	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
 const (
@@ -308,6 +309,10 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		if err != nil {
 			return "", err
 		}
+		toolorch.RememberAllow(e.approvalStore, runID, approved.Name, approved.Input)
+		if e.denyBreaker != nil {
+			e.denyBreaker.RecordAllow(runID)
+		}
 		contextResult, _ := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
 		raw, err := json.Marshal(contextResult)
 		if err != nil {
@@ -583,6 +588,24 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	}
 	if !pauseRequired {
 		return nil, nil
+	}
+	if e.orchestrator != nil {
+		decision, orchErr := e.orchestrator.DecideApproval(ctx, toolorch.ApprovalRequest{
+			RunID:         runID,
+			Tool:          call.Name,
+			Input:         call.Input,
+			PauseRequired: true,
+		})
+		if orchErr != nil {
+			return nil, orchErr
+		}
+		switch decision {
+		case toolorch.DecisionAllow:
+			return nil, nil
+		case toolorch.DecisionDeny:
+			// Soft-deny on the execute path; do not open the human gate again.
+			return nil, nil
+		}
 	}
 	if e.gate == nil {
 		return nil, nil

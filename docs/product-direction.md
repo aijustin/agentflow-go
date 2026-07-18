@@ -12,7 +12,8 @@
 | 编排 | 三模式光谱见下；**默认与承诺深度 = `autonomous`** |
 | 竞品关系 | 借鉴 LangGraph 编排概念，**不做全量 parity** |
 
-三模式设计理由、选型与激活触发条件：[orchestration-modes.md](./orchestration-modes.md)。
+三模式设计理由、选型与激活触发条件：[orchestration-modes.md](./orchestration-modes.md)。  
+Codex 对照（吸收 / 不吸收）：[competitive-notes-codex.md](./competitive-notes-codex.md)。
 
 ## 编排模式与投资优先级
 

@@ -17,6 +17,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/security"
+	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
 type toolDispatchOptions struct {
@@ -34,6 +35,16 @@ func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent c
 
 func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker, options toolDispatchOptions) (core.ToolResult, error) {
 	tracker = tracker.ensure()
+	if step, ok := samplingStepFromContext(ctx); ok && step.Frozen() && !step.Allows(call.Name) {
+		result := core.ToolResult{Tool: call.Name, Error: "tool was not advertised in this sampling step"}
+		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{
+			"agent":  agent.Name,
+			"tool":   call.Name,
+			"reason": result.Error,
+			"kind":   "step_context",
+		})
+		return result, nil
+	}
 	if limit := e.scenario.Runtime.DoomLoopLimit; limit > 0 {
 		// sameInputCount is prior attempts; +1 is the attempt about to run.
 		if tracker.sameInputCount(call.Name, call.Input)+1 >= limit {
@@ -88,9 +99,31 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil
 	}
+	if !options.approved && e.orchestrator != nil {
+		decision, orchErr := e.orchestrator.DecideApproval(ctx, toolorch.ApprovalRequest{
+			RunID:         runID,
+			Tool:          call.Name,
+			Input:         call.Input,
+			PauseRequired: false,
+		})
+		if orchErr != nil {
+			return core.ToolResult{}, orchErr
+		}
+		if decision == toolorch.DecisionDeny {
+			result := core.ToolResult{Tool: call.Name, Error: "tool approval denied (cached)"}
+			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error, "kind": "approval_cache"})
+			if err := e.noteApprovalDeny(ctx, runID, call.Name); err != nil {
+				return core.ToolResult{}, err
+			}
+			return result, nil
+		}
+	}
 	if reason := toolinvoke.DenialWithoutGate(tool, e.gate != nil, options.approved || TrustModeFromContext(ctx) == TrustModeFullTrust); reason != "" {
 		result := core.ToolResult{Tool: call.Name, Error: reason}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
+		if err := e.noteApprovalDeny(ctx, runID, call.Name); err != nil {
+			return core.ToolResult{}, err
+		}
 		return result, nil
 	}
 	if tool.RateCap > 0 && tracker.nameCount(call.Name) >= tool.RateCap {
@@ -140,9 +173,15 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		}
 		result = core.ToolResult{Tool: call.Name, Error: err.Error()}
 	}
+	if e.orchestrator != nil {
+		_ = e.orchestrator.AfterAttempt(ctx, runID, call.Name, call.Input, toolorch.AttemptResult{})
+	}
 	tracker.recordAttempt(call.Name, call.Input)
 	if result.Error == "" {
 		tracker.recordSuccess(call.Name)
+		if e.denyBreaker != nil {
+			e.denyBreaker.RecordAllow(runID)
+		}
 	}
 	if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil {
 		persistErr := err.Error()

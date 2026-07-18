@@ -8,7 +8,7 @@ func EventCategory(typ EventType) string {
 	switch typ {
 	case EventToolCalled, EventToolReturned, EventToolDenied, EventCompletionRecovery, EventCompletionRequirementFail:
 		return "tool"
-	case EventInterjectionDrained:
+	case EventInterjectionDrained, EventHITLDenyBreakerTripped, EventTurnStopContinued:
 		return "run"
 	case EventSkillApplied:
 		return "skill"
@@ -89,6 +89,10 @@ func DisplayLabel(typ EventType) string {
 		return "Completion requirement failed"
 	case EventInterjectionDrained:
 		return "Interjection drained"
+	case EventHITLDenyBreakerTripped:
+		return "HITL deny breaker tripped"
+	case EventTurnStopContinued:
+		return "Turn stop continued"
 	default:
 		return string(typ)
 	}
