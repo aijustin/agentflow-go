@@ -360,9 +360,9 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		// here (e.g. the pause happened on the very last allowed step).
 		// Try to replan instead of always failing hard, matching the
 		// budget-exhaustion behavior of the non-paused tool loop.
-		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, tracker, maxSteps, prompt, replanAttempts, stepsConsumed, true, nil)
+		return e.replanOrFail(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, tracker, maxSteps, prompt, replanAttempts, stepsConsumed, true, 0, nil)
 	}
-	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, tracker, remainingSteps, prompt, replanAttempts, stepsConsumed, true, nil)
+	return e.answerWithToolsFrom(ctx, runID, agent, profile, baseReq, caller, toolSpecs, messages, tracker, remainingSteps, prompt, replanAttempts, stepsConsumed, true, 0, nil)
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {

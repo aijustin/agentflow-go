@@ -6,8 +6,10 @@ import "fmt"
 // tool, knowledge, skill, llm, memory, or run.
 func EventCategory(typ EventType) string {
 	switch typ {
-	case EventToolCalled, EventToolReturned, EventToolDenied:
+	case EventToolCalled, EventToolReturned, EventToolDenied, EventCompletionRecovery, EventCompletionRequirementFail:
 		return "tool"
+	case EventInterjectionDrained:
+		return "run"
 	case EventSkillApplied:
 		return "skill"
 	case EventLLMCalled, EventLLMReturned, EventLLMTokenUsage:
@@ -81,6 +83,12 @@ func DisplayLabel(typ EventType) string {
 		return "Context incomplete"
 	case EventSkillApplied:
 		return "Skill applied"
+	case EventCompletionRecovery:
+		return "Completion recovery"
+	case EventCompletionRequirementFail:
+		return "Completion requirement failed"
+	case EventInterjectionDrained:
+		return "Interjection drained"
 	default:
 		return string(typ)
 	}

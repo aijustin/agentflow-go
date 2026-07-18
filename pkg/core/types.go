@@ -41,6 +41,25 @@ type Agent struct {
 	SubAgents    []string          `json:"sub_agents,omitempty"`
 	Policy       AgentPolicy       `json:"policy"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+	// CompletionRequirement, when set, requires a successful call to Tool
+	// before the autonomous tool loop may finish with a final answer.
+	CompletionRequirement *CompletionRequirement `json:"completion_requirement,omitempty"`
+}
+
+// CompletionRequirement declares that the agent must call a specific tool
+// before ending its turn (orchestrated worker pattern from grok-build).
+type CompletionRequirement struct {
+	Tool     string               `json:"tool"`
+	Reminder string               `json:"reminder"`
+	Recovery *CompletionRecovery  `json:"recovery,omitempty"`
+}
+
+// CompletionRecovery controls reminder retries with exponential backoff when
+// the required completion tool was not called.
+type CompletionRecovery struct {
+	MaxRetries  int   `json:"max_retries"`
+	BaseDelayMS int64 `json:"base_delay_ms"`
+	MaxDelayMS  int64 `json:"max_delay_ms"`
 }
 
 type AgentPolicy struct {

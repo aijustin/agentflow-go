@@ -464,6 +464,41 @@
         },
         "metadata": {
           "$ref": "#/$defs/stringMap"
+        },
+        "completion_requirement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool", "reminder"],
+          "properties": {
+            "tool": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Tool that must succeed before the agent may finish."
+            },
+            "reminder": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reminder injected when the agent finishes without calling the tool."
+            },
+            "recovery": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "max_retries": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "base_delay_ms": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "max_delay_ms": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
         }
       }
     },

@@ -129,20 +129,33 @@ type AgentPolicy struct {
 }
 
 type Agent struct {
-	Description      string            `yaml:"description"`
-	Role             string            `yaml:"role"`
-	Instructions     string            `yaml:"instructions"`
-	LLM              string            `yaml:"llm"`
-	Memory           string            `yaml:"memory"`
-	Tools            []string          `yaml:"tools"`
-	Skills           []string          `yaml:"skills"`
-	SubAgents        []string          `yaml:"sub_agents"`
-	MaxSteps         int               `yaml:"max_steps"`
-	Timeout          time.Duration     `yaml:"timeout"`
-	RetryLimit       int               `yaml:"retry_limit"`
-	OutputSchema     map[string]any    `yaml:"output_schema"`
-	HumanCheckpoints []string          `yaml:"human_checkpoints"`
-	Metadata         map[string]string `yaml:"metadata"`
+	Description           string                 `yaml:"description"`
+	Role                  string                 `yaml:"role"`
+	Instructions          string                 `yaml:"instructions"`
+	LLM                   string                 `yaml:"llm"`
+	Memory                string                 `yaml:"memory"`
+	Tools                 []string               `yaml:"tools"`
+	Skills                []string               `yaml:"skills"`
+	SubAgents             []string               `yaml:"sub_agents"`
+	MaxSteps              int                    `yaml:"max_steps"`
+	Timeout               time.Duration          `yaml:"timeout"`
+	RetryLimit            int                    `yaml:"retry_limit"`
+	OutputSchema          map[string]any         `yaml:"output_schema"`
+	HumanCheckpoints      []string               `yaml:"human_checkpoints"`
+	Metadata              map[string]string      `yaml:"metadata"`
+	CompletionRequirement *CompletionRequirement `yaml:"completion_requirement"`
+}
+
+type CompletionRequirement struct {
+	Tool     string              `yaml:"tool"`
+	Reminder string              `yaml:"reminder"`
+	Recovery *CompletionRecovery `yaml:"recovery"`
+}
+
+type CompletionRecovery struct {
+	MaxRetries  int   `yaml:"max_retries"`
+	BaseDelayMS int64 `yaml:"base_delay_ms"`
+	MaxDelayMS  int64 `yaml:"max_delay_ms"`
 }
 
 type Orchestration struct {
@@ -424,7 +437,7 @@ func (d Document) ToCore() (core.Scenario, error) {
 		if err != nil {
 			return core.Scenario{}, fmt.Errorf("agent %q output_schema: %w", name, err)
 		}
-		s.Agents[name] = core.Agent{
+		coreAgent := core.Agent{
 			Name:         name,
 			Description:  agent.Description,
 			Role:         agent.Role,
@@ -437,6 +450,21 @@ func (d Document) ToCore() (core.Scenario, error) {
 			Policy:       core.AgentPolicy{MaxSteps: agent.MaxSteps, Timeout: agent.Timeout, RetryLimit: agent.RetryLimit, OutputSchema: outputSchema, HumanCheckpoints: agent.HumanCheckpoints},
 			Metadata:     agent.Metadata,
 		}
+		if agent.CompletionRequirement != nil {
+			req := &core.CompletionRequirement{
+				Tool:     agent.CompletionRequirement.Tool,
+				Reminder: agent.CompletionRequirement.Reminder,
+			}
+			if agent.CompletionRequirement.Recovery != nil {
+				req.Recovery = &core.CompletionRecovery{
+					MaxRetries:  agent.CompletionRequirement.Recovery.MaxRetries,
+					BaseDelayMS: agent.CompletionRequirement.Recovery.BaseDelayMS,
+					MaxDelayMS:  agent.CompletionRequirement.Recovery.MaxDelayMS,
+				}
+			}
+			coreAgent.CompletionRequirement = req
+		}
+		s.Agents[name] = coreAgent
 	}
 	for _, trigger := range d.Scenario.Triggers {
 		s.Triggers = append(s.Triggers, core.Trigger{

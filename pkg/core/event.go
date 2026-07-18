@@ -36,7 +36,10 @@ const (
 	EventMemoryEvicted     EventType = "MemoryEvicted"
 	EventContextPrepared   EventType = "ContextPrepared"
 	EventContextIncomplete EventType = "ContextIncomplete"
-	EventSkillApplied      EventType = "SkillApplied"
+	EventSkillApplied             EventType = "SkillApplied"
+	EventCompletionRecovery       EventType = "CompletionRecovery"
+	EventCompletionRequirementFail EventType = "CompletionRequirementFail"
+	EventInterjectionDrained      EventType = "InterjectionDrained"
 )
 
 type Event struct {

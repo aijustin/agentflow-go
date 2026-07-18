@@ -400,7 +400,7 @@ func (e *Engine) answerWithTools(
 	tracker := newToolCallTracker()
 	return e.answerWithToolsFrom(
 		ctx, runID, agent, profile, req, caller, toolSpecs, messages, tracker,
-		maxSteps, prompt, 0, 0, false, emit,
+		maxSteps, prompt, 0, 0, false, 0, emit,
 	)
 }
 
@@ -419,6 +419,7 @@ func (e *Engine) answerWithToolsFrom(
 	replanAttempts int,
 	stepsConsumedBase int,
 	userPromptPersisted bool,
+	completionRecoveryAttempts int,
 	emit streamChunkSink,
 ) (string, error) {
 	if hint := e.planningToolHint(ctx, runID); hint != "" {
@@ -427,6 +428,11 @@ func (e *Engine) answerWithToolsFrom(
 	for step := 0; step < maxSteps; step++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
+		}
+		var drainErr error
+		messages, drainErr = e.drainInterjectionsInto(ctx, runID, agent, messages)
+		if drainErr != nil {
+			return "", drainErr
 		}
 		var staleStats staleEvictionStats
 		if profile.Context.StaleToolTurns > 0 {
@@ -473,6 +479,16 @@ func (e *Engine) answerWithToolsFrom(
 			if strings.TrimSpace(resp.Message.Content) == "" && resp.FinishReason == "length" {
 				return "", fmt.Errorf("runtime: llm response was empty after reaching max tokens; increase max_output_tokens or disable reasoning output for profile %q", agent.LLM)
 			}
+			continued, cont, enforceErr := e.enforceCompletionRequirement(
+				ctx, runID, agent, messages, tracker, &completionRecoveryAttempts,
+			)
+			if enforceErr != nil {
+				return "", enforceErr
+			}
+			if cont {
+				messages = continued
+				continue
+			}
 			mem := make([]memoryMessage, 0, 2)
 			if !userPromptPersisted && strings.TrimSpace(prompt) != "" {
 				mem = append(mem, runTurnMemoryMessage(string(llm.RoleUser), prompt))
@@ -491,10 +507,14 @@ func (e *Engine) answerWithToolsFrom(
 		if dispatchErr != nil {
 			return "", dispatchErr
 		}
+		messages, drainErr = e.drainInterjectionsInto(ctx, runID, agent, messages)
+		if drainErr != nil {
+			return "", drainErr
+		}
 	}
 	return e.replanOrFail(
 		ctx, runID, agent, profile, req, caller, toolSpecs, messages, tracker,
-		maxSteps, prompt, replanAttempts, stepsConsumedBase, userPromptPersisted, emit,
+		maxSteps, prompt, replanAttempts, stepsConsumedBase, userPromptPersisted, completionRecoveryAttempts, emit,
 	)
 }
 
@@ -520,6 +540,7 @@ func (e *Engine) replanOrFail(
 	replanAttempts int,
 	stepsConsumedBase int,
 	userPromptPersisted bool,
+	completionRecoveryAttempts int,
 	emit streamChunkSink,
 ) (string, error) {
 	if replanAttempts < maxReplanAttempts {
@@ -535,7 +556,7 @@ func (e *Engine) replanOrFail(
 			if len(replanned) > len(messages) {
 				return e.answerWithToolsFrom(
 					ctx, runID, agent, profile, req, caller, toolSpecs, replanned, tracker,
-					maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps, userPromptPersisted, emit,
+					maxSteps, prompt, replanAttempts+1, stepsConsumedBase+maxSteps, userPromptPersisted, completionRecoveryAttempts, emit,
 				)
 			}
 		}

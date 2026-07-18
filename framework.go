@@ -1216,6 +1216,15 @@ func (f *Framework) Resume(ctx context.Context, token string, decision core.Deci
 	return f.gate.Resume(ctx, token, decision, amendment)
 }
 
+// Interject queues a mid-turn user message for an in-flight run. The autonomous
+// tool loop drains it at the next safe point (before the next LLM call).
+func (f *Framework) Interject(runID, text string) error {
+	if f == nil || f.engine == nil {
+		return fmt.Errorf("agentflow: framework is not initialized")
+	}
+	return f.engine.Interject(runID, text)
+}
+
 func (f *Framework) Catalog() catalog.Catalog {
 	return catalog.FromScenario(f.scenario)
 }

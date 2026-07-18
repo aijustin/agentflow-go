@@ -145,7 +145,7 @@ func DocumentFromCore(scenario core.Scenario) (Document, error) {
 		if err != nil {
 			return Document{}, fmt.Errorf("agent %q output_schema: %w", name, err)
 		}
-		doc.Scenario.Agents[name] = Agent{
+		exported := Agent{
 			Description:      agent.Description,
 			Role:             agent.Role,
 			Instructions:     agent.Instructions,
@@ -161,6 +161,20 @@ func DocumentFromCore(scenario core.Scenario) (Document, error) {
 			HumanCheckpoints: agent.Policy.HumanCheckpoints,
 			Metadata:         agent.Metadata,
 		}
+		if agent.CompletionRequirement != nil {
+			exported.CompletionRequirement = &CompletionRequirement{
+				Tool:     agent.CompletionRequirement.Tool,
+				Reminder: agent.CompletionRequirement.Reminder,
+			}
+			if agent.CompletionRequirement.Recovery != nil {
+				exported.CompletionRequirement.Recovery = &CompletionRecovery{
+					MaxRetries:  agent.CompletionRequirement.Recovery.MaxRetries,
+					BaseDelayMS: agent.CompletionRequirement.Recovery.BaseDelayMS,
+					MaxDelayMS:  agent.CompletionRequirement.Recovery.MaxDelayMS,
+				}
+			}
+		}
+		doc.Scenario.Agents[name] = exported
 	}
 	for _, trigger := range scenario.Triggers {
 		doc.Scenario.Triggers = append(doc.Scenario.Triggers, Trigger{

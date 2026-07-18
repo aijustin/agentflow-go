@@ -229,6 +229,11 @@ Agent 定义在 `scenario.agents.<name>` 下。
 | `tools` | 字符串数组 | 否 | 来自 `scenario.tools` 的工具名称。 |
 | `skills` | 字符串数组 | 否 | 来自 `scenario.skills` 的 Skill 名称；绑定后会在场景构建阶段展开。 |
 | `sub_agents` | 字符串数组 | 否 | 可用于委派的 Agent。 |
+| `completion_requirement.tool` | 字符串 | 否 | 结束前必须成功调用的工具名（编排 worker 契约）。 |
+| `completion_requirement.reminder` | 字符串 | 否 | 未调用时注入的提醒文本。 |
+| `completion_requirement.recovery.max_retries` | 整数 | 否 | 提醒重试上限；省略 recovery 时默认提醒重试 1 次。 |
+| `completion_requirement.recovery.base_delay_ms` | 整数 | 否 | 指数退避起始延迟（毫秒）。 |
+| `completion_requirement.recovery.max_delay_ms` | 整数 | 否 | 退避上限（毫秒）。 |
 | `max_steps` | 整数 | 否 | Agent 级步骤上限。 |
 | `timeout` | duration | 否 | Agent 级超时时间。 |
 | `retry_limit` | 整数 | 否 | Agent 级重试上限。 |

@@ -145,6 +145,19 @@ func (ab *AgentBuilder) HumanCheckpoint(name string) *AgentBuilder {
 	return ab
 }
 
+// CompletionRequirement requires a successful call to tool before the agent
+// may finish. reminder is injected on recovery attempts; recovery may be nil
+// for a single reminder retry with no delay.
+func (ab *AgentBuilder) CompletionRequirement(tool, reminder string, recovery *core.CompletionRecovery) *AgentBuilder {
+	ab.registerPending()
+	ab.agent.CompletionRequirement = &core.CompletionRequirement{
+		Tool:     tool,
+		Reminder: reminder,
+		Recovery: recovery,
+	}
+	return ab
+}
+
 // Done commits the agent and returns the parent scenario builder.
 func (ab *AgentBuilder) Done() *ScenarioBuilder {
 	if ab.parent == nil {

@@ -12,6 +12,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
+	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -42,6 +43,7 @@ type Engine struct {
 	logger                 log.Logger
 	enqueueMemoryReconcile func(context.Context, async.Job) error
 	toolTransforms         map[string]contextwindow.ToolOutputTransform
+	interjections          *interjection.Buffer
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -115,6 +117,7 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		logger:                 deps.Logger,
 		enqueueMemoryReconcile: deps.EnqueueMemoryReconcile,
 		toolTransforms:         deps.ToolOutputTransforms,
+		interjections:          interjection.NewBuffer(),
 	}, nil
 }
 
