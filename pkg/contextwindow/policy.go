@@ -62,8 +62,9 @@ type Policy struct {
 	// matching assistant messages may be stripped on memory write by integrators
 	// that opt in. The framework does not strip by default.
 	StripAssistantPatterns []string `json:"strip_assistant_patterns,omitempty" yaml:"strip_assistant_patterns,omitempty"`
-	// InjectCompactReminder asks the runtime to append a system reminder with
+	// InjectCompactReminder asks the runtime to reinject a system reminder with
 	// active plan/TODO state after compaction drops or summarizes history.
+	// Placement is before the last user message (see InsertBeforeLastUserMessage).
 	InjectCompactReminder bool `json:"inject_compact_reminder,omitempty" yaml:"inject_compact_reminder,omitempty"`
 }
 

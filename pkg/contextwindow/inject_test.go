@@ -34,3 +34,16 @@ func TestInsertAppend(t *testing.T) {
 		t.Fatalf("got %+v", out)
 	}
 }
+
+func TestInsertBeforeLastUserMessageAppendsWhenNoUser(t *testing.T) {
+	msgs := []contextwindow.Message{
+		{Role: contextwindow.RoleSystem, Content: "sys"},
+		{Role: contextwindow.RoleAssistant, Content: "a"},
+	}
+	out := contextwindow.InsertMessage(msgs, contextwindow.Message{
+		Role: contextwindow.RoleSystem, Content: "reminder",
+	}, contextwindow.InsertBeforeLastUserMessage)
+	if out[len(out)-1].Content != "reminder" {
+		t.Fatalf("expected append when no user, got %+v", out)
+	}
+}

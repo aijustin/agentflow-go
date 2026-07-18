@@ -41,6 +41,18 @@ func TestEventCategoryAndDisplayLabel(t *testing.T) {
 	if got := core.DisplayLabel(core.EventSkillApplied); got != "Skill applied" {
 		t.Fatalf("display label=%q", got)
 	}
+	if got := core.EventCategory(core.EventHITLDenyBreakerTripped); got != "run" {
+		t.Fatalf("HITLDenyBreakerTripped category=%q", got)
+	}
+	if got := core.EventCategory(core.EventTurnStopContinued); got != "run" {
+		t.Fatalf("TurnStopContinued category=%q", got)
+	}
+	if got := core.DisplayLabel(core.EventHITLDenyBreakerTripped); got != "HITL deny breaker tripped" {
+		t.Fatalf("HITLDenyBreakerTripped label=%q", got)
+	}
+	if got := core.DisplayLabel(core.EventTurnStopContinued); got != "Turn stop continued" {
+		t.Fatalf("TurnStopContinued label=%q", got)
+	}
 }
 
 func TestShouldEmitToProductUI(t *testing.T) {

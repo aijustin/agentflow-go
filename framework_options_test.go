@@ -11,10 +11,12 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
+	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
+	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
 func TestBuildPlan(t *testing.T) {
@@ -242,6 +244,49 @@ func TestFrameworkWithMemoryAndTierOptionsRejectInvalid(t *testing.T) {
 	}
 	if _, err := agentflow.New(scenario, agentflow.WithTierMemory("", tier.NewManager(tierinmem.NewStore(), tier.DefaultPolicy(), tier.NoopMigrationObserver{}))); err == nil {
 		t.Fatal("expected empty tier memory name error")
+	}
+}
+
+func TestCodexPortFrameworkOptions(t *testing.T) {
+	scenario := testAutonomousScenario()
+	store := toolorch.NewMemoryApprovalStore()
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(fakeGateway{content: "ok"}),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+		agentflow.WithApprovalStore(store),
+		agentflow.WithToolOrchestrator(toolorch.NewStoreOrchestrator(store)),
+		agentflow.WithInterjectDrainPolicy(interjection.DrainPolicy{
+			BeforeSample:          true,
+			AfterToolBatch:        true,
+			DeferUntilPostCompact: true,
+		}),
+		agentflow.WithTurnStopHook(func(context.Context, core.TurnStopInfo) (core.TurnStopDecision, error) {
+			return core.TurnStopDecision{}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-codex-opts", Prompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestCodexPortFrameworkOptionsRejectNil(t *testing.T) {
+	scenario := testAutonomousScenario()
+	if _, err := agentflow.New(scenario, agentflow.WithApprovalStore(nil)); err == nil {
+		t.Fatal("expected nil approval store error")
+	}
+	if _, err := agentflow.New(scenario, agentflow.WithToolOrchestrator(nil)); err == nil {
+		t.Fatal("expected nil orchestrator error")
+	}
+	if _, err := agentflow.New(scenario, agentflow.WithTurnStopHook(nil)); err == nil {
+		t.Fatal("expected nil turn stop hook error")
 	}
 }
 
