@@ -236,8 +236,12 @@ type RuntimePolicy struct {
 	// ValidateToolInput, when true, validates each tool call's input against
 	// the tool's declared InputSchema before execution. Defaults to false to
 	// preserve the previous behavior (schema is advisory to the model only).
-	ValidateToolInput bool              `json:"validate_tool_input,omitempty"`
-	Secrets           map[string]string `json:"secrets,omitempty"`
+	ValidateToolInput bool `json:"validate_tool_input,omitempty"`
+	// DoomLoopLimit, when > 0, denies a tool call that repeats the same
+	// canonical input this many times within one autonomous run (including
+	// the current attempt). Zero disables the check.
+	DoomLoopLimit int               `json:"doom_loop_limit,omitempty"`
+	Secrets       map[string]string `json:"secrets,omitempty"`
 }
 
 type ToolCall struct {
@@ -261,6 +265,25 @@ type ToolResult struct {
 
 type ToolExecutor interface {
 	Execute(ctx context.Context, call ToolCall) (ToolResult, error)
+}
+
+// ToolStreamEvent is one item in a tool progress stream.
+// Shape: zero or more Progress-only events, then exactly one Terminal
+// (Result set) or a failed Terminal (Error set). Matching grok-build's
+// Progress* → Terminal invariant.
+type ToolStreamEvent struct {
+	Progress json.RawMessage `json:"progress,omitempty"`
+	Result   *ToolResult     `json:"result,omitempty"`
+	Error    string          `json:"error,omitempty"`
+	Terminal bool            `json:"terminal,omitempty"`
+}
+
+// ToolStreamer is an optional ToolExecutor extension that emits progress
+// before the terminal result. Runtimes that do not care about progress
+// continue to call Execute only.
+type ToolStreamer interface {
+	ToolExecutor
+	ExecuteStream(ctx context.Context, call ToolCall) (<-chan ToolStreamEvent, error)
 }
 
 // ToolResolver resolves a declared tool manifest to an executor at call time.

@@ -59,6 +59,7 @@ var (
 		string(contextwindow.StrategyNone),
 		string(contextwindow.StrategySlidingWindow),
 		string(contextwindow.StrategySlidingWindowWithSummary),
+		string(contextwindow.StrategyFullReplace),
 	}
 )
 

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 // toolCallTracker tracks successful per-tool counts and per-(tool,input)
 // attempt counts for governance and rate caps within one autonomous tool loop.
 type toolCallTracker struct {
+	mu          sync.Mutex
 	ByName      map[string]int `json:"by_name"`
 	BySameInput map[string]int `json:"by_same_input"`
 }
@@ -24,43 +26,88 @@ func (t *toolCallTracker) ensure() *toolCallTracker {
 	if t == nil {
 		return newToolCallTracker()
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initMapsLocked()
+	return t
+}
+
+func (t *toolCallTracker) initMapsLocked() {
 	if t.ByName == nil {
 		t.ByName = make(map[string]int)
 	}
 	if t.BySameInput == nil {
 		t.BySameInput = make(map[string]int)
 	}
-	return t
 }
 
 func (t *toolCallTracker) nameCount(name string) int {
-	t = t.ensure()
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initMapsLocked()
 	return t.ByName[name]
 }
 
 func (t *toolCallTracker) sameInputCount(tool string, input json.RawMessage) int {
-	t = t.ensure()
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initMapsLocked()
 	return t.BySameInput[toolInputFingerprint(tool, input)]
 }
 
 func (t *toolCallTracker) recordAttempt(tool string, input json.RawMessage) {
-	t = t.ensure()
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initMapsLocked()
 	fp := toolInputFingerprint(tool, input)
 	t.BySameInput[fp]++
 }
 
 func (t *toolCallTracker) recordSuccess(name string) {
-	t = t.ensure()
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initMapsLocked()
 	t.ByName[name]++
 }
 
 func (t *toolCallTracker) totalSuccesses() int {
-	t = t.ensure()
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initMapsLocked()
 	total := 0
 	for _, count := range t.ByName {
 		total += count
 	}
 	return total
+}
+
+// MarshalJSON exports tracker counts without the mutex.
+func (t *toolCallTracker) MarshalJSON() ([]byte, error) {
+	if t == nil {
+		return []byte(`{"by_name":{},"by_same_input":{}}`), nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	type wire struct {
+		ByName      map[string]int `json:"by_name"`
+		BySameInput map[string]int `json:"by_same_input"`
+	}
+	return json.Marshal(wire{ByName: t.ByName, BySameInput: t.BySameInput})
 }
 
 func toolInputFingerprint(tool string, input json.RawMessage) string {

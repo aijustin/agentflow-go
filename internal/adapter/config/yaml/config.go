@@ -236,6 +236,7 @@ type Runtime struct {
 	MaxRetries          int               `yaml:"max_retries"`
 	MaxParallel         int               `yaml:"max_parallel"`
 	StepOutputThreshold int64             `yaml:"step_output_threshold"`
+	DoomLoopLimit       int               `yaml:"doom_loop_limit"`
 	Secrets             map[string]string `yaml:"secrets"`
 }
 
@@ -292,6 +293,7 @@ func (d Document) ToCore() (core.Scenario, error) {
 			MaxRetries:          d.Scenario.Runtime.MaxRetries,
 			MaxParallel:         d.Scenario.Runtime.MaxParallel,
 			StepOutputThreshold: d.Scenario.Runtime.StepOutputThreshold,
+			DoomLoopLimit:       d.Scenario.Runtime.DoomLoopLimit,
 			Secrets:             d.Scenario.Runtime.Secrets,
 		},
 	}

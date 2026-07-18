@@ -20,7 +20,10 @@ type Message struct {
 	Content    string            `json:"content,omitempty"`
 	Name       string            `json:"name,omitempty"`
 	ToolCallID string            `json:"tool_call_id,omitempty"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	// ToolCallIDs lists tool_call ids issued by an assistant turn. Used for
+	// tool-pair-safe trimming (assistant + matching tool results stay atomic).
+	ToolCallIDs []string          `json:"tool_call_ids,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 type Stats struct {
@@ -40,6 +43,9 @@ type Stats struct {
 	StaleDroppedToolTurns    int      `json:"stale_dropped_tool_turns,omitempty"`
 	DenialOccupiedSlots      int      `json:"denial_occupied_slots,omitempty"`
 	StaleExcludedTurns       int      `json:"stale_excluded_turns,omitempty"`
+	// NeedsReminder is true when compaction dropped or summarized history and
+	// hosts should re-inject active plan/TODO state.
+	NeedsReminder bool `json:"needs_reminder,omitempty"`
 }
 
 type Result struct {
@@ -119,6 +125,36 @@ func (m *Manager) Prepare(messages []Message) Result {
 		if summary.Content != "" {
 			out = append(out, summary)
 			stats.Summarized = true
+			stats.NeedsReminder = true
+			stats.SummaryTokens = EstimateTokens(summary.Content)
+		}
+		out = append(out, remaining...)
+		dropped.applyTo(&stats)
+		stats.AfterTokens = CountMessages(out)
+		return Result{Messages: out, Stats: stats}
+	case StrategyFullReplace:
+		budget := m.policy.MaxInputTokens - CountMessages(protected)
+		summaryBudget := m.policy.SummaryTokens
+		recentBudget := budget - summaryBudget
+		if recentBudget < budget/3 {
+			recentBudget = budget / 3
+		}
+		summary, remaining, dropped := m.summarizeAndKeep(candidates, budget, summaryBudget)
+		// Prefer a tighter recent tail than sliding_window_with_summary.
+		if CountMessages(remaining) > recentBudget {
+			var extra roleDropStats
+			remaining, extra = m.trimCandidates(remaining, recentBudget)
+			dropped.Total += extra.Total
+			dropped.User += extra.User
+			dropped.Assistant += extra.Assistant
+			dropped.Tool += extra.Tool
+			dropped.System += extra.System
+		}
+		out := cloneMessages(protected)
+		if summary.Content != "" {
+			out = append(out, summary)
+			stats.Summarized = true
+			stats.NeedsReminder = true
 			stats.SummaryTokens = EstimateTokens(summary.Content)
 		}
 		out = append(out, remaining...)
@@ -290,7 +326,19 @@ func compact(text string, limit int) string {
 
 func cloneMessages(messages []Message) []Message {
 	out := make([]Message, len(messages))
-	copy(out, messages)
+	for i, msg := range messages {
+		out[i] = msg
+		if len(msg.ToolCallIDs) > 0 {
+			out[i].ToolCallIDs = append([]string(nil), msg.ToolCallIDs...)
+		}
+		if len(msg.Metadata) > 0 {
+			meta := make(map[string]string, len(msg.Metadata))
+			for k, v := range msg.Metadata {
+				meta[k] = v
+			}
+			out[i].Metadata = meta
+		}
+	}
 	return out
 }
 

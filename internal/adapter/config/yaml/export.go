@@ -64,6 +64,7 @@ func DocumentFromCore(scenario core.Scenario) (Document, error) {
 			MaxRetries:          scenario.Runtime.MaxRetries,
 			MaxParallel:         scenario.Runtime.MaxParallel,
 			StepOutputThreshold: scenario.Runtime.StepOutputThreshold,
+			DoomLoopLimit:       scenario.Runtime.DoomLoopLimit,
 			Secrets:             scenario.Runtime.Secrets,
 		},
 	}}

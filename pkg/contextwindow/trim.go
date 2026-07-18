@@ -14,39 +14,61 @@ func (d roleDropStats) applyTo(stats *Stats) {
 	stats.DroppedAssistantMessages = d.Assistant
 	stats.DroppedToolMessages = d.Tool
 	stats.ContextIncomplete = d.User > 0
+	if d.Total > 0 {
+		stats.NeedsReminder = true
+	}
 }
 
 func trimToBudget(messages []Message, budget int, pinUser bool) ([]Message, roleDropStats) {
 	if budget <= 0 {
 		return nil, countAllDropped(messages)
 	}
+	groups := groupMessagesForToolPairSafety(messages)
 	if pinUser {
-		return keepRecentPinUser(messages, budget)
+		return keepRecentGroupsPinUser(groups, budget, messages)
 	}
-	kept, _ := keepRecent(messages, budget)
+	keptGroups, _ := keepRecentGroups(groups, budget)
+	kept := flattenGroups(keptGroups)
 	return kept, droppedStatsByRole(messages, kept)
 }
 
-func keepRecentPinUser(messages []Message, budget int) ([]Message, roleDropStats) {
+func keepRecentGroups(groups []messageGroup, budget int) ([]messageGroup, int) {
 	if budget <= 0 {
-		return nil, countAllDropped(messages)
+		return nil, len(groups)
 	}
-
-	userIdx := make([]int, 0)
-	nonUserIdx := make([]int, 0)
-	for i, msg := range messages {
-		if msg.Role == RoleUser {
-			userIdx = append(userIdx, i)
+	out := make([]messageGroup, 0, len(groups))
+	used := 0
+	for i := len(groups) - 1; i >= 0; i-- {
+		cost := groups[i].Tokens
+		if used+cost > budget {
 			continue
 		}
-		nonUserIdx = append(nonUserIdx, i)
+		used += cost
+		out = append([]messageGroup{groups[i]}, out...)
+	}
+	return out, len(groups) - len(out)
+}
+
+func keepRecentGroupsPinUser(groups []messageGroup, budget int, original []Message) ([]Message, roleDropStats) {
+	if budget <= 0 {
+		return nil, countAllDropped(original)
+	}
+
+	userGroups := make([]int, 0)
+	nonUserGroups := make([]int, 0)
+	for i, g := range groups {
+		if groupHasUser(g) {
+			userGroups = append(userGroups, i)
+			continue
+		}
+		nonUserGroups = append(nonUserGroups, i)
 	}
 
 	keptIdx := make(map[int]struct{})
 	userUsed := 0
-	for i := len(userIdx) - 1; i >= 0; i-- {
-		idx := userIdx[i]
-		cost := EstimateTokens(messages[idx].Content)
+	for i := len(userGroups) - 1; i >= 0; i-- {
+		idx := userGroups[i]
+		cost := groups[idx].Tokens
 		if userUsed+cost > budget {
 			continue
 		}
@@ -56,9 +78,9 @@ func keepRecentPinUser(messages []Message, budget int) ([]Message, roleDropStats
 
 	remaining := budget - userUsed
 	nonUserUsed := 0
-	for i := len(nonUserIdx) - 1; i >= 0; i-- {
-		idx := nonUserIdx[i]
-		cost := EstimateTokens(messages[idx].Content)
+	for i := len(nonUserGroups) - 1; i >= 0; i-- {
+		idx := nonUserGroups[i]
+		cost := groups[idx].Tokens
 		if nonUserUsed+cost > remaining {
 			continue
 		}
@@ -66,26 +88,27 @@ func keepRecentPinUser(messages []Message, budget int) ([]Message, roleDropStats
 		keptIdx[idx] = struct{}{}
 	}
 
-	out := make([]Message, 0, len(keptIdx))
-	stats := roleDropStats{}
-	for i, msg := range messages {
+	keptGroups := make([]messageGroup, 0, len(keptIdx))
+	for i := range groups {
 		if _, ok := keptIdx[i]; ok {
-			out = append(out, msg)
-			continue
-		}
-		stats.Total++
-		switch msg.Role {
-		case RoleUser:
-			stats.User++
-		case RoleAssistant:
-			stats.Assistant++
-		case RoleTool:
-			stats.Tool++
-		case RoleSystem:
-			stats.System++
+			keptGroups = append(keptGroups, groups[i])
 		}
 	}
-	return out, stats
+	kept := flattenGroups(keptGroups)
+	return kept, droppedStatsByRole(original, kept)
+}
+
+func groupHasUser(g messageGroup) bool {
+	for _, msg := range g.Messages {
+		if msg.Role == RoleUser {
+			return true
+		}
+	}
+	return false
+}
+
+func keepRecentPinUser(messages []Message, budget int) ([]Message, roleDropStats) {
+	return keepRecentGroupsPinUser(groupMessagesForToolPairSafety(messages), budget, messages)
 }
 
 func droppedStatsByRole(original, kept []Message) roleDropStats {
@@ -108,6 +131,9 @@ func droppedStatsByRole(original, kept []Message) roleDropStats {
 			stats.System++
 		}
 	}
+	if stats.Total > 0 {
+		// NeedsReminder is applied via applyTo on Stats.
+	}
 	return stats
 }
 
@@ -129,8 +155,16 @@ func countAllDropped(messages []Message) roleDropStats {
 }
 
 func messagesEquivalent(a, b Message) bool {
-	return a.Role == b.Role &&
-		a.Content == b.Content &&
-		a.Name == b.Name &&
-		a.ToolCallID == b.ToolCallID
+	if a.Role != b.Role || a.Content != b.Content || a.Name != b.Name || a.ToolCallID != b.ToolCallID {
+		return false
+	}
+	if len(a.ToolCallIDs) != len(b.ToolCallIDs) {
+		return false
+	}
+	for i := range a.ToolCallIDs {
+		if a.ToolCallIDs[i] != b.ToolCallIDs[i] {
+			return false
+		}
+	}
+	return true
 }

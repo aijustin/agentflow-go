@@ -101,30 +101,32 @@ type ChatResponse struct {
 type ChunkKind string
 
 const (
-	ChunkKindContent    ChunkKind = ""
-	ChunkKindToolCall   ChunkKind = "tool_call"
-	ChunkKindToolResult ChunkKind = "tool_result"
-	ChunkKindToolDenied ChunkKind = "tool_denied"
+	ChunkKindContent      ChunkKind = ""
+	ChunkKindToolCall     ChunkKind = "tool_call"
+	ChunkKindToolResult   ChunkKind = "tool_result"
+	ChunkKindToolDenied   ChunkKind = "tool_denied"
+	ChunkKindToolProgress ChunkKind = "tool_progress"
 )
 
 type ChatChunk struct {
-	Kind       ChunkKind       `json:"kind,omitempty"`
-	Content    string          `json:"content,omitempty"`
-	Done       bool            `json:"done,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Usage      TokenUsage      `json:"usage,omitempty"`
-	Paused     bool            `json:"paused,omitempty"`
-	PauseToken string          `json:"pause_token,omitempty"`
-	PauseKind  string          `json:"pause_kind,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	ToolName   string          `json:"tool_name,omitempty"`
-	ToolInput  json.RawMessage `json:"tool_input,omitempty"`
-	ToolOutput json.RawMessage `json:"tool_output,omitempty"`
-	ToolError  string          `json:"tool_error,omitempty"`
+	Kind         ChunkKind       `json:"kind,omitempty"`
+	Content      string          `json:"content,omitempty"`
+	Done         bool            `json:"done,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Usage        TokenUsage      `json:"usage,omitempty"`
+	Paused       bool            `json:"paused,omitempty"`
+	PauseToken   string          `json:"pause_token,omitempty"`
+	PauseKind    string          `json:"pause_kind,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	ToolName     string          `json:"tool_name,omitempty"`
+	ToolInput    json.RawMessage `json:"tool_input,omitempty"`
+	ToolOutput   json.RawMessage `json:"tool_output,omitempty"`
+	ToolError    string          `json:"tool_error,omitempty"`
+	ToolProgress json.RawMessage `json:"tool_progress,omitempty"`
 }
 
 // IsAnswerContent reports whether this chunk contributes to the final answer
-// text aggregated by Engine.Stream. Tool progress events must not.
+// text aggregated by Engine.Stream. Tool progress/result events must not.
 func (c ChatChunk) IsAnswerContent() bool {
 	return c.Kind == ChunkKindContent
 }

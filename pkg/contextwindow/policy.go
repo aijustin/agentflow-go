@@ -6,6 +6,9 @@ const (
 	StrategyNone                     Strategy = "none"
 	StrategySlidingWindow            Strategy = "sliding_window"
 	StrategySlidingWindowWithSummary Strategy = "sliding_window_with_summary"
+	// StrategyFullReplace summarizes everything outside a recent tail into one
+	// system summary, then keeps the tool-pair-safe recent tail.
+	StrategyFullReplace Strategy = "full_replace"
 )
 
 type CompressionPolicy struct {
@@ -59,6 +62,9 @@ type Policy struct {
 	// matching assistant messages may be stripped on memory write by integrators
 	// that opt in. The framework does not strip by default.
 	StripAssistantPatterns []string `json:"strip_assistant_patterns,omitempty" yaml:"strip_assistant_patterns,omitempty"`
+	// InjectCompactReminder asks the runtime to append a system reminder with
+	// active plan/TODO state after compaction drops or summarizes history.
+	InjectCompactReminder bool `json:"inject_compact_reminder,omitempty" yaml:"inject_compact_reminder,omitempty"`
 }
 
 // ExcludeFromStaleWindowOrDefault returns configured exclusions, or denied+empty.

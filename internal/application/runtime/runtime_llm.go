@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
-	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -544,11 +543,11 @@ func (e *Engine) replanOrFail(
 	return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", stepsConsumedBase+maxSteps)
 }
 
-// dispatchToolCalls executes an assistant turn's tool calls in order. Before
-// each call it checks whether human approval is required; if so it persists the
-// remaining calls (including the one awaiting approval) and returns a pause so
-// resume continues exactly where it left off. Tool result messages are appended
-// in order, keeping every tool_call_id paired with a tool response. When
+// dispatchToolCalls executes an assistant turn's tool calls. Before each
+// executable prefix it checks whether human approval is required; if so it
+// persists the remaining calls and returns a pause. Approved prefixes run
+// concurrently (bounded by max_parallel, default = batch size) with same-path
+// serialization. Tool result messages are appended in model order. When
 // persistTurnMemory is true and every call in the batch completes, the
 // assistant turn and tool results are written to memory together so a mid-turn
 // pause never leaves partial assistant/tool_call pairings in memory.
@@ -569,7 +568,7 @@ func (e *Engine) dispatchToolCalls(
 	emit streamChunkSink,
 ) ([]llm.Message, bool, error) {
 	toolMem := make([]memoryMessage, 0, len(calls))
-	for index := range calls {
+	for index := 0; index < len(calls); {
 		toolCall := calls[index]
 		emitStreamChunk(emit, llm.ChatChunk{
 			Kind:       llm.ChunkKindToolCall,
@@ -582,71 +581,28 @@ func (e *Engine) dispatchToolCalls(
 		} else if paused != nil {
 			return messages, userPromptPersisted, *paused
 		}
-		result, err := e.dispatchTool(ctx, runID, agent, toolCall, tracker, true)
+		end, err := e.growExecutableToolPrefix(ctx, runID, calls, index)
 		if err != nil {
 			return messages, userPromptPersisted, err
 		}
-		if result.Error != "" {
+		for j := index + 1; j < end; j++ {
 			emitStreamChunk(emit, llm.ChatChunk{
-				Kind:       llm.ChunkKindToolDenied,
-				ToolCallID: toolCall.ID,
-				ToolName:   toolCall.Name,
-				ToolError:  result.Error,
-				ToolOutput: result.Output,
-			})
-		} else {
-			emitStreamChunk(emit, llm.ChatChunk{
-				Kind:       llm.ChunkKindToolResult,
-				ToolCallID: toolCall.ID,
-				ToolName:   toolCall.Name,
-				ToolOutput: result.Output,
+				Kind:       llm.ChunkKindToolCall,
+				ToolCallID: calls[j].ID,
+				ToolName:   calls[j].Name,
+				ToolInput:  calls[j].Input,
 			})
 		}
-		// Persist the same compacted result the model sees so a later memory
-		// recall/replay never surfaces tool output the model never received.
-		// The full, uncompacted result stays in StepOutputs["tool.<id>"] for
-		// audit. With ToolResultMaxTokens==0 (default) this is a no-op.
-		contextResult, transformMeta := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
-		if maxBytes := profile.Context.ToolOutputMaxBytes; maxBytes > 0 && len(contextResult.Output) > maxBytes {
-			truncated, meta := contextwindow.ApplyToolOutputTransform(toolCall.Name, contextResult.Output, maxBytes/3, e.toolTransforms)
-			contextResult.Output = truncated
-			transformMeta = meta
-			transformMeta.Truncated = true
-		}
-		toolMsg := memoryMessageFromToolResult(toolCall, contextResult)
-		if transformMeta.Truncated || transformMeta.Strategy != contextwindow.TransformStrategyNone {
-			if toolMsg.Metadata == nil {
-				toolMsg.Metadata = map[string]string{}
-			}
-			toolMsg.Metadata["transformed"] = "true"
-			toolMsg.Metadata["truncate_strategy"] = transformMeta.Strategy
-		}
-		toolMem = append(toolMem, toolMsg)
-		raw, err := json.Marshal(contextResult)
+		items, err := e.executeToolBatch(ctx, runID, agent, profile, calls[index:end], tracker, emit)
 		if err != nil {
 			return messages, userPromptPersisted, err
 		}
-		class := classifyToolResultMessage(llm.Message{Role: llm.RoleTool, Content: string(raw), Name: toolCall.Name})
-		messages = append(messages, llm.Message{
-			Role:       llm.RoleTool,
-			Content:    string(raw),
-			Name:       toolCall.Name,
-			ToolCallID: toolCall.ID,
-			Metadata: map[string]string{
-				"tool_result_class":  string(class),
-				"truncate_strategy":  transformMeta.Strategy,
-			},
-		})
-		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
-			// markPlanStepDone only updates plan-progress bookkeeping; the
-			// tool call above already executed successfully and its result
-			// is already appended to messages/toolMem, so a bookkeeping
-			// failure here must not discard that real, already-completed
-			// work by failing the whole turn.
-			if err := e.markPlanStepDone(ctx, runID, toolCall.Name); err != nil {
-				e.logWarn(ctx, "runtime: failed to update plan progress after successful tool call", "run_id", runID, "tool", toolCall.Name, "error", err)
-			}
+		for _, item := range items {
+			toolMem = append(toolMem, item.toolMsg)
+			messages = append(messages, item.message)
 		}
+		e.markPlanStepsForBatch(ctx, runID, items)
+		index = end
 	}
 	if persistTurnMemory {
 		if !userPromptPersisted && strings.TrimSpace(prompt) != "" {

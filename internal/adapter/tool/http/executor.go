@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/security/ssrf"
 )
 
 const DefaultMaxResponseBytes int64 = 1 << 20
@@ -73,6 +74,9 @@ func NewExecutor(config Config) (*Executor, error) {
 		if !allowedHosts[req.URL.Host] {
 			return fmt.Errorf("http tool: redirect to host %q is not allowed", req.URL.Host)
 		}
+		if err := ssrf.CheckURLHost(req.URL.String()); err != nil {
+			return fmt.Errorf("http tool: redirect blocked: %w", err)
+		}
 		return nil
 	}
 	return &Executor{allowedHosts: allowedHosts, allowedMethods: allowedMethods, defaultHeaders: cloneMap(config.DefaultHeaders), maxResponseBytes: maxResponseBytes, client: &client}, nil
@@ -102,6 +106,12 @@ func (e *Executor) Execute(ctx context.Context, call core.ToolCall) (core.ToolRe
 	}
 	if !e.allowedHosts[parsed.Host] {
 		return core.ToolResult{}, fmt.Errorf("http tool: host %q is not allowed", parsed.Host)
+	}
+	if err := ssrf.CheckURLHost(parsed.String()); err != nil {
+		return core.ToolResult{}, fmt.Errorf("http tool: %w", err)
+	}
+	if err := ssrf.LookupAndCheck(parsed.Hostname()); err != nil {
+		return core.ToolResult{}, fmt.Errorf("http tool: %w", err)
 	}
 	var body io.Reader
 	if input.Body != "" {

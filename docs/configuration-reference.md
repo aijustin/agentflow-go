@@ -78,10 +78,11 @@ LLM 配置定义在 `scenario.llms.<name>` 下，可被 Agent 或工具引用。
 | 值 | 含义 |
 | --- | --- |
 | `none` | 不使用额外裁剪策略，直接构造请求上下文。 |
-| `sliding_window` | 保留受保护 prompt 和最近消息，使输入落在预算内。 |
+| `sliding_window` | 保留受保护 prompt 和最近消息，使输入落在预算内（tool-call 与对应 tool result 原子保留）。 |
 | `sliding_window_with_summary` | 对丢弃上下文生成摘要，同时保留最近消息。 |
+| `full_replace` | 将预算外历史压缩为一条摘要，并保留更紧的最近 tail（适合长编码会话）。 |
 
-Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`reserved_output_tokens`、`summary_tokens`、`tool_result_max_tokens`、`memory_recall_limit`、`system_prompt_protection`、`compression.trigger_ratio`。其中 `tool_result_max_tokens` 会限制工具结果回灌给下一轮 LLM 的上下文大小；完整工具输出仍会按运行状态/Blob 策略持久化。
+Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`reserved_output_tokens`、`summary_tokens`、`tool_result_max_tokens`、`memory_recall_limit`、`system_prompt_protection`、`compression.trigger_ratio`、`inject_compact_reminder`。其中 `tool_result_max_tokens` 会限制工具结果回灌给下一轮 LLM 的上下文大小；完整工具输出仍会按运行状态/Blob 策略持久化。`inject_compact_reminder` 为 true 且发生裁剪/摘要时，运行时会注入当前 plan 进度的 system reminder。
 
 ## 记忆
 
@@ -243,7 +244,7 @@ Agent 定义在 `scenario.agents.<name>` 下。
 | --- | --- | --- | --- |
 | `mode` | 枚举 | 否 | 运行时编排模式。为空时按 autonomous 行为处理。 |
 | `workflow` | 对象 | `fixed_workflow` 必填 | 工作流图。 |
-| `max_parallel` | 整数 | 否 | 工作流批次的最大并行度。 |
+| `max_parallel` | 整数 | 否 | 工作流批次与 autonomous 同 turn 工具批次的最大并行度；未设置时工具批次默认全并行（同文件路径串行）。 |
 | `human_in_loop.enabled` | 布尔值 | 否 | 启用全局 HITL checkpoint。 |
 | `human_in_loop.checkpoints` | 字符串数组 | 否 | 全局 checkpoint 名称。 |
 | `planning.enabled` | 布尔值 | 否 | 启用自主执行前的规划 pass。 |
@@ -447,7 +448,8 @@ go run ./examples/go/event-trigger/main.go
 | `timeout` | duration | 否 | 全局运行超时时间。 |
 | `max_steps` | 整数 | 否 | 全局 autonomous 步骤上限。 |
 | `max_retries` | 整数 | 否 | 全局重试上限。 |
-| `max_parallel` | 整数 | 否 | 全局并行度上限。 |
+| `max_parallel` | 整数 | 否 | 全局并行度上限（工作流与工具批次共用；工具批次未设置时默认全并行）。 |
+| `doom_loop_limit` | 整数 | 否 | 同一 tool+canonical input 在单次 run 内重复达到该次数时显式拒绝（含当前次）；`0` 关闭。 |
 | `step_output_threshold` | 整数 | 否 | 单步输出超过该字节阈值时外置到已配置的 BlobStore；未配置 BlobStore 或未超过阈值时继续内联保存。 |
 | `secrets` | 字符串映射 | 否 | Secret 引用。敏感值建议优先使用环境变量。 |
 

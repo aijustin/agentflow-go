@@ -34,6 +34,19 @@ func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent c
 
 func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker, options toolDispatchOptions) (core.ToolResult, error) {
 	tracker = tracker.ensure()
+	if limit := e.scenario.Runtime.DoomLoopLimit; limit > 0 {
+		// sameInputCount is prior attempts; +1 is the attempt about to run.
+		if tracker.sameInputCount(call.Name, call.Input)+1 >= limit {
+			result := core.ToolResult{Tool: call.Name, Error: formatDoomLoopError(call.Name, limit)}
+			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{
+				"agent":  agent.Name,
+				"tool":   call.Name,
+				"reason": result.Error,
+				"kind":   "doom_loop",
+			})
+			return result, nil
+		}
+	}
 	if subAgentName, ok := e.delegateTarget(agent, call.Name); ok {
 		if delegationDepthFromContext(ctx) >= maxDelegationDepth {
 			result := core.ToolResult{Tool: call.Name, Error: fmt.Sprintf("delegation depth limit (%d) exceeded", maxDelegationDepth)}
@@ -324,8 +337,9 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 		// single execution attempt so a slow tool cannot consume the whole
 		// run budget. withTimeout is a no-op when the timeout is zero.
 		execCtx, cancelTimeout := e.withTimeout(toolCtx, tool.Timeout)
+		toolCall := core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, ToolCallID: call.ID, Input: call.Input}
 		result, err := safecall.Invoke("runtime: tool execute", func() (core.ToolResult, error) {
-			return executor.Execute(execCtx, core.ToolCall{RunID: runID, Agent: agent.Name, Tool: call.Name, ToolCallID: call.ID, Input: call.Input})
+			return e.invokeToolExecutor(execCtx, call, executor, toolCall)
 		})
 		cancelTimeout()
 		if err == nil {
@@ -346,6 +360,61 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 		}
 	}
 	return core.ToolResult{}, lastErr
+}
+
+type toolProgressSinkKey struct{}
+
+func withToolProgressSink(ctx context.Context, emit streamChunkSink) context.Context {
+	if emit == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, toolProgressSinkKey{}, emit)
+}
+
+func toolProgressSinkFromContext(ctx context.Context) streamChunkSink {
+	emit, _ := ctx.Value(toolProgressSinkKey{}).(streamChunkSink)
+	return emit
+}
+
+func (e *Engine) invokeToolExecutor(ctx context.Context, call llm.ToolCall, executor core.ToolExecutor, toolCall core.ToolCall) (core.ToolResult, error) {
+	streamer, ok := executor.(core.ToolStreamer)
+	if !ok {
+		return executor.Execute(ctx, toolCall)
+	}
+	events, err := streamer.ExecuteStream(ctx, toolCall)
+	if err != nil {
+		return core.ToolResult{}, err
+	}
+	if events == nil {
+		return executor.Execute(ctx, toolCall)
+	}
+	emit := toolProgressSinkFromContext(ctx)
+	var terminal *core.ToolResult
+	var terminalErr string
+	for event := range events {
+		if !event.Terminal {
+			if len(event.Progress) > 0 {
+				emitStreamChunk(emit, llm.ChatChunk{
+					Kind:         llm.ChunkKindToolProgress,
+					ToolCallID:   call.ID,
+					ToolName:     call.Name,
+					ToolProgress: event.Progress,
+				})
+			}
+			continue
+		}
+		if event.Error != "" {
+			terminalErr = event.Error
+		}
+		terminal = event.Result
+	}
+	if terminalErr != "" {
+		return core.ToolResult{}, fmt.Errorf("%s", terminalErr)
+	}
+	if terminal == nil {
+		return core.ToolResult{}, fmt.Errorf("runtime: tool stream ended without a terminal result")
+	}
+	return *terminal, nil
 }
 
 func agentAllowsTool(agent core.Agent, tool string) bool {

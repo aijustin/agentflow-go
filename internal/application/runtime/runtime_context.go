@@ -3,11 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func (e *Engine) compactToolResultForContext(result core.ToolResult, maxTokens int) (core.ToolResult, contextwindow.TransformMeta) {
@@ -85,11 +88,12 @@ func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile c
 		metadata := cloneMetadata(msg.Metadata)
 		metadata["source_index"] = strconv.Itoa(i)
 		raw = append(raw, contextwindow.Message{
-			Role:       contextwindow.Role(msg.Role),
-			Content:    msg.Content,
-			Name:       msg.Name,
-			ToolCallID: msg.ToolCallID,
-			Metadata:   metadata,
+			Role:        contextwindow.Role(msg.Role),
+			Content:     msg.Content,
+			Name:        msg.Name,
+			ToolCallID:  msg.ToolCallID,
+			ToolCallIDs: toolCallIDs(msg),
+			Metadata:    metadata,
 		})
 	}
 	if len(req.Context) > 0 && string(req.Context) != "null" {
@@ -116,11 +120,12 @@ func (e *Engine) prepareMessages(ctx context.Context, runID string, agent core.A
 		metadata := cloneMetadata(msg.Metadata)
 		metadata["source_index"] = strconv.Itoa(i)
 		raw = append(raw, contextwindow.Message{
-			Role:       contextwindow.Role(msg.Role),
-			Content:    msg.Content,
-			Name:       msg.Name,
-			ToolCallID: msg.ToolCallID,
-			Metadata:   metadata,
+			Role:        contextwindow.Role(msg.Role),
+			Content:     msg.Content,
+			Name:        msg.Name,
+			ToolCallID:  msg.ToolCallID,
+			ToolCallIDs: toolCallIDs(msg),
+			Metadata:    metadata,
 		})
 	}
 	prepared, stats := e.prepareRawMessages(ctx, runID, agent, raw, profile)
@@ -153,7 +158,7 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent cor
 		policy.ReservedOutputTokens = profile.MaxOutputTokens
 	}
 	result := e.contextManager(ctx, runID, agent, policy).Prepare(raw)
-	messages := make([]llm.Message, 0, len(result.Messages))
+	messages := make([]llm.Message, 0, len(result.Messages)+1)
 	for _, msg := range result.Messages {
 		messages = append(messages, llm.Message{
 			Role:       llm.Role(msg.Role),
@@ -163,7 +168,61 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent cor
 			Metadata:   msg.Metadata,
 		})
 	}
+	if policy.InjectCompactReminder && result.Stats.NeedsReminder {
+		if reminder := e.compactReminder(ctx, runID); reminder != "" {
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleSystem,
+				Content: reminder,
+				Metadata: map[string]string{
+					"context_window": "compact_reminder",
+				},
+			})
+		}
+	}
 	return messages, result.Stats
+}
+
+func toolCallIDs(msg llm.Message) []string {
+	if len(msg.ToolCalls) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(msg.ToolCalls))
+	for _, call := range msg.ToolCalls {
+		if call.ID != "" {
+			ids = append(ids, call.ID)
+		}
+	}
+	return ids
+}
+
+func (e *Engine) compactReminder(ctx context.Context, runID string) string {
+	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	if err != nil {
+		return ""
+	}
+	ref, ok := snapshot.StepOutputs["plan"]
+	if !ok || len(ref.Inline) == 0 {
+		return ""
+	}
+	var state planExecutionState
+	if err := json.Unmarshal(ref.Inline, &state); err != nil || len(state.Steps) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<system-reminder>\nActive plan after context compaction:\n")
+	for _, step := range state.Steps {
+		status := step.Status
+		if status == "" {
+			status = "pending"
+		}
+		if step.Tool != "" {
+			fmt.Fprintf(&b, "- [%s] %s (tool=%s)\n", status, step.Goal, step.Tool)
+		} else {
+			fmt.Fprintf(&b, "- [%s] %s\n", status, step.Goal)
+		}
+	}
+	b.WriteString("</system-reminder>")
+	return strings.TrimSpace(b.String())
 }
 
 // emitPairingIncomplete surfaces an EventContextIncomplete when repairing the

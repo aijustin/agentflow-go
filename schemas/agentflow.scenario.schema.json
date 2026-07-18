@@ -179,7 +179,7 @@
       "properties": {
         "strategy": {
           "type": "string",
-          "enum": ["none", "sliding_window", "sliding_window_with_summary"]
+          "enum": ["none", "sliding_window", "sliding_window_with_summary", "full_replace"]
         },
         "context_window_tokens": {
           "type": "integer",
@@ -227,6 +227,10 @@
         "pin_user_messages": {
           "type": "boolean",
           "description": "When true, retain user messages during context-window truncation before dropping assistant/tool messages. Defaults to true when omitted."
+        },
+        "inject_compact_reminder": {
+          "type": "boolean",
+          "description": "When true, append a system reminder with active plan progress after compaction drops or summarizes history."
         }
       }
     },
@@ -768,6 +772,11 @@
         "step_output_threshold": {
           "type": "integer",
           "minimum": 0
+        },
+        "doom_loop_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Deny a tool call when the same tool+input repeats this many times in one run (0 disables)."
         },
         "secrets": {
           "$ref": "#/$defs/stringMap"
