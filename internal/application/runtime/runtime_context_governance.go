@@ -196,9 +196,10 @@ func enforceToolCallPairingWithStats(messages []llm.Message) ([]llm.Message, pai
 }
 
 type staleEvictionStats struct {
-	DroppedToolTurns   int
+	DroppedToolTurns    int
 	DenialOccupiedSlots int
-	ExcludedTurns      int
+	ExcludedTurns       int
+	CompactedDenials    int
 }
 
 func classifyToolResultMessage(msg llm.Message) contextwindow.ToolResultClass {
@@ -261,7 +262,38 @@ func evictStaleToolMessages(messages []llm.Message, keepTurns int) []llm.Message
 	return out
 }
 
-func evictStaleToolMessagesWithPolicy(messages []llm.Message, keepTurns int, exclude []contextwindow.ToolResultClass) ([]llm.Message, staleEvictionStats) {
+type staleToolBatch struct {
+	resultIndexes []int
+	counted       bool
+}
+
+func denialContextSignature(msg llm.Message, callNames map[string]string) string {
+	tool := strings.TrimSpace(msg.Name)
+	if tool == "" {
+		tool = strings.TrimSpace(callNames[msg.ToolCallID])
+	}
+	reason := strings.TrimSpace(msg.Content)
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(reason), &parsed); err == nil {
+		if value, ok := parsed["error"].(string); ok {
+			reason = strings.TrimSpace(value)
+		}
+	}
+	normalized := strings.ToLower(strings.Join(strings.Fields(reason), " "))
+	if index := strings.IndexByte(normalized, ':'); index >= 0 {
+		code := strings.TrimSpace(normalized[:index])
+		if strings.HasPrefix(code, "run_tool_") || code == "tool_denied" {
+			normalized = code
+		}
+	}
+	return tool + "|" + normalized
+}
+
+func evictStaleToolMessagesWithPolicy(
+	messages []llm.Message,
+	keepTurns int,
+	exclude []contextwindow.ToolResultClass,
+) ([]llm.Message, staleEvictionStats) {
 	var stats staleEvictionStats
 	if keepTurns <= 0 || len(messages) == 0 {
 		return messages, stats
@@ -269,16 +301,38 @@ func evictStaleToolMessagesWithPolicy(messages []llm.Message, keepTurns int, exc
 	if exclude == nil {
 		exclude = contextwindow.Policy{}.ExcludeFromStaleWindowOrDefault()
 	}
-	type toolSlot struct {
-		index   int
-		class   contextwindow.ToolResultClass
-		counted bool
-	}
-	slots := make([]toolSlot, 0)
+
+	batches := make([]staleToolBatch, 0)
+	callBatches := make(map[string]int)
+	callNames := make(map[string]string)
+	activeBatch := -1
 	for index, msg := range messages {
-		if msg.Role != llm.RoleTool {
+		if len(msg.ToolCalls) > 0 {
+			activeBatch = len(batches)
+			batches = append(batches, staleToolBatch{})
+			for _, call := range msg.ToolCalls {
+				if call.ID != "" {
+					callBatches[call.ID] = activeBatch
+					callNames[call.ID] = call.Name
+				}
+			}
 			continue
 		}
+		if msg.Role != llm.RoleTool {
+			activeBatch = -1
+			continue
+		}
+
+		batchIndex, ok := callBatches[msg.ToolCallID]
+		if !ok && msg.ToolCallID == "" && activeBatch >= 0 {
+			batchIndex = activeBatch
+			ok = true
+		}
+		if !ok {
+			batchIndex = len(batches)
+			batches = append(batches, staleToolBatch{})
+		}
+
 		class := classifyToolResultMessage(msg)
 		counted := !staleClassExcluded(class, exclude)
 		if !counted {
@@ -287,47 +341,75 @@ func evictStaleToolMessagesWithPolicy(messages []llm.Message, keepTurns int, exc
 				stats.DenialOccupiedSlots++
 			}
 		}
-		slots = append(slots, toolSlot{index: index, class: class, counted: counted})
+		batches[batchIndex].resultIndexes = append(batches[batchIndex].resultIndexes, index)
+		batches[batchIndex].counted = batches[batchIndex].counted || counted
 	}
-	counted := 0
-	for _, slot := range slots {
-		if slot.counted {
-			counted++
+
+	countedBatches := 0
+	for _, batch := range batches {
+		if batch.counted {
+			countedBatches++
 		}
 	}
-	if counted <= keepTurns {
-		return messages, stats
-	}
-	// Keep the newest keepTurns counted (success) tool results; older counted
-	// results are dropped. Excluded (denied/empty) messages that sit between
-	// kept successes remain so pairing stays intact for recent turns, but
-	// excluded messages older than the oldest kept success are also dropped.
-	keepCountedFrom := 0
-	seenCounted := 0
-	for i := len(slots) - 1; i >= 0; i-- {
-		if !slots[i].counted {
-			continue
-		}
-		seenCounted++
-		if seenCounted == keepTurns {
-			keepCountedFrom = slots[i].index
-			break
+
+	keepBatchFrom := 0
+	if countedBatches > keepTurns {
+		seenCounted := 0
+		for index := len(batches) - 1; index >= 0; index-- {
+			if !batches[index].counted {
+				continue
+			}
+			seenCounted++
+			if seenCounted == keepTurns {
+				keepBatchFrom = index
+				break
+			}
 		}
 	}
-	dropped := make(map[string]struct{})
-	droppedUnidentified := false
+
 	dropIndex := make(map[int]struct{})
-	for _, slot := range slots {
-		if slot.index >= keepCountedFrom {
+	for batchIndex, batch := range batches {
+		if countedBatches <= keepTurns || batchIndex >= keepBatchFrom {
 			continue
 		}
-		// Drop older counted successes, and also older excluded messages so
-		// they cannot linger ahead of the retained success window.
-		dropIndex[slot.index] = struct{}{}
-		if slot.counted {
+		for _, resultIndex := range batch.resultIndexes {
+			dropIndex[resultIndex] = struct{}{}
+		}
+		if batch.counted {
 			stats.DroppedToolTurns++
 		}
-		msg := messages[slot.index]
+	}
+
+	// Governance denials are actionable once per tool/reason. Keep the newest
+	// copy and remove older duplicates (including duplicates inside one
+	// parallel tool batch) so repeated loop-guard messages cannot crowd the
+	// successful tool evidence that the model needs for its final answer.
+	seenDenials := make(map[string]struct{})
+	for batchIndex := len(batches) - 1; batchIndex >= 0; batchIndex-- {
+		batch := batches[batchIndex]
+		for resultOffset := len(batch.resultIndexes) - 1; resultOffset >= 0; resultOffset-- {
+			resultIndex := batch.resultIndexes[resultOffset]
+			if _, dropped := dropIndex[resultIndex]; dropped {
+				continue
+			}
+			msg := messages[resultIndex]
+			if classifyToolResultMessage(msg) != contextwindow.ToolResultClassDenied {
+				continue
+			}
+			signature := denialContextSignature(msg, callNames)
+			if _, duplicate := seenDenials[signature]; duplicate {
+				dropIndex[resultIndex] = struct{}{}
+				stats.CompactedDenials++
+				continue
+			}
+			seenDenials[signature] = struct{}{}
+		}
+	}
+
+	dropped := make(map[string]struct{})
+	droppedUnidentified := false
+	for index := range dropIndex {
+		msg := messages[index]
 		if msg.ToolCallID != "" {
 			dropped[msg.ToolCallID] = struct{}{}
 		} else {

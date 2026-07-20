@@ -172,9 +172,9 @@ type ToolCaller interface {
 	ChatWithTools(ctx context.Context, profile string, req ToolCallRequest) (ToolCallResponse, error)
 }
 
-// ToolCallStreamer streams a tool-enabled chat turn. Implementors should emit
-// incremental answer content, then zero or more ChunkKindToolCall frames, then
-// a terminal Done chunk.
+// ToolCallStreamer streams a tool-enabled chat turn. Content can precede
+// ChunkKindToolCall frames, so consumers must classify the completed turn
+// before committing content as a final answer.
 type ToolCallStreamer interface {
 	StreamChatWithTools(ctx context.Context, profile string, req ToolCallRequest) (<-chan ChatChunk, error)
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -360,7 +359,47 @@ func TestGatewayStreamChatWithToolsAssemblesNativeToolCallDeltas(t *testing.T) {
 	}
 }
 
-func TestGatewayStreamChatWithToolsStreamsProseIncrementally(t *testing.T) {
+func TestGatewayStreamChatWithToolsDiscardsContentBeforeNativeToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"I'll check that first.\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{\\\"text\\\":\\\"hi\\\"}\"}}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	ch, err := gateway.StreamChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}},
+		Tools:       []llm.ToolSpec{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []llm.ChatChunk
+	done := false
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatal(chunk.Error)
+		}
+		if chunk.Content != "" {
+			t.Fatalf("tool-call preamble leaked as answer content: %q", chunk.Content)
+		}
+		if chunk.Kind == llm.ChunkKindToolCall {
+			calls = append(calls, chunk)
+		}
+		done = done || chunk.Done
+	}
+	if len(calls) != 1 || calls[0].ToolCallID != "call_1" || calls[0].ToolName != "echo" {
+		t.Fatalf("unexpected tool calls: %+v", calls)
+	}
+	if !done {
+		t.Fatal("expected done")
+	}
+}
+
+func TestGatewayStreamChatWithToolsEmitsFinalProseThenDone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n"))
@@ -378,8 +417,7 @@ func TestGatewayStreamChatWithToolsStreamsProseIncrementally(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var parts []string
-	done := false
+	var chunks []llm.ChatChunk
 	for chunk := range ch {
 		if chunk.Error != "" {
 			t.Fatal(chunk.Error)
@@ -387,19 +425,16 @@ func TestGatewayStreamChatWithToolsStreamsProseIncrementally(t *testing.T) {
 		if chunk.Kind == llm.ChunkKindToolCall {
 			t.Fatalf("unexpected tool call for prose: %+v", chunk)
 		}
-		if chunk.Content != "" {
-			parts = append(parts, chunk.Content)
-		}
-		done = done || chunk.Done
+		chunks = append(chunks, chunk)
 	}
-	if !done {
-		t.Fatal("expected done")
+	if len(chunks) != 2 {
+		t.Fatalf("expected final prose and Done chunks, got %+v", chunks)
 	}
-	if len(parts) < 2 {
-		t.Fatalf("expected incremental content frames, got %#v", parts)
+	if chunks[0].Content != "你好！" || chunks[0].Done {
+		t.Fatalf("unexpected final prose chunk: %+v", chunks[0])
 	}
-	if strings.Join(parts, "") != "你好！" {
-		t.Fatalf("joined=%q parts=%#v", strings.Join(parts, ""), parts)
+	if !chunks[1].Done || chunks[1].Content != "" {
+		t.Fatalf("unexpected Done chunk: %+v", chunks[1])
 	}
 }
 

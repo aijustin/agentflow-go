@@ -16,10 +16,10 @@ const (
 )
 
 type Message struct {
-	Role       Role              `json:"role"`
-	Content    string            `json:"content,omitempty"`
-	Name       string            `json:"name,omitempty"`
-	ToolCallID string            `json:"tool_call_id,omitempty"`
+	Role       Role   `json:"role"`
+	Content    string `json:"content,omitempty"`
+	Name       string `json:"name,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
 	// ToolCallIDs lists tool_call ids issued by an assistant turn. Used for
 	// tool-pair-safe trimming (assistant + matching tool results stay atomic).
 	ToolCallIDs []string          `json:"tool_call_ids,omitempty"`
@@ -43,6 +43,7 @@ type Stats struct {
 	StaleDroppedToolTurns    int      `json:"stale_dropped_tool_turns,omitempty"`
 	DenialOccupiedSlots      int      `json:"denial_occupied_slots,omitempty"`
 	StaleExcludedTurns       int      `json:"stale_excluded_turns,omitempty"`
+	CompactedToolDenials     int      `json:"compacted_tool_denials,omitempty"`
 	// NeedsReminder is true when compaction dropped or summarized history and
 	// hosts should re-inject active plan/TODO state.
 	NeedsReminder bool `json:"needs_reminder,omitempty"`

@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,6 +108,100 @@ func TestEvictStaleToolMessagesHandlesEmptyToolCallID(t *testing.T) {
 	}
 	if len(evicted[0].ToolCalls) != 1 || evicted[0].ToolCalls[0].ID != "new-1" {
 		t.Fatalf("expected empty-ID tool_call stripped, got %+v", evicted[0].ToolCalls)
+	}
+}
+
+func TestEvictStaleToolMessagesCountsParallelResultsAsOneTurn(t *testing.T) {
+	calls := make([]llm.ToolCall, 0, 17)
+	messages := []llm.Message{}
+	for day := 1; day <= 17; day++ {
+		callID := fmt.Sprintf("day-%02d", day)
+		calls = append(calls, llm.ToolCall{ID: callID, Name: "calendar_query"})
+	}
+	messages = append(messages, llm.Message{Role: llm.RoleAssistant, ToolCalls: calls})
+	for day := 1; day <= 17; day++ {
+		callID := fmt.Sprintf("day-%02d", day)
+		messages = append(messages, llm.Message{
+			Role:       llm.RoleTool,
+			Name:       "calendar_query",
+			ToolCallID: callID,
+			Content:    fmt.Sprintf(`{"tool":"calendar_query","output":{"day":%d}}`, day),
+		})
+	}
+
+	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil)
+	if len(evicted) != 18 {
+		t.Fatalf("expected assistant plus all 17 parallel results, got %d messages: %+v", len(evicted), evicted)
+	}
+	if stats.DroppedToolTurns != 0 {
+		t.Fatalf("one parallel batch must count as one retained turn, got %+v", stats)
+	}
+	for day := 1; day <= 17; day++ {
+		callID := fmt.Sprintf("day-%02d", day)
+		if !slices.ContainsFunc(evicted, func(msg llm.Message) bool {
+			return msg.Role == llm.RoleTool && msg.ToolCallID == callID
+		}) {
+			t.Fatalf("parallel result %q was evicted", callID)
+		}
+	}
+}
+
+func TestEvictStaleToolMessagesCompactsRepeatedDenials(t *testing.T) {
+	calls := make([]llm.ToolCall, 0, 5)
+	messages := []llm.Message{}
+	for attempt := 1; attempt <= 5; attempt++ {
+		callID := fmt.Sprintf("denied-%d", attempt)
+		calls = append(calls, llm.ToolCall{ID: callID, Name: "calendar_query"})
+	}
+	messages = append(messages, llm.Message{Role: llm.RoleAssistant, ToolCalls: calls})
+	for attempt := 1; attempt <= 5; attempt++ {
+		messages = append(messages, llm.Message{
+			Role:       llm.RoleTool,
+			Name:       "calendar_query",
+			ToolCallID: fmt.Sprintf("denied-%d", attempt),
+			Content: fmt.Sprintf(
+				`{"tool":"calendar_query","error":"run_tool_loop_guard: tool=calendar_query repeated=%d limit=3; stop retrying"}`,
+				attempt,
+			),
+			Metadata: map[string]string{"tool_result_class": "denied"},
+		})
+	}
+	messages = append(
+		messages,
+		llm.Message{
+			Role:      llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{ID: "success-1", Name: "calendar_query"}},
+		},
+		llm.Message{
+			Role:       llm.RoleTool,
+			Name:       "calendar_query",
+			ToolCallID: "success-1",
+			Content:    `{"tool":"calendar_query","output":{"day":17}}`,
+			Metadata:   map[string]string{"tool_result_class": "success"},
+		},
+	)
+
+	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil)
+	denials := 0
+	for _, msg := range evicted {
+		if msg.Role == llm.RoleTool && classifyToolResultMessage(msg) == contextwindow.ToolResultClassDenied {
+			denials++
+		}
+	}
+	if denials != 1 {
+		t.Fatalf("expected one actionable denial after compaction, got %d: %+v", denials, evicted)
+	}
+	if stats.CompactedDenials != 4 {
+		t.Fatalf("expected four repeated denials compacted, got %+v", stats)
+	}
+	if !slices.ContainsFunc(evicted, func(msg llm.Message) bool {
+		return msg.Role == llm.RoleTool && msg.ToolCallID == "success-1"
+	}) {
+		t.Fatalf("successful result must remain after denial compaction: %+v", evicted)
+	}
+	evicted = enforceToolCallPairing(evicted)
+	if len(evicted) != 4 {
+		t.Fatalf("expected balanced denial and success pairs, got %+v", evicted)
 	}
 }
 
@@ -228,7 +324,7 @@ func TestSortedLLMProfileName(t *testing.T) {
 		t.Fatal("expected empty for nil profiles")
 	}
 	got := sortedLLMProfileName(map[string]core.LLMProfileRef{
-		"zeta": {Provider: "mock"},
+		"zeta":  {Provider: "mock"},
 		"alpha": {Provider: "mock"},
 	})
 	if got != "alpha" {

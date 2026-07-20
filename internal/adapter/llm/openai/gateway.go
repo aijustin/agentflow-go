@@ -87,10 +87,10 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 	return g.streamChat(ctx, profileName, req, nil)
 }
 
-// StreamChatWithTools streams a completion with tools enabled. When the
-// provider emits tool calls as plain text content instead of structured
-// tool_calls deltas, the aggregated content is normalized via
-// normalizeContentToolCalls before the terminal chunk is sent.
+// StreamChatWithTools streams a completion with tools enabled. Content is
+// buffered until the provider classifies the turn: tool-call turns emit only
+// tool-call chunks, while final-answer turns emit their prose followed by Done.
+// Content-encoded tool calls are normalized before the terminal chunks.
 func (g *Gateway) StreamChatWithTools(ctx context.Context, profileName string, req llm.ToolCallRequest) (<-chan llm.ChatChunk, error) {
 	return g.streamChat(ctx, profileName, req.ChatRequest, req.Tools)
 }
@@ -135,13 +135,9 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		var aggregated strings.Builder
 		var usage llm.TokenUsage
 		normalizeTools := len(tools) > 0
-		// When tools are present we still aggregate for AF-002 text tool-call
-		// normalization, but forward prose deltas live so clients get a typing
-		// effect. Content that still looks like a tool-call JSON object is
-		// buffered until the turn ends. Native tool_calls deltas are assembled
-		// separately and win over content at finish.
-		contentReleased := false
-		sawNativeToolCalls := false
+		// A provider may emit prose before native tool_calls. Do not release any
+		// tool-enabled content until finish classifies the turn, otherwise that
+		// preamble can be mistaken for final answer content by Stream consumers.
 		nativeCalls := map[int]*streamToolCallAcc{}
 		finish := func(doneChunk llm.ChatChunk) {
 			if normalizeTools {
@@ -184,13 +180,9 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 					send(llm.ChatChunk{Done: true, Usage: usage})
 					return
 				}
-				// Prose path: either already streamed incrementally, or still buffered
-				// (short replies / never crossed the tool-JSON heuristic).
-				if !contentReleased {
-					if content := aggregated.String(); content != "" {
-						if !send(llm.ChatChunk{Content: content, Usage: usage}) {
-							return
-						}
+				if content := aggregated.String(); content != "" {
+					if !send(llm.ChatChunk{Content: content, Usage: usage}) {
+						return
 					}
 				}
 				send(llm.ChatChunk{Done: true, Usage: usage})
@@ -222,24 +214,10 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 			}
 			if normalizeTools {
 				if len(delta.ToolCalls) > 0 {
-					sawNativeToolCalls = true
 					mergeStreamToolCallDeltas(nativeCalls, delta.ToolCalls)
 				}
-				if delta.Content != "" && !sawNativeToolCalls {
+				if delta.Content != "" {
 					aggregated.WriteString(delta.Content)
-					if !contentReleased {
-						if shouldBufferForToolNormalize(aggregated.String()) {
-							// Keep buffering possible text tool-call JSON.
-						} else {
-							// Flush buffered prose, then stream subsequent deltas.
-							contentReleased = true
-							if !send(llm.ChatChunk{Content: aggregated.String()}) {
-								return
-							}
-						}
-					} else if !send(llm.ChatChunk{Content: delta.Content}) {
-						return
-					}
 				}
 				if delta.Done {
 					finish(llm.ChatChunk{Done: true, Usage: usage})
@@ -266,18 +244,6 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		}
 	}()
 	return ch, nil
-}
-
-// shouldBufferForToolNormalize reports whether aggregated stream text still
-// looks like a possible content-encoded tool call (AF-002) and must not be
-// forwarded to clients yet.
-func shouldBufferForToolNormalize(aggregated string) bool {
-	s := strings.TrimSpace(aggregated)
-	if s == "" {
-		return true
-	}
-	// Text tool-call payloads are JSON objects/arrays; prose answers are not.
-	return s[0] == '{' || s[0] == '['
 }
 
 func (g *Gateway) Embed(ctx context.Context, profileName string, input []string) ([][]float32, error) {

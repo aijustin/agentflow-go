@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	llmmock "github.com/aijustin/agentflow-go/internal/adapter/llm/mock"
@@ -68,5 +70,85 @@ func TestToolStreamerEmitsProgressChunks(t *testing.T) {
 	}
 	if !gotResult {
 		t.Fatal("expected tool_result chunk")
+	}
+}
+
+type preambleToolStreamGateway struct {
+	turn int
+}
+
+func (*preambleToolStreamGateway) Supports(_ string, capability llm.Capability) bool {
+	return capability == llm.CapChat || capability == llm.CapToolCall || capability == llm.CapStream
+}
+
+func (*preambleToolStreamGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatResponse, error) {
+	return llm.ChatResponse{}, errors.New("unexpected Chat call")
+}
+
+func (*preambleToolStreamGateway) ChatWithTools(
+	context.Context,
+	string,
+	llm.ToolCallRequest,
+) (llm.ToolCallResponse, error) {
+	return llm.ToolCallResponse{}, errors.New("unexpected ChatWithTools call")
+}
+
+func (g *preambleToolStreamGateway) StreamChatWithTools(
+	_ context.Context,
+	_ string,
+	_ llm.ToolCallRequest,
+) (<-chan llm.ChatChunk, error) {
+	ch := make(chan llm.ChatChunk, 4)
+	switch g.turn {
+	case 0:
+		ch <- llm.ChatChunk{Content: "我先查询。"}
+		ch <- llm.ChatChunk{
+			Kind:       llm.ChunkKindToolCall,
+			ToolCallID: "call-1",
+			ToolName:   "echo",
+			ToolInput:  json.RawMessage(`{"query":"hi"}`),
+		}
+		ch <- llm.ChatChunk{Done: true}
+	case 1:
+		ch <- llm.ChatChunk{Content: "最终"}
+		ch <- llm.ChatChunk{Content: "答案"}
+		ch <- llm.ChatChunk{Done: true}
+	default:
+		close(ch)
+		return nil, errors.New("unexpected stream turn")
+	}
+	g.turn++
+	close(ch)
+	return ch, nil
+}
+
+func TestEngineStreamDiscardsToolTurnPreamble(t *testing.T) {
+	gateway := &preambleToolStreamGateway{}
+	engine, err := NewEngine(toolScenario(core.ApprovalNever, core.SideEffectRead, 4), Dependencies{
+		Runs:  runstateinmem.NewRepository(),
+		LLM:   gateway,
+		Tools: mapToolRegistry{"echo": okEchoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := engine.Stream(
+		context.Background(),
+		RunRequest{RunID: "run-stream-preamble", Agent: "assistant", Prompt: "go"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var answer strings.Builder
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatalf("stream error: %s", chunk.Error)
+		}
+		if chunk.IsAnswerContent() {
+			answer.WriteString(chunk.Content)
+		}
+	}
+	if got := answer.String(); got != "最终答案" {
+		t.Fatalf("expected only terminal answer content, got %q", got)
 	}
 }

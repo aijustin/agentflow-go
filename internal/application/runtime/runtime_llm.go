@@ -495,6 +495,7 @@ func (e *Engine) answerWithToolsFrom(
 		stats.StaleDroppedToolTurns = staleStats.DroppedToolTurns
 		stats.DenialOccupiedSlots = staleStats.DenialOccupiedSlots
 		stats.StaleExcludedTurns = staleStats.ExcludedTurns
+		stats.CompactedToolDenials = staleStats.CompactedDenials
 		e.emitContextPrepared(ctx, runID, stats)
 		toolReq := llm.ToolCallRequest{
 			ChatRequest: llm.ChatRequest{
@@ -829,7 +830,6 @@ func (e *Engine) collectStreamChatWithTools(
 		default:
 			if chunk.IsAnswerContent() && chunk.Content != "" {
 				content.WriteString(chunk.Content)
-				emitStreamChunk(emit, llm.ChatChunk{Content: chunk.Content})
 			}
 		}
 	}
@@ -843,6 +843,11 @@ func (e *Engine) collectStreamChatWithTools(
 	if len(toolCalls) > 0 {
 		message.ToolCalls = append([]llm.ToolCall(nil), toolCalls...)
 		message.Content = ""
+	} else if message.Content != "" {
+		// A tool-capable provider may send prose before it declares native
+		// tool_calls. Commit answer content only after the turn closes and is
+		// known to be a terminal prose turn.
+		emitStreamChunk(emit, llm.ChatChunk{Content: message.Content})
 	}
 	return llm.ToolCallResponse{
 		ChatResponse: llm.ChatResponse{

@@ -256,6 +256,7 @@ func (e *Engine) emitContextPrepared(ctx context.Context, runID string, stats co
 		"stale_dropped_tool_turns":   stats.StaleDroppedToolTurns,
 		"denial_occupied_slots":      stats.DenialOccupiedSlots,
 		"stale_excluded_turns":       stats.StaleExcludedTurns,
+		"compacted_tool_denials":     stats.CompactedToolDenials,
 	}
 	if stats.FallbackApplied {
 		payload["warning"] = "context max_input_tokens fell back to 8192; set LLMProfileRef.ContextWindowTokens or Context.MaxInputTokens"
