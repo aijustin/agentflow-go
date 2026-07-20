@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
@@ -23,6 +25,19 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
+
+var workflowEmitWarnGate atomic.Bool
+
+func warnWorkflowEmitFailure(ctx context.Context, runID string, err error) {
+	if err == nil {
+		return
+	}
+	if !workflowEmitWarnGate.CompareAndSwap(false, true) {
+		return
+	}
+	defer workflowEmitWarnGate.Store(false)
+	slog.WarnContext(ctx, "orchestration: event emit failed", "run_id", runID, "error", err)
+}
 
 type ToolRegistry interface {
 	ResolveTool(ctx context.Context, tool core.Tool) (core.ToolExecutor, bool, error)
@@ -1128,7 +1143,11 @@ func (r *WorkflowRunner) emit(ctx context.Context, typ core.EventType, scenarioN
 	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
 		event.ParentSpanID = parentSpanID
 	}
-	_ = r.events.Emit(ctx, event)
+	if err := r.events.Emit(ctx, event); err != nil {
+		// WorkflowRunner has no logger; avoid silent total loss by recording
+		// once via the standard library when emit fails.
+		warnWorkflowEmitFailure(ctx, runID, err)
+	}
 }
 
 // authorizeTool mirrors the autonomous runtime's security.Policy check so a

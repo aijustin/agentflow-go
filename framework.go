@@ -9,7 +9,6 @@ package agentflow
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,19 +18,12 @@ import (
 	"sync"
 	"time"
 
-	blobfile "github.com/aijustin/agentflow-go/internal/adapter/blob/file"
 	blobinmem "github.com/aijustin/agentflow-go/internal/adapter/blob/inmem"
 	configyaml "github.com/aijustin/agentflow-go/internal/adapter/config/yaml"
 	humancli "github.com/aijustin/agentflow-go/internal/adapter/human/cli"
-	memoryfile "github.com/aijustin/agentflow-go/internal/adapter/memory/file"
-	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
-	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	tierllmsummary "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/llmsummary"
-	runstatefile "github.com/aijustin/agentflow-go/internal/adapter/runstate/file"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
-	runstatepostgres "github.com/aijustin/agentflow-go/internal/adapter/runstate/postgres"
 	runstaterecording "github.com/aijustin/agentflow-go/internal/adapter/runstate/recording"
-	runstateredis "github.com/aijustin/agentflow-go/internal/adapter/runstate/redis"
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	appscenario "github.com/aijustin/agentflow-go/internal/application/scenario"
@@ -87,6 +79,8 @@ type Plan struct {
 
 // Framework is an embeddable runtime wrapper for one scenario.
 type Framework struct {
+	mu sync.RWMutex
+
 	scenario          core.Scenario
 	engine            *appexec.Engine
 	runs              runstate.Repository
@@ -100,6 +94,16 @@ type Framework struct {
 	llm               llm.Gateway
 	tools             *toolRegistry
 	memory            map[string]memory.Repository
+	tierMemory        map[string]tier.Manager
+	cognitive         map[string]memory.CognitiveMemory
+	tierStores        map[string]tier.Store
+	tierStorePolicies map[string]tier.Policy
+	tierColdIndexers  map[string]tier.ColdSummaryIndexer
+	tierColdSummarizers map[string]tier.ContentSummarizer
+	enqueueMemoryReconcile func(context.Context, async.Job) error
+	toolOrchestrator  toolorch.ToolOrchestrator
+	approvalStore     toolorch.ApprovalStore
+	turnStopHook      core.TurnStopHook
 	policy            security.Policy
 	audit             audit.Sink
 	toolGov           governance.ToolPolicy
@@ -110,6 +114,7 @@ type Framework struct {
 	runLocker         coordination.Locker
 	runLeaseOwner     string
 	runLeaseTTL       time.Duration
+	workflowRunner    *orchestration.WorkflowRunner
 	closers           []func(context.Context) error
 }
 
@@ -298,12 +303,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 	if cfg.checkpointHistory != nil {
 		cfg.runs = &runstaterecording.Repository{Inner: cfg.runs, History: cfg.checkpointHistory, Logger: cfg.logger}
 	}
-	autoMemory := make(map[string]bool)
-	for name, ref := range scenario.Memories {
-		if ref.Type == "in_memory" {
-			autoMemory[name] = true
-		}
-	}
+	autoMemory := autoMemoryNames(scenario)
 	wiringRules := defaultWiringOptions()
 	if cfg.requireLLM {
 		wiringRules.RequireLLM = true
@@ -330,44 +330,8 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		}
 		cfg.gate = humancli.NewGate(cfg.runs, signer, cfg.tokenWriter, humancli.WithTokenTTL(cfg.tokenTTL))
 	}
-	for name, ref := range scenario.Memories {
-		if _, exists := cfg.memory[name]; exists {
-			continue
-		}
-		if ref.Tiers != nil && ref.Tiers.Enabled {
-			continue
-		}
-		if ref.Type == "in_memory" {
-			cfg.memory[name] = memoryinmem.NewRepository()
-		}
-	}
-	for name, ref := range scenario.Memories {
-		if ref.Tiers == nil || !ref.Tiers.Enabled {
-			continue
-		}
-		if _, exists := cfg.tierMemory[name]; exists {
-			continue
-		}
-		store := cfg.tierStores[name]
-		if store == nil {
-			store = tierinmem.NewStore()
-		}
-		settings, _ := tier.SettingsFromCore(ref.Tiers)
-		policy := settings.Policy()
-		if override, ok := cfg.tierStorePolicies[name]; ok {
-			policy = override
-		}
-		coldSummary := tierColdSummaryBackend(settings.ColdSummary, cfg.tierColdIndexers[name], tierColdSummarizer(&cfg, name, settings.ColdSummary))
-		manager := tier.NewManagerWithWeights(store, policy, tierMigrationObserver(scenario, cfg.recorder, cfg.events), settings.Weights(), coldSummary)
-		cognitive := cfg.cognitive[name]
-		if cognitive == nil {
-			if cfg.cognitive == nil {
-				cfg.cognitive = make(map[string]memory.CognitiveMemory)
-			}
-			cognitive = memoryinmem.NewCognitiveRepository()
-			cfg.cognitive[name] = cognitive
-		}
-		cfg.tierMemory[name] = tier.NewDualWriteManager(manager, cognitive)
+	if err := wireTierMemory(scenario, &cfg); err != nil {
+		return nil, err
 	}
 	var enqueueMemoryReconcile func(context.Context, async.Job) error
 	if cfg.jobQueue != nil {
@@ -377,60 +341,47 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 			return err
 		}
 	}
-	engine, err := appexec.NewEngine(scenario, appexec.Dependencies{
-		LLM:                   cfg.llm,
-		Runs:                  cfg.runs,
-		Blobs:                 cfg.blobs,
-		Events:                cfg.events,
-		HumanGate:             cfg.gate,
-		ToolApprovalEvaluator: cfg.approvalEvaluator,
-		Tools:                 tools,
-		Memory:                 cfg.memory,
-		TierMemory:             cfg.tierMemory,
-		Cognitive:              cfg.cognitive,
-		Policy:                 cfg.policy,
-		Audit:                  cfg.audit,
-		ToolPolicy:             cfg.toolGov,
-		OutputRedactor:         cfg.redactor,
-		Recorder:               cfg.recorder,
-		Tracer:                 cfg.tracer,
-		Logger:                 cfg.logger,
-		EnqueueMemoryReconcile: enqueueMemoryReconcile,
-		ToolOutputTransforms:   cfg.toolTransforms,
-		InterjectDrain:         cfg.interjectDrain,
-		ToolOrchestrator:       cfg.toolOrchestrator,
-		ApprovalStore:          cfg.approvalStore,
-		TurnStopHook:           cfg.turnStopHook,
-	})
+	fw := &Framework{
+		runs:                cfg.runs,
+		checkpointHistory:   cfg.checkpointHistory,
+		blobs:               cfg.blobs,
+		events:              cfg.events,
+		gate:                cfg.gate,
+		approvalEvaluator:   cfg.approvalEvaluator,
+		tokenSigner:         tokenSigner,
+		tokenTTL:            cfg.tokenTTL,
+		llm:                 cfg.llm,
+		tools:               tools,
+		memory:              cfg.memory,
+		tierMemory:          cfg.tierMemory,
+		cognitive:           cfg.cognitive,
+		tierStores:          cfg.tierStores,
+		tierStorePolicies:   cfg.tierStorePolicies,
+		tierColdIndexers:    cfg.tierColdIndexers,
+		tierColdSummarizers: cfg.tierColdSummarizers,
+		enqueueMemoryReconcile: enqueueMemoryReconcile,
+		toolOrchestrator:    cfg.toolOrchestrator,
+		approvalStore:       cfg.approvalStore,
+		turnStopHook:        cfg.turnStopHook,
+		policy:              cfg.policy,
+		audit:               cfg.audit,
+		toolGov:             cfg.toolGov,
+		redactor:            cfg.redactor,
+		recorder:            cfg.recorder,
+		tracer:              cfg.tracer,
+		logger:              cfg.logger,
+		runLocker:           cfg.runLocker,
+		runLeaseOwner:       cfg.runLeaseOwner,
+		runLeaseTTL:         cfg.runLeaseTTL,
+		closers:             append([]func(context.Context) error(nil), cfg.closers...),
+	}
+	engine, err := appexec.NewEngine(scenario, fw.engineDependencies(cfg.toolTransforms, cfg.interjectDrain))
 	if err != nil {
 		return nil, err
 	}
-	return &Framework{
-		scenario:          scenario,
-		engine:            engine,
-		runs:              cfg.runs,
-		checkpointHistory: cfg.checkpointHistory,
-		blobs:             cfg.blobs,
-		events:            cfg.events,
-		gate:              cfg.gate,
-		approvalEvaluator: cfg.approvalEvaluator,
-		tokenSigner:       tokenSigner,
-		tokenTTL:          cfg.tokenTTL,
-		llm:               cfg.llm,
-		tools:             tools,
-		memory:            cfg.memory,
-		policy:            cfg.policy,
-		audit:             cfg.audit,
-		toolGov:           cfg.toolGov,
-		redactor:          cfg.redactor,
-		recorder:          cfg.recorder,
-		tracer:            cfg.tracer,
-		logger:            cfg.logger,
-		runLocker:         cfg.runLocker,
-		runLeaseOwner:     cfg.runLeaseOwner,
-		runLeaseTTL:       cfg.runLeaseTTL,
-		closers:           append([]func(context.Context) error(nil), cfg.closers...),
-	}, nil
+	fw.scenario = scenario
+	fw.engine = engine
+	return fw, nil
 }
 
 // WithLLMGateway wires a provider-neutral LLM gateway.
@@ -875,253 +826,15 @@ func (f *Framework) Run(ctx context.Context, req RunRequest) (RunResult, error) 
 	}
 	defer release()
 	var result RunResult
-	switch f.scenario.Orchestration.Mode {
+	switch f.currentScenario().Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
 		result, err = f.runWorkflow(ctx, req)
 	case core.OrchestrationHybrid:
 		result, err = f.runHybrid(ctx, req)
 	default:
-		result, err = f.engine.Run(ctx, req)
+		result, err = f.currentEngine().Run(ctx, req)
 	}
 	return result, mapLeaseLostError(ctx, err)
-}
-
-func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult, error) {
-	return f.runWorkflowScenario(ctx, f.scenario, req)
-}
-
-func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scenario, req RunRequest) (RunResult, error) {
-	ctx, cancel := withScenarioTimeout(ctx, scenario.Runtime.Timeout)
-	defer cancel()
-	ctx = core.ContextWithTrustMode(ctx, string(req.TrustMode))
-	ctx = core.ContextWithEpisodeCorrelation(ctx, core.EpisodeCorrelation{
-		EpisodeID:   req.EpisodeID,
-		TriggerKind: req.TriggerKind,
-		SessionID:   req.SessionID,
-	})
-	if req.RunID == "" {
-		req.RunID = generateRunID()
-	}
-	snapshot := runstate.RunSnapshot{
-		RunID:        req.RunID,
-		ScenarioName: scenario.Name,
-		Status:       runstate.RunStatusRunning,
-		Variables: map[string]json.RawMessage{
-			"input": req.Context,
-		},
-		StepOutputs: make(map[string]runstate.StepOutputRef),
-	}
-	resolvedAgent, _ := f.engine.ResolveAgentName(req.Agent)
-	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
-	runstate.StampTenant(ctx, &snapshot)
-	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
-		if errors.Is(err, runstate.ErrStaleSnapshot) {
-			return RunResult{}, f.classifyExistingRun(ctx, req.RunID)
-		}
-		return RunResult{}, err
-	}
-	f.emitJSON(ctx, core.EventRunStarted, req.RunID, runStartedPayload(req))
-	runner := f.newWorkflowRunner()
-	if err := runner.Run(ctx, scenario, req.RunID); err != nil {
-		var paused orchestration.WorkflowPausedError
-		if errors.As(err, &paused) {
-			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
-		}
-		f.markWorkflowFailed(ctx, req.RunID, err)
-		return RunResult{}, err
-	}
-	loaded, err := f.completeWorkflowRun(ctx, req.RunID, nil)
-	if err != nil {
-		return RunResult{}, err
-	}
-	output := f.workflowRunOutput(ctx, loaded)
-	return RunResult{RunID: req.RunID, Status: runstate.RunStatusCompleted, Output: output}, nil
-}
-
-// runHybrid executes a hybrid scenario: the optional fixed workflow DAG runs
-// first, then an autonomous agent executes with the workflow step outputs
-// injected as context.  If no workflow is defined, execution falls back to
-// pure autonomous mode.
-func (f *Framework) runHybrid(ctx context.Context, req RunRequest) (RunResult, error) {
-	if f.scenario.Orchestration.Workflow == nil {
-		return f.engine.Run(ctx, req)
-	}
-	ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
-	defer cancel()
-	req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
-	if err != nil || paused.Status != "" {
-		return paused, err
-	}
-	return f.engine.RunHybrid(ctx, req)
-}
-
-func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scenario core.Scenario, req RunRequest) (RunRequest, RunResult, error) {
-	if scenario.Orchestration.Workflow == nil {
-		return req, RunResult{}, fmt.Errorf("agentflow: hybrid scenario has no workflow configured")
-	}
-	if req.RunID == "" {
-		req.RunID = generateRunID()
-	}
-	snapshot := runstate.RunSnapshot{
-		RunID:        req.RunID,
-		ScenarioName: scenario.Name,
-		Status:       runstate.RunStatusRunning,
-		Variables: map[string]json.RawMessage{
-			"input":           req.Context,
-			executionPhaseVar: json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow)),
-		},
-		StepOutputs: make(map[string]runstate.StepOutputRef),
-	}
-	resolvedAgent, _ := f.engine.ResolveAgentName(req.Agent)
-	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
-	runstate.StampTenant(ctx, &snapshot)
-	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
-		if errors.Is(err, runstate.ErrStaleSnapshot) {
-			return req, RunResult{}, f.classifyExistingRun(ctx, req.RunID)
-		}
-		return req, RunResult{}, err
-	}
-	f.emitJSON(ctx, core.EventRunStarted, req.RunID, runStartedPayload(req))
-	runner := f.newWorkflowRunner()
-	workflowCtx := core.ContextWithTrustMode(ctx, string(req.TrustMode))
-	if err := runner.Run(workflowCtx, scenario, req.RunID); err != nil {
-		var paused orchestration.WorkflowPausedError
-		if errors.As(err, &paused) {
-			return req, RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
-		}
-		f.markWorkflowFailed(ctx, req.RunID, err)
-		return req, RunResult{}, err
-	}
-	loaded, err := f.saveRunSnapshotWithRetry(ctx, req.RunID, func(snapshot *runstate.RunSnapshot) error {
-		if snapshot.Variables == nil {
-			snapshot.Variables = make(map[string]json.RawMessage)
-		}
-		snapshot.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseAutonomous))
-		return nil
-	})
-	if err != nil {
-		// The workflow phase finished but the phase transition could not be
-		// persisted; without it a resume would re-run the whole workflow.
-		f.markWorkflowFailed(ctx, req.RunID, err)
-		return req, RunResult{}, err
-	}
-	req, err = f.hydrateRunRequest(ctx, req, loaded)
-	if err != nil {
-		return req, RunResult{}, fmt.Errorf("agentflow: hydrate workflow context for autonomous phase: %w", err)
-	}
-	return req, RunResult{}, nil
-}
-
-// classifyExistingRun converts a create-conflict on an already-existing run
-// ID into the same classified sentinel errors the autonomous beginRun path
-// reports, instead of surfacing a bare optimistic-concurrency error that
-// hides which state the existing run is actually in.
-func (f *Framework) classifyExistingRun(ctx context.Context, runID string) error {
-	existing, err := runstate.LoadAuthorized(ctx, f.runs, runID)
-	if err != nil {
-		return fmt.Errorf("agentflow: run %q already exists: %w", runID, err)
-	}
-	switch existing.Status {
-	case runstate.RunStatusCompleted:
-		return ErrRunAlreadyCompleted
-	case runstate.RunStatusCancelled:
-		return ErrRunCancelled
-	case runstate.RunStatusPaused:
-		return ErrRunPaused
-	case runstate.RunStatusFailed:
-		return ErrRunFailed
-	default:
-		return ErrRunInProgress
-	}
-}
-
-// runNotRunningError reports that a completion save observed the run in a
-// non-Running status: a concurrent writer (cancellation, failure, pause)
-// got there first and its state must not be clobbered with Completed.
-type runNotRunningError struct {
-	runID  string
-	status runstate.RunStatus
-}
-
-func (e runNotRunningError) Error() string {
-	return fmt.Sprintf("agentflow: cannot complete run %q in status %s", e.runID, e.status)
-}
-
-// saveRunSnapshotWithRetry mirrors the engine's saveSnapshotWithRetry:
-// reload-mutate-save with retries on optimistic-concurrency conflicts, so a
-// single ErrStaleSnapshot from a concurrent writer does not abort a
-// bookkeeping save (e.g. the final Completed transition).
-func (f *Framework) saveRunSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) (runstate.RunSnapshot, error) {
-	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
-		if err != nil {
-			return runstate.RunSnapshot{}, err
-		}
-		if err := mutate(&snapshot); err != nil {
-			return runstate.RunSnapshot{}, err
-		}
-		if err := f.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
-			if errors.Is(err, runstate.ErrStaleSnapshot) {
-				continue
-			}
-			return runstate.RunSnapshot{}, err
-		}
-		return snapshot, nil
-	}
-	return runstate.RunSnapshot{}, fmt.Errorf("agentflow: failed to save snapshot %q after stale retries", runID)
-}
-
-// completeWorkflowRun persists the terminal Completed transition for a
-// workflow (or hybrid workflow-phase) run. On a status conflict the error is
-// returned without touching the run; on a persistent save failure the run is
-// marked Failed so it does not linger in Running forever.
-func (f *Framework) completeWorkflowRun(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot)) (runstate.RunSnapshot, error) {
-	loaded, err := f.saveRunSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
-		if snapshot.Status != runstate.RunStatusRunning {
-			return runNotRunningError{runID: runID, status: snapshot.Status}
-		}
-		if mutate != nil {
-			mutate(snapshot)
-		}
-		snapshot.Status = runstate.RunStatusCompleted
-		return nil
-	})
-	if err != nil {
-		var conflict runNotRunningError
-		if !errors.As(err, &conflict) {
-			f.markWorkflowFailed(ctx, runID, err)
-		}
-		return runstate.RunSnapshot{}, err
-	}
-	f.emit(ctx, core.EventRunCompleted, runID, nil)
-	return loaded, nil
-}
-
-func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause error) {
-	// Persist the failure with a context stripped of the caller's own
-	// cancellation/deadline: cause is frequently the caller's context being
-	// cancelled or timing out, and using that same context here would make
-	// this bookkeeping save fail too, leaving the run stuck as Running.
-	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	if snapshot, err := runstate.LoadAuthorized(persistCtx, f.runs, runID); err == nil {
-		snapshot.Status = runstate.RunStatusFailed
-		if snapshot.Variables == nil {
-			snapshot.Variables = make(map[string]json.RawMessage)
-		}
-		// Mirrors engine.markRunFailed's run_error_message variable so a
-		// failed run's reason survives on the snapshot itself, not just in
-		// the (possibly rotated-out) event stream.
-		snapshot.Variables["run_error_message"] = json.RawMessage(fmt.Sprintf("%q", cause.Error()))
-		if saveErr := f.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
-			if f.logger != nil {
-				f.logger.Warn(persistCtx, "agentflow: failed to persist workflow failure status", "run_id", runID, "save_error", saveErr)
-			}
-			f.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q,"save_error":%q}`, cause.Error(), saveErr.Error())))
-			return
-		}
-	}
-	f.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))
 }
 
 // RunStructured executes an agent using its configured output_schema and a
@@ -1133,9 +846,9 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 	}
 	defer release()
 	var result RunResult
-	switch f.scenario.Orchestration.Mode {
+	switch f.currentScenario().Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		if workflowContainsAgentNode(f.scenario) {
+		if workflowContainsAgentNode(f.currentScenario()) {
 			return RunResult{}, fmt.Errorf("agentflow: RunStructured on fixed_workflow with agent nodes would re-execute agents; use hybrid mode or call Run")
 		}
 		result, err = f.runWorkflow(ctx, req)
@@ -1149,28 +862,31 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 		if err != nil {
 			return RunResult{}, err
 		}
-		result, err = f.engine.RunStructured(ctx, req)
+		result, err = f.currentEngine().RunStructured(ctx, req)
 	case core.OrchestrationHybrid:
-		if f.scenario.Orchestration.Workflow == nil {
-			result, err = f.engine.RunStructured(ctx, req)
+		if f.currentScenario().Orchestration.Workflow == nil {
+			result, err = f.currentEngine().RunStructured(ctx, req)
 			break
 		}
 		var cancel context.CancelFunc
-		ctx, cancel = withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
+		ctx, cancel = withScenarioTimeout(ctx, f.currentScenario().Runtime.Timeout)
 		defer cancel()
 		var paused RunResult
-		req, paused, err = f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
+		req, paused, err = f.prepareHybridAutonomousRunScenario(ctx, f.currentScenario(), req)
 		if err != nil || paused.Status != "" {
 			return paused, mapLeaseLostError(ctx, err)
 		}
-		result, err = f.engine.RunStructured(ctx, req)
+		result, err = f.currentEngine().RunStructured(ctx, req)
 	default:
-		result, err = f.engine.RunStructured(ctx, req)
+		result, err = f.currentEngine().RunStructured(ctx, req)
 	}
 	return result, mapLeaseLostError(ctx, err)
 }
 
 // Stream executes an agent using a gateway that implements llm.Streamer.
+// Callers must drain the returned channel to completion or cancel ctx;
+// otherwise the engine goroutine (and any run lease renewer) may remain
+// blocked indefinitely.
 func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
 	ctx, release, err := f.acquireRunLease(ctx, &req)
 	if err != nil {
@@ -1185,9 +901,9 @@ func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.Chat
 }
 
 func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
-	switch f.scenario.Orchestration.Mode {
+	switch f.currentScenario().Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		if workflowContainsAgentNode(f.scenario) {
+		if workflowContainsAgentNode(f.currentScenario()) {
 			return nil, fmt.Errorf("agentflow: Stream on fixed_workflow with agent nodes would re-execute agents; use hybrid mode or call Run")
 		}
 		result, err := f.runWorkflow(ctx, req)
@@ -1201,23 +917,27 @@ func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan 
 		if err != nil {
 			return nil, err
 		}
-		return f.engine.Stream(ctx, req)
+		return f.currentEngine().Stream(ctx, req)
 	case core.OrchestrationHybrid:
-		if f.scenario.Orchestration.Workflow == nil {
-			return f.engine.Stream(ctx, req)
+		if f.currentScenario().Orchestration.Workflow == nil {
+			return f.currentEngine().Stream(ctx, req)
 		}
-		ctx, cancel := withScenarioTimeout(ctx, f.scenario.Runtime.Timeout)
-		defer cancel()
-		req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, f.scenario, req)
+		// Timeout applies only to the synchronous workflow prepare phase.
+		// engine.Stream owns its own timeout for the async consumer goroutine;
+		// wrapping the parent ctx here would cancel the stream as soon as this
+		// function returns (defer cancel).
+		prepareCtx, cancel := withScenarioTimeout(ctx, f.currentScenario().Runtime.Timeout)
+		req, paused, err := f.prepareHybridAutonomousRunScenario(prepareCtx, f.currentScenario(), req)
+		cancel()
 		if err != nil {
 			return nil, err
 		}
 		if paused.Status == runstate.RunStatusPaused {
 			return pausedChunkChannel(paused.Token, "workflow"), nil
 		}
-		return f.engine.Stream(ctx, req)
+		return f.currentEngine().Stream(ctx, req)
 	default:
-		return f.engine.Stream(ctx, req)
+		return f.currentEngine().Stream(ctx, req)
 	}
 }
 
@@ -1226,6 +946,9 @@ func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan 
 // itself (the engine's goroutine keeps running while the caller consumes the
 // channel), so releasing via defer inside Stream would drop the lease while
 // the run is still actively executing.
+//
+// Callers must drain the returned channel or cancel ctx; otherwise this
+// forwarder and the lease renewer stay alive.
 func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan llm.ChatChunk, release func()) <-chan llm.ChatChunk {
 	if f.runLocker == nil {
 		return source
@@ -1262,7 +985,11 @@ func pausedChunkChannel(token, kind string) <-chan llm.ChatChunk {
 	return ch
 }
 
-// Resume resumes a paused run through the configured human gate.
+// Resume approves or rejects a paused run via the human gate without continuing
+// execution. When WithRunLease is enabled, an approved run becomes Running with
+// no lease holder; MarkAbandonedRuns will skip it only for one lease TTL after
+// UpdatedAt, so a worker must ResumeAndContinue (or otherwise take the lease)
+// within that grace window.
 func (f *Framework) Resume(ctx context.Context, token string, decision core.Decision, amendment json.RawMessage) error {
 	if f.gate == nil {
 		return fmt.Errorf("agentflow: human gate is not configured")
@@ -1273,19 +1000,23 @@ func (f *Framework) Resume(ctx context.Context, token string, decision core.Deci
 // Interject queues a mid-turn user message for an in-flight run. The autonomous
 // tool loop drains it at the next safe point (before the next LLM call).
 func (f *Framework) Interject(runID, text string) error {
-	if f == nil || f.engine == nil {
+	if f == nil {
 		return fmt.Errorf("agentflow: framework is not initialized")
 	}
-	return f.engine.Interject(runID, text)
+	engine := f.currentEngine()
+	if engine == nil {
+		return fmt.Errorf("agentflow: framework is not initialized")
+	}
+	return engine.Interject(runID, text)
 }
 
 func (f *Framework) Catalog() catalog.Catalog {
-	return catalog.FromScenario(f.scenario)
+	return catalog.FromScenario(f.currentScenario())
 }
 
 // Scenario returns the scenario used by this framework.
 func (f *Framework) Scenario() core.Scenario {
-	return f.scenario
+	return f.currentScenario()
 }
 
 // RunStateRepository returns the repository backing run-state snapshots.
@@ -1304,10 +1035,10 @@ func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, 
 		payload = core.BuildLifecyclePayload(typ, payload, corr)
 	}
 	payload = governance.RedactEventPayload(ctx, f.redactor, runID, typ, payload)
-	_ = f.events.Emit(ctx, core.Event{
+	event := core.Event{
 		Type:         typ,
 		RunID:        runID,
-		ScenarioName: f.scenario.Name,
+		ScenarioName: f.currentScenario().Name,
 		EpisodeID:    corr.EpisodeID,
 		SessionID:    corr.SessionID,
 		TriggerKind:  corr.TriggerKind,
@@ -1315,7 +1046,17 @@ func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, 
 		Category:     core.EventCategory(typ),
 		DisplayLabel: core.DisplayLabel(typ),
 		Payload:      payload,
-	})
+	}
+	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
+		event.TraceID = traceID
+		event.SpanID = spanID
+	}
+	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
+		event.ParentSpanID = parentSpanID
+	}
+	if err := f.events.Emit(ctx, event); err != nil {
+		warnEmitFailure(f.logger, ctx, runID, err)
+	}
 }
 
 func (f *Framework) emitJSON(ctx context.Context, typ core.EventType, runID string, payload any) {
@@ -1345,85 +1086,6 @@ func withScenarioTimeout(ctx context.Context, timeout time.Duration) (context.Co
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, timeout)
-}
-
-// NewInMemoryRunStateRepository creates the default in-memory run-state
-// repository used by New.
-func NewInMemoryRunStateRepository() runstate.Repository {
-	return runstateinmem.NewRepository()
-}
-
-// NewInMemoryCheckpointHistory creates an append-only in-memory checkpoint history store.
-func NewInMemoryCheckpointHistory() runstate.CheckpointHistory {
-	return runstateinmem.NewCheckpointHistory()
-}
-
-// NewPostgresCheckpointHistory creates a PostgreSQL append-only checkpoint history store.
-func NewPostgresCheckpointHistory(db *sql.DB, tableName ...string) (runstate.CheckpointHistory, error) {
-	if len(tableName) > 1 {
-		return nil, fmt.Errorf("agentflow: at most one postgres checkpoint history table name is allowed")
-	}
-	if len(tableName) == 1 && tableName[0] != "" {
-		return runstatepostgres.NewCheckpointHistory(db, runstatepostgres.WithCheckpointHistoryTable(tableName[0]))
-	}
-	return runstatepostgres.NewCheckpointHistory(db)
-}
-
-// NewInMemoryBlobStore creates the default in-memory blob store used by New.
-func NewInMemoryBlobStore() runstate.BlobStore {
-	return blobinmem.NewStore()
-}
-
-// NewFileRunStateRepository creates a JSON-file-backed run-state repository.
-func NewFileRunStateRepository(dir string) (runstate.Repository, error) {
-	return runstatefile.NewRepository(dir)
-}
-
-// NewPostgresRunStateRepository creates a PostgreSQL-compatible run-state
-// repository using a caller-provided *sql.DB. Applications must import and
-// register their preferred PostgreSQL database/sql driver.
-func NewPostgresRunStateRepository(db *sql.DB, tableName ...string) (runstate.Repository, error) {
-	if len(tableName) > 1 {
-		return nil, fmt.Errorf("agentflow: at most one postgres run-state table name is allowed")
-	}
-	if len(tableName) == 1 && tableName[0] != "" {
-		return runstatepostgres.NewRepository(db, runstatepostgres.WithTableName(tableName[0]))
-	}
-	return runstatepostgres.NewRepository(db)
-}
-
-type RedisRunStateRepositoryConfig struct {
-	Addr         string
-	Password     string
-	DB           int
-	KeyPrefix    string
-	DialTimeout  time.Duration
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-}
-
-// NewRedisRunStateRepository creates a Redis-backed run-state repository with
-// compare-and-swap version checks for distributed workers.
-func NewRedisRunStateRepository(config RedisRunStateRepositoryConfig) (runstate.Repository, error) {
-	return runstateredis.NewRepository(runstateredis.Config{
-		Addr:         config.Addr,
-		Password:     config.Password,
-		DB:           config.DB,
-		KeyPrefix:    config.KeyPrefix,
-		DialTimeout:  config.DialTimeout,
-		ReadTimeout:  config.ReadTimeout,
-		WriteTimeout: config.WriteTimeout,
-	})
-}
-
-// NewFileBlobStore creates a file-backed blob store.
-func NewFileBlobStore(dir string) (runstate.BlobStore, error) {
-	return blobfile.NewStore(dir)
-}
-
-// NewFileMemoryRepository creates a JSON-file-backed memory repository.
-func NewFileMemoryRepository(dir string) (memory.Repository, error) {
-	return memoryfile.NewRepository(dir)
 }
 
 // generateRunID returns a cryptographically random run identifier with a

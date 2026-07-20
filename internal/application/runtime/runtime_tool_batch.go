@@ -120,7 +120,7 @@ func (e *Engine) executeToolBatch(
 			}
 			contextResult, transformMeta := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
 			if maxBytes := profile.Context.ToolOutputMaxBytes; maxBytes > 0 && len(contextResult.Output) > maxBytes {
-				truncated, meta := contextwindow.ApplyToolOutputTransform(call.Name, contextResult.Output, maxBytes/3, e.toolTransforms)
+				truncated, meta := contextwindow.ApplyToolOutputTransform(call.Name, contextResult.Output, maxBytes/3, e.toolTransformsCopy())
 				contextResult.Output = truncated
 				transformMeta = meta
 				transformMeta.Truncated = true

@@ -72,34 +72,47 @@ func mergeWorkflowContext(userContext, hydrated json.RawMessage) (json.RawMessag
 	return json.Marshal(userObj)
 }
 
-func (f *Framework) workflowRunOutput(ctx context.Context, snapshot runstate.RunSnapshot) string {
-	if ref, ok := snapshot.StepOutputs["final"]; ok && len(ref.Inline) > 0 {
-		return string(ref.Inline)
+func (f *Framework) workflowRunOutput(ctx context.Context, snapshot runstate.RunSnapshot) (string, error) {
+	if ref, ok := snapshot.StepOutputs["final"]; ok {
+		raw, err := runstate.LoadStepOutput(ctx, f.blobs, ref)
+		if err != nil {
+			if f.logger != nil {
+				f.logger.Warn(ctx, "agentflow: load final step output failed", "run_id", snapshot.RunID, "error", err)
+			}
+			return "", fmt.Errorf("agentflow: load final step output: %w", err)
+		}
+		return string(raw), nil
 	}
 	if len(snapshot.StepOutputs) == 0 {
-		return ""
+		return "", nil
 	}
 	raw, err := runstate.HydrateStepContext(ctx, f.blobs, snapshot.StepOutputs)
 	if err != nil {
-		return ""
+		if f.logger != nil {
+			f.logger.Warn(ctx, "agentflow: hydrate step outputs failed", "run_id", snapshot.RunID, "error", err)
+		}
+		return "", fmt.Errorf("agentflow: hydrate step outputs: %w", err)
 	}
-	return string(raw)
+	return string(raw), nil
 }
 
-func completedHybridResult(ctx context.Context, f *Framework, snapshot runstate.RunSnapshot) (RunResult, bool) {
+func completedHybridResult(ctx context.Context, f *Framework, snapshot runstate.RunSnapshot) (RunResult, bool, error) {
 	if snapshot.Status != runstate.RunStatusCompleted {
-		return RunResult{}, false
+		return RunResult{}, false, nil
 	}
-	output := f.workflowRunOutput(ctx, snapshot)
-	if ref, ok := snapshot.StepOutputs["final"]; ok && len(ref.Inline) > 0 {
-		return RunResult{
-			RunID:            snapshot.RunID,
-			Status:           runstate.RunStatusCompleted,
-			Output:           output,
-			StructuredOutput: ref.Inline,
-		}, true
+	output, err := f.workflowRunOutput(ctx, snapshot)
+	if err != nil {
+		return RunResult{}, false, err
 	}
-	return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusCompleted, Output: output}, true
+	result := RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusCompleted, Output: output}
+	if ref, ok := snapshot.StepOutputs["final"]; ok {
+		raw, loadErr := runstate.LoadStepOutput(ctx, f.blobs, ref)
+		if loadErr != nil {
+			return RunResult{}, false, fmt.Errorf("agentflow: load final structured output: %w", loadErr)
+		}
+		result.StructuredOutput = raw
+	}
+	return result, true, nil
 }
 
 func isEmptyOrNullJSON(raw json.RawMessage) bool {

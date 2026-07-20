@@ -14,23 +14,29 @@ import (
 )
 
 const (
-	resumePromptVar                 = "resume_prompt"
-	resumeAgentVar                  = "resume_agent"
-	resumeTrustModeVar              = "resume_trust_mode"
-	resumeEpisodeIDVar              = "resume_episode_id"
-	resumeTriggerKindVar            = "resume_trigger_kind"
-	resumeSessionIDVar              = "resume_session_id"
-	executionPhaseVar               = "execution_phase"
-	executionPhaseWorkflow          = "workflow"
-	executionPhaseAutonomous        = "autonomous"
-	checkpointKindVar               = "checkpoint_kind"
-	checkpointKindBeforeFinalAnswer = "before_final_answer"
-	checkpointKindToolApproval      = "tool_approval"
+	resumePromptVar                 = runstate.VarResumePrompt
+	resumeAgentVar                  = runstate.VarResumeAgent
+	resumeTrustModeVar              = runstate.VarResumeTrustMode
+	resumeEpisodeIDVar              = runstate.VarResumeEpisodeID
+	resumeTriggerKindVar            = runstate.VarResumeTriggerKind
+	resumeSessionIDVar              = runstate.VarResumeSessionID
+	executionPhaseVar               = runstate.VarExecutionPhase
+	executionPhaseWorkflow          = runstate.ExecutionPhaseWorkflow
+	executionPhaseAutonomous        = runstate.ExecutionPhaseAutonomous
+	checkpointKindVar               = runstate.VarCheckpointKind
+	checkpointKindBeforeFinalAnswer = runstate.CheckpointKindBeforeFinalAnswer
+	checkpointKindToolApproval      = runstate.CheckpointKindToolApproval
 	checkpointWorkflowNodeVar       = "checkpoint_workflow_node"
 )
 
 // ResumeAndContinue resumes a paused run and continues execution until the next
 // pause point or completion.
+//
+// When run leases are enabled, the lease is acquired before gate.Resume so the
+// run is never left Running without a holder. Callers that only approve via
+// Resume / ResumeRunByID(..., false) must continue (or take a lease) within
+// the MarkAbandonedRuns grace window (equal to the lease TTL) or the run may
+// be reaped as abandoned.
 func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decision core.Decision, amendment json.RawMessage) (RunResult, error) {
 	if f.gate == nil {
 		return RunResult{}, fmt.Errorf("agentflow: human gate is not configured")
@@ -39,11 +45,11 @@ func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decisio
 	if err != nil {
 		return RunResult{}, err
 	}
-	if err := f.gate.Resume(ctx, token, decision, amendment); err != nil {
-		return RunResult{}, err
-	}
 	if decision == core.DecisionReject {
-		f.engine.RememberHITLReject(ctx, runID)
+		if err := f.gate.Resume(ctx, token, decision, amendment); err != nil {
+			return RunResult{}, err
+		}
+		f.currentEngine().RememberHITLReject(ctx, runID)
 		return RunResult{RunID: runID, Status: runstate.RunStatusCancelled}, nil
 	}
 	if f.runLocker != nil {
@@ -54,8 +60,12 @@ func (f *Framework) ResumeAndContinue(ctx context.Context, token string, decisio
 		}
 		defer release()
 	}
+	if err := f.gate.Resume(ctx, token, decision, amendment); err != nil {
+		return RunResult{}, err
+	}
 	if snapshot, loadErr := runstate.LoadAuthorized(ctx, f.runs, runID); loadErr == nil {
-		f.engine.EmitRunResumedForSnapshot(ctx, snapshot)
+		// load failure skips RunResumed; continue still runs from persisted state
+		f.currentEngine().EmitRunResumedForSnapshot(ctx, snapshot)
 		ctx = appexec.ContextWithRunResumedEmitted(ctx)
 	}
 	result, err := f.continueRun(ctx, runID)
@@ -94,7 +104,7 @@ func (f *Framework) ResumeRunByID(ctx context.Context, runID string, decision co
 	// later Run() on the same ID does not re-enter or overwrite the consumed
 	// checkpoint. A rejected run is Cancelled and needs no cleanup.
 	if decision == core.DecisionApprove || decision == core.DecisionAmend {
-		if err := f.engine.ClearCheckpointState(ctx, runID); err != nil {
+		if err := f.currentEngine().ClearCheckpointState(ctx, runID); err != nil {
 			return RunResult{}, err
 		}
 	}
@@ -132,24 +142,24 @@ func (f *Framework) continueRun(ctx context.Context, runID string) (RunResult, e
 	if err != nil {
 		return RunResult{}, err
 	}
-	switch f.scenario.Orchestration.Mode {
+	switch f.currentScenario().Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
 		return f.continueFixedWorkflowRun(ctx, runID, snapshot)
 	case core.OrchestrationHybrid:
 		return f.continueHybridRun(ctx, runID, snapshot)
 	default:
-		return f.engine.ContinueAfterCheckpoint(ctx, runID)
+		return f.currentEngine().ContinueAfterCheckpoint(ctx, runID)
 	}
 }
 
 func (f *Framework) continueFixedWorkflowRun(ctx context.Context, runID string, snapshot runstate.RunSnapshot) (RunResult, error) {
 	switch variableJSONString(snapshot.Variables, checkpointKindVar) {
 	case checkpointKindBeforeFinalAnswer:
-		return f.engine.ContinueAfterCheckpoint(ctx, runID)
+		return f.currentEngine().ContinueAfterCheckpoint(ctx, runID)
 	case checkpointKindToolApproval:
 		nodeID := variableJSONString(snapshot.Variables, checkpointWorkflowNodeVar)
 		if nodeID == "" {
-			return f.engine.ContinueAfterCheckpoint(ctx, runID)
+			return f.currentEngine().ContinueAfterCheckpoint(ctx, runID)
 		}
 		return f.continueWorkflowAgentCheckpoint(ctx, runID, nodeID)
 	default:
@@ -158,7 +168,7 @@ func (f *Framework) continueFixedWorkflowRun(ctx context.Context, runID string, 
 }
 
 func (f *Framework) continueWorkflowAgentCheckpoint(ctx context.Context, runID, nodeID string) (RunResult, error) {
-	result, err := f.engine.ContinueAfterCheckpointPhase(ctx, runID)
+	result, err := f.currentEngine().ContinueAfterCheckpointPhase(ctx, runID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -166,7 +176,7 @@ func (f *Framework) continueWorkflowAgentCheckpoint(ctx context.Context, runID, 
 		return result, nil
 	}
 	runner := f.newWorkflowRunner()
-	if err := runner.SaveStepOutput(ctx, f.scenario, runID, nodeID, core.AgentOutput{RunID: runID, Text: result.Output}); err != nil {
+	if err := runner.SaveStepOutput(ctx, f.currentScenario(), runID, nodeID, core.AgentOutput{RunID: runID, Text: result.Output}); err != nil {
 		f.markWorkflowFailed(ctx, runID, err)
 		return RunResult{}, err
 	}
@@ -196,12 +206,12 @@ func (f *Framework) applyWorkflowAmendment(ctx context.Context, runID string) er
 	if snapshot.Variables == nil {
 		snapshot.Variables = make(map[string]json.RawMessage)
 	}
-	snapshot.Variables["workflow_amendment"] = json.RawMessage(fmt.Sprintf("%q", amendment))
+	snapshot.Variables["workflow_amendment"] = quoteJSONString(amendment)
 	prior := variableJSONString(snapshot.Variables, resumePromptVar)
 	if prior == "" {
-		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", amendment))
+		snapshot.Variables[resumePromptVar] = quoteJSONString(amendment)
 	} else {
-		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", prior+"\n\nHuman feedback: "+amendment))
+		snapshot.Variables[resumePromptVar] = quoteJSONString(prior+"\n\nHuman feedback: "+amendment)
 	}
 	delete(snapshot.Variables, "human_amendment")
 	return f.runs.Save(ctx, &snapshot, snapshot.Version)
@@ -214,7 +224,7 @@ func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCom
 		}
 	}
 	runner := f.newWorkflowRunner()
-	if err := runner.Resume(ctx, f.scenario, runID); err != nil {
+	if err := runner.Resume(ctx, f.currentScenario(), runID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
 			return RunResult{RunID: runID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
@@ -233,7 +243,10 @@ func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCom
 	if err != nil {
 		return RunResult{}, err
 	}
-	output := f.workflowRunOutput(ctx, loaded)
+	output, err := f.workflowRunOutput(ctx, loaded)
+	if err != nil {
+		return RunResult{}, err
+	}
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
 
@@ -243,7 +256,7 @@ func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCom
 // already finished re-enters the autonomous phase directly (workflow step
 // outputs are re-hydrated into the request context).
 func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult, error) {
-	switch f.scenario.Orchestration.Mode {
+	switch f.currentScenario().Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow, core.OrchestrationHybrid:
 	default:
 		return RunResult{}, fmt.Errorf("agentflow: RetryFailedRun requires fixed_workflow or hybrid orchestration mode")
@@ -292,7 +305,7 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 		retryPayload[key] = value
 	}
 	f.emitJSON(ctx, core.EventRunResumed, runID, retryPayload)
-	if f.scenario.Orchestration.Mode == core.OrchestrationFixedWorkflow {
+	if f.currentScenario().Orchestration.Mode == core.OrchestrationFixedWorkflow {
 		return f.finishWorkflowRun(ctx, runID, true)
 	}
 	snapshot, err = runstate.LoadAuthorized(ctx, f.runs, runID)
@@ -303,32 +316,35 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 }
 
 func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapshot runstate.RunSnapshot) (RunResult, error) {
-	if result, ok := completedHybridResult(ctx, f, snapshot); ok {
+	if result, ok, err := completedHybridResult(ctx, f, snapshot); err != nil {
+		return RunResult{}, err
+	} else if ok {
 		return result, nil
 	}
 	if snapshot.Status == runstate.RunStatusPaused {
 		return RunResult{RunID: runID, Status: runstate.RunStatusPaused}, nil
 	}
-	if variableJSONString(snapshot.Variables, executionPhaseVar) == executionPhaseAutonomous {
-		switch variableJSONString(snapshot.Variables, checkpointKindVar) {
+	vars := decodeResumeVars(snapshot.Variables)
+	if vars.ExecutionPhase == executionPhaseAutonomous {
+		switch vars.CheckpointKind {
 		case checkpointKindBeforeFinalAnswer, checkpointKindToolApproval:
-			return f.engine.ContinueAfterCheckpoint(ctx, runID)
+			return f.currentEngine().ContinueAfterCheckpoint(ctx, runID)
 		case "":
 			// No pending checkpoint: this is a recovery continuation (e.g.
 			// RetryFailedRun) of a run whose workflow phase already
 			// finished. Re-hydrate the workflow step outputs and re-enter
 			// the autonomous phase.
-			req, err := f.hydrateRunRequest(ctx, hybridRunRequest(snapshot), snapshot)
+			req, err := f.hydrateRunRequest(ctx, hybridRunRequestFromVars(snapshot.RunID, snapshot.Variables, vars), snapshot)
 			if err != nil {
 				return RunResult{}, err
 			}
-			return f.engine.RunHybrid(ctx, req)
+			return f.currentEngine().RunHybrid(ctx, req)
 		default:
-			return RunResult{}, fmt.Errorf("agentflow: unknown autonomous checkpoint kind %q for run %q", variableJSONString(snapshot.Variables, checkpointKindVar), runID)
+			return RunResult{}, fmt.Errorf("agentflow: unknown autonomous checkpoint kind %q for run %q", vars.CheckpointKind, runID)
 		}
 	}
 	var err error
-	if variableJSONString(snapshot.Variables, executionPhaseVar) != executionPhaseAutonomous {
+	if vars.ExecutionPhase != executionPhaseAutonomous {
 		if snapshot.PendingGate != nil {
 			return RunResult{RunID: runID, Status: runstate.RunStatusPaused}, nil
 		}
@@ -346,13 +362,14 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 		if snapshot.Variables == nil {
 			snapshot.Variables = make(map[string]json.RawMessage)
 		}
-		snapshot.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseAutonomous))
+		snapshot.Variables[executionPhaseVar] = quoteJSONString(executionPhaseAutonomous)
 		snapshot.Status = runstate.RunStatusRunning
 		if err := f.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
 			return RunResult{}, err
 		}
+		vars = decodeResumeVars(snapshot.Variables)
 	}
-	req := hybridRunRequest(snapshot)
+	req := hybridRunRequestFromVars(snapshot.RunID, snapshot.Variables, vars)
 	snapshot, err = runstate.LoadAuthorized(ctx, f.runs, runID)
 	if err != nil {
 		return RunResult{}, err
@@ -361,28 +378,73 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 	if err != nil {
 		return RunResult{}, err
 	}
-	return f.engine.RunHybrid(ctx, req)
+	return f.currentEngine().RunHybrid(ctx, req)
+}
+
+type resumeVars struct {
+	Prompt         string
+	Agent          string
+	TrustMode      string
+	EpisodeID      string
+	TriggerKind    string
+	SessionID      string
+	ExecutionPhase string
+	CheckpointKind string
+}
+
+func decodeResumeVars(vars map[string]json.RawMessage) resumeVars {
+	return resumeVars{
+		Prompt:         variableJSONString(vars, resumePromptVar),
+		Agent:          variableJSONString(vars, resumeAgentVar),
+		TrustMode:      variableJSONString(vars, resumeTrustModeVar),
+		EpisodeID:      variableJSONString(vars, resumeEpisodeIDVar),
+		TriggerKind:    variableJSONString(vars, resumeTriggerKindVar),
+		SessionID:      variableJSONString(vars, resumeSessionIDVar),
+		ExecutionPhase: variableJSONString(vars, executionPhaseVar),
+		CheckpointKind: variableJSONString(vars, checkpointKindVar),
+	}
 }
 
 func hybridRunRequest(snapshot runstate.RunSnapshot) RunRequest {
+	return hybridRunRequestFromVars(snapshot.RunID, snapshot.Variables, decodeResumeVars(snapshot.Variables))
+}
+
+func hybridRunRequestFromVars(runID string, variables map[string]json.RawMessage, vars resumeVars) RunRequest {
+	var input json.RawMessage
+	if variables != nil {
+		input = variables["input"]
+	}
 	return RunRequest{
-		RunID:       snapshot.RunID,
-		Agent:       variableJSONString(snapshot.Variables, resumeAgentVar),
-		Prompt:      variableJSONString(snapshot.Variables, resumePromptVar),
-		Context:     snapshot.Variables["input"],
-		TrustMode:   TrustMode(variableJSONString(snapshot.Variables, resumeTrustModeVar)),
-		EpisodeID:   variableJSONString(snapshot.Variables, resumeEpisodeIDVar),
-		TriggerKind: variableJSONString(snapshot.Variables, resumeTriggerKindVar),
-		SessionID:   variableJSONString(snapshot.Variables, resumeSessionIDVar),
+		RunID:       runID,
+		Agent:       vars.Agent,
+		Prompt:      vars.Prompt,
+		Context:     input,
+		TrustMode:   TrustMode(vars.TrustMode),
+		EpisodeID:   vars.EpisodeID,
+		TriggerKind: vars.TriggerKind,
+		SessionID:   vars.SessionID,
 	}
 }
 
 func (f *Framework) newWorkflowRunner() *orchestration.WorkflowRunner {
-	return orchestration.NewWorkflowRunner(
+	f.mu.RLock()
+	cached := f.workflowRunner
+	engine := f.engine
+	scenario := f.scenario
+	f.mu.RUnlock()
+	if cached != nil {
+		return cached
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.workflowRunner != nil {
+		return f.workflowRunner
+	}
+	runner := orchestration.NewWorkflowRunner(
 		f.tools,
 		f.runs,
 		f.events,
-		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: f.scenario.Agents, engine: f.engine}),
+		orchestration.WithAgentRegistry(workflowAgentRegistry{agents: scenario.Agents, engine: engine}),
 		orchestration.WithHumanGate(f.gate),
 		orchestration.WithToolApprovalEvaluator(f.approvalEvaluator),
 		orchestration.WithBlobStore(f.blobs),
@@ -390,8 +452,10 @@ func (f *Framework) newWorkflowRunner() *orchestration.WorkflowRunner {
 		orchestration.WithAuditSink(f.audit),
 		orchestration.WithWorkflowToolPolicy(f.toolGov),
 		orchestration.WithOutputRedactor(f.redactor),
-		orchestration.WithMemoryRewinder(f.engine),
+		orchestration.WithMemoryRewinder(engine),
 	)
+	f.workflowRunner = runner
+	return runner
 }
 
 func saveRunResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest, resolvedAgent string) {
@@ -399,26 +463,26 @@ func saveRunResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest, resol
 		snapshot.Variables = make(map[string]json.RawMessage)
 	}
 	if req.Prompt != "" {
-		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", req.Prompt))
+		snapshot.Variables[resumePromptVar] = quoteJSONString(req.Prompt)
 	}
 	agentName := req.Agent
 	if agentName == "" {
 		agentName = resolvedAgent
 	}
 	if agentName != "" {
-		snapshot.Variables[resumeAgentVar] = json.RawMessage(fmt.Sprintf("%q", agentName))
+		snapshot.Variables[resumeAgentVar] = quoteJSONString(agentName)
 	}
 	if req.TrustMode != "" {
-		snapshot.Variables[resumeTrustModeVar] = json.RawMessage(fmt.Sprintf("%q", req.TrustMode))
+		snapshot.Variables[resumeTrustModeVar] = quoteJSONString(string(req.TrustMode))
 	}
 	if req.EpisodeID != "" {
-		snapshot.Variables[resumeEpisodeIDVar] = json.RawMessage(fmt.Sprintf("%q", req.EpisodeID))
+		snapshot.Variables[resumeEpisodeIDVar] = quoteJSONString(req.EpisodeID)
 	}
 	if req.TriggerKind != "" {
-		snapshot.Variables[resumeTriggerKindVar] = json.RawMessage(fmt.Sprintf("%q", req.TriggerKind))
+		snapshot.Variables[resumeTriggerKindVar] = quoteJSONString(req.TriggerKind)
 	}
 	if req.SessionID != "" {
-		snapshot.Variables[resumeSessionIDVar] = json.RawMessage(fmt.Sprintf("%q", req.SessionID))
+		snapshot.Variables[resumeSessionIDVar] = quoteJSONString(req.SessionID)
 	}
 }
 

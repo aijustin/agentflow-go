@@ -50,12 +50,24 @@ type ForkRunResult struct {
 	ForkFromVersion int64  `json:"fork_from_version,omitempty"`
 }
 
+// Studio groups development-time graph editing and run inspection APIs.
+// Prefer Framework.Studio() for new call sites; existing Framework methods remain
+// as thin delegates for compatibility.
+type Studio struct {
+	f *Framework
+}
+
+// Studio returns the development-time Studio API bound to this framework.
+func (f *Framework) Studio() Studio {
+	return Studio{f: f}
+}
+
 // ValidateStudioGraph validates an edited Studio graph against the framework scenario.
-func (f *Framework) ValidateStudioGraph(_ context.Context, edited graph.ScenarioGraph) (ValidateStudioResult, error) {
-	scenario, err := graph.ApplyGraph(f.scenario, edited)
+func (s Studio) ValidateStudioGraph(_ context.Context, edited graph.ScenarioGraph) (ValidateStudioResult, error) {
+	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
 	if err != nil {
 		payload := studio.ErrorPayloadFrom(studio.WrapGraphError(err))
-		return ValidateStudioResult{Valid: false, Error: payload.Message, ErrorCode: payload.Code, Scenario: f.scenario.Name}, nil
+		return ValidateStudioResult{Valid: false, Error: payload.Message, ErrorCode: payload.Code, Scenario: s.f.currentScenario().Name}, nil
 	}
 	if err := ValidateScenario(scenario); err != nil {
 		payload := studio.ErrorPayloadFrom(err)
@@ -65,8 +77,8 @@ func (f *Framework) ValidateStudioGraph(_ context.Context, edited graph.Scenario
 }
 
 // GenerateStudioBuilderCode renders builder Go code for an edited Studio graph.
-func (f *Framework) GenerateStudioBuilderCode(_ context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
-	scenario, err := graph.ApplyGraph(f.scenario, edited)
+func (s Studio) GenerateStudioBuilderCode(_ context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
+	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
 	if err != nil {
 		return CodegenResult{}, err
 	}
@@ -78,8 +90,8 @@ func (f *Framework) GenerateStudioBuilderCode(_ context.Context, edited graph.Sc
 }
 
 // GenerateStudioScenarioYAML renders legacy scenario YAML for an edited Studio graph.
-func (f *Framework) GenerateStudioScenarioYAML(_ context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
-	scenario, err := graph.ApplyGraph(f.scenario, edited)
+func (s Studio) GenerateStudioScenarioYAML(_ context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
+	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
 	if err != nil {
 		return CodegenResult{}, err
 	}
@@ -98,7 +110,7 @@ type ImportStudioResult struct {
 
 // ImportStudioScenarioYAML parses legacy scenario YAML and returns an editable graph.
 // When layout is non-empty, node positions from layout are merged onto the imported graph.
-func (f *Framework) ImportStudioScenarioYAML(_ context.Context, yamlData []byte, layout graph.ScenarioGraph) (ImportStudioResult, error) {
+func (s Studio) ImportStudioScenarioYAML(_ context.Context, yamlData []byte, layout graph.ScenarioGraph) (ImportStudioResult, error) {
 	scenario, err := configyaml.Load(yamlData)
 	if err != nil {
 		return ImportStudioResult{}, err
@@ -113,12 +125,15 @@ func (f *Framework) ImportStudioScenarioYAML(_ context.Context, yamlData []byte,
 	return ImportStudioResult{ScenarioName: scenario.Name, Graph: exported}, nil
 }
 
-// SaveStudioGraph validates an edited graph, writes legacy YAML to path, and updates the framework scenario.
-func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGraph, path string) (SaveStudioResult, error) {
+// SaveStudioGraph validates an edited graph, writes legacy YAML to path, and
+// atomically replaces the live scenario and engine so subsequent runs use the
+// saved definition (not a half-updated Framework / stale Engine pair).
+func (s Studio) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGraph, path string) (SaveStudioResult, error) {
 	if path == "" {
 		return SaveStudioResult{}, &studio.CodedError{Code: "studio.save_path_missing", Message: "agentflow: studio save path is required"}
 	}
-	scenario, err := graph.ApplyGraph(f.scenario, edited)
+	base := s.f.currentScenario()
+	scenario, err := graph.ApplyGraph(base, edited)
 	if err != nil {
 		return SaveStudioResult{}, studio.WrapGraphError(err)
 	}
@@ -128,7 +143,15 @@ func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGr
 	if err := configyaml.SaveFile(path, scenario); err != nil {
 		return SaveStudioResult{}, err
 	}
-	f.scenario = scenario
+	s.f.mu.Lock()
+	defer s.f.mu.Unlock()
+	engine, err := s.f.rebuildLiveEngine(scenario)
+	if err != nil {
+		return SaveStudioResult{}, err
+	}
+	s.f.scenario = scenario
+	s.f.engine = engine
+	s.f.workflowRunner = nil // agents / scenario bindings may have changed
 	return SaveStudioResult{
 		Path:         path,
 		ScenarioName: scenario.Name,
@@ -137,49 +160,52 @@ func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGr
 }
 
 // RunStudioGraph validates an edited graph and executes it as a new run.
-func (f *Framework) RunStudioGraph(ctx context.Context, edited graph.ScenarioGraph, req RunRequest) (RunResult, error) {
-	scenario, err := graph.ApplyGraph(f.scenario, edited)
+func (s Studio) RunStudioGraph(ctx context.Context, edited graph.ScenarioGraph, req RunRequest) (RunResult, error) {
+	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
 	if err != nil {
 		return RunResult{}, err
 	}
 	if err := ValidateScenario(scenario); err != nil {
 		return RunResult{}, err
 	}
-	ctx, release, err := f.acquireRunLease(ctx, &req)
+	ctx, release, err := s.f.acquireRunLease(ctx, &req)
 	if err != nil {
 		return RunResult{}, err
 	}
 	defer release()
+	var result RunResult
 	switch scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		return f.runWorkflowScenario(ctx, scenario, req)
+		result, err = s.f.runWorkflowScenario(ctx, scenario, req)
 	case core.OrchestrationHybrid:
 		if scenario.Orchestration.Workflow == nil {
-			return f.engine.Run(ctx, req)
+			result, err = s.f.currentEngine().Run(ctx, req)
+		} else {
+			req, paused, prepErr := s.f.prepareHybridAutonomousRunScenario(ctx, scenario, req)
+			if prepErr != nil || paused.Status != "" {
+				return paused, mapLeaseLostError(ctx, prepErr)
+			}
+			result, err = s.f.currentEngine().RunHybrid(ctx, req)
 		}
-		req, paused, err := f.prepareHybridAutonomousRunScenario(ctx, scenario, req)
-		if err != nil || paused.Status != "" {
-			return paused, err
-		}
-		return f.engine.RunHybrid(ctx, req)
 	default:
 		return RunResult{}, fmt.Errorf("agentflow: studio run supports fixed_workflow and hybrid scenarios")
 	}
+	return result, mapLeaseLostError(ctx, err)
 }
 
 // CompareRuns diffs step outputs between two persisted runs.
-func (f *Framework) CompareRuns(ctx context.Context, runA, runB string) (studio.RunCompareResult, error) {
-	if f.runs == nil {
+func (s Studio) CompareRuns(ctx context.Context, runA, runB string) (studio.RunCompareResult, error) {
+	if s.f.runs == nil {
 		return studio.RunCompareResult{}, fmt.Errorf("agentflow: run-state repository is not configured")
 	}
 	if runA == "" || runB == "" {
 		return studio.RunCompareResult{}, fmt.Errorf("agentflow: compare requires run_a and run_b")
 	}
-	snapA, err := runstate.LoadAuthorized(ctx, f.runs, runA)
+	snapA, err := runstate.LoadAuthorized(ctx, s.f.runs, runA)
 	if err != nil {
 		return studio.RunCompareResult{}, err
 	}
-	snapB, err := runstate.LoadAuthorized(ctx, f.runs, runB)
+	snapB, err := runstate.LoadAuthorized(ctx, s.f.runs, runB)
 	if err != nil {
 		return studio.RunCompareResult{}, err
 	}
@@ -187,16 +213,16 @@ func (f *Framework) CompareRuns(ctx context.Context, runA, runB string) (studio.
 }
 
 // ListRunThread returns runs in the same fork/thread group as the given run.
-func (f *Framework) ListRunThread(ctx context.Context, runID string) ([]ThreadRunSummary, error) {
-	if f.runs == nil {
+func (s Studio) ListRunThread(ctx context.Context, runID string) ([]ThreadRunSummary, error) {
+	if s.f.runs == nil {
 		return nil, fmt.Errorf("agentflow: run-state repository is not configured")
 	}
-	root, err := runstate.LoadAuthorized(ctx, f.runs, runID)
+	root, err := runstate.LoadAuthorized(ctx, s.f.runs, runID)
 	if err != nil {
 		return nil, err
 	}
 	threadID := resolveThreadID(root)
-	list, err := f.runs.List(ctx, runstate.ListFilter{ThreadID: threadID})
+	list, err := s.f.runs.List(ctx, runstate.ListFilter{ThreadID: threadID})
 	if err != nil {
 		return nil, err
 	}
@@ -219,20 +245,20 @@ func (f *Framework) ListRunThread(ctx context.Context, runID string) ([]ThreadRu
 }
 
 // ForkRun copies a run snapshot into a new run ID without modifying the parent run.
-func (f *Framework) ForkRun(ctx context.Context, parentRunID string, version int64) (ForkRunResult, error) {
-	if f.runs == nil {
+func (s Studio) ForkRun(ctx context.Context, parentRunID string, version int64) (ForkRunResult, error) {
+	if s.f.runs == nil {
 		return ForkRunResult{}, fmt.Errorf("agentflow: run-state repository is not configured")
 	}
-	parent, err := runstate.LoadAuthorized(ctx, f.runs, parentRunID)
+	parent, err := runstate.LoadAuthorized(ctx, s.f.runs, parentRunID)
 	if err != nil {
 		return ForkRunResult{}, err
 	}
 	source := parent
 	if version > 0 {
-		if f.checkpointHistory == nil {
+		if s.f.checkpointHistory == nil {
 			return ForkRunResult{}, fmt.Errorf("agentflow: checkpoint history is not configured")
 		}
-		source, err = f.checkpointHistory.Load(ctx, parentRunID, version)
+		source, err = s.f.checkpointHistory.Load(ctx, parentRunID, version)
 		if err != nil {
 			return ForkRunResult{}, err
 		}
@@ -246,7 +272,7 @@ func (f *Framework) ForkRun(ctx context.Context, parentRunID string, version int
 	child.ForkFromVersion = version
 	child.ThreadID = threadID
 	child.PendingGate = nil
-	if err := f.runs.Save(ctx, &child, 0); err != nil {
+	if err := s.f.runs.Save(ctx, &child, 0); err != nil {
 		return ForkRunResult{}, err
 	}
 	return ForkRunResult{
@@ -259,4 +285,42 @@ func (f *Framework) ForkRun(ctx context.Context, parentRunID string, version int
 
 func resolveThreadID(snapshot runstate.RunSnapshot) string {
 	return runstate.ResolveThreadID(snapshot)
+}
+
+// Thin Framework delegates — prefer Studio() for new code.
+
+func (f *Framework) ValidateStudioGraph(ctx context.Context, edited graph.ScenarioGraph) (ValidateStudioResult, error) {
+	return f.Studio().ValidateStudioGraph(ctx, edited)
+}
+
+func (f *Framework) GenerateStudioBuilderCode(ctx context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
+	return f.Studio().GenerateStudioBuilderCode(ctx, edited)
+}
+
+func (f *Framework) GenerateStudioScenarioYAML(ctx context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
+	return f.Studio().GenerateStudioScenarioYAML(ctx, edited)
+}
+
+func (f *Framework) ImportStudioScenarioYAML(ctx context.Context, yamlData []byte, layout graph.ScenarioGraph) (ImportStudioResult, error) {
+	return f.Studio().ImportStudioScenarioYAML(ctx, yamlData, layout)
+}
+
+func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGraph, path string) (SaveStudioResult, error) {
+	return f.Studio().SaveStudioGraph(ctx, edited, path)
+}
+
+func (f *Framework) RunStudioGraph(ctx context.Context, edited graph.ScenarioGraph, req RunRequest) (RunResult, error) {
+	return f.Studio().RunStudioGraph(ctx, edited, req)
+}
+
+func (f *Framework) CompareRuns(ctx context.Context, runA, runB string) (studio.RunCompareResult, error) {
+	return f.Studio().CompareRuns(ctx, runA, runB)
+}
+
+func (f *Framework) ListRunThread(ctx context.Context, runID string) ([]ThreadRunSummary, error) {
+	return f.Studio().ListRunThread(ctx, runID)
+}
+
+func (f *Framework) ForkRun(ctx context.Context, parentRunID string, version int64) (ForkRunResult, error) {
+	return f.Studio().ForkRun(ctx, parentRunID, version)
 }

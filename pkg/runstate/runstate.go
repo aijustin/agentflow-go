@@ -158,6 +158,9 @@ type ListFilter struct {
 	ParentRunID string
 	// ThreadID, when non-empty, restricts results to a fork/thread group.
 	ThreadID string
+	// UpdatedBefore, when non-zero, keeps only snapshots with UpdatedAt strictly
+	// before this instant (useful for retention purge pushdown).
+	UpdatedBefore time.Time
 	// Limit is the maximum number of results to return. 0 means no limit.
 	Limit int
 }

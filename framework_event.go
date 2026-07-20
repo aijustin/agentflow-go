@@ -20,7 +20,7 @@ func NewEventRouter(scenario core.Scenario) *EventRouter {
 
 // HandleEvent resolves an incoming event and executes the scenario.
 func (f *Framework) HandleEvent(ctx context.Context, event IncomingEvent) (RunResult, error) {
-	router := eventrouter.NewRouter(f.scenario)
+	router := eventrouter.NewRouter(f.currentScenario())
 	req, err := router.Resolve(event)
 	if err != nil {
 		return RunResult{}, err
@@ -35,7 +35,7 @@ func (f *Framework) HandleEvent(ctx context.Context, event IncomingEvent) (RunRe
 
 // ResolveEvent resolves an incoming event without executing it.
 func (f *Framework) ResolveEvent(event IncomingEvent) (RunRequest, error) {
-	resolved, err := eventrouter.NewRouter(f.scenario).Resolve(event)
+	resolved, err := eventrouter.NewRouter(f.currentScenario()).Resolve(event)
 	if err != nil {
 		return RunRequest{}, err
 	}

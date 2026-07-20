@@ -72,12 +72,14 @@ func TestFrameworkRunLeaseBlocksConcurrentWorker(t *testing.T) {
 
 func TestFrameworkMarkAbandonedRunsMarksZombie(t *testing.T) {
 	locker := agentflow.NewInMemoryLocker()
+	// Lease TTL doubles as reaper grace; use the minimum clamp (1s) so the
+	// freshly-saved zombie ages out of the grace window quickly.
 	fw, err := agentflow.New(
 		retryWorkflowScenario(),
 		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
 		agentflow.WithToolExecutor("stepA", noopTool{}),
 		agentflow.WithToolExecutor("stepB", noopTool{}),
-		agentflow.WithRunLease(locker, "reaper", time.Minute),
+		agentflow.WithRunLease(locker, "reaper", time.Second),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -102,10 +104,12 @@ func TestFrameworkMarkAbandonedRunsMarksZombie(t *testing.T) {
 	if err := repo.Save(context.Background(), &own, 0); err != nil {
 		t.Fatal(err)
 	}
+	// Hold own lease longer than the grace sleep so it is not free for reaping.
 	if _, ok, err := locker.Acquire(context.Background(), "run:run-own", "reaper", time.Minute); err != nil || !ok {
 		t.Fatalf("failed to pre-acquire own lease: ok=%v err=%v", ok, err)
 	}
 
+	time.Sleep(1100 * time.Millisecond)
 	marked, err := fw.MarkAbandonedRuns(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +185,7 @@ func TestFrameworkMarkAbandonedRunsHonorsTenantScope(t *testing.T) {
 		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
 		agentflow.WithToolExecutor("stepA", noopTool{}),
 		agentflow.WithToolExecutor("stepB", noopTool{}),
-		agentflow.WithRunLease(locker, "reaper", time.Minute),
+		agentflow.WithRunLease(locker, "reaper", time.Second),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +200,7 @@ func TestFrameworkMarkAbandonedRunsHonorsTenantScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	time.Sleep(1100 * time.Millisecond)
 	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
 		ID:    "ops",
 		Type:  identity.PrincipalUser,
@@ -214,6 +219,39 @@ func TestFrameworkMarkAbandonedRunsHonorsTenantScope(t *testing.T) {
 	}
 	if otherTenant.Status != runstate.RunStatusRunning {
 		t.Fatalf("tenant-b's run must not be touched, got %s", otherTenant.Status)
+	}
+}
+
+func TestFrameworkMarkAbandonedRunsSkipsRecentRunning(t *testing.T) {
+	locker := agentflow.NewInMemoryLocker()
+	fw, err := agentflow.New(
+		retryWorkflowScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
+		agentflow.WithToolExecutor("stepA", noopTool{}),
+		agentflow.WithToolExecutor("stepB", noopTool{}),
+		agentflow.WithRunLease(locker, "reaper", time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := fw.RunStateRepository()
+	fresh := runstate.RunSnapshot{RunID: "run-fresh", ScenarioName: "wf-retry", Status: runstate.RunStatusRunning}
+	if err := repo.Save(context.Background(), &fresh, 0); err != nil {
+		t.Fatal(err)
+	}
+	marked, err := fw.MarkAbandonedRuns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(marked) != 0 {
+		t.Fatalf("expected grace to skip recently updated Running run, got %v", marked)
+	}
+	got, err := repo.Load(context.Background(), "run-fresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != runstate.RunStatusRunning {
+		t.Fatalf("expected still Running, got %s", got.Status)
 	}
 }
 

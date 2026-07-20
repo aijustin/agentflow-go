@@ -193,6 +193,15 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 			where += " AND " + clause
 		}
 	}
+	if !filter.UpdatedBefore.IsZero() {
+		args = append(args, filter.UpdatedBefore.UTC())
+		clause := fmt.Sprintf("updated_at < $%d", len(args))
+		if where == "" {
+			where = " WHERE " + clause
+		} else {
+			where += " AND " + clause
+		}
+	}
 	limit := ""
 	if filter.Limit > 0 {
 		args = append(args, filter.Limit)

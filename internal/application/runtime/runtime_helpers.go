@@ -9,16 +9,32 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/retry"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
+
+// emitWarnGate prevents recursive Warn if the logger itself emits events.
+var emitWarnGate atomic.Bool
+
+func warnEmitFailure(logger log.Logger, ctx context.Context, runID string, err error) {
+	if logger == nil || err == nil {
+		return
+	}
+	if !emitWarnGate.CompareAndSwap(false, true) {
+		return
+	}
+	defer emitWarnGate.Store(false)
+	logger.Warn(ctx, "runtime: event emit failed", "run_id", runID, "error", err)
+}
 
 var (
 	ErrRunAlreadyCompleted = errors.New("runtime: run already completed")
@@ -350,14 +366,14 @@ func shouldRetry(ctx context.Context, err error) bool {
 }
 
 const (
-	runStartedAtVar    = "run_started_at"
-	runErrorMessageVar   = "run_error_message"
-	resumePromptVar      = "resume_prompt"
-	resumeAgentVar       = "resume_agent"
-	resumeTrustModeVar   = "resume_trust_mode"
-	resumeEpisodeIDVar   = "resume_episode_id"
-	resumeTriggerKindVar = "resume_trigger_kind"
-	resumeSessionIDVar   = "resume_session_id"
+	runStartedAtVar      = "run_started_at"
+	runErrorMessageVar   = runstate.VarRunErrorMessage
+	resumePromptVar      = runstate.VarResumePrompt
+	resumeAgentVar       = runstate.VarResumeAgent
+	resumeTrustModeVar   = runstate.VarResumeTrustMode
+	resumeEpisodeIDVar   = runstate.VarResumeEpisodeID
+	resumeTriggerKindVar = runstate.VarResumeTriggerKind
+	resumeSessionIDVar   = runstate.VarResumeSessionID
 )
 
 func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
@@ -545,6 +561,7 @@ func (e *Engine) persistRunCompleted(ctx context.Context, runID string, finalRaw
 	}); err != nil {
 		return runstate.RunSnapshot{}, err
 	}
+	e.clearInterjections(runID)
 	e.recordRunCompleted(ctx, saved)
 	e.emit(ctx, core.EventRunCompleted, runID, finalRef.Inline)
 	return saved, nil
@@ -571,6 +588,7 @@ func nonRunningCompletionResult(runID string, status runstate.RunStatus) (RunRes
 func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
+	defer e.clearInterjections(runID)
 	if snapshot, err := runstate.LoadAuthorized(persistCtx, e.runs, runID); err == nil {
 		if snapshot.Status == runstate.RunStatusCancelled {
 			e.emit(persistCtx, core.EventRunCancelled, runID, nil)
@@ -603,6 +621,7 @@ func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
+	defer e.clearInterjections(runID)
 	if snapshot, err := runstate.LoadAuthorized(persistCtx, e.runs, runID); err == nil {
 		if snapshot.Status != runstate.RunStatusCancelled {
 			if !snapshot.Status.CanTransitionTo(runstate.RunStatusCancelled) {
@@ -708,9 +727,13 @@ func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, pay
 	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
 		event.ParentSpanID = parentSpanID
 	}
-	_ = e.events.Emit(ctx, event)
+	if err := e.events.Emit(ctx, event); err != nil {
+		warnEmitFailure(e.logger, ctx, runID, err)
+	}
 	if tee := eventTeeFromContext(ctx); tee != nil {
-		_ = tee.Emit(ctx, event)
+		if err := tee.Emit(ctx, event); err != nil {
+			warnEmitFailure(e.logger, ctx, runID, err)
+		}
 	}
 }
 

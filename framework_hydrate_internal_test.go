@@ -3,12 +3,42 @@ package agentflow
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
+	blobinmem "github.com/aijustin/agentflow-go/internal/adapter/blob/inmem"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
+
+func TestWorkflowRunOutputLoadsBlobFinal(t *testing.T) {
+	blobs := blobinmem.NewStore()
+	payload := json.RawMessage(`{"answer":"from-blob"}`)
+	ref, err := blobs.Put(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw := &Framework{blobs: blobs}
+	snapshot := runstate.RunSnapshot{
+		RunID:  "run-blob-final",
+		Status: runstate.RunStatusCompleted,
+		StepOutputs: map[string]runstate.StepOutputRef{
+			"prep":  {Inline: json.RawMessage(`{"ready":true}`)},
+			"final": {Blob: &ref},
+		},
+	}
+	out, err := fw.workflowRunOutput(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != string(payload) {
+		t.Fatalf("got %q, want blob final payload", out)
+	}
+	if strings.Contains(out, `"steps"`) {
+		t.Fatalf("must not return hydrated steps envelope: %s", out)
+	}
+}
 
 func TestCompletedHybridResultReturnsFinalOutput(t *testing.T) {
 	fw := &Framework{
@@ -21,7 +51,10 @@ func TestCompletedHybridResultReturnsFinalOutput(t *testing.T) {
 			"final": {Inline: json.RawMessage(`{"answer":"ok"}`)},
 		},
 	}
-	result, ok := completedHybridResult(context.Background(), fw, snapshot)
+	result, ok, err := completedHybridResult(context.Background(), fw, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || result.Status != runstate.RunStatusCompleted || result.Output != `{"answer":"ok"}` {
 		t.Fatalf("result=%+v ok=%v", result, ok)
 	}

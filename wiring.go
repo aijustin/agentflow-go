@@ -46,14 +46,19 @@ func defaultWiringOptions() WiringOptions {
 	return WiringOptions{AllowMockProviderWithoutGW: true}
 }
 
-func buildWiringOptions(scenario core.Scenario, opts ...Option) (options, map[string]bool, error) {
-	cfg := defaultOptions()
+func autoMemoryNames(scenario core.Scenario) map[string]bool {
 	autoMemory := make(map[string]bool)
 	for name, ref := range scenario.Memories {
 		if ref.Type == "in_memory" {
 			autoMemory[name] = true
 		}
 	}
+	return autoMemory
+}
+
+func buildWiringOptions(scenario core.Scenario, opts ...Option) (options, map[string]bool, error) {
+	cfg := defaultOptions()
+	autoMemory := autoMemoryNames(scenario)
 	for _, opt := range opts {
 		if opt == nil {
 			continue

@@ -91,12 +91,12 @@ func pendingHITLFromSnapshot(snapshot runstate.RunSnapshot) *PendingHITLInfo {
 // ResumeFromStep rewinds a workflow run to the given node, truncating that node
 // and all downstream step outputs, then reruns from that point forward.
 func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (RunResult, error) {
-	switch f.scenario.Orchestration.Mode {
+	switch f.currentScenario().Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow, core.OrchestrationHybrid:
 	default:
 		return RunResult{}, fmt.Errorf("agentflow: ResumeFromStep requires fixed_workflow or hybrid orchestration mode")
 	}
-	if f.scenario.Orchestration.Workflow == nil {
+	if f.currentScenario().Orchestration.Workflow == nil {
 		return RunResult{}, fmt.Errorf("agentflow: ResumeFromStep requires a configured workflow")
 	}
 	if f.runLocker != nil {
@@ -110,7 +110,7 @@ func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (R
 	}
 
 	runner := f.newWorkflowRunner()
-	if err := runner.ResumeFromStep(ctx, f.scenario, runID, nodeID); err != nil {
+	if err := runner.ResumeFromStep(ctx, f.currentScenario(), runID, nodeID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
 			return RunResult{RunID: runID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
@@ -123,19 +123,23 @@ func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (R
 	if err != nil {
 		return RunResult{}, err
 	}
-	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: f.workflowRunOutput(ctx, loaded)}, nil
+	output, err := f.workflowRunOutput(ctx, loaded)
+	if err != nil {
+		return RunResult{}, err
+	}
+	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }
 
 // stampHybridWorkflowPhase marks the snapshot as being in the workflow phase
 // for hybrid scenarios; a no-op for other orchestration modes.
 func (f *Framework) stampHybridWorkflowPhase(snapshot *runstate.RunSnapshot) {
-	if f.scenario.Orchestration.Mode != core.OrchestrationHybrid {
+	if f.currentScenario().Orchestration.Mode != core.OrchestrationHybrid {
 		return
 	}
 	if snapshot.Variables == nil {
 		snapshot.Variables = make(map[string]json.RawMessage)
 	}
-	snapshot.Variables[executionPhaseVar] = json.RawMessage(fmt.Sprintf("%q", executionPhaseWorkflow))
+	snapshot.Variables[executionPhaseVar] = quoteJSONString(executionPhaseWorkflow)
 }
 
 // ListRunCheckpoints returns append-only snapshot revisions recorded for a run.
@@ -173,12 +177,12 @@ func (f *Framework) GetRunCheckpoint(ctx context.Context, runID string, version 
 // ResumeFromCheckpoint restores a historical snapshot revision and reruns the
 // workflow forward from that restored state.
 func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, version int64) (RunResult, error) {
-	switch f.scenario.Orchestration.Mode {
+	switch f.currentScenario().Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow, core.OrchestrationHybrid:
 	default:
 		return RunResult{}, fmt.Errorf("agentflow: ResumeFromCheckpoint requires fixed_workflow or hybrid orchestration mode")
 	}
-	if f.scenario.Orchestration.Workflow == nil {
+	if f.currentScenario().Orchestration.Workflow == nil {
 		return RunResult{}, fmt.Errorf("agentflow: ResumeFromCheckpoint requires a configured workflow")
 	}
 	if f.checkpointHistory == nil {
@@ -200,7 +204,7 @@ func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, vers
 	}
 
 	runner := f.newWorkflowRunner()
-	if err := runner.RestoreSnapshotAndRun(ctx, f.scenario, runID, snapshot); err != nil {
+	if err := runner.RestoreSnapshotAndRun(ctx, f.currentScenario(), runID, snapshot); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {
 			return RunResult{RunID: runID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
@@ -213,5 +217,9 @@ func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, vers
 	if err != nil {
 		return RunResult{}, err
 	}
-	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: f.workflowRunOutput(ctx, loaded)}, nil
+	output, err := f.workflowRunOutput(ctx, loaded)
+	if err != nil {
+		return RunResult{}, err
+	}
+	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: output}, nil
 }

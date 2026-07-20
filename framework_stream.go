@@ -3,6 +3,8 @@ package agentflow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/aijustin/agentflow-go/internal/application/runtime"
@@ -115,7 +117,7 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 			streamErr error
 			paused    bool
 			pauseTok  string
-			output    string
+			output    strings.Builder
 		)
 		send := func(frame StreamFrame) bool {
 			select {
@@ -145,7 +147,7 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 		for chunk := range chunks {
 			chunkCopy := chunk
 			if chunk.IsAnswerContent() && chunk.Content != "" {
-				output += chunk.Content
+				output.WriteString(chunk.Content)
 			}
 			if chunk.Error != "" {
 				streamErr = streamFrameError(chunk.Error)
@@ -170,18 +172,32 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 			return
 		}
 
-		result := &RunResult{RunID: req.RunID, Output: output}
+		result := &RunResult{RunID: req.RunID, Output: output.String()}
 		if paused {
 			result.Status = runstate.RunStatusPaused
 			result.Token = pauseTok
-		} else if snapshot, loadErr := f.runs.Load(ctx, req.RunID); loadErr == nil {
-			result.Status = snapshot.Status
-			if final, ok := snapshot.StepOutputs["final"]; ok && len(final.Inline) > 0 {
-				result.Output = string(final.Inline)
-				result.StructuredOutput = append(json.RawMessage(nil), final.Inline...)
-			}
 		} else {
-			result.Status = runstate.RunStatusCompleted
+			snapshot, loadErr := runstate.LoadAuthorized(ctx, f.runs, req.RunID)
+			if loadErr != nil {
+				if f.logger != nil {
+					f.logger.Warn(ctx, "agentflow: StreamRun failed to load run snapshot for done frame", "run_id", req.RunID, "error", loadErr)
+				}
+				send(StreamFrame{Kind: StreamFrameError, Err: fmt.Errorf("agentflow: load run for stream done: %w", loadErr)})
+				return
+			}
+			result.Status = snapshot.Status
+			if final, ok := snapshot.StepOutputs["final"]; ok {
+				raw, finalErr := runstate.LoadStepOutput(ctx, f.blobs, final)
+				if finalErr != nil {
+					if f.logger != nil {
+						f.logger.Warn(ctx, "agentflow: StreamRun failed to load final output", "run_id", req.RunID, "error", finalErr)
+					}
+					send(StreamFrame{Kind: StreamFrameError, Err: fmt.Errorf("agentflow: load final for stream done: %w", finalErr)})
+					return
+				}
+				result.Output = string(raw)
+				result.StructuredOutput = append(json.RawMessage(nil), raw...)
+			}
 		}
 		send(StreamFrame{Kind: StreamFrameDone, Result: result})
 	}()

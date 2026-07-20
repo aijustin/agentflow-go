@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
@@ -43,9 +45,10 @@ type Engine struct {
 	tracer                 observability.Tracer
 	logger                 log.Logger
 	enqueueMemoryReconcile func(context.Context, async.Job) error
+	toolTransformMu        sync.RWMutex
 	toolTransforms         map[string]contextwindow.ToolOutputTransform
 	interjections          *interjection.Buffer
-	interjectDrain         interjection.DrainPolicy
+	interjectDrain         atomic.Value // interjection.DrainPolicy
 	orchestrator           toolorch.ToolOrchestrator
 	approvalStore          toolorch.ApprovalStore
 	denyBreaker            *toolorch.DenyBreaker
@@ -132,7 +135,7 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 	if scenario.Runtime.HITLDenyLimit > 0 {
 		breaker = toolorch.NewDenyBreaker(scenario.Runtime.HITLDenyLimit)
 	}
-	return &Engine{
+	engine := &Engine{
 		scenario:               scenario,
 		llm:                    deps.LLM,
 		tools:                  deps.Tools,
@@ -154,12 +157,13 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		enqueueMemoryReconcile: deps.EnqueueMemoryReconcile,
 		toolTransforms:         deps.ToolOutputTransforms,
 		interjections:          interjection.NewBuffer(),
-		interjectDrain:         deps.InterjectDrain.Normalize(),
 		orchestrator:           orch,
 		approvalStore:          store,
 		denyBreaker:            breaker,
 		turnStopHook:           deps.TurnStopHook,
-	}, nil
+	}
+	engine.interjectDrain.Store(deps.InterjectDrain.Normalize())
+	return engine, nil
 }
 
 // TrustMode controls run-scoped tool approval overrides.
@@ -186,7 +190,13 @@ type RunRequest struct {
 }
 
 // SetToolOutputTransform registers or replaces a per-tool output transform.
+// Safe for concurrent use with the tool loop (tests / late config).
 func (e *Engine) SetToolOutputTransform(tool string, fn contextwindow.ToolOutputTransform) {
+	if e == nil {
+		return
+	}
+	e.toolTransformMu.Lock()
+	defer e.toolTransformMu.Unlock()
 	if e.toolTransforms == nil {
 		e.toolTransforms = map[string]contextwindow.ToolOutputTransform{}
 	}
@@ -195,6 +205,54 @@ func (e *Engine) SetToolOutputTransform(tool string, fn contextwindow.ToolOutput
 		return
 	}
 	e.toolTransforms[tool] = fn
+}
+
+// Scenario returns the scenario the engine was constructed with.
+func (e *Engine) Scenario() core.Scenario {
+	if e == nil {
+		return core.Scenario{}
+	}
+	return e.scenario
+}
+
+// LateConfig returns a copy of runtime-mutable engine config for engine rebuild.
+func (e *Engine) LateConfig() (map[string]contextwindow.ToolOutputTransform, interjection.DrainPolicy) {
+	if e == nil {
+		return nil, interjection.DrainPolicy{}.Normalize()
+	}
+	e.toolTransformMu.RLock()
+	transforms := make(map[string]contextwindow.ToolOutputTransform, len(e.toolTransforms))
+	for k, v := range e.toolTransforms {
+		transforms[k] = v
+	}
+	e.toolTransformMu.RUnlock()
+	return transforms, e.drainPolicy()
+}
+
+func (e *Engine) toolTransformsCopy() map[string]contextwindow.ToolOutputTransform {
+	if e == nil {
+		return nil
+	}
+	e.toolTransformMu.RLock()
+	defer e.toolTransformMu.RUnlock()
+	if len(e.toolTransforms) == 0 {
+		return nil
+	}
+	out := make(map[string]contextwindow.ToolOutputTransform, len(e.toolTransforms))
+	for k, v := range e.toolTransforms {
+		out[k] = v
+	}
+	return out
+}
+
+func (e *Engine) drainPolicy() interjection.DrainPolicy {
+	if e == nil {
+		return interjection.DrainPolicy{}.Normalize()
+	}
+	if v := e.interjectDrain.Load(); v != nil {
+		return v.(interjection.DrainPolicy)
+	}
+	return interjection.DrainPolicy{}.Normalize()
 }
 
 type RunResult struct {

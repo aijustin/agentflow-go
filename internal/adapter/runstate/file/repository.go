@@ -155,6 +155,9 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 		if filter.ThreadID != "" && runstate.ResolveThreadID(snap) != filter.ThreadID {
 			continue
 		}
+		if !filter.UpdatedBefore.IsZero() && (snap.UpdatedAt.IsZero() || !snap.UpdatedAt.Before(filter.UpdatedBefore)) {
+			continue
+		}
 		out = append(out, snap)
 		if filter.Limit > 0 && len(out) >= filter.Limit {
 			break

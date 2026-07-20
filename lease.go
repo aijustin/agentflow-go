@@ -104,7 +104,11 @@ func (f *Framework) holdRunLease(ctx context.Context, runID string) (context.Con
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(f.runLeaseTTL / 3)
+		interval := f.runLeaseTTL / 3
+		if interval < time.Millisecond {
+			interval = time.Millisecond
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -159,7 +163,7 @@ func (f *Framework) MarkAbandonedRuns(ctx context.Context) ([]string, error) {
 	if f.runLocker == nil {
 		return nil, fmt.Errorf("agentflow: run lease coordination is not configured; use WithRunLease")
 	}
-	filter := runstate.ListFilter{ScenarioName: f.scenario.Name, Status: runstate.RunStatusRunning}
+	filter := runstate.ListFilter{ScenarioName: f.currentScenario().Name, Status: runstate.RunStatusRunning}
 	if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
 		filter.TenantID = principal.Scope.TenantID
 	}
@@ -170,7 +174,7 @@ func (f *Framework) MarkAbandonedRuns(ctx context.Context) ([]string, error) {
 	// Enforce the tenant boundary here as well instead of trusting the
 	// repository filter alone: a snapshot the caller is not authorized for
 	// must never be probed or reaped.
-	authorized := snapshots[:0]
+	authorized := make([]runstate.RunSnapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		if err := runstate.AuthorizeTenant(ctx, snapshot); err != nil {
 			continue
@@ -178,12 +182,22 @@ func (f *Framework) MarkAbandonedRuns(ctx context.Context) ([]string, error) {
 		authorized = append(authorized, snapshot)
 	}
 	snapshots = authorized
+	// Skip recently-updated Running runs so Resume (approve without continue)
+	// and the short gate→lease window in ResumeAndContinue are not reaped
+	// before a worker can take the lease.
+	grace := f.runLeaseTTL
+	if grace <= 0 {
+		grace = defaultRunLeaseTTL
+	}
 	// A distinct reaper owner is required: Acquire is reentrant for the
 	// holding owner, so probing with f.runLeaseOwner would steal (and then
 	// reap) this very worker's own live runs.
 	reaperOwner := f.runLeaseOwner + ":reaper"
 	var marked []string
 	for _, snapshot := range snapshots {
+		if !snapshot.UpdatedAt.IsZero() && time.Since(snapshot.UpdatedAt) < grace {
+			continue
+		}
 		// Acquiring the run's lease succeeds only when no live worker holds
 		// it; that is exactly the zombie condition.
 		lease, ok, err := f.runLocker.Acquire(ctx, runLeaseKey(snapshot.RunID), reaperOwner, f.runLeaseTTL)
@@ -216,7 +230,7 @@ func (f *Framework) markRunAbandoned(ctx context.Context, runID string) (bool, e
 		if snapshot.Variables == nil {
 			snapshot.Variables = make(map[string]json.RawMessage)
 		}
-		snapshot.Variables["run_error_message"] = json.RawMessage(`"worker lost"`)
+		snapshot.Variables[runstate.VarRunErrorMessage] = json.RawMessage(`"worker lost"`)
 		return nil
 	})
 	if err != nil {

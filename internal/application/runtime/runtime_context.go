@@ -15,7 +15,8 @@ import (
 
 func (e *Engine) compactToolResultForContext(result core.ToolResult, maxTokens int) (core.ToolResult, contextwindow.TransformMeta) {
 	meta := contextwindow.TransformMeta{Strategy: contextwindow.TransformStrategyNone, OriginalBytes: len(result.Output)}
-	if maxTokens <= 0 && (e == nil || len(e.toolTransforms) == 0) {
+	transforms := e.toolTransformsCopy()
+	if maxTokens <= 0 && len(transforms) == 0 {
 		meta.TruncatedBytes = len(result.Output)
 		return result, meta
 	}
@@ -24,10 +25,6 @@ func (e *Engine) compactToolResultForContext(result core.ToolResult, maxTokens i
 		content = json.RawMessage(strconv.Quote(result.Error))
 	}
 	toolName := result.Tool
-	var transforms map[string]contextwindow.ToolOutputTransform
-	if e != nil {
-		transforms = e.toolTransforms
-	}
 	// Prefer transforming the tool Output payload (JSON body) so knowledge_retrieve
 	// and MCP tools keep a parseable structure. Fall back to wrapping the full
 	// ToolResult only when the output alone still exceeds the budget after transform.

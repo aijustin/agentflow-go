@@ -13,7 +13,7 @@ func (f *Framework) PurgeOrphanBlobs(ctx context.Context) (int, error) {
 	if f.runs == nil || f.blobs == nil {
 		return 0, nil
 	}
-	filter := runstate.ListFilter{ScenarioName: f.scenario.Name}
+	filter := runstate.ListFilter{ScenarioName: f.currentScenario().Name}
 	if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
 		filter.TenantID = principal.Scope.TenantID
 	}

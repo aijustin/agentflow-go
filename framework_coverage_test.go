@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	agentflow "github.com/aijustin/agentflow-go"
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
@@ -77,6 +78,65 @@ func TestFrameworkStreamHybridAfterWorkflowPhase(t *testing.T) {
 	}
 	if got != "streamed" {
 		t.Fatalf("unexpected stream output %q", got)
+	}
+}
+
+// TestFrameworkStreamHybridWithTimeoutKeepsStreamAlive ensures the framework
+// timeout wraps only the synchronous workflow prepare phase. Previously,
+// defer cancel() on the hybrid Stream path cancelled the engine ctx as soon
+// as Stream returned the channel, truncating chunks / marking the run Cancelled.
+func TestFrameworkStreamHybridWithTimeoutKeepsStreamAlive(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "hybrid-stream-timeout",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Runtime: core.RuntimePolicy{Timeout: 30 * time.Second},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationHybrid,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "prep", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"ready":true}}`)},
+				},
+			},
+		},
+	}
+	gateway := &streamGateway{chunks: []llm.ChatChunk{
+		{Content: "hello"},
+		{Content: " world"},
+		{Done: true},
+	}}
+	fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(gateway))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := fw.Stream(context.Background(), agentflow.RunRequest{
+		RunID: "hybrid-stream-timeout", Agent: "assistant", Prompt: "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	var cancelled bool
+	for chunk := range ch {
+		got += chunk.Content
+		if chunk.Error != "" {
+			cancelled = true
+		}
+	}
+	if got != "hello world" {
+		t.Fatalf("unexpected stream output %q", got)
+	}
+	if cancelled {
+		t.Fatal("stream should not be cancelled by prepare-phase timeout context")
+	}
+	snapshot, err := fw.RunStateRepository().Load(context.Background(), "hybrid-stream-timeout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status == runstate.RunStatusCancelled {
+		t.Fatalf("run marked cancelled: %s", snapshot.Status)
 	}
 }
 

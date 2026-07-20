@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // HydrateStepContext loads inline and blob-backed step outputs into a JSON
@@ -13,12 +16,23 @@ func HydrateStepContext(ctx context.Context, blobs BlobStore, outputs map[string
 		return nil, nil
 	}
 	steps := make(map[string]json.RawMessage, len(outputs))
+	var mu sync.Mutex
+	g, gctx := errgroup.WithContext(ctx)
 	for nodeID, ref := range outputs {
-		raw, err := LoadStepOutput(ctx, blobs, ref)
-		if err != nil {
-			return nil, fmt.Errorf("runstate: hydrate step %q: %w", nodeID, err)
-		}
-		steps[nodeID] = raw
+		nodeID, ref := nodeID, ref
+		g.Go(func() error {
+			raw, err := LoadStepOutput(gctx, blobs, ref)
+			if err != nil {
+				return fmt.Errorf("runstate: hydrate step %q: %w", nodeID, err)
+			}
+			mu.Lock()
+			steps[nodeID] = raw
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 	payload, err := json.Marshal(map[string]any{"steps": steps})
 	if err != nil {

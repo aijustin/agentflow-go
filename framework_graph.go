@@ -18,5 +18,5 @@ type GraphEdge = graph.GraphEdge
 
 // ExportScenarioGraph exports the framework scenario as a nested graph.
 func (f *Framework) ExportScenarioGraph() ScenarioGraph {
-	return graph.ExportScenario(f.scenario)
+	return graph.ExportScenario(f.currentScenario())
 }

@@ -333,7 +333,11 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 			defer close(ch)
 			defer func() {
 				if r := recover(); r != nil {
-					ch <- llm.ChatChunk{Done: true, Error: fmt.Sprintf("runtime: panic recovered: %v", r)}
+					select {
+					case ch <- llm.ChatChunk{Done: true, Error: fmt.Sprintf("runtime: panic recovered: %v", r)}:
+					case <-ctx.Done():
+					default:
+					}
 				}
 			}()
 			emit := func(chunk llm.ChatChunk) {
@@ -346,13 +350,22 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 			if err != nil {
 				var paused RunPausedError
 				if errorsAsRunPaused(err, &paused) {
-					ch <- llm.ChatChunk{Done: true, Paused: true, PauseToken: paused.Token, PauseKind: paused.Kind}
+					select {
+					case ch <- llm.ChatChunk{Done: true, Paused: true, PauseToken: paused.Token, PauseKind: paused.Kind}:
+					case <-ctx.Done():
+					}
 					return
 				}
-				ch <- llm.ChatChunk{Done: true, Error: err.Error()}
+				select {
+				case ch <- llm.ChatChunk{Done: true, Error: err.Error()}:
+				case <-ctx.Done():
+				}
 				return
 			}
-			ch <- llm.ChatChunk{Content: output, Done: true}
+			select {
+			case ch <- llm.ChatChunk{Content: output, Done: true}:
+			case <-ctx.Done():
+			}
 		}()
 		return ch, agent, cancel, nil
 	}
@@ -432,7 +445,7 @@ func (e *Engine) answerWithToolsFrom(
 			return "", err
 		}
 		var drainErr error
-		policy := e.interjectDrain.Normalize()
+		policy := e.drainPolicy()
 		if policy.Allow(interjection.DrainBeforeSample, false) && !policy.DeferUntilPostCompact {
 			messages, drainErr = e.drainInterjectionsIfAllowed(ctx, runID, agent, messages, interjection.DrainBeforeSample, false)
 			if drainErr != nil {

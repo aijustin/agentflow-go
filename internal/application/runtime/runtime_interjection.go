@@ -32,22 +32,31 @@ func (e *Engine) Interject(runID, text string) error {
 }
 
 // SetInterjectDrainPolicy overrides the drain policy (tests / late config).
+// Safe for concurrent use with the tool loop.
 func (e *Engine) SetInterjectDrainPolicy(policy interjection.DrainPolicy) {
 	if e == nil {
 		return
 	}
-	e.interjectDrain = policy.Normalize()
+	e.interjectDrain.Store(policy.Normalize())
 }
 
 func (e *Engine) drainInterjectionsIfAllowed(ctx context.Context, runID string, agent core.Agent, messages []llm.Message, phase interjection.DrainPhase, justCompacted bool) ([]llm.Message, error) {
 	if e == nil {
 		return messages, nil
 	}
-	policy := e.interjectDrain.Normalize()
+	policy := e.drainPolicy()
 	if !policy.Allow(phase, justCompacted) {
 		return messages, nil
 	}
 	return e.drainInterjectionsInto(ctx, runID, agent, messages)
+}
+
+// clearInterjections discards any buffered mid-turn messages for a terminal run.
+func (e *Engine) clearInterjections(runID string) {
+	if e == nil || e.interjections == nil {
+		return
+	}
+	_ = e.interjections.Drain(runID)
 }
 
 func (e *Engine) drainInterjectionsInto(ctx context.Context, runID string, agent core.Agent, messages []llm.Message) ([]llm.Message, error) {

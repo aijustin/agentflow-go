@@ -44,27 +44,29 @@ func (f *Framework) PurgeExpired(ctx context.Context, maxAge time.Duration) (int
 	if f.runs == nil {
 		return 0, nil
 	}
-	filter := runstate.ListFilter{ScenarioName: f.scenario.Name}
-	if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
-		filter.TenantID = principal.Scope.TenantID
-	}
-	snapshots, err := f.runs.List(ctx, filter)
-	if err != nil {
-		return 0, err
-	}
 	cutoff := time.Now().UTC().Add(-maxAge)
 	removed := 0
-	for _, snapshot := range snapshots {
-		if snapshot.Status != runstate.RunStatusCompleted && snapshot.Status != runstate.RunStatusFailed && snapshot.Status != runstate.RunStatusCancelled {
-			continue
+	for _, status := range []runstate.RunStatus{
+		runstate.RunStatusCompleted, runstate.RunStatusFailed, runstate.RunStatusCancelled,
+	} {
+		filter := runstate.ListFilter{
+			ScenarioName:  f.currentScenario().Name,
+			Status:        status,
+			UpdatedBefore: cutoff,
 		}
-		if snapshot.UpdatedAt.IsZero() || !snapshot.UpdatedAt.Before(cutoff) {
-			continue
+		if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
+			filter.TenantID = principal.Scope.TenantID
 		}
-		if err := f.runs.Delete(ctx, snapshot.RunID); err != nil {
+		snapshots, err := f.runs.List(ctx, filter)
+		if err != nil {
 			return removed, err
 		}
-		removed++
+		for _, snapshot := range snapshots {
+			if err := f.runs.Delete(ctx, snapshot.RunID); err != nil {
+				return removed, err
+			}
+			removed++
+		}
 	}
 	return removed, nil
 }
@@ -80,54 +82,58 @@ func (f *Framework) PurgeWithPolicy(ctx context.Context, policy RetentionPolicy)
 		Limit:        policy.Limit,
 	}
 	if filter.ScenarioName == "" {
-		filter.ScenarioName = f.scenario.Name
+		filter.ScenarioName = f.currentScenario().Name
 	}
 	return f.PurgeRuns(ctx, filter)
-}
-
-func isTerminalRunStatus(status runstate.RunStatus) bool {
-	return status == runstate.RunStatusCompleted || status == runstate.RunStatusFailed || status == runstate.RunStatusCancelled
 }
 
 func (f *Framework) purgeExpiredWithLimit(ctx context.Context, policy RetentionPolicy) (int, error) {
 	if f.runs == nil {
 		return 0, nil
 	}
-	filter := runstate.ListFilter{
-		Status:       policy.Status,
-		ScenarioName: policy.ScenarioName,
+	cutoff := time.Now().UTC().Add(-policy.MaxAge)
+	statuses := []runstate.RunStatus{policy.Status}
+	if policy.Status == "" {
+		statuses = []runstate.RunStatus{
+			runstate.RunStatusCompleted, runstate.RunStatusFailed, runstate.RunStatusCancelled,
+		}
 	}
-	if filter.ScenarioName == "" {
-		filter.ScenarioName = f.scenario.Name
-	}
-	if filter.TenantID == "" {
+	removed := 0
+	for _, status := range statuses {
+		if status == "" {
+			continue
+		}
+		filter := runstate.ListFilter{
+			Status:        status,
+			ScenarioName:  policy.ScenarioName,
+			UpdatedBefore: cutoff,
+			Limit:         policy.Limit,
+		}
+		if filter.ScenarioName == "" {
+			filter.ScenarioName = f.currentScenario().Name
+		}
 		if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
 			filter.TenantID = principal.Scope.TenantID
 		}
-	}
-	snapshots, err := f.runs.List(ctx, filter)
-	if err != nil {
-		return 0, err
-	}
-	cutoff := time.Now().UTC().Add(-policy.MaxAge)
-	removed := 0
-	for _, snapshot := range snapshots {
-		if policy.Status != "" {
-			if snapshot.Status != policy.Status {
-				continue
+		if policy.Limit > 0 {
+			remaining := policy.Limit - removed
+			if remaining <= 0 {
+				break
 			}
-		} else if !isTerminalRunStatus(snapshot.Status) {
-			continue
+			filter.Limit = remaining
 		}
-		if snapshot.UpdatedAt.IsZero() || !snapshot.UpdatedAt.Before(cutoff) {
-			continue
-		}
-		if err := f.runs.Delete(ctx, snapshot.RunID); err != nil {
+		snapshots, err := f.runs.List(ctx, filter)
+		if err != nil {
 			return removed, err
 		}
-		removed++
-		if policy.Limit > 0 && removed >= policy.Limit {
-			break
+		for _, snapshot := range snapshots {
+			if err := f.runs.Delete(ctx, snapshot.RunID); err != nil {
+				return removed, err
+			}
+			removed++
+			if policy.Limit > 0 && removed >= policy.Limit {
+				return removed, nil
+			}
 		}
 	}
 	return removed, nil

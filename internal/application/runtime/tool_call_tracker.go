@@ -119,6 +119,15 @@ func canonicalJSON(raw json.RawMessage) string {
 	if len(trimmed) == 0 {
 		return ""
 	}
+	// Fast path: already compact scalar / empty. Objects still need a
+	// round-trip so map key order is stable across producers.
+	if len(trimmed) > 0 && trimmed[0] != '{' && trimmed[0] != '[' {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, trimmed); err == nil {
+			return buf.String()
+		}
+		return string(trimmed)
+	}
 	var value any
 	if err := json.Unmarshal(trimmed, &value); err != nil {
 		return string(trimmed)
