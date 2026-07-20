@@ -340,7 +340,11 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 					}
 				}
 			}()
+			contentEmitted := false
 			emit := func(chunk llm.ChatChunk) {
+				if chunk.IsAnswerContent() && chunk.Content != "" {
+					contentEmitted = true
+				}
 				select {
 				case ch <- chunk:
 				case <-ctx.Done():
@@ -362,8 +366,13 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 				}
 				return
 			}
+			// When the tool loop already streamed answer deltas, only signal Done.
+			done := llm.ChatChunk{Done: true}
+			if !contentEmitted && output != "" {
+				done.Content = output
+			}
 			select {
-			case ch <- llm.ChatChunk{Content: output, Done: true}:
+			case ch <- done:
 			case <-ctx.Done():
 			}
 		}()
@@ -499,7 +508,7 @@ func (e *Engine) answerWithToolsFrom(
 			},
 			Tools: toolSpecs,
 		}
-		resp, err := e.chatWithToolsWithRetry(stepRunCtx, runID, agent, profile, toolReq, caller, step+1)
+		resp, err := e.chatWithToolsWithRetry(stepRunCtx, runID, agent, profile, toolReq, caller, step+1, emit)
 		if err != nil {
 			return "", err
 		}
@@ -731,7 +740,7 @@ func (e *Engine) chatWithRetry(ctx context.Context, runID string, agent core.Age
 	return llm.ChatResponse{}, lastErr
 }
 
-func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ToolCallRequest, caller llm.ToolCaller, step int) (llm.ToolCallResponse, error) {
+func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ToolCallRequest, caller llm.ToolCaller, step int, emit streamChunkSink) (llm.ToolCallResponse, error) {
 	attempts := e.maxAttempts(agent)
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -744,10 +753,23 @@ func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent
 			"tools":   true,
 			"step":    step,
 			"attempt": attempt,
+			"stream":  emit != nil,
 		}, req.Messages))
-		resp, err := safecall.Invoke("runtime: llm chat with tools", func() (llm.ToolCallResponse, error) {
-			return caller.ChatWithTools(callCtx, agent.LLM, req)
-		})
+		var resp llm.ToolCallResponse
+		var err error
+		if emit != nil {
+			if streamer, ok := e.llm.(llm.ToolCallStreamer); ok && e.llm.Supports(agent.LLM, llm.CapStream) {
+				resp, err = e.collectStreamChatWithTools(callCtx, streamer, agent.LLM, req, emit)
+			} else {
+				resp, err = safecall.Invoke("runtime: llm chat with tools", func() (llm.ToolCallResponse, error) {
+					return caller.ChatWithTools(callCtx, agent.LLM, req)
+				})
+			}
+		} else {
+			resp, err = safecall.Invoke("runtime: llm chat with tools", func() (llm.ToolCallResponse, error) {
+				return caller.ChatWithTools(callCtx, agent.LLM, req)
+			})
+		}
 		cancel()
 		if err == nil {
 			payload := map[string]any{
@@ -772,6 +794,64 @@ func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent
 		}
 	}
 	return llm.ToolCallResponse{}, lastErr
+}
+
+func (e *Engine) collectStreamChatWithTools(
+	ctx context.Context,
+	streamer llm.ToolCallStreamer,
+	profile string,
+	req llm.ToolCallRequest,
+	emit streamChunkSink,
+) (llm.ToolCallResponse, error) {
+	ch, err := streamer.StreamChatWithTools(ctx, profile, req)
+	if err != nil {
+		return llm.ToolCallResponse{}, err
+	}
+	var content strings.Builder
+	var toolCalls []llm.ToolCall
+	var usage llm.TokenUsage
+	finishReason := "stop"
+	for chunk := range ch {
+		if chunk.Error != "" {
+			return llm.ToolCallResponse{}, fmt.Errorf("%s", chunk.Error)
+		}
+		if chunk.Usage.TotalTokens > 0 || chunk.Usage.InputTokens > 0 || chunk.Usage.OutputTokens > 0 {
+			usage = chunk.Usage
+		}
+		switch chunk.Kind {
+		case llm.ChunkKindToolCall:
+			toolCalls = append(toolCalls, llm.ToolCall{
+				ID:    chunk.ToolCallID,
+				Name:  chunk.ToolName,
+				Input: chunk.ToolInput,
+			})
+			finishReason = "tool_calls"
+		default:
+			if chunk.IsAnswerContent() && chunk.Content != "" {
+				content.WriteString(chunk.Content)
+				emitStreamChunk(emit, llm.ChatChunk{Content: chunk.Content})
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return llm.ToolCallResponse{}, err
+	}
+	message := llm.Message{
+		Role:    llm.RoleAssistant,
+		Content: content.String(),
+	}
+	if len(toolCalls) > 0 {
+		message.ToolCalls = append([]llm.ToolCall(nil), toolCalls...)
+		message.Content = ""
+	}
+	return llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{
+			Message:      message,
+			Usage:        usage,
+			FinishReason: finishReason,
+		},
+		ToolCalls: toolCalls,
+	}, nil
 }
 
 func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, schema json.RawMessage, req llm.ChatRequest, outputter llm.StructuredOutputter) (json.RawMessage, error) {

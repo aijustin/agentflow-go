@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -137,12 +138,29 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		// When tools are present we still aggregate for AF-002 text tool-call
 		// normalization, but forward prose deltas live so clients get a typing
 		// effect. Content that still looks like a tool-call JSON object is
-		// buffered until the turn ends.
+		// buffered until the turn ends. Native tool_calls deltas are assembled
+		// separately and win over content at finish.
 		contentReleased := false
+		sawNativeToolCalls := false
+		nativeCalls := map[int]*streamToolCallAcc{}
 		finish := func(doneChunk llm.ChatChunk) {
 			if normalizeTools {
 				if doneChunk.Error != "" {
 					send(llm.ChatChunk{Done: true, Error: doneChunk.Error, Usage: usage})
+					return
+				}
+				if calls := finalizeStreamToolCalls(nativeCalls); len(calls) > 0 {
+					for _, call := range calls {
+						if !send(llm.ChatChunk{
+							Kind:       llm.ChunkKindToolCall,
+							ToolCallID: call.ID,
+							ToolName:   call.Name,
+							ToolInput:  call.Input,
+						}) {
+							return
+						}
+					}
+					send(llm.ChatChunk{Done: true, Usage: usage})
 					return
 				}
 				normalized := normalizeContentToolCalls(llm.ToolCallResponse{
@@ -194,17 +212,21 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 				finish(llm.ChatChunk{Done: true, Usage: usage})
 				return
 			}
-			chunk, err := decodeStreamChunk([]byte(data))
+			delta, err := decodeStreamDelta([]byte(data))
 			if err != nil {
 				finish(llm.ChatChunk{Done: true, Error: err.Error(), Usage: usage})
 				return
 			}
-			if chunk.Usage.TotalTokens > 0 || chunk.Usage.InputTokens > 0 || chunk.Usage.OutputTokens > 0 {
-				usage = chunk.Usage
+			if delta.Usage.TotalTokens > 0 || delta.Usage.InputTokens > 0 || delta.Usage.OutputTokens > 0 {
+				usage = delta.Usage
 			}
 			if normalizeTools {
-				if chunk.Content != "" {
-					aggregated.WriteString(chunk.Content)
+				if len(delta.ToolCalls) > 0 {
+					sawNativeToolCalls = true
+					mergeStreamToolCallDeltas(nativeCalls, delta.ToolCalls)
+				}
+				if delta.Content != "" && !sawNativeToolCalls {
+					aggregated.WriteString(delta.Content)
 					if !contentReleased {
 						if shouldBufferForToolNormalize(aggregated.String()) {
 							// Keep buffering possible text tool-call JSON.
@@ -215,16 +237,17 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 								return
 							}
 						}
-					} else if !send(llm.ChatChunk{Content: chunk.Content}) {
+					} else if !send(llm.ChatChunk{Content: delta.Content}) {
 						return
 					}
 				}
-				if chunk.Done {
+				if delta.Done {
 					finish(llm.ChatChunk{Done: true, Usage: usage})
 					return
 				}
 				continue
 			}
+			chunk := llm.ChatChunk{Content: delta.Content, Done: delta.Done, Usage: delta.Usage}
 			if chunk.Content != "" || chunk.Done || chunk.Usage.TotalTokens > 0 {
 				if !send(chunk) {
 					return
@@ -462,11 +485,48 @@ func decodeChatResponse(raw []byte) (llm.ToolCallResponse, error) {
 	}, nil
 }
 
+type streamToolCallDelta struct {
+	Index     int
+	ID        string
+	Name      string
+	Arguments string
+}
+
+type streamToolCallAcc struct {
+	ID        string
+	Name      string
+	Arguments strings.Builder
+}
+
+type streamDelta struct {
+	Content   string
+	Done      bool
+	Usage     llm.TokenUsage
+	ToolCalls []streamToolCallDelta
+}
+
 func decodeStreamChunk(raw []byte) (llm.ChatChunk, error) {
+	delta, err := decodeStreamDelta(raw)
+	if err != nil {
+		return llm.ChatChunk{}, err
+	}
+	return llm.ChatChunk{Content: delta.Content, Done: delta.Done, Usage: delta.Usage}, nil
+}
+
+func decodeStreamDelta(raw []byte) (streamDelta, error) {
 	var decoded struct {
 		Choices []struct {
 			Delta struct {
-				Content string `json:"content"`
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					Index    int    `json:"index"`
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"delta"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -482,20 +542,80 @@ func decodeStreamChunk(raw []byte) (llm.ChatChunk, error) {
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return llm.ChatChunk{}, err
+		return streamDelta{}, err
 	}
-	chunk := llm.ChatChunk{}
+	out := streamDelta{
+		Usage: llm.TokenUsage{
+			InputTokens:     firstNonZero(decoded.Usage.PromptTokens, decoded.Usage.InputTokens),
+			OutputTokens:    firstNonZero(decoded.Usage.CompletionTokens, decoded.Usage.OutputTokens),
+			ReasoningTokens: decoded.Usage.CompletionTokensDetails.ReasoningTokens,
+			TotalTokens:     decoded.Usage.TotalTokens,
+		},
+	}
 	if len(decoded.Choices) > 0 {
-		chunk.Content = decoded.Choices[0].Delta.Content
-		chunk.Done = decoded.Choices[0].FinishReason != ""
+		choice := decoded.Choices[0]
+		out.Content = choice.Delta.Content
+		out.Done = choice.FinishReason != ""
+		if len(choice.Delta.ToolCalls) > 0 {
+			out.ToolCalls = make([]streamToolCallDelta, 0, len(choice.Delta.ToolCalls))
+			for _, call := range choice.Delta.ToolCalls {
+				out.ToolCalls = append(out.ToolCalls, streamToolCallDelta{
+					Index:     call.Index,
+					ID:        call.ID,
+					Name:      call.Function.Name,
+					Arguments: call.Function.Arguments,
+				})
+			}
+		}
 	}
-	chunk.Usage = llm.TokenUsage{
-		InputTokens:     firstNonZero(decoded.Usage.PromptTokens, decoded.Usage.InputTokens),
-		OutputTokens:    firstNonZero(decoded.Usage.CompletionTokens, decoded.Usage.OutputTokens),
-		ReasoningTokens: decoded.Usage.CompletionTokensDetails.ReasoningTokens,
-		TotalTokens:     decoded.Usage.TotalTokens,
+	return out, nil
+}
+
+func mergeStreamToolCallDeltas(dst map[int]*streamToolCallAcc, deltas []streamToolCallDelta) {
+	for _, delta := range deltas {
+		acc, ok := dst[delta.Index]
+		if !ok {
+			acc = &streamToolCallAcc{}
+			dst[delta.Index] = acc
+		}
+		if delta.ID != "" {
+			acc.ID = delta.ID
+		}
+		if delta.Name != "" {
+			acc.Name = delta.Name
+		}
+		if delta.Arguments != "" {
+			acc.Arguments.WriteString(delta.Arguments)
+		}
 	}
-	return chunk, nil
+}
+
+func finalizeStreamToolCalls(acc map[int]*streamToolCallAcc) []llm.ToolCall {
+	if len(acc) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(acc))
+	for index := range acc {
+		indexes = append(indexes, index)
+	}
+	slices.Sort(indexes)
+	out := make([]llm.ToolCall, 0, len(indexes))
+	for _, index := range indexes {
+		item := acc[index]
+		if item == nil || strings.TrimSpace(item.Name) == "" {
+			continue
+		}
+		id := item.ID
+		if id == "" {
+			id = fmt.Sprintf("call_%d", index)
+		}
+		out = append(out, llm.ToolCall{
+			ID:    id,
+			Name:  item.Name,
+			Input: normalizeToolArguments(json.RawMessage(item.Arguments.String())),
+		})
+	}
+	return out
 }
 
 func cloneExtraBody(in map[string]any) map[string]any {

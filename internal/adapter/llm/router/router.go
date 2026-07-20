@@ -83,6 +83,18 @@ func (g *Gateway) StreamChat(ctx context.Context, profile string, req llm.ChatRe
 	return streamer.StreamChat(ctx, profile, req)
 }
 
+func (g *Gateway) StreamChatWithTools(ctx context.Context, profile string, req llm.ToolCallRequest) (<-chan llm.ChatChunk, error) {
+	route, ok := g.routes[profile]
+	if !ok {
+		return nil, fmt.Errorf("llm router: profile %q not found", profile)
+	}
+	streamer, ok := route.(llm.ToolCallStreamer)
+	if !ok {
+		return nil, fmt.Errorf("llm router: profile %q does not support tool streaming", profile)
+	}
+	return streamer.StreamChatWithTools(ctx, profile, req)
+}
+
 func (g *Gateway) Embed(ctx context.Context, profile string, input []string) ([][]float32, error) {
 	route, ok := g.routes[profile]
 	if !ok {

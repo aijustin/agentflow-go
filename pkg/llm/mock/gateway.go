@@ -154,6 +154,46 @@ func (g *Gateway) StreamChat(ctx context.Context, profile string, req llm.ChatRe
 	return ch, nil
 }
 
+// StreamChatWithTools streams queued tool-call responses. Prose answers are
+// split into small content frames so Stream consumers can exercise typing.
+func (g *Gateway) StreamChatWithTools(ctx context.Context, profile string, req llm.ToolCallRequest) (<-chan llm.ChatChunk, error) {
+	resp, err := g.ChatWithTools(ctx, profile, req)
+	if err != nil {
+		return nil, err
+	}
+	content := resp.Message.Content
+	frames := 1 + len(resp.ToolCalls)
+	if content != "" {
+		frames += (len([]rune(content)) + 1) / 2
+	}
+	ch := make(chan llm.ChatChunk, frames)
+	go func() {
+		defer close(ch)
+		if len(resp.ToolCalls) > 0 {
+			for _, call := range resp.ToolCalls {
+				ch <- llm.ChatChunk{
+					Kind:       llm.ChunkKindToolCall,
+					ToolCallID: call.ID,
+					ToolName:   call.Name,
+					ToolInput:  call.Input,
+				}
+			}
+			ch <- llm.ChatChunk{Done: true, Usage: resp.Usage}
+			return
+		}
+		runes := []rune(content)
+		for i := 0; i < len(runes); i += 2 {
+			end := i + 2
+			if end > len(runes) {
+				end = len(runes)
+			}
+			ch <- llm.ChatChunk{Content: string(runes[i:end])}
+		}
+		ch <- llm.ChatChunk{Done: true, Usage: resp.Usage}
+	}()
+	return ch, nil
+}
+
 // Embed returns the next queued embedding response for a profile.
 func (g *Gateway) Embed(ctx context.Context, profile string, input []string) ([][]float32, error) {
 	if err := ctx.Err(); err != nil {

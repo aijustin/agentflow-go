@@ -317,6 +317,49 @@ func TestGatewayStreamChat(t *testing.T) {
 	}
 }
 
+func TestGatewayStreamChatWithToolsAssemblesNativeToolCallDeltas(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"\"}}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"text\\\":\\\"hi\\\"}\"}}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	ch, err := gateway.StreamChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}},
+		Tools:       []llm.ToolSpec{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []llm.ChatChunk
+	done := false
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatal(chunk.Error)
+		}
+		if chunk.Kind == llm.ChunkKindToolCall {
+			calls = append(calls, chunk)
+		}
+		if chunk.Content != "" {
+			t.Fatalf("unexpected content while assembling tool calls: %q", chunk.Content)
+		}
+		done = done || chunk.Done
+	}
+	if !done {
+		t.Fatal("expected done")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls=%#v", calls)
+	}
+	if calls[0].ToolCallID != "call_1" || calls[0].ToolName != "echo" || string(calls[0].ToolInput) != `{"text":"hi"}` {
+		t.Fatalf("unexpected call: %+v", calls[0])
+	}
+}
+
 func TestGatewayStreamChatWithToolsStreamsProseIncrementally(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
