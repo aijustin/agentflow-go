@@ -134,6 +134,11 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		var aggregated strings.Builder
 		var usage llm.TokenUsage
 		normalizeTools := len(tools) > 0
+		// When tools are present we still aggregate for AF-002 text tool-call
+		// normalization, but forward prose deltas live so clients get a typing
+		// effect. Content that still looks like a tool-call JSON object is
+		// buffered until the turn ends.
+		contentReleased := false
 		finish := func(doneChunk llm.ChatChunk) {
 			if normalizeTools {
 				if doneChunk.Error != "" {
@@ -161,9 +166,13 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 					send(llm.ChatChunk{Done: true, Usage: usage})
 					return
 				}
-				if content := aggregated.String(); content != "" {
-					if !send(llm.ChatChunk{Content: content, Usage: usage}) {
-						return
+				// Prose path: either already streamed incrementally, or still buffered
+				// (short replies / never crossed the tool-JSON heuristic).
+				if !contentReleased {
+					if content := aggregated.String(); content != "" {
+						if !send(llm.ChatChunk{Content: content, Usage: usage}) {
+							return
+						}
 					}
 				}
 				send(llm.ChatChunk{Done: true, Usage: usage})
@@ -196,6 +205,19 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 			if normalizeTools {
 				if chunk.Content != "" {
 					aggregated.WriteString(chunk.Content)
+					if !contentReleased {
+						if shouldBufferForToolNormalize(aggregated.String()) {
+							// Keep buffering possible text tool-call JSON.
+						} else {
+							// Flush buffered prose, then stream subsequent deltas.
+							contentReleased = true
+							if !send(llm.ChatChunk{Content: aggregated.String()}) {
+								return
+							}
+						}
+					} else if !send(llm.ChatChunk{Content: chunk.Content}) {
+						return
+					}
 				}
 				if chunk.Done {
 					finish(llm.ChatChunk{Done: true, Usage: usage})
@@ -221,6 +243,18 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		}
 	}()
 	return ch, nil
+}
+
+// shouldBufferForToolNormalize reports whether aggregated stream text still
+// looks like a possible content-encoded tool call (AF-002) and must not be
+// forwarded to clients yet.
+func shouldBufferForToolNormalize(aggregated string) bool {
+	s := strings.TrimSpace(aggregated)
+	if s == "" {
+		return true
+	}
+	// Text tool-call payloads are JSON objects/arrays; prose answers are not.
+	return s[0] == '{' || s[0] == '['
 }
 
 func (g *Gateway) Embed(ctx context.Context, profileName string, input []string) ([][]float32, error) {
