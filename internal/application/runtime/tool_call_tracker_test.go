@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,37 @@ func TestToolInputFingerprintCanonicalizesJSON(t *testing.T) {
 	c := toolInputFingerprint("box", json.RawMessage(`{"date":"2026-07-02","page":1}`))
 	if a == c {
 		t.Fatal("different inputs must not share fingerprint")
+	}
+}
+
+func TestToolInputFingerprintIsPostgresJSONBSafe(t *testing.T) {
+	t.Parallel()
+	tracker := newToolCallTracker()
+	tracker.recordAttempt("mcp_list_login_cinemas", json.RawMessage(`{}`))
+	fp := toolInputFingerprint("mcp_list_login_cinemas", json.RawMessage(`{}`))
+	if strings.ContainsRune(fp, 0) {
+		t.Fatalf("fingerprint must not contain NUL (Postgres jsonb rejects \\u0000): %q", fp)
+	}
+	if !strings.Contains(fp, toolInputFingerprintSep) {
+		t.Fatalf("fingerprint missing separator: %q", fp)
+	}
+	raw, err := json.Marshal(tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		BySameInput map[string]int `json:"by_same_input"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for key := range wire.BySameInput {
+		if strings.ContainsRune(key, 0) {
+			t.Fatalf("by_same_input key must not contain NUL: %q", key)
+		}
+	}
+	if wire.BySameInput[fp] != 1 {
+		t.Fatalf("by_same_input[%q]=%d want 1 (raw=%s)", fp, wire.BySameInput[fp], raw)
 	}
 }
 
@@ -52,14 +84,18 @@ func TestDecodeToolCallTrackerLegacyAndNew(t *testing.T) {
 		t.Fatalf("legacy decode should leave same-input empty, got %+v", legacy.BySameInput)
 	}
 
-	modern, err := decodeToolCallTracker(json.RawMessage(`{"by_name":{"echo":3},"by_same_input":{"echo\u0000{}":4}}`))
+	modernKey := "echo" + toolInputFingerprintSep + "{}"
+	// JSON string literals must escape RS as \u001e (raw 0x1E is illegal in JSON).
+	modern, err := decodeToolCallTracker(json.RawMessage(
+		`{"by_name":{"echo":3},"by_same_input":{"echo\u001e{}":4}}`,
+	))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if modern.nameCount("echo") != 3 {
 		t.Fatalf("by_name decode failed: %+v", modern)
 	}
-	if modern.BySameInput["echo\x00{}"] != 4 {
+	if modern.BySameInput[modernKey] != 4 {
 		t.Fatalf("by_same_input decode failed: %+v", modern.BySameInput)
 	}
 }

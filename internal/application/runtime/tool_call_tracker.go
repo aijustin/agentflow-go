@@ -110,8 +110,13 @@ func (t *toolCallTracker) MarshalJSON() ([]byte, error) {
 	return json.Marshal(wire{ByName: t.ByName, BySameInput: t.BySameInput})
 }
 
+// toolInputFingerprintSep separates tool name from canonical input JSON in
+// by_same_input map keys. It must not be NUL (\x00): encoding/json emits
+// \u0000 for that byte, and PostgreSQL jsonb rejects \u0000 (SQLSTATE 22P05).
+const toolInputFingerprintSep = "\x1e"
+
 func toolInputFingerprint(tool string, input json.RawMessage) string {
-	return tool + "\x00" + canonicalJSON(input)
+	return tool + toolInputFingerprintSep + canonicalJSON(input)
 }
 
 func canonicalJSON(raw json.RawMessage) string {
