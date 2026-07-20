@@ -73,8 +73,8 @@ func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.
 	if err != nil {
 		return "", err
 	}
-	if resp.Usage.TotalTokens > 0 {
-		e.emitJSON(ctx, core.EventLLMTokenUsage, req.RunID, resp.Usage)
+	if emitUsage := normalizeEmittedUsage(resp.Usage); emitUsage != nil {
+		e.emitJSON(ctx, core.EventLLMTokenUsage, req.RunID, *emitUsage)
 	}
 	if strings.TrimSpace(resp.Message.Content) == "" && resp.FinishReason == "length" {
 		return "", fmt.Errorf("runtime: llm response was empty after reaching max tokens; increase max_output_tokens or disable reasoning output for profile %q", agent.LLM)
@@ -513,8 +513,8 @@ func (e *Engine) answerWithToolsFrom(
 		if err != nil {
 			return "", err
 		}
-		if resp.Usage.TotalTokens > 0 {
-			e.emitJSON(ctx, core.EventLLMTokenUsage, runID, resp.Usage)
+		if emitUsage := normalizeEmittedUsage(resp.Usage); emitUsage != nil {
+			e.emitJSON(ctx, core.EventLLMTokenUsage, runID, *emitUsage)
 		}
 		assistant := resp.Message
 		assistant.Role = llm.RoleAssistant
@@ -857,6 +857,16 @@ func (e *Engine) collectStreamChatWithTools(
 		},
 		ToolCalls: toolCalls,
 	}, nil
+}
+
+func normalizeEmittedUsage(usage llm.TokenUsage) *llm.TokenUsage {
+	if usage.TotalTokens == 0 && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	}
+	if usage.TotalTokens == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.ReasoningTokens == 0 {
+		return nil
+	}
+	return &usage
 }
 
 func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, schema json.RawMessage, req llm.ChatRequest, outputter llm.StructuredOutputter) (json.RawMessage, error) {

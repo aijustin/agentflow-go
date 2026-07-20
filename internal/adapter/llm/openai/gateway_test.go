@@ -290,6 +290,10 @@ func TestGatewayStreamChat(t *testing.T) {
 		if req["stream"] != true {
 			t.Fatalf("stream flag not sent: %+v", req)
 		}
+		opts, _ := req["stream_options"].(map[string]any)
+		if opts["include_usage"] != true {
+			t.Fatalf("stream_options.include_usage not sent: %+v", req)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n"))
@@ -304,15 +308,99 @@ func TestGatewayStreamChat(t *testing.T) {
 	}
 	var got string
 	done := false
+	var usage llm.TokenUsage
 	for chunk := range ch {
 		if chunk.Error != "" {
 			t.Fatal(chunk.Error)
 		}
 		got += chunk.Content
 		done = done || chunk.Done
+		if chunk.Usage.TotalTokens > 0 {
+			usage = chunk.Usage
+		}
 	}
 	if got != "hello" || !done {
 		t.Fatalf("unexpected stream: got=%q done=%v", got, done)
+	}
+	if usage.TotalTokens != 3 || usage.InputTokens != 1 || usage.OutputTokens != 2 {
+		t.Fatalf("unexpected usage: %+v", usage)
+	}
+}
+
+func TestGatewayStreamChatCollectsUsageAfterFinishReason(t *testing.T) {
+	// OpenAI include_usage shape: finish_reason chunk, then a separate usage chunk.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	ch, err := gateway.StreamChat(context.Background(), "default", llm.ChatRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	var usage llm.TokenUsage
+	done := false
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatal(chunk.Error)
+		}
+		got += chunk.Content
+		done = done || chunk.Done
+		if chunk.Usage.TotalTokens > 0 {
+			usage = chunk.Usage
+		}
+	}
+	if got != "ok" || !done {
+		t.Fatalf("unexpected stream: got=%q done=%v", got, done)
+	}
+	if usage.TotalTokens != 18 || usage.InputTokens != 11 || usage.OutputTokens != 7 {
+		t.Fatalf("usage after finish_reason lost: %+v", usage)
+	}
+}
+
+func TestGatewayStreamChatWithToolsCollectsUsageAfterFinishReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{\\\"text\\\":\\\"hi\\\"}\"}}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3,\"total_tokens\":8}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	ch, err := gateway.StreamChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}},
+		Tools:       []llm.ToolSpec{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usage llm.TokenUsage
+	var calls int
+	done := false
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatal(chunk.Error)
+		}
+		if chunk.Kind == llm.ChunkKindToolCall {
+			calls++
+		}
+		done = done || chunk.Done
+		if chunk.Usage.TotalTokens > 0 {
+			usage = chunk.Usage
+		}
+	}
+	if !done || calls != 1 {
+		t.Fatalf("done=%v calls=%d", done, calls)
+	}
+	if usage.TotalTokens != 8 {
+		t.Fatalf("tool-stream usage after finish_reason lost: %+v", usage)
 	}
 }
 

@@ -106,6 +106,11 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		req.ExtraBody = cloneExtraBody(req.ExtraBody)
 	}
 	req.ExtraBody["stream"] = true
+	// OpenAI-compatible providers only return usage on the final stream chunk when
+	// include_usage is requested; without it, TokenUsage stays zero for StreamRun.
+	if _, ok := req.ExtraBody["stream_options"]; !ok {
+		req.ExtraBody["stream_options"] = map[string]any{"include_usage": true}
+	}
 	httpReq, err := g.chatRequest(ctx, profile, req, tools)
 	if err != nil {
 		return nil, err
@@ -135,6 +140,9 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		var aggregated strings.Builder
 		var usage llm.TokenUsage
 		normalizeTools := len(tools) > 0
+		// Providers that honor stream_options.include_usage emit usage in a chunk
+		// *after* finish_reason. Do not finalize on Done; wait for [DONE]/EOF.
+		finished := false
 		// A provider may emit prose before native tool_calls. Do not release any
 		// tool-enabled content until finish classifies the turn, otherwise that
 		// preamble can be mistaken for final answer content by Stream consumers.
@@ -188,7 +196,11 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 				send(llm.ChatChunk{Done: true, Usage: usage})
 				return
 			}
-			send(doneChunk)
+			if doneChunk.Error != "" {
+				send(llm.ChatChunk{Done: true, Error: doneChunk.Error, Usage: usage})
+				return
+			}
+			send(llm.ChatChunk{Done: true, Usage: usage})
 		}
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -209,8 +221,8 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 				finish(llm.ChatChunk{Done: true, Error: err.Error(), Usage: usage})
 				return
 			}
-			if delta.Usage.TotalTokens > 0 || delta.Usage.InputTokens > 0 || delta.Usage.OutputTokens > 0 {
-				usage = delta.Usage
+			if tokenUsagePresent(delta.Usage) {
+				usage = normalizeTokenUsage(delta.Usage)
 			}
 			if normalizeTools {
 				if len(delta.ToolCalls) > 0 {
@@ -220,26 +232,24 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 					aggregated.WriteString(delta.Content)
 				}
 				if delta.Done {
-					finish(llm.ChatChunk{Done: true, Usage: usage})
-					return
+					finished = true
 				}
 				continue
 			}
-			chunk := llm.ChatChunk{Content: delta.Content, Done: delta.Done, Usage: delta.Usage}
-			if chunk.Content != "" || chunk.Done || chunk.Usage.TotalTokens > 0 {
-				if !send(chunk) {
+			if delta.Content != "" {
+				if !send(llm.ChatChunk{Content: delta.Content, Usage: usage}) {
 					return
 				}
-				if chunk.Done {
-					return
-				}
+			}
+			if delta.Done {
+				finished = true
 			}
 		}
 		if err := scanner.Err(); err != nil {
 			finish(llm.ChatChunk{Done: true, Error: err.Error(), Usage: usage})
 			return
 		}
-		if normalizeTools {
+		if normalizeTools || finished {
 			finish(llm.ChatChunk{Done: true, Usage: usage})
 		}
 	}()
@@ -419,12 +429,12 @@ func decodeChatResponse(raw []byte) (llm.ToolCallResponse, error) {
 		return llm.ToolCallResponse{}, fmt.Errorf("openai: response contained no choices")
 	}
 	choice := decoded.Choices[0]
-	usage := llm.TokenUsage{
+	usage := normalizeTokenUsage(llm.TokenUsage{
 		InputTokens:     firstNonZero(decoded.Usage.PromptTokens, decoded.Usage.InputTokens),
 		OutputTokens:    firstNonZero(decoded.Usage.CompletionTokens, decoded.Usage.OutputTokens),
 		ReasoningTokens: decoded.Usage.CompletionTokensDetails.ReasoningTokens,
 		TotalTokens:     decoded.Usage.TotalTokens,
-	}
+	})
 	message := llm.Message{
 		Role:             choice.Message.Role,
 		Content:          choice.Message.Content,
@@ -511,12 +521,12 @@ func decodeStreamDelta(raw []byte) (streamDelta, error) {
 		return streamDelta{}, err
 	}
 	out := streamDelta{
-		Usage: llm.TokenUsage{
+		Usage: normalizeTokenUsage(llm.TokenUsage{
 			InputTokens:     firstNonZero(decoded.Usage.PromptTokens, decoded.Usage.InputTokens),
 			OutputTokens:    firstNonZero(decoded.Usage.CompletionTokens, decoded.Usage.OutputTokens),
 			ReasoningTokens: decoded.Usage.CompletionTokensDetails.ReasoningTokens,
 			TotalTokens:     decoded.Usage.TotalTokens,
-		},
+		}),
 	}
 	if len(decoded.Choices) > 0 {
 		choice := decoded.Choices[0]
@@ -666,6 +676,17 @@ func normalizeToolArguments(raw json.RawMessage) json.RawMessage {
 		return json.RawMessage(encoded)
 	}
 	return raw
+}
+
+func tokenUsagePresent(usage llm.TokenUsage) bool {
+	return usage.TotalTokens > 0 || usage.InputTokens > 0 || usage.OutputTokens > 0 || usage.ReasoningTokens > 0
+}
+
+func normalizeTokenUsage(usage llm.TokenUsage) llm.TokenUsage {
+	if usage.TotalTokens == 0 && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	}
+	return usage
 }
 
 func firstNonZero(values ...int) int {
