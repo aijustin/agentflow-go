@@ -87,10 +87,14 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 	return g.streamChat(ctx, profileName, req, nil)
 }
 
-// StreamChatWithTools streams a completion with tools enabled. Content is
-// buffered until the provider classifies the turn: tool-call turns emit only
-// tool-call chunks, while final-answer turns emit their prose followed by Done.
-// Content-encoded tool calls are normalized before the terminal chunks.
+// StreamChatWithTools streams a completion with tools enabled. Content deltas
+// are forwarded immediately for live UI. On finish, tool-call turns emit only
+// tool-call chunks (no bulk content re-emit); final-answer turns emit Done only
+// because prose was already streamed. Content-encoded tool calls are still
+// normalized from the aggregated buffer before the terminal Done chunk.
+// Consumers must treat streamed content as presentation-only: tool-turn
+// preambles may appear before tool_call chunks; authoritative final text comes
+// from the completed run snapshot / StreamFrameDone.Result.Output.
 func (g *Gateway) StreamChatWithTools(ctx context.Context, profileName string, req llm.ToolCallRequest) (<-chan llm.ChatChunk, error) {
 	return g.streamChat(ctx, profileName, req.ChatRequest, req.Tools)
 }
@@ -143,9 +147,8 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		// Providers that honor stream_options.include_usage emit usage in a chunk
 		// *after* finish_reason. Do not finalize on Done; wait for [DONE]/EOF.
 		finished := false
-		// A provider may emit prose before native tool_calls. Do not release any
-		// tool-enabled content until finish classifies the turn, otherwise that
-		// preamble can be mistaken for final answer content by Stream consumers.
+		// Aggregate tool-enabled content for content-encoded tool-call detection
+		// at finish, while still forwarding each delta for live presentation.
 		nativeCalls := map[int]*streamToolCallAcc{}
 		finish := func(doneChunk llm.ChatChunk) {
 			if normalizeTools {
@@ -188,11 +191,7 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 					send(llm.ChatChunk{Done: true, Usage: usage})
 					return
 				}
-				if content := aggregated.String(); content != "" {
-					if !send(llm.ChatChunk{Content: content, Usage: usage}) {
-						return
-					}
-				}
+				// Final prose was already forwarded per delta; only signal Done.
 				send(llm.ChatChunk{Done: true, Usage: usage})
 				return
 			}
@@ -230,6 +229,9 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 				}
 				if delta.Content != "" {
 					aggregated.WriteString(delta.Content)
+					if !send(llm.ChatChunk{Content: delta.Content, Usage: usage}) {
+						return
+					}
 				}
 				if delta.Done {
 					finished = true

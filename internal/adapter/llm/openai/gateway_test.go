@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -447,7 +448,7 @@ func TestGatewayStreamChatWithToolsAssemblesNativeToolCallDeltas(t *testing.T) {
 	}
 }
 
-func TestGatewayStreamChatWithToolsDiscardsContentBeforeNativeToolCalls(t *testing.T) {
+func TestGatewayStreamChatWithToolsStreamsPreambleThenNativeToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"I'll check that first.\"}}]}\n\n"))
@@ -465,6 +466,7 @@ func TestGatewayStreamChatWithToolsDiscardsContentBeforeNativeToolCalls(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	var content []string
 	var calls []llm.ChatChunk
 	done := false
 	for chunk := range ch {
@@ -472,12 +474,16 @@ func TestGatewayStreamChatWithToolsDiscardsContentBeforeNativeToolCalls(t *testi
 			t.Fatal(chunk.Error)
 		}
 		if chunk.Content != "" {
-			t.Fatalf("tool-call preamble leaked as answer content: %q", chunk.Content)
+			content = append(content, chunk.Content)
 		}
 		if chunk.Kind == llm.ChunkKindToolCall {
 			calls = append(calls, chunk)
 		}
 		done = done || chunk.Done
+	}
+	// Presentation may include tool-turn preamble; finish must not re-emit a bulk copy.
+	if len(content) != 1 || content[0] != "I'll check that first." {
+		t.Fatalf("expected streamed preamble deltas only, got %#v", content)
 	}
 	if len(calls) != 1 || calls[0].ToolCallID != "call_1" || calls[0].ToolName != "echo" {
 		t.Fatalf("unexpected tool calls: %+v", calls)
@@ -505,7 +511,8 @@ func TestGatewayStreamChatWithToolsEmitsFinalProseThenDone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var chunks []llm.ChatChunk
+	var contentChunks []string
+	var doneChunk *llm.ChatChunk
 	for chunk := range ch {
 		if chunk.Error != "" {
 			t.Fatal(chunk.Error)
@@ -513,16 +520,25 @@ func TestGatewayStreamChatWithToolsEmitsFinalProseThenDone(t *testing.T) {
 		if chunk.Kind == llm.ChunkKindToolCall {
 			t.Fatalf("unexpected tool call for prose: %+v", chunk)
 		}
-		chunks = append(chunks, chunk)
+		if chunk.Content != "" {
+			if chunk.Done {
+				t.Fatalf("content and Done must not share a chunk: %+v", chunk)
+			}
+			contentChunks = append(contentChunks, chunk.Content)
+		}
+		if chunk.Done {
+			c := chunk
+			doneChunk = &c
+		}
 	}
-	if len(chunks) != 2 {
-		t.Fatalf("expected final prose and Done chunks, got %+v", chunks)
+	if len(contentChunks) != 3 {
+		t.Fatalf("expected per-delta prose chunks, got %#v", contentChunks)
 	}
-	if chunks[0].Content != "你好！" || chunks[0].Done {
-		t.Fatalf("unexpected final prose chunk: %+v", chunks[0])
+	if got := strings.Join(contentChunks, ""); got != "你好！" {
+		t.Fatalf("unexpected concatenated prose: %q", got)
 	}
-	if !chunks[1].Done || chunks[1].Content != "" {
-		t.Fatalf("unexpected Done chunk: %+v", chunks[1])
+	if doneChunk == nil || doneChunk.Content != "" {
+		t.Fatalf("unexpected Done chunk: %+v", doneChunk)
 	}
 }
 

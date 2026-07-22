@@ -124,8 +124,9 @@ func (g *preambleToolStreamGateway) StreamChatWithTools(
 
 func TestEngineStreamDiscardsToolTurnPreamble(t *testing.T) {
 	gateway := &preambleToolStreamGateway{}
+	repo := runstateinmem.NewRepository()
 	engine, err := NewEngine(toolScenario(core.ApprovalNever, core.SideEffectRead, 4), Dependencies{
-		Runs:  runstateinmem.NewRepository(),
+		Runs:  repo,
 		LLM:   gateway,
 		Tools: mapToolRegistry{"echo": okEchoTool{}},
 	})
@@ -140,15 +141,28 @@ func TestEngineStreamDiscardsToolTurnPreamble(t *testing.T) {
 		t.Fatal(err)
 	}
 	var answer strings.Builder
+	var contentFrames int
 	for chunk := range ch {
 		if chunk.Error != "" {
 			t.Fatalf("stream error: %s", chunk.Error)
 		}
-		if chunk.IsAnswerContent() {
+		if chunk.IsAnswerContent() && chunk.Content != "" {
+			contentFrames++
 			answer.WriteString(chunk.Content)
 		}
 	}
-	if got := answer.String(); got != "最终答案" {
-		t.Fatalf("expected only terminal answer content, got %q", got)
+	// Live stream may include tool-turn preamble; authoritative final must not.
+	if got := answer.String(); !strings.Contains(got, "最终答案") {
+		t.Fatalf("expected terminal answer in stream, got %q", got)
+	}
+	if contentFrames < 2 {
+		t.Fatalf("expected incremental content frames, got %d (%q)", contentFrames, answer.String())
+	}
+	loaded, err := repo.Load(context.Background(), "run-stream-preamble")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(loaded.StepOutputs["final"].Inline); got != `{"text":"最终答案"}` {
+		t.Fatalf("authoritative final must exclude tool-turn preamble, got %q", got)
 	}
 }

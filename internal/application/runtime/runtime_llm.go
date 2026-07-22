@@ -340,11 +340,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 					}
 				}
 			}()
-			contentEmitted := false
 			emit := func(chunk llm.ChatChunk) {
-				if chunk.IsAnswerContent() && chunk.Content != "" {
-					contentEmitted = true
-				}
 				select {
 				case ch <- chunk:
 				case <-ctx.Done():
@@ -366,13 +362,12 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 				}
 				return
 			}
-			// When the tool loop already streamed answer deltas, only signal Done.
-			done := llm.ChatChunk{Done: true}
-			if !contentEmitted && output != "" {
-				done.Content = output
-			}
+			// Always attach authoritative terminal prose on Done so Engine.Stream
+			// can persist StepOutputs["final"] without tool-turn preambles.
+			// When deltas were already streamed, Stream strips Done.Content
+			// before fanout to avoid a duplicate bulk frame.
 			select {
-			case ch <- done:
+			case ch <- llm.ChatChunk{Done: true, Content: output}:
 			case <-ctx.Done():
 			}
 		}()
@@ -830,6 +825,10 @@ func (e *Engine) collectStreamChatWithTools(
 		default:
 			if chunk.IsAnswerContent() && chunk.Content != "" {
 				content.WriteString(chunk.Content)
+				// Forward deltas immediately for live UI. Tool-turn preambles
+				// may stream before tool_calls; authoritative message.Content
+				// is cleared below when the turn is classified as tool_calls.
+				emitStreamChunk(emit, llm.ChatChunk{Content: chunk.Content})
 			}
 		}
 	}
@@ -842,12 +841,9 @@ func (e *Engine) collectStreamChatWithTools(
 	}
 	if len(toolCalls) > 0 {
 		message.ToolCalls = append([]llm.ToolCall(nil), toolCalls...)
+		// Drop tool-turn prose from the authoritative assistant message so it
+		// cannot persist into StepOutputs["final"] / StreamFrameDone.Result.
 		message.Content = ""
-	} else if message.Content != "" {
-		// A tool-capable provider may send prose before it declares native
-		// tool_calls. Commit answer content only after the turn closes and is
-		// known to be a terminal prose turn.
-		emitStreamChunk(emit, llm.ChatChunk{Content: message.Content})
 	}
 	return llm.ToolCallResponse{
 		ChatResponse: llm.ChatResponse{

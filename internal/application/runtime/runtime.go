@@ -470,12 +470,61 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 			}
 		}
 		var b strings.Builder
+		toolsAgent := len(agent.Tools) > 0 || len(agent.SubAgents) > 0
 		for chunk := range source {
-			// Only answer-content chunks feed the persisted final output.
-			// Tool progress (tool_call / tool_result / tool_denied) is
-			// forwarded to Stream consumers but must not corrupt final.
-			if chunk.IsAnswerContent() && chunk.Content != "" {
+			// Presentation answer deltas (non-terminal) feed the plain-chat
+			// aggregate. Tool progress chunks must not. Done.Content is handled
+			// below: tools path treats it as authoritative final; plain chat may
+			// deliver content+Done in one chunk.
+			if !chunk.Done && chunk.IsAnswerContent() && chunk.Content != "" {
 				b.WriteString(chunk.Content)
+			}
+			if chunk.Done {
+				finalOutput := b.String()
+				if toolsAgent {
+					if chunk.Content != "" {
+						// answerWithTools returns terminal prose without tool-turn
+						// preambles; prefer it over concatenated presentation tokens.
+						finalOutput = chunk.Content
+					}
+					// When deltas were already streamed, strip Done.Content so
+					// consumers do not receive a duplicate bulk prose frame.
+					if b.Len() > 0 {
+						chunk.Content = ""
+					}
+				} else if chunk.Content != "" && b.Len() == 0 {
+					// Plain chat providers/mocks may send content only on Done.
+					finalOutput = chunk.Content
+				} else if b.Len() > 0 {
+					// Content already forwarded via deltas; avoid re-emitting on Done.
+					chunk.Content = ""
+				}
+				if !send(chunk) {
+					if err := ctx.Err(); errors.Is(err, context.DeadlineExceeded) {
+						e.markRunFailed(ctx, req.RunID, err)
+					} else {
+						e.markRunCancelled(ctx, req.RunID)
+					}
+					return
+				}
+				if chunk.Paused {
+					if err := e.ensureRunPaused(ctx, req.RunID); err != nil {
+						e.logWarn(ctx, "runtime: failed to persist paused status after stream pause", "run_id", req.RunID, "error", err)
+					}
+					return
+				}
+				if chunk.Error != "" {
+					var paused RunPausedError
+					if errorsAsRunPaused(errors.New(chunk.Error), &paused) {
+						return
+					}
+					e.markRunFailed(ctx, req.RunID, errors.New(chunk.Error))
+					return
+				}
+				if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, finalOutput); err != nil {
+					sendTerminal(llm.ChatChunk{Error: err.Error()})
+				}
+				return
 			}
 			if !send(chunk) {
 				if err := ctx.Err(); errors.Is(err, context.DeadlineExceeded) {
@@ -497,12 +546,6 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 					return
 				}
 				e.markRunFailed(ctx, req.RunID, errors.New(chunk.Error))
-				return
-			}
-			if chunk.Done {
-				if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, b.String()); err != nil {
-					sendTerminal(llm.ChatChunk{Error: err.Error()})
-				}
 				return
 			}
 		}
