@@ -11,7 +11,6 @@ import (
 type stubMultiStore struct {
 	byNamespace map[string][]knowledge.SearchResult
 	errs        map[string]error
-	calls       []string
 }
 
 func (s *stubMultiStore) Upsert(context.Context, []knowledge.DocumentEmbedding) error {
@@ -21,7 +20,6 @@ func (s *stubMultiStore) Upsert(context.Context, []knowledge.DocumentEmbedding) 
 func (s *stubMultiStore) Delete(context.Context, knowledge.DeleteRequest) error { return nil }
 
 func (s *stubMultiStore) Query(_ context.Context, query knowledge.Query) ([]knowledge.SearchResult, error) {
-	s.calls = append(s.calls, query.Namespace)
 	if err, ok := s.errs[query.Namespace]; ok {
 		return nil, err
 	}
