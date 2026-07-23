@@ -507,14 +507,6 @@ type streamDelta struct {
 	ToolCalls []streamToolCallDelta
 }
 
-func decodeStreamChunk(raw []byte) (llm.ChatChunk, error) {
-	delta, err := decodeStreamDelta(raw)
-	if err != nil {
-		return llm.ChatChunk{}, err
-	}
-	return llm.ChatChunk{Content: delta.Content, Done: delta.Done, Usage: delta.Usage}, nil
-}
-
 // decodeStreamErrorPayload recognizes the error object OpenAI-compatible
 // providers emit as a data line when a stream fails mid-flight
 // ({"error":{"message","type","code"}}). It returns nil for ordinary delta

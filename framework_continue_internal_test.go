@@ -55,7 +55,7 @@ func TestApplyWorkflowAmendmentPromotesHumanFeedback(t *testing.T) {
 
 func TestVariableJSONString(t *testing.T) {
 	vars := map[string]json.RawMessage{
-		"plain": json.RawMessage(`hello`),
+		"plain":  json.RawMessage(`hello`),
 		"quoted": json.RawMessage(`"world"`),
 	}
 	if got := variableJSONString(vars, "plain"); got != "hello" {

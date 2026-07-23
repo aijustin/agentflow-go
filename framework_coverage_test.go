@@ -7,9 +7,9 @@ import (
 	"time"
 
 	agentflow "github.com/aijustin/agentflow-go"
-	"github.com/aijustin/agentflow-go/pkg/adapters"
-	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
+	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"

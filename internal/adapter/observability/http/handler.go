@@ -11,33 +11,33 @@ import (
 	"strconv"
 	"strings"
 
-	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/log"
+	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/studio"
 )
 
 type Config struct {
-	Store          obspkg.EventStore
-	Hub            *obspkg.EventHub
-	AuthMiddleware func(nethttp.Handler) nethttp.Handler
+	Store           obspkg.EventStore
+	Hub             *obspkg.EventHub
+	AuthMiddleware  func(nethttp.Handler) nethttp.Handler
 	TraceExploreURL string
-	Steps          StepsLister
-	HITLResume     RunHITLResumer
-	Graph          GraphExporter
-	Resume         StepResumer
-	History        CheckpointLister
-	Checkpoints    CheckpointLoader
-	Restore        CheckpointResumer
-	Studio         StudioValidator
-	Codegen        StudioCodeGenerator
-	YAML           StudioYAMLExporter
-	ImportYAML     StudioYAMLImporter
-	RunStudio      StudioRunner
-	StudioSave     StudioSaver
-	Compare        RunComparer
-	Thread         ThreadLister
-	Fork           RunForker
+	Steps           StepsLister
+	HITLResume      RunHITLResumer
+	Graph           GraphExporter
+	Resume          StepResumer
+	History         CheckpointLister
+	Checkpoints     CheckpointLoader
+	Restore         CheckpointResumer
+	Studio          StudioValidator
+	Codegen         StudioCodeGenerator
+	YAML            StudioYAMLExporter
+	ImportYAML      StudioYAMLImporter
+	RunStudio       StudioRunner
+	StudioSave      StudioSaver
+	Compare         RunComparer
+	Thread          ThreadLister
+	Fork            RunForker
 	// InsecureAllowNoAuth disables the default-deny guard on mutating
 	// endpoints (HITL resume, resume-from-step/checkpoint, fork, studio
 	// run/save) when AuthMiddleware is nil. Only set it behind an
@@ -113,30 +113,30 @@ type RunForker interface {
 }
 
 type Handler struct {
-	store      obspkg.EventStore
-	hub        *obspkg.EventHub
-	steps      StepsLister
-	hitlResume RunHITLResumer
-	graph      GraphExporter
-	resume     StepResumer
-	history    CheckpointLister
-	checkpoint CheckpointLoader
-	restore    CheckpointResumer
-	studio     StudioValidator
-	codegen    StudioCodeGenerator
-	yaml       StudioYAMLExporter
-	importYAML StudioYAMLImporter
-	runStudio  StudioRunner
-	studioSave StudioSaver
-	compare    RunComparer
-	thread     ThreadLister
-	fork       RunForker
+	store           obspkg.EventStore
+	hub             *obspkg.EventHub
+	steps           StepsLister
+	hitlResume      RunHITLResumer
+	graph           GraphExporter
+	resume          StepResumer
+	history         CheckpointLister
+	checkpoint      CheckpointLoader
+	restore         CheckpointResumer
+	studio          StudioValidator
+	codegen         StudioCodeGenerator
+	yaml            StudioYAMLExporter
+	importYAML      StudioYAMLImporter
+	runStudio       StudioRunner
+	studioSave      StudioSaver
+	compare         RunComparer
+	thread          ThreadLister
+	fork            RunForker
 	traceExploreURL string
 	// guardMutating default-denies mutating endpoints when no AuthMiddleware
 	// is configured and InsecureAllowNoAuth was not set explicitly.
 	guardMutating bool
-	mux        *nethttp.ServeMux
-	handler    nethttp.Handler
+	mux           *nethttp.ServeMux
+	handler       nethttp.Handler
 }
 
 func NewHandler(config Config) (*Handler, error) {
@@ -144,26 +144,26 @@ func NewHandler(config Config) (*Handler, error) {
 		return nil, fmt.Errorf("observability http: event store is nil")
 	}
 	handler := &Handler{
-		store:      config.Store,
-		hub:        config.Hub,
-		steps:      config.Steps,
-		hitlResume: config.HITLResume,
-		graph:      config.Graph,
-		resume:     config.Resume,
-		history:    config.History,
-		checkpoint: config.Checkpoints,
-		restore:    config.Restore,
-		studio:     config.Studio,
-		codegen:    config.Codegen,
-		yaml:       config.YAML,
-		importYAML: config.ImportYAML,
-		runStudio:  config.RunStudio,
-		studioSave: config.StudioSave,
-		compare:    config.Compare,
-		thread:     config.Thread,
-		fork:       config.Fork,
+		store:           config.Store,
+		hub:             config.Hub,
+		steps:           config.Steps,
+		hitlResume:      config.HITLResume,
+		graph:           config.Graph,
+		resume:          config.Resume,
+		history:         config.History,
+		checkpoint:      config.Checkpoints,
+		restore:         config.Restore,
+		studio:          config.Studio,
+		codegen:         config.Codegen,
+		yaml:            config.YAML,
+		importYAML:      config.ImportYAML,
+		runStudio:       config.RunStudio,
+		studioSave:      config.StudioSave,
+		compare:         config.Compare,
+		thread:          config.Thread,
+		fork:            config.Fork,
 		traceExploreURL: config.TraceExploreURL,
-		mux:        nethttp.NewServeMux(),
+		mux:             nethttp.NewServeMux(),
 	}
 	if config.AuthMiddleware == nil {
 		handler.guardMutating = !config.InsecureAllowNoAuth
@@ -667,7 +667,6 @@ func (handler *Handler) handleRunFork(w nethttp.ResponseWriter, r *nethttp.Reque
 	}
 	writeJSON(w, nethttp.StatusOK, result)
 }
-
 
 func (handler *Handler) handleEpisodeResource(w nethttp.ResponseWriter, r *nethttp.Request) {
 	episodeID, segments, ok := parseScopedResource(r.URL.Path, "/api/episodes/")

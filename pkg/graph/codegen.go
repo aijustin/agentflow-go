@@ -13,10 +13,10 @@ import (
 var routeIfEqPattern = regexp.MustCompile(`^eq\((.+),\s*(.+)\)$`)
 
 type mapNodeInput struct {
-	ItemsPath string          `json:"items_path"`
-	Branch    mapNodeBranch   `json:"branch"`
-	OnError   string          `json:"on_error,omitempty"`
-	ItemField string          `json:"item_field,omitempty"`
+	ItemsPath string        `json:"items_path"`
+	Branch    mapNodeBranch `json:"branch"`
+	OnError   string        `json:"on_error,omitempty"`
+	ItemField string        `json:"item_field,omitempty"`
 }
 
 type mapNodeBranch struct {

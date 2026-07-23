@@ -854,10 +854,6 @@ func (e *Engine) hasBeforeFinalCheckpoint(agent core.Agent) bool {
 	return core.HasHumanCheckpoint(agent.Policy.HumanCheckpoints, core.CheckpointBeforeFinalAnswer)
 }
 
-func (e *Engine) shouldPauseBeforeFinal(agent core.Agent) bool {
-	return e.gate != nil && e.hasBeforeFinalCheckpoint(agent)
-}
-
 func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {
 	corr := core.EpisodeCorrelationFromContext(ctx)
 	if core.IsLifecycleEvent(typ) {

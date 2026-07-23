@@ -401,7 +401,7 @@ func (f *Framework) applyWorkflowAmendment(ctx context.Context, runID string) er
 	if prior == "" {
 		snapshot.Variables[resumePromptVar] = quoteJSONString(amendment)
 	} else {
-		snapshot.Variables[resumePromptVar] = quoteJSONString(prior+"\n\nHuman feedback: "+amendment)
+		snapshot.Variables[resumePromptVar] = quoteJSONString(prior + "\n\nHuman feedback: " + amendment)
 	}
 	delete(snapshot.Variables, "human_amendment")
 	return f.runs.Save(ctx, &snapshot, snapshot.Version)

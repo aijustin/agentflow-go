@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	obsInmem "github.com/aijustin/agentflow-go/internal/adapter/observability/inmem"
 	llmmock "github.com/aijustin/agentflow-go/internal/adapter/llm/mock"
+	obsInmem "github.com/aijustin/agentflow-go/internal/adapter/observability/inmem"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"

@@ -43,8 +43,8 @@ type stubRepo struct {
 }
 
 func (s stubRepo) Load(context.Context, string) (RunSnapshot, error) { return s.snapshot, nil }
-func (s stubRepo) Save(context.Context, *RunSnapshot, int64) error     { return nil }
-func (s stubRepo) Delete(context.Context, string) error                { return nil }
+func (s stubRepo) Save(context.Context, *RunSnapshot, int64) error   { return nil }
+func (s stubRepo) Delete(context.Context, string) error              { return nil }
 func (s stubRepo) List(context.Context, ListFilter) ([]RunSnapshot, error) {
 	return nil, nil
 }

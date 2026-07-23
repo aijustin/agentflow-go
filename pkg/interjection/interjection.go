@@ -35,7 +35,7 @@ func truncateUTF8(text string, limit int) string {
 
 // Buffer holds pending mid-turn interjections keyed by run ID.
 type Buffer struct {
-	mu   sync.Mutex
+	mu    sync.Mutex
 	byRun map[string][]string
 }
 

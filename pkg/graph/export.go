@@ -17,10 +17,10 @@ type ScenarioGraph struct {
 
 // GraphView describes one workflow DAG.
 type GraphView struct {
-	ID     string                    `json:"id,omitempty"`
-	Nodes  []GraphNode               `json:"nodes"`
-	Edges  []GraphEdge               `json:"edges"`
-	Layout map[string]GraphPosition  `json:"layout,omitempty"`
+	ID     string                   `json:"id,omitempty"`
+	Nodes  []GraphNode              `json:"nodes"`
+	Edges  []GraphEdge              `json:"edges"`
+	Layout map[string]GraphPosition `json:"layout,omitempty"`
 }
 
 // GraphPosition stores a Studio canvas coordinate for a node.

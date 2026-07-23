@@ -48,12 +48,12 @@ func TestTruncateStepOutputsForRerun(t *testing.T) {
 		},
 	}
 	outputs := map[string]runstate.StepOutputRef{
-		"prep":                    {Inline: json.RawMessage(`{"ready":true}`)},
-		"fanout":                  {Inline: json.RawMessage(`{"members":{}}`)},
-		"fanout.agent.analyst.0":  {Inline: json.RawMessage(`{"text":"a"}`)},
-		"fanout.agent.analyst.1":  {Inline: json.RawMessage(`{"text":"b"}`)},
-		"merge":                   {Inline: json.RawMessage(`{"done":true}`)},
-		"final":                   {Inline: json.RawMessage(`{"answer":"x"}`)},
+		"prep":                   {Inline: json.RawMessage(`{"ready":true}`)},
+		"fanout":                 {Inline: json.RawMessage(`{"members":{}}`)},
+		"fanout.agent.analyst.0": {Inline: json.RawMessage(`{"text":"a"}`)},
+		"fanout.agent.analyst.1": {Inline: json.RawMessage(`{"text":"b"}`)},
+		"merge":                  {Inline: json.RawMessage(`{"done":true}`)},
+		"final":                  {Inline: json.RawMessage(`{"answer":"x"}`)},
 	}
 	truncateStepOutputsForRerun(outputs, workflow, "fanout")
 	for _, id := range []string{"fanout", "fanout.agent.analyst.0", "fanout.agent.analyst.1", "merge"} {

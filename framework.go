@@ -27,8 +27,8 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
-	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/identity"
+	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -80,42 +80,42 @@ type Plan struct {
 type Framework struct {
 	mu sync.RWMutex
 
-	scenario          core.Scenario
-	engine            *appexec.Engine
-	runs              runstate.Repository
-	checkpointHistory runstate.CheckpointHistory
-	blobs             runstate.BlobStore
-	events            core.EventSink
-	gate              core.HumanGate
-	approvalEvaluator core.ToolApprovalEvaluator
-	tokenSigner       *runstate.TokenSigner
-	tokenTTL          time.Duration
-	llm               llm.Gateway
-	tools             *toolRegistry
-	memory            map[string]memory.Repository
-	tierMemory        map[string]tier.Manager
-	cognitive         map[string]memory.CognitiveMemory
-	tierStores        map[string]tier.Store
-	tierStorePolicies map[string]tier.Policy
-	tierColdIndexers  map[string]tier.ColdSummaryIndexer
-	tierColdSummarizers map[string]tier.ContentSummarizer
+	scenario               core.Scenario
+	engine                 *appexec.Engine
+	runs                   runstate.Repository
+	checkpointHistory      runstate.CheckpointHistory
+	blobs                  runstate.BlobStore
+	events                 core.EventSink
+	gate                   core.HumanGate
+	approvalEvaluator      core.ToolApprovalEvaluator
+	tokenSigner            *runstate.TokenSigner
+	tokenTTL               time.Duration
+	llm                    llm.Gateway
+	tools                  *toolRegistry
+	memory                 map[string]memory.Repository
+	tierMemory             map[string]tier.Manager
+	cognitive              map[string]memory.CognitiveMemory
+	tierStores             map[string]tier.Store
+	tierStorePolicies      map[string]tier.Policy
+	tierColdIndexers       map[string]tier.ColdSummaryIndexer
+	tierColdSummarizers    map[string]tier.ContentSummarizer
 	enqueueMemoryReconcile func(context.Context, async.Job) error
-	toolOrchestrator  toolorch.ToolOrchestrator
-	approvalStore     toolorch.ApprovalStore
-	turnStopHook      core.TurnStopHook
-	resumeAuthHook    ResumeAuthorizationHook
-	policy            security.Policy
-	audit             audit.Sink
-	toolGov           governance.ToolPolicy
-	redactor          governance.OutputRedactor
-	recorder          observability.Recorder
-	tracer            observability.Tracer
-	logger            log.Logger
-	runLocker         coordination.Locker
-	runLeaseOwner     string
-	runLeaseTTL       time.Duration
-	workflowRunner    *orchestration.WorkflowRunner
-	closers           []func(context.Context) error
+	toolOrchestrator       toolorch.ToolOrchestrator
+	approvalStore          toolorch.ApprovalStore
+	turnStopHook           core.TurnStopHook
+	resumeAuthHook         ResumeAuthorizationHook
+	policy                 security.Policy
+	audit                  audit.Sink
+	toolGov                governance.ToolPolicy
+	redactor               governance.OutputRedactor
+	recorder               observability.Recorder
+	tracer                 observability.Tracer
+	logger                 log.Logger
+	runLocker              coordination.Locker
+	runLeaseOwner          string
+	runLeaseTTL            time.Duration
+	workflowRunner         *orchestration.WorkflowRunner
+	closers                []func(context.Context) error
 
 	// resumeMu guards resumeInFlight, the in-process set of runs currently
 	// being resumed/continued. It gives concurrent ResumeAndContinue /
@@ -127,46 +127,46 @@ type Framework struct {
 }
 
 type options struct {
-	llm                 llm.Gateway
-	runs                runstate.Repository
-	checkpointHistory   runstate.CheckpointHistory
-	blobs               runstate.BlobStore
-	events              core.EventSink
-	gate                core.HumanGate
-	approvalEvaluator   core.ToolApprovalEvaluator
-	tools               map[string]core.ToolExecutor
-	resolver            core.ToolResolver
-	memory              map[string]memory.Repository
-	tierMemory          map[string]tier.Manager
-	tierStores          map[string]tier.Store
-	tierStorePolicies   map[string]tier.Policy
-	tierColdIndexers    map[string]tier.ColdSummaryIndexer
-	tierColdSummarizers map[string]tier.ContentSummarizer
-	cognitive           map[string]memory.CognitiveMemory
-	jobQueue            async.Queue
-	tokenSecret         []byte
+	llm                  llm.Gateway
+	runs                 runstate.Repository
+	checkpointHistory    runstate.CheckpointHistory
+	blobs                runstate.BlobStore
+	events               core.EventSink
+	gate                 core.HumanGate
+	approvalEvaluator    core.ToolApprovalEvaluator
+	tools                map[string]core.ToolExecutor
+	resolver             core.ToolResolver
+	memory               map[string]memory.Repository
+	tierMemory           map[string]tier.Manager
+	tierStores           map[string]tier.Store
+	tierStorePolicies    map[string]tier.Policy
+	tierColdIndexers     map[string]tier.ColdSummaryIndexer
+	tierColdSummarizers  map[string]tier.ContentSummarizer
+	cognitive            map[string]memory.CognitiveMemory
+	jobQueue             async.Queue
+	tokenSecret          []byte
 	tokenSecretSecondary []byte
-	tokenTTL            time.Duration
-	tokenTTLSet         bool
-	tokenWriter         io.Writer
-	policy              security.Policy
-	audit               audit.Sink
-	toolGov             governance.ToolPolicy
-	redactor            governance.OutputRedactor
-	recorder            observability.Recorder
-	tracer              observability.Tracer
-	logger              log.Logger
-	requireLLM          bool
-	runLocker           coordination.Locker
-	runLeaseOwner       string
-	runLeaseTTL         time.Duration
-	closers             []func(context.Context) error
-	toolTransforms      map[string]contextwindow.ToolOutputTransform
-	interjectDrain      interjection.DrainPolicy
-	toolOrchestrator    toolorch.ToolOrchestrator
-	approvalStore       toolorch.ApprovalStore
-	turnStopHook        core.TurnStopHook
-	resumeAuthHook      ResumeAuthorizationHook
+	tokenTTL             time.Duration
+	tokenTTLSet          bool
+	tokenWriter          io.Writer
+	policy               security.Policy
+	audit                audit.Sink
+	toolGov              governance.ToolPolicy
+	redactor             governance.OutputRedactor
+	recorder             observability.Recorder
+	tracer               observability.Tracer
+	logger               log.Logger
+	requireLLM           bool
+	runLocker            coordination.Locker
+	runLeaseOwner        string
+	runLeaseTTL          time.Duration
+	closers              []func(context.Context) error
+	toolTransforms       map[string]contextwindow.ToolOutputTransform
+	interjectDrain       interjection.DrainPolicy
+	toolOrchestrator     toolorch.ToolOrchestrator
+	approvalStore        toolorch.ApprovalStore
+	turnStopHook         core.TurnStopHook
+	resumeAuthHook       ResumeAuthorizationHook
 }
 
 type toolRegistry struct {
@@ -358,39 +358,39 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		}
 	}
 	fw := &Framework{
-		runs:                cfg.runs,
-		checkpointHistory:   cfg.checkpointHistory,
-		blobs:               cfg.blobs,
-		events:              cfg.events,
-		gate:                cfg.gate,
-		approvalEvaluator:   cfg.approvalEvaluator,
-		tokenSigner:         tokenSigner,
-		tokenTTL:            cfg.tokenTTL,
-		llm:                 cfg.llm,
-		tools:               tools,
-		memory:              cfg.memory,
-		tierMemory:          cfg.tierMemory,
-		cognitive:           cfg.cognitive,
-		tierStores:          cfg.tierStores,
-		tierStorePolicies:   cfg.tierStorePolicies,
-		tierColdIndexers:    cfg.tierColdIndexers,
-		tierColdSummarizers: cfg.tierColdSummarizers,
+		runs:                   cfg.runs,
+		checkpointHistory:      cfg.checkpointHistory,
+		blobs:                  cfg.blobs,
+		events:                 cfg.events,
+		gate:                   cfg.gate,
+		approvalEvaluator:      cfg.approvalEvaluator,
+		tokenSigner:            tokenSigner,
+		tokenTTL:               cfg.tokenTTL,
+		llm:                    cfg.llm,
+		tools:                  tools,
+		memory:                 cfg.memory,
+		tierMemory:             cfg.tierMemory,
+		cognitive:              cfg.cognitive,
+		tierStores:             cfg.tierStores,
+		tierStorePolicies:      cfg.tierStorePolicies,
+		tierColdIndexers:       cfg.tierColdIndexers,
+		tierColdSummarizers:    cfg.tierColdSummarizers,
 		enqueueMemoryReconcile: enqueueMemoryReconcile,
-		toolOrchestrator:    cfg.toolOrchestrator,
-		approvalStore:       cfg.approvalStore,
-		turnStopHook:        cfg.turnStopHook,
-		resumeAuthHook:      cfg.resumeAuthHook,
-		policy:              cfg.policy,
-		audit:               cfg.audit,
-		toolGov:             cfg.toolGov,
-		redactor:            cfg.redactor,
-		recorder:            cfg.recorder,
-		tracer:              cfg.tracer,
-		logger:              cfg.logger,
-		runLocker:           cfg.runLocker,
-		runLeaseOwner:       cfg.runLeaseOwner,
-		runLeaseTTL:         cfg.runLeaseTTL,
-		closers:             append([]func(context.Context) error(nil), cfg.closers...),
+		toolOrchestrator:       cfg.toolOrchestrator,
+		approvalStore:          cfg.approvalStore,
+		turnStopHook:           cfg.turnStopHook,
+		resumeAuthHook:         cfg.resumeAuthHook,
+		policy:                 cfg.policy,
+		audit:                  cfg.audit,
+		toolGov:                cfg.toolGov,
+		redactor:               cfg.redactor,
+		recorder:               cfg.recorder,
+		tracer:                 cfg.tracer,
+		logger:                 cfg.logger,
+		runLocker:              cfg.runLocker,
+		runLeaseOwner:          cfg.runLeaseOwner,
+		runLeaseTTL:            cfg.runLeaseTTL,
+		closers:                append([]func(context.Context) error(nil), cfg.closers...),
 	}
 	engine, err := appexec.NewEngine(scenario, fw.engineDependencies(cfg.toolTransforms, cfg.interjectDrain))
 	if err != nil {

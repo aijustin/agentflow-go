@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	checkpointKindVar           = "checkpoint_kind"
-	checkpointKindToolApproval  = "tool_approval"
-	checkpointPromptVar         = "checkpoint_prompt"
-	checkpointAgentVar    = "checkpoint_agent"
-	checkpointContextVar  = "checkpoint_context"
-	beforeFinalResumedVar = "before_final_resumed"
+	checkpointKindVar          = "checkpoint_kind"
+	checkpointKindToolApproval = "tool_approval"
+	checkpointPromptVar        = "checkpoint_prompt"
+	checkpointAgentVar         = "checkpoint_agent"
+	checkpointContextVar       = "checkpoint_context"
+	beforeFinalResumedVar      = "before_final_resumed"
 	// checkpointResumedVar is deprecated; reads accept it for backward compatibility.
 	checkpointResumedVar        = "checkpoint_resumed"
 	checkpointToolCallsVar      = "checkpoint_tool_calls"

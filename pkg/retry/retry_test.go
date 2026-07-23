@@ -9,8 +9,8 @@ import (
 
 type retryableErr struct{ msg string }
 
-func (e retryableErr) Error() string   { return e.msg }
-func (retryableErr) Retryable() bool   { return true }
+func (e retryableErr) Error() string { return e.msg }
+func (retryableErr) Retryable() bool { return true }
 
 func TestRetryable(t *testing.T) {
 	ctx := context.Background()

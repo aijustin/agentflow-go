@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
+	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/memory"

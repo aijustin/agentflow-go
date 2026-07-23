@@ -184,4 +184,3 @@ func IsLifecycleEvent(typ EventType) bool {
 		return false
 	}
 }
-

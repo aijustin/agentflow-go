@@ -279,4 +279,3 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 	}
 	f.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))
 }
-

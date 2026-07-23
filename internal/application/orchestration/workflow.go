@@ -121,18 +121,18 @@ func WithMemoryRewinder(memory ConversationMemoryRewinder) RunnerOption {
 }
 
 type WorkflowRunner struct {
-	tools               ToolRegistry
-	agents              AgentRegistry
-	gate                core.HumanGate
-	approvalEvaluator   core.ToolApprovalEvaluator
-	runs                runstate.Repository
-	blobs    runstate.BlobStore
-	events   core.EventSink
-	policy   security.Policy
-	audit    audit.Sink
-	toolGov  governance.ToolPolicy
-	redactor governance.OutputRedactor
-	memory   ConversationMemoryRewinder
+	tools             ToolRegistry
+	agents            AgentRegistry
+	gate              core.HumanGate
+	approvalEvaluator core.ToolApprovalEvaluator
+	runs              runstate.Repository
+	blobs             runstate.BlobStore
+	events            core.EventSink
+	policy            security.Policy
+	audit             audit.Sink
+	toolGov           governance.ToolPolicy
+	redactor          governance.OutputRedactor
+	memory            ConversationMemoryRewinder
 }
 
 type WorkflowPausedError struct {

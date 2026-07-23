@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
-	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -65,11 +65,11 @@ func TestObservabilityHTTPHandlerWithStudioAdapter(t *testing.T) {
 	}
 	savePath := filepath.Join(t.TempDir(), "scenario.yaml")
 	store := adapters.NewInMemoryEventStore()
-	handler, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{InsecureAllowNoAuth: true, 
-		Store:          store,
-		Hub:            adapters.NewEventHub(),
-		Framework:      fw,
-		StudioSavePath: savePath,
+	handler, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{InsecureAllowNoAuth: true,
+		Store:           store,
+		Hub:             adapters.NewEventHub(),
+		Framework:       fw,
+		StudioSavePath:  savePath,
 		TraceExploreURL: "https://trace.example/{trace_id}",
 	})
 	if err != nil {

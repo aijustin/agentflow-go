@@ -33,12 +33,12 @@ const (
 )
 
 type Policy struct {
-	Strategy               Strategy          `json:"strategy,omitempty" yaml:"strategy,omitempty"`
-	ContextWindowTokens    int               `json:"context_window_tokens,omitempty" yaml:"context_window_tokens,omitempty"`
-	MaxInputTokens         int               `json:"max_input_tokens,omitempty" yaml:"max_input_tokens,omitempty"`
-	ReservedOutputTokens   int               `json:"reserved_output_tokens,omitempty" yaml:"reserved_output_tokens,omitempty"`
-	SummaryTokens          int               `json:"summary_tokens,omitempty" yaml:"summary_tokens,omitempty"`
-	ToolResultMaxTokens    int               `json:"tool_result_max_tokens,omitempty" yaml:"tool_result_max_tokens,omitempty"`
+	Strategy             Strategy `json:"strategy,omitempty" yaml:"strategy,omitempty"`
+	ContextWindowTokens  int      `json:"context_window_tokens,omitempty" yaml:"context_window_tokens,omitempty"`
+	MaxInputTokens       int      `json:"max_input_tokens,omitempty" yaml:"max_input_tokens,omitempty"`
+	ReservedOutputTokens int      `json:"reserved_output_tokens,omitempty" yaml:"reserved_output_tokens,omitempty"`
+	SummaryTokens        int      `json:"summary_tokens,omitempty" yaml:"summary_tokens,omitempty"`
+	ToolResultMaxTokens  int      `json:"tool_result_max_tokens,omitempty" yaml:"tool_result_max_tokens,omitempty"`
 	// ToolOutputMaxBytes caps tool message bytes written to session memory.
 	// Zero disables the write-side byte cap (LLM-side ToolResultMaxTokens still applies).
 	ToolOutputMaxBytes     int               `json:"tool_output_max_bytes,omitempty" yaml:"tool_output_max_bytes,omitempty"`

@@ -53,7 +53,7 @@ type ApprovalStore interface {
 
 // MemoryApprovalStore is an in-process ApprovalStore.
 type MemoryApprovalStore struct {
-	mu   sync.Mutex
+	mu    sync.Mutex
 	byRun map[string]map[ApprovalKey]Decision
 }
 

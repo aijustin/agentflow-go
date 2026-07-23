@@ -102,11 +102,11 @@ func (e *Engine) enforceCompletionRequirement(
 	}
 	delay := completionBackoff(req, attempt)
 	e.emitJSON(ctx, core.EventCompletionRecovery, runID, map[string]any{
-		"agent":      agent.Name,
-		"tool":       strings.TrimSpace(req.Tool),
-		"attempt":    attempt,
+		"agent":       agent.Name,
+		"tool":        strings.TrimSpace(req.Tool),
+		"attempt":     attempt,
 		"max_retries": maxRetries,
-		"delay_ms":   delay.Milliseconds(),
+		"delay_ms":    delay.Milliseconds(),
 	})
 	if delay > 0 {
 		timer := time.NewTimer(delay)

@@ -107,10 +107,6 @@ func groupHasUser(g messageGroup) bool {
 	return false
 }
 
-func keepRecentPinUser(messages []Message, budget int) ([]Message, roleDropStats) {
-	return keepRecentGroupsPinUser(groupMessagesForToolPairSafety(messages), budget, messages)
-}
-
 func droppedStatsByRole(original, kept []Message) roleDropStats {
 	stats := roleDropStats{}
 	ki := 0
@@ -131,9 +127,7 @@ func droppedStatsByRole(original, kept []Message) roleDropStats {
 			stats.System++
 		}
 	}
-	if stats.Total > 0 {
-		// NeedsReminder is applied via applyTo on Stats.
-	}
+	// NeedsReminder is applied via applyTo on Stats.
 	return stats
 }
 

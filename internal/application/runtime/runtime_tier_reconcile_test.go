@@ -161,7 +161,7 @@ func TestEngineRunHybridCompletesExistingRun(t *testing.T) {
 		ScenarioName: "scenario",
 		Status:       runstate.RunStatusRunning,
 		Variables: map[string]json.RawMessage{
-			"input":            json.RawMessage(`{"steps":{"prep":{"ok":true}}}`),
+			"input":           json.RawMessage(`{"steps":{"prep":{"ok":true}}}`),
 			"execution_phase": json.RawMessage(`"autonomous"`),
 		},
 		StepOutputs: map[string]runstate.StepOutputRef{

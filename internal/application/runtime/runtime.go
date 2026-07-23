@@ -64,20 +64,20 @@ type ToolRegistry interface {
 }
 
 type Dependencies struct {
-	LLM            llm.Gateway
-	Tools          ToolRegistry
-	Memory         map[string]memory.Repository
-	TierMemory     map[string]tier.Manager
-	Cognitive      map[string]memory.CognitiveMemory
-	Runs           runstate.Repository
-	Blobs          runstate.BlobStore
-	Events         core.EventSink
-	HumanGate           core.HumanGate
+	LLM                   llm.Gateway
+	Tools                 ToolRegistry
+	Memory                map[string]memory.Repository
+	TierMemory            map[string]tier.Manager
+	Cognitive             map[string]memory.CognitiveMemory
+	Runs                  runstate.Repository
+	Blobs                 runstate.BlobStore
+	Events                core.EventSink
+	HumanGate             core.HumanGate
 	ToolApprovalEvaluator core.ToolApprovalEvaluator
-	Policy              security.Policy
-	Audit          audit.Sink
-	ToolPolicy     governance.ToolPolicy
-	OutputRedactor governance.OutputRedactor
+	Policy                security.Policy
+	Audit                 audit.Sink
+	ToolPolicy            governance.ToolPolicy
+	OutputRedactor        governance.OutputRedactor
 	// Recorder receives metric observations. If nil, metrics are discarded.
 	Recorder observability.Recorder
 	// Tracer receives distributed tracing spans. If nil, tracing is a no-op.

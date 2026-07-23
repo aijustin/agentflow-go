@@ -20,14 +20,14 @@ type toolSpec struct {
 }
 
 type skillSpec struct {
-	Description      string              `yaml:"description"`
-	Version          string              `yaml:"version"`
-	CompatibleAgents []string            `yaml:"compatible_agents"`
-	PromptFragments  []promptFragmentSpec `yaml:"prompt_fragments"`
-	AgentPolicy      agentPolicySpec     `yaml:"agent_policy"`
+	Description      string                `yaml:"description"`
+	Version          string                `yaml:"version"`
+	CompatibleAgents []string              `yaml:"compatible_agents"`
+	PromptFragments  []promptFragmentSpec  `yaml:"prompt_fragments"`
+	AgentPolicy      agentPolicySpec       `yaml:"agent_policy"`
 	ToolPolicies     []skillToolPolicySpec `yaml:"tool_policies"`
-	Workflow         *workflowSpec       `yaml:"workflow"`
-	Metadata         map[string]string   `yaml:"metadata"`
+	Workflow         *workflowSpec         `yaml:"workflow"`
+	Metadata         map[string]string     `yaml:"metadata"`
 }
 
 type promptFragmentSpec struct {
@@ -56,13 +56,13 @@ type workflowSpec struct {
 }
 
 type workflowNodeSpec struct {
-	ID        string         `yaml:"id"`
-	Kind      string         `yaml:"kind"`
-	Ref       string         `yaml:"ref"`
-	Input     map[string]any `yaml:"input"`
-	DependsOn []string       `yaml:"depends_on"`
-	Condition string         `yaml:"condition"`
-	Interrupt bool           `yaml:"interrupt"`
+	ID        string          `yaml:"id"`
+	Kind      string          `yaml:"kind"`
+	Ref       string          `yaml:"ref"`
+	Input     map[string]any  `yaml:"input"`
+	DependsOn []string        `yaml:"depends_on"`
+	Condition string          `yaml:"condition"`
+	Interrupt bool            `yaml:"interrupt"`
 	Retry     retryPolicySpec `yaml:"retry"`
 }
 

@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	retentionhttp 	"github.com/aijustin/agentflow-go/internal/adapter/retention/http"
+	retentionhttp "github.com/aijustin/agentflow-go/internal/adapter/retention/http"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
 type stubPurger struct {
-	runsRemoved int
+	runsRemoved  int
 	blobsRemoved int
-	lastPolicy retentionhttp.RetentionPolicy
+	lastPolicy   retentionhttp.RetentionPolicy
 }
 
 func (s *stubPurger) PurgeRuns(context.Context, runstate.ListFilter) (int, error) {

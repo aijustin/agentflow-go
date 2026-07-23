@@ -901,4 +901,3 @@ func TestEngineRunStructuredRejectsTools(t *testing.T) {
 		t.Fatalf("expected tools rejection, got %v", err)
 	}
 }
-

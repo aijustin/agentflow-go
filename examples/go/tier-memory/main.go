@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	agentflow "github.com/aijustin/agentflow-go"
+	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
 )
 

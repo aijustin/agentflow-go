@@ -16,11 +16,11 @@ const (
 
 // Snapshot is a persistable view of plan-mode lifecycle state.
 type Snapshot struct {
-	State                State `json:"state"`
-	WasPreviouslyActive  bool  `json:"was_previously_active"`
+	State                State  `json:"state"`
+	WasPreviouslyActive  bool   `json:"was_previously_active"`
 	ReminderCount        uint32 `json:"reminder_count"`
-	PendingExitReminder  bool  `json:"pending_exit_reminder"`
-	AwaitingPlanApproval bool  `json:"awaiting_plan_approval"`
+	PendingExitReminder  bool   `json:"pending_exit_reminder"`
+	AwaitingPlanApproval bool   `json:"awaiting_plan_approval"`
 }
 
 // Tracker manages plan-mode transitions without SessionActor / I/O deps.

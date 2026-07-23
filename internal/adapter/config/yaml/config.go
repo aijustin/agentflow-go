@@ -159,12 +159,12 @@ type CompletionRecovery struct {
 }
 
 type Orchestration struct {
-	Mode        string            `yaml:"mode"`
-	Workflow    *Workflow         `yaml:"workflow"`
+	Mode        string              `yaml:"mode"`
+	Workflow    *Workflow           `yaml:"workflow"`
 	Workflows   map[string]Workflow `yaml:"workflows"`
-	MaxParallel int               `yaml:"max_parallel"`
-	HumanInLoop HumanInLoopPolicy `yaml:"human_in_loop"`
-	Planning    PlanningPolicy    `yaml:"planning"`
+	MaxParallel int                 `yaml:"max_parallel"`
+	HumanInLoop HumanInLoopPolicy   `yaml:"human_in_loop"`
+	Planning    PlanningPolicy      `yaml:"planning"`
 }
 
 type PlanningPolicy struct {

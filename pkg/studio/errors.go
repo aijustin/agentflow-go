@@ -29,14 +29,14 @@ func (e *CodedError) Error() string {
 }
 
 var (
-	ErrSavePathMissing    = &CodedError{Code: "studio.save_path_missing", Message: "studio save path is not configured"}
-	ErrGraphRequired      = &CodedError{Code: "studio.graph_required", Message: "graph is required"}
-	ErrRunStateMissing    = &CodedError{Code: "studio.run_state_missing", Message: "run-state repository is not configured"}
-	ErrCheckpointMissing  = &CodedError{Code: "studio.checkpoint_missing", Message: "checkpoint history is not configured"}
-	ErrCompareRunsMissing = &CodedError{Code: "studio.compare_runs_missing", Message: "compare requires run_a and run_b"}
-	ErrUnsupportedMode    = &CodedError{Code: "studio.unsupported_mode", Message: "studio run supports fixed_workflow and hybrid scenarios"}
-	ErrNodeIDRequired     = &CodedError{Code: "obs.node_id_required", Message: "node_id is required"}
-	ErrVersionRequired    = &CodedError{Code: "obs.version_required", Message: "version must be a positive integer"}
+	ErrSavePathMissing      = &CodedError{Code: "studio.save_path_missing", Message: "studio save path is not configured"}
+	ErrGraphRequired        = &CodedError{Code: "studio.graph_required", Message: "graph is required"}
+	ErrRunStateMissing      = &CodedError{Code: "studio.run_state_missing", Message: "run-state repository is not configured"}
+	ErrCheckpointMissing    = &CodedError{Code: "studio.checkpoint_missing", Message: "checkpoint history is not configured"}
+	ErrCompareRunsMissing   = &CodedError{Code: "studio.compare_runs_missing", Message: "compare requires run_a and run_b"}
+	ErrUnsupportedMode      = &CodedError{Code: "studio.unsupported_mode", Message: "studio run supports fixed_workflow and hybrid scenarios"}
+	ErrNodeIDRequired       = &CodedError{Code: "obs.node_id_required", Message: "node_id is required"}
+	ErrVersionRequired      = &CodedError{Code: "obs.version_required", Message: "version must be a positive integer"}
 	ErrStreamingUnsupported = &CodedError{Code: "obs.streaming_unsupported", Message: "streaming is not supported"}
 )
 

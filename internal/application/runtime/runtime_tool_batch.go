@@ -16,12 +16,12 @@ import (
 )
 
 type toolBatchItem struct {
-	call           llm.ToolCall
-	result         core.ToolResult
-	contextResult  core.ToolResult
-	transformMeta  contextwindow.TransformMeta
-	toolMsg        memoryMessage
-	message        llm.Message
+	call          llm.ToolCall
+	result        core.ToolResult
+	contextResult core.ToolResult
+	transformMeta contextwindow.TransformMeta
+	toolMsg       memoryMessage
+	message       llm.Message
 }
 
 func (e *Engine) toolCallNeedsPause(ctx context.Context, runID string, call llm.ToolCall) (bool, error) {

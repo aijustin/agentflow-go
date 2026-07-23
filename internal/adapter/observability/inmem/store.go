@@ -168,4 +168,3 @@ func (store *Store) ListScopedEvents(ctx context.Context, query obspkg.ScopedEve
 	}
 	return events, nil
 }
-

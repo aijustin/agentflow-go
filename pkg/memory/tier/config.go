@@ -8,16 +8,16 @@ import (
 
 // Settings configures tiered memory for a scenario memory reference.
 type Settings struct {
-	Enabled       bool          `json:"enabled,omitempty" yaml:"enabled"`
-	HotCapacity   int           `json:"hot_capacity,omitempty" yaml:"hot_capacity"`
-	WarmCapacity  int           `json:"warm_capacity,omitempty" yaml:"warm_capacity"`
-	ColdCapacity  int           `json:"cold_capacity,omitempty" yaml:"cold_capacity"`
-	HotTTL        time.Duration `json:"hot_ttl,omitempty" yaml:"hot_ttl"`
-	WarmTTL       time.Duration `json:"warm_ttl,omitempty" yaml:"warm_ttl"`
-	PromoteAccess int           `json:"promote_access,omitempty" yaml:"promote_access"`
-	DemoteIdle    time.Duration `json:"demote_idle,omitempty" yaml:"demote_idle"`
-	RecallBudget  RecallBudget  `json:"recall_budget,omitempty" yaml:"recall_budget"`
-	RecallWeights RecallWeights `json:"recall_weights,omitempty" yaml:"recall_weights"`
+	Enabled       bool                `json:"enabled,omitempty" yaml:"enabled"`
+	HotCapacity   int                 `json:"hot_capacity,omitempty" yaml:"hot_capacity"`
+	WarmCapacity  int                 `json:"warm_capacity,omitempty" yaml:"warm_capacity"`
+	ColdCapacity  int                 `json:"cold_capacity,omitempty" yaml:"cold_capacity"`
+	HotTTL        time.Duration       `json:"hot_ttl,omitempty" yaml:"hot_ttl"`
+	WarmTTL       time.Duration       `json:"warm_ttl,omitempty" yaml:"warm_ttl"`
+	PromoteAccess int                 `json:"promote_access,omitempty" yaml:"promote_access"`
+	DemoteIdle    time.Duration       `json:"demote_idle,omitempty" yaml:"demote_idle"`
+	RecallBudget  RecallBudget        `json:"recall_budget,omitempty" yaml:"recall_budget"`
+	RecallWeights RecallWeights       `json:"recall_weights,omitempty" yaml:"recall_weights"`
 	ColdSummary   ColdSummarySettings `json:"cold_summary,omitempty" yaml:"cold_summary"`
 }
 

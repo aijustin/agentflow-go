@@ -137,9 +137,9 @@ func TestEngineAlwaysApprovalPausesWhenGateConfigured(t *testing.T) {
 	scenario := toolScenario(core.ApprovalAlways, core.SideEffectExternal, 4)
 	gate := &capturingGate{repo: repo}
 	engine, err := NewEngine(scenario, Dependencies{
-		Runs:  repo,
-		LLM:   gateway,
-		Tools: mapToolRegistry{"echo": okEchoTool{}},
+		Runs:      repo,
+		LLM:       gateway,
+		Tools:     mapToolRegistry{"echo": okEchoTool{}},
 		HumanGate: gate,
 	})
 	if err != nil {

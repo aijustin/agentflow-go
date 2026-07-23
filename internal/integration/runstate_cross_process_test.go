@@ -23,9 +23,9 @@ func TestCrossProcessRunStateLoad(t *testing.T) {
 	}
 	ctx := context.Background()
 	snap := &runstate.RunSnapshot{
-		RunID:        "run-cross",
-		ScenarioName: "cross-process",
-		Status:       runstate.RunStatusPaused,
+		RunID:         "run-cross",
+		ScenarioName:  "cross-process",
+		Status:        runstate.RunStatusPaused,
 		CurrentNodeID: "review",
 		StepOutputs: map[string]runstate.StepOutputRef{
 			"inspect": {Inline: []byte(`{"ok":true}`)},

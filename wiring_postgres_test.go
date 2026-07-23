@@ -43,7 +43,7 @@ func TestAsyncJobHandlerRejectsInvalidPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := handler.HandleJob(ctx, asyncpkg.Job{Type: asyncpkg.EventJobType, Payload: json.RawMessage(`{`) }); err == nil {
+	if err := handler.HandleJob(ctx, asyncpkg.Job{Type: asyncpkg.EventJobType, Payload: json.RawMessage(`{`)}); err == nil {
 		t.Fatal("expected decode error for event job")
 	}
 	if err := handler.HandleJob(ctx, asyncpkg.Job{Type: asyncpkg.ResumeContinueJobType, Payload: json.RawMessage(`{}`)}); err == nil {

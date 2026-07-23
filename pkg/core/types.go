@@ -49,9 +49,9 @@ type Agent struct {
 // CompletionRequirement declares that the agent must call a specific tool
 // before ending its turn (orchestrated worker pattern from grok-build).
 type CompletionRequirement struct {
-	Tool     string               `json:"tool"`
-	Reminder string               `json:"reminder"`
-	Recovery *CompletionRecovery  `json:"recovery,omitempty"`
+	Tool     string              `json:"tool"`
+	Reminder string              `json:"reminder"`
+	Recovery *CompletionRecovery `json:"recovery,omitempty"`
 }
 
 // CompletionRecovery controls reminder retries with exponential backoff when
@@ -178,16 +178,16 @@ type MemoryRef struct {
 
 // MemoryTierSettings configures hot/warm/cold tiered recall for a memory reference.
 type MemoryTierSettings struct {
-	Enabled       bool                    `json:"enabled,omitempty"`
-	HotCapacity   int                     `json:"hot_capacity,omitempty"`
-	WarmCapacity  int                     `json:"warm_capacity,omitempty"`
-	ColdCapacity  int                     `json:"cold_capacity,omitempty"`
-	HotTTL        string                  `json:"hot_ttl,omitempty"`
-	WarmTTL       string                  `json:"warm_ttl,omitempty"`
-	PromoteAccess int                     `json:"promote_access,omitempty"`
-	DemoteIdle    string                  `json:"demote_idle,omitempty"`
-	RecallBudget  MemoryTierRecallBudget  `json:"recall_budget,omitempty"`
-	RecallWeights MemoryTierRecallWeights `json:"recall_weights,omitempty"`
+	Enabled       bool                           `json:"enabled,omitempty"`
+	HotCapacity   int                            `json:"hot_capacity,omitempty"`
+	WarmCapacity  int                            `json:"warm_capacity,omitempty"`
+	ColdCapacity  int                            `json:"cold_capacity,omitempty"`
+	HotTTL        string                         `json:"hot_ttl,omitempty"`
+	WarmTTL       string                         `json:"warm_ttl,omitempty"`
+	PromoteAccess int                            `json:"promote_access,omitempty"`
+	DemoteIdle    string                         `json:"demote_idle,omitempty"`
+	RecallBudget  MemoryTierRecallBudget         `json:"recall_budget,omitempty"`
+	RecallWeights MemoryTierRecallWeights        `json:"recall_weights,omitempty"`
 	ColdSummary   *MemoryTierColdSummarySettings `json:"cold_summary,omitempty"`
 }
 
@@ -220,12 +220,12 @@ const (
 )
 
 type Orchestration struct {
-	Mode        OrchestrationMode `json:"mode"`
-	Workflow    *Workflow         `json:"workflow,omitempty"`
+	Mode        OrchestrationMode   `json:"mode"`
+	Workflow    *Workflow           `json:"workflow,omitempty"`
 	Workflows   map[string]Workflow `json:"workflows,omitempty"`
-	MaxParallel int               `json:"max_parallel,omitempty"`
-	HumanInLoop HumanInLoopPolicy `json:"human_in_loop"`
-	Planning    PlanningPolicy    `json:"planning,omitempty"`
+	MaxParallel int                 `json:"max_parallel,omitempty"`
+	HumanInLoop HumanInLoopPolicy   `json:"human_in_loop"`
+	Planning    PlanningPolicy      `json:"planning,omitempty"`
 }
 
 type PlanningPolicy struct {
@@ -369,8 +369,8 @@ type TurnStopInfo struct {
 // When Continue is true and ContinuationPrompt is non-empty, the runtime
 // appends the prompt as a user message and samples again.
 type TurnStopDecision struct {
-	Continue            bool
-	ContinuationPrompt  string
+	Continue           bool
+	ContinuationPrompt string
 }
 
 // TurnStopHook is an optional host callback after a candidate final answer.

@@ -215,23 +215,6 @@ func splitProtected(messages []Message, protectSystem bool) ([]Message, []Messag
 	return protected, candidates
 }
 
-func keepRecent(messages []Message, budget int) ([]Message, int) {
-	if budget <= 0 {
-		return nil, len(messages)
-	}
-	out := make([]Message, 0, len(messages))
-	used := 0
-	for i := len(messages) - 1; i >= 0; i-- {
-		cost := EstimateTokens(messages[i].Content)
-		if used+cost > budget {
-			continue
-		}
-		used += cost
-		out = append([]Message{messages[i]}, out...)
-	}
-	return out, len(messages) - len(out)
-}
-
 func (m *Manager) summarizeAndKeep(messages []Message, budget, summaryBudget int) (Message, []Message, roleDropStats) {
 	if budget <= 0 {
 		return Message{}, nil, countAllDropped(messages)

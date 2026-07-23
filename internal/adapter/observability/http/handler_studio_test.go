@@ -14,15 +14,15 @@ import (
 
 func TestHandlerStudioRoutesAndUIConfig(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, 
-		Store:          store,
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true,
+		Store:           store,
 		TraceExploreURL: "https://traces.example.com",
-		Codegen:        studioStub{value: map[string]any{"code": "package main"}},
-		YAML:           studioStub{value: map[string]any{"yaml": "name: demo"}},
-		ImportYAML:     studioStub{value: map[string]any{"graph": map[string]any{"name": "demo"}}},
-		RunStudio:      studioStub{value: map[string]any{"status": "completed"}},
-		StudioSave:     studioStub{value: map[string]any{"saved": true}},
-		HITLResume:     hitlStub{value: map[string]any{"status": "completed"}},
+		Codegen:         studioStub{value: map[string]any{"code": "package main"}},
+		YAML:            studioStub{value: map[string]any{"yaml": "name: demo"}},
+		ImportYAML:      studioStub{value: map[string]any{"graph": map[string]any{"name": "demo"}}},
+		RunStudio:       studioStub{value: map[string]any{"status": "completed"}},
+		StudioSave:      studioStub{value: map[string]any{"saved": true}},
+		HITLResume:      hitlStub{value: map[string]any{"status": "completed"}},
 	})
 	if err != nil {
 		t.Fatal(err)
