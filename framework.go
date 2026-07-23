@@ -1,9 +1,3 @@
-// Package agentflow provides a small public facade for embedding the
-// scenario-driven agent runtime in other Go projects.
-//
-// Applications that need low-level extension points can import pkg/core,
-// pkg/llm, pkg/memory, and pkg/runstate directly. Applications that only need
-// to load a YAML scenario and run it should use this package.
 package agentflow
 
 import (
