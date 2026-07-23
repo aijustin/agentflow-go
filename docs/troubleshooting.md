@@ -191,6 +191,29 @@ YAML 中 `knowledge.collections[].tenant_scoped: true` 会在运行时注入 `te
 
 ---
 
+### 工具结果出现 `persist tool output: ... after stale snapshot retries`（并行 tool batch）
+
+**现象**：模型一次返回多个 tool_calls 并行执行后，部分工具结果报错
+`persist tool output: runtime: failed to save step "tool.xxx" output after stale snapshot retries`，
+模型误判工具失败并用相同入参重试，随后撞上 `same_input_repeated` / doom-loop guard。
+
+**机制**：并行 batch 中每个 goroutine 各自对同一 run 快照做 Load→merge→Save
+乐观 CAS。N 路并发写必然互相使版本过期，单条路径最多重试 5 次，冲突面
+是 N × 5，高并发下耗尽重试。自 057ee24 之后的版本修复为：工具 I/O 仍并行，
+持久化推迟到 batch 结束后由 `saveStepOutputs` 一次性写入（一次 Load、一次
+Save，仅冲突时重试），冲突面从 N 降到 1。
+
+**修复后行为**：并行工具结果不再出现 CAS 风暴导致的 persist 错误；所有
+`tool.<call_id>` / `agent.<子代理>.<call_id>` 输出一次性落库。若升级后仍见
+`persist tool output:`，说明持久层本身在持续失败（如 Postgres 连接中断），
+此时该错误会标注到受影响工具结果上并随 `persist_error` 出现在
+`tool.returned` 事件与审计中，模型会看到真实失败原因——这是有意保留的语义。
+
+**排查**：检查 run-state 仓库（Postgres/Redis/文件）可用性与写入延迟；
+确认是否使用了过旧的框架版本（升级即可，无需改业务代码）。
+
+---
+
 ## 库集成调试建议
 
 | 做法 | 作用 |

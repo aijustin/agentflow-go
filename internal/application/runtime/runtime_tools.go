@@ -22,14 +22,11 @@ import (
 
 type toolDispatchOptions struct {
 	approved bool
-}
-
-// dispatchTool executes a tool call from the batch dispatch path. Tool
-// results never reach memory from here: the batch caller writes the
-// compacted result itself, so there is intentionally no skipMemory switch
-// (the old false branch was dead and used to write uncompacted results).
-func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker) (core.ToolResult, error) {
-	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{})
+	// skipPersist defers the step-output save to the caller: the parallel
+	// tool batch persists every item in a single saveStepOutputs after the
+	// parallel section, instead of N goroutines racing optimistic-CAS writes
+	// on the same run snapshot. Audit and EventToolReturned still fire here.
+	skipPersist bool
 }
 
 func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker) (core.ToolResult, error) {
@@ -81,7 +78,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 			return result, nil
 		}
 		tracker.recordAttempt(call.Name, call.Input)
-		return e.dispatchSubAgent(ctx, runID, agent, subAgentName, call)
+		return e.dispatchSubAgent(ctx, runID, agent, subAgentName, call, options.skipPersist)
 	}
 	if !agentAllowsTool(agent, call.Name) {
 		result := core.ToolResult{Tool: call.Name, Error: "tool is not in agent whitelist"}
@@ -186,17 +183,22 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 			e.denyBreaker.RecordAllow(runID)
 		}
 	}
-	if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil {
-		persistErr := err.Error()
-		if result.Error == "" {
-			result.Error = "persist tool output: " + persistErr
-		} else {
-			e.logWarn(ctx, "runtime: failed to persist tool output after tool error", "run_id", runID, "tool", call.Name, "error", err)
+	if !options.skipPersist {
+		if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil {
+			persistErr := err.Error()
+			if result.Error == "" {
+				result.Error = "persist tool output: " + persistErr
+			} else {
+				e.logWarn(ctx, "runtime: failed to persist tool output after tool error", "run_id", runID, "tool", call.Name, "error", err)
+			}
+			e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
+			e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error, "persist_error": persistErr})
+			return result, nil
 		}
-		e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
-		e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error, "persist_error": persistErr})
-		return result, nil
 	}
+	// On the skipPersist (batch) path this audit+event pair carries no
+	// persistence semantics; the batch persists every item in one
+	// saveStepOutputs after the parallel section.
 	e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})
 	return result, nil
@@ -291,7 +293,7 @@ func toolOutcome(result core.ToolResult) string {
 	return "success"
 }
 
-func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core.Agent, subAgentName string, call llm.ToolCall) (core.ToolResult, error) {
+func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core.Agent, subAgentName string, call llm.ToolCall, skipPersist bool) (core.ToolResult, error) {
 	var input struct {
 		Prompt  string          `json:"prompt"`
 		Context json.RawMessage `json:"context"`
@@ -337,8 +339,10 @@ func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core
 			result.Output = raw
 		}
 	}
-	if err := e.saveStepOutput(ctx, runID, "agent."+subAgentName+"."+call.ID, result); err != nil && result.Error == "" {
-		result.Error = "persist delegated output: " + err.Error()
+	if !skipPersist {
+		if err := e.saveStepOutput(ctx, runID, "agent."+subAgentName+"."+call.ID, result); err != nil && result.Error == "" {
+			result.Error = "persist delegated output: " + err.Error()
+		}
 	}
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "sub_agent": subAgentName, "tool_call_id": call.ID, "error": result.Error})
 	return result, nil

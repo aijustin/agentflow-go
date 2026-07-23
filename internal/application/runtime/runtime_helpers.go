@@ -356,6 +356,54 @@ func (e *Engine) saveStepOutput(ctx context.Context, runID, key string, value an
 	return fmt.Errorf("runtime: failed to save step %q output after stale snapshot retries", key)
 }
 
+// saveStepOutputs persists several step outputs in a single optimistic
+// compare-and-swap round: one Load, one ref per key, one Save. The parallel
+// tool batch uses it to collapse what would otherwise be N concurrent
+// saveStepOutput writers on the same run snapshot (an optimistic-CAS storm)
+// into one writer; retries still reload on ErrStaleSnapshot so other
+// concurrent writers (plan updates, memory reconcile) do not silently lose
+// these outputs.
+func (e *Engine) saveStepOutputs(ctx context.Context, runID string, outputs map[string]any) error {
+	if len(outputs) == 0 {
+		return nil
+	}
+	if e.runs == nil {
+		return fmt.Errorf("runtime: runstate repository is required to save step outputs")
+	}
+	raws := make(map[string]json.RawMessage, len(outputs))
+	for key, value := range outputs {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		raws[key] = raw
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		if err != nil {
+			return err
+		}
+		if snapshot.StepOutputs == nil {
+			snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
+		}
+		for key, raw := range raws {
+			ref, err := e.stepOutputRef(ctx, runID, key, raw)
+			if err != nil {
+				return err
+			}
+			snapshot.StepOutputs[key] = ref
+		}
+		err = e.runs.Save(ctx, &snapshot, snapshot.Version)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, runstate.ErrStaleSnapshot) {
+			return err
+		}
+	}
+	return fmt.Errorf("runtime: failed to save %d step outputs after stale snapshot retries", len(outputs))
+}
+
 func firstPositive(values ...int) int {
 	for _, value := range values {
 		if value > 0 {
