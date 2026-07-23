@@ -62,6 +62,8 @@ func TestQueueLeasesAndCompletesJobs(t *testing.T) {
 func TestQueueRetriesUntilDeadLetter(t *testing.T) {
 	ctx := context.Background()
 	queue := newTestQueue(t)
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	queue.now = func() time.Time { return now }
 	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: asyncpkg.RunJobType, MaxAttempts: 2}); err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +81,12 @@ func TestQueueRetriesUntilDeadLetter(t *testing.T) {
 	if loaded.State != asyncpkg.JobQueued || loaded.LastError != "boom" {
 		t.Fatalf("expected queued retry, got %+v", loaded)
 	}
+	// The retry backs off before becoming available again, so an immediate
+	// re-lease finds nothing until the backoff window has passed.
+	if _, ok, err := queue.Lease(ctx, "worker-1", time.Minute); err != nil || ok {
+		t.Fatalf("expected retry backoff to block immediate re-lease, ok=%v err=%v", ok, err)
+	}
+	now = now.Add(2 * time.Second)
 	lease, ok, err = queue.Lease(ctx, "worker-1", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("expected second lease, ok=%v err=%v", ok, err)
@@ -399,10 +407,11 @@ func (c *testConn) fail(args []driver.NamedValue) (driver.Result, error) {
 	dead := asyncpkg.JobState(args[0].Value.(string))
 	queued := asyncpkg.JobState(args[1].Value.(string))
 	cause := stringValue(args[2].Value)
-	now := args[3].Value.(time.Time)
-	jobID := args[4].Value.(string)
-	workerID := args[6].Value.(string)
-	attempt := int(args[7].Value.(int64))
+	retryAt := args[3].Value.(time.Time)
+	now := args[4].Value.(time.Time)
+	jobID := args[5].Value.(string)
+	workerID := args[7].Value.(string)
+	attempt := int(args[8].Value.(int64))
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	job, ok := c.state.rows[jobID]
@@ -413,7 +422,7 @@ func (c *testConn) fail(args []driver.NamedValue) (driver.Result, error) {
 		job.State = dead
 	} else {
 		job.State = queued
-		job.AvailableAt = now
+		job.AvailableAt = retryAt
 	}
 	job.LastError = cause
 	job.LeaseWorkerID = ""

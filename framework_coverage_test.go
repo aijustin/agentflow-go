@@ -166,7 +166,7 @@ func TestFrameworkWithTierMemoryOption(t *testing.T) {
 func TestFrameworkResumeAndContinueInvalidToken(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 	)
 	if err != nil {
 		t.Fatal(err)

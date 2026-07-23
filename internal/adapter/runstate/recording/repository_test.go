@@ -24,6 +24,10 @@ func (failingHistory) Load(context.Context, string, int64) (runstate.RunSnapshot
 	return runstate.RunSnapshot{}, fmt.Errorf("history backend unavailable")
 }
 
+func (failingHistory) Delete(context.Context, string) error {
+	return fmt.Errorf("history backend unavailable")
+}
+
 type capturingLogger struct {
 	mu       sync.Mutex
 	warnings int
@@ -67,19 +71,20 @@ func TestRepositoryRecordsCheckpointHistory(t *testing.T) {
 	}
 }
 
-func TestRepositorySaveSucceedsAndLogsWhenHistoryAppendFails(t *testing.T) {
+func TestRepositorySaveReturnsAndLogsHistoryAppendFailure(t *testing.T) {
 	inner := runstateinmem.NewRepository()
 	logger := &capturingLogger{}
 	repo := &Repository{Inner: inner, History: failingHistory{}, Logger: logger}
 	ctx := context.Background()
 
 	snap := &runstate.RunSnapshot{RunID: "run-1", ScenarioName: "demo", Status: runstate.RunStatusRunning}
-	if err := repo.Save(ctx, snap, 0); err != nil {
-		t.Fatalf("expected Save to succeed despite history append failure, got %v", err)
+	err := repo.Save(ctx, snap, 0)
+	if err == nil {
+		t.Fatal("expected Save to surface the history append failure")
 	}
-	loaded, err := inner.Load(ctx, "run-1")
-	if err != nil {
-		t.Fatal(err)
+	loaded, loadErr := inner.Load(ctx, "run-1")
+	if loadErr != nil {
+		t.Fatal(loadErr)
 	}
 	if loaded.RunID != "run-1" {
 		t.Fatalf("expected inner save to have persisted the snapshot, got %+v", loaded)

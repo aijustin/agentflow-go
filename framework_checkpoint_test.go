@@ -293,7 +293,7 @@ func TestFrameworkListRunStepsWithPendingHITL(t *testing.T) {
 			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("secret"), nil))
+	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil))
 	if err != nil {
 		t.Fatal(err)
 	}

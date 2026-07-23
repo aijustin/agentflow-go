@@ -14,6 +14,12 @@ import (
 type WebhookHTTPHandlerConfig struct {
 	Framework    *Framework
 	MaxBodyBytes int64
+	// VerifySignature, when set, validates the raw webhook body before the
+	// event is decoded (e.g. an HMAC signature from the event source); a
+	// non-nil error rejects the request with 401. Webhooks are
+	// unauthenticated ingress — production deployments should set this or
+	// wrap the handler in an authenticating middleware.
+	VerifySignature func(r *http.Request, body []byte) error
 }
 
 type HumanHTTPHandlerConfig struct {
@@ -47,14 +53,21 @@ func NewWebhookHTTPHandler(config WebhookHTTPHandlerConfig) (http.Handler, error
 		return nil, fmt.Errorf("agentflow: webhook handler requires framework")
 	}
 	return eventrouterhttp.NewHandler(eventrouterhttp.HandlerConfig{
-		Framework:    &webhookFramework{framework: config.Framework},
-		MaxBodyBytes: config.MaxBodyBytes,
+		Framework:       &webhookFramework{framework: config.Framework},
+		MaxBodyBytes:    config.MaxBodyBytes,
+		VerifySignature: eventrouterhttp.SignatureVerifier(config.VerifySignature),
 	})
 }
 
 // NewHumanHTTPHandler serves human gate resume requests. When the request sets
 // continue=true, the handler calls ResumeAndContinue instead of Resume.
+// It panics when config.Framework is nil: a nil framework would panic later at
+// request time inside the adapter, so failing fast at construction surfaces
+// the wiring mistake where it is made.
 func NewHumanHTTPHandler(config HumanHTTPHandlerConfig) http.Handler {
+	if config.Framework == nil {
+		panic("agentflow: NewHumanHTTPHandler requires a non-nil Framework")
+	}
 	adapter := &humanFramework{framework: config.Framework}
 	return humanhttp.NewHandler(humanhttp.HandlerConfig{
 		Gate:         adapter,

@@ -112,14 +112,24 @@ func (worker *Worker) Run(ctx context.Context) error {
 }
 
 func (worker *Worker) loop(ctx context.Context) error {
+	leaseFailures := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
 		lease, ok, err := worker.queue.Lease(ctx, worker.workerID, worker.leaseTTL)
 		if err != nil {
-			return err
+			// A transient queue outage (DB blip, network partition) must not
+			// kill the worker: back off exponentially and keep polling
+			// instead of tearing down every concurrent loop on the first
+			// error.
+			leaseFailures++
+			if waitErr := wait(ctx, leaseFailureDelay(leaseFailures)); waitErr != nil {
+				return nil
+			}
+			continue
 		}
+		leaseFailures = 0
 		if !ok {
 			if err := wait(ctx, worker.pollInterval); err != nil {
 				return nil
@@ -132,14 +142,24 @@ func (worker *Worker) loop(ctx context.Context) error {
 	}
 }
 
+// leaseFailureDelay returns the exponential backoff before the next lease
+// poll after consecutive lease failures: 100ms doubling to a 5s cap.
+func leaseFailureDelay(failures int) time.Duration {
+	delay := 100 * time.Millisecond
+	for i := 1; i < failures; i++ {
+		delay *= 2
+		if delay >= 5*time.Second {
+			return 5 * time.Second
+		}
+	}
+	return delay
+}
+
 func (worker *Worker) handleLeasedJob(ctx context.Context, lease Lease) error {
 	job, err := worker.queue.Load(ctx, lease.JobID)
 	if err != nil {
 		return err
 	}
-	renewCtx, stopRenew := context.WithCancel(ctx)
-	defer stopRenew()
-	worker.startLeaseRenewal(renewCtx, lease)
 	jobCtx, jobCancel := context.WithCancel(ctx)
 	defer jobCancel()
 	if worker.jobTimeout > 0 {
@@ -147,6 +167,11 @@ func (worker *Worker) handleLeasedJob(ctx context.Context, lease Lease) error {
 		jobCtx, timeoutCancel = context.WithTimeout(jobCtx, worker.jobTimeout)
 		defer timeoutCancel()
 	}
+	renewCtx, stopRenew := context.WithCancel(ctx)
+	defer stopRenew()
+	// A lost job lease must cancel the job: letting it run unowned duplicates
+	// work when the queue re-leases the job to another worker.
+	worker.startLeaseRenewal(renewCtx, lease, jobCancel)
 	stopWatch := worker.watchJobCancellation(ctx, lease.JobID, jobCancel)
 	defer stopWatch()
 	err = worker.handler.HandleJob(jobCtx, job)
@@ -191,6 +216,7 @@ func (worker *Worker) watchJobCancellation(ctx context.Context, jobID string, ca
 	go func() {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
+		loadFailures := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -200,8 +226,15 @@ func (worker *Worker) watchJobCancellation(ctx context.Context, jobID string, ca
 			case <-ticker.C:
 				job, err := worker.queue.Load(ctx, jobID)
 				if err != nil {
+					// Back off on repeated load failures instead of spinning
+					// at the 200ms tick while the queue is down.
+					loadFailures++
+					if waitErr := wait(ctx, leaseFailureDelay(loadFailures)); waitErr != nil {
+						return
+					}
 					continue
 				}
+				loadFailures = 0
 				if job.State == JobCancelled {
 					cancel()
 					return
@@ -212,7 +245,10 @@ func (worker *Worker) watchJobCancellation(ctx context.Context, jobID string, ca
 	return stop
 }
 
-func (worker *Worker) startLeaseRenewal(ctx context.Context, lease Lease) {
+// startLeaseRenewal renews the job lease in the background and calls onLost
+// when renewal fails or reports the lease as no longer held, so the job is
+// cancelled instead of completing unowned.
+func (worker *Worker) startLeaseRenewal(ctx context.Context, lease Lease, onLost func()) {
 	renewer, ok := worker.queue.(LeaseRenewer)
 	if !ok {
 		return
@@ -228,6 +264,7 @@ func (worker *Worker) startLeaseRenewal(ctx context.Context, lease Lease) {
 			case <-ticker.C:
 				renewed, ok, err := renewer.Renew(ctx, current, worker.leaseTTL)
 				if err != nil || !ok {
+					onLost()
 					return
 				}
 				current = renewed

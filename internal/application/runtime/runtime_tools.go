@@ -21,16 +21,19 @@ import (
 )
 
 type toolDispatchOptions struct {
-	skipMemory bool
-	approved   bool
+	approved bool
 }
 
-func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker, skipMemory bool) (core.ToolResult, error) {
-	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{skipMemory: skipMemory})
+// dispatchTool executes a tool call from the batch dispatch path. Tool
+// results never reach memory from here: the batch caller writes the
+// compacted result itself, so there is intentionally no skipMemory switch
+// (the old false branch was dead and used to write uncompacted results).
+func (e *Engine) dispatchTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker) (core.ToolResult, error) {
+	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{})
 }
 
 func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker) (core.ToolResult, error) {
-	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{skipMemory: true, approved: true})
+	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{approved: true})
 }
 
 func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker, options toolDispatchOptions) (core.ToolResult, error) {
@@ -192,20 +195,10 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		}
 		e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
 		e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error, "persist_error": persistErr})
-		if !options.skipMemory {
-			if err := e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromToolResult(call, result)}); err != nil {
-				return result, err
-			}
-		}
 		return result, nil
 	}
 	e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
 	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})
-	if !options.skipMemory {
-		if err := e.writeMemory(ctx, runID, agent, []memoryMessage{memoryMessageFromToolResult(call, result)}); err != nil {
-			return result, err
-		}
-	}
 	return result, nil
 }
 

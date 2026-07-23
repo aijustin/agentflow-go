@@ -22,7 +22,7 @@ import (
 
 func TestEngineContinueAfterBeforeFinalAnswer(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestEngineContinueAfterBeforeFinalAnswer(t *testing.T) {
 
 func TestEngineContinueAfterStructuredBeforeFinalAnswer(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestEnginePlanningExecuteTracksPlanSteps(t *testing.T) {
 
 func TestEngineContinueAfterMultiToolApprovalPause(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestEngineContinueAfterMultiToolApprovalPause(t *testing.T) {
 
 func TestEngineContinueAfterToolApprovalUsesGovernanceAndAudit(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestEngineContinueAfterToolApprovalUsesGovernanceAndAudit(t *testing.T) {
 func TestEngineToolLoopMemoryUnchangedWhilePaused(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	memRepo := memoryinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestEngineToolLoopMemoryUnchangedWhilePaused(t *testing.T) {
 
 func TestEngineContinueAppliesHumanAmendment(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestEngineContinueAppliesHumanAmendment(t *testing.T) {
 
 func TestEngineContinueToolApprovalAmendmentFollowsToolResults(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +530,7 @@ func TestEngineContinueToolApprovalAmendmentFollowsToolResults(t *testing.T) {
 func TestEngineToolApprovalCheckpointExternalizesMessagesAndCleansUp(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	blobs := blobinmem.NewStore()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,7 +642,7 @@ func TestEngineContinueToolApprovalRejectsCorruptToolCounts(t *testing.T) {
 
 func TestEngineContinueToolApprovalPreservesCheckpointOnFailure(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -708,7 +708,7 @@ func TestEngineContinueToolApprovalPreservesCheckpointOnFailure(t *testing.T) {
 
 func TestEngineRunAgentHonorsAgentHumanCheckpoint(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +745,7 @@ func TestEngineRunAgentHonorsAgentHumanCheckpoint(t *testing.T) {
 
 func TestEngineContinueBeforeFinalPreservesCheckpointOnFailure(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}

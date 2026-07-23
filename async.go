@@ -102,6 +102,21 @@ func (handler *frameworkJobHandler) handleRun(ctx context.Context, job asyncpkg.
 	if err != nil {
 		return err
 	}
+	// A redelivered run job for a run that already Failed cannot re-run from
+	// scratch (Run rejects it with ErrRunFailed, so every queue retry would
+	// fail identically until dead-letter). Re-enter through RetryFailedRun,
+	// which resumes from the persisted checkpoint instead.
+	if snapshot, loadErr := runstate.LoadAuthorized(ctx, handler.framework.runs, payload.RunID); loadErr == nil &&
+		snapshot.Status == runstate.RunStatusFailed {
+		result, err := handler.framework.RetryFailedRun(ctx, payload.RunID)
+		if err != nil {
+			return err
+		}
+		if result.Status == runstate.RunStatusPaused {
+			return asyncpkg.RunPausedError{RunID: result.RunID, Token: result.Token}
+		}
+		return nil
+	}
 	result, err := handler.framework.Run(ctx, RunRequest{
 		RunID:   payload.RunID,
 		Agent:   payload.Agent,

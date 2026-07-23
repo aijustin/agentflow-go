@@ -14,7 +14,7 @@ import (
 
 func TestHandlerStudioRoutesAndUIConfig(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, 
 		Store:          store,
 		TraceExploreURL: "https://traces.example.com",
 		Codegen:        studioStub{value: map[string]any{"code": "package main"}},
@@ -84,7 +84,7 @@ func TestHandlerStudioRoutesAndUIConfig(t *testing.T) {
 
 func TestHandlerCompareRequiresQueryParams(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store, Compare: compareStub{value: map[string]any{}}})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store, Compare: compareStub{value: map[string]any{}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,11 @@ const (
 	VarRunErrorMessage   = "run_error_message"
 	VarExecutionPhase    = "execution_phase"
 	VarCheckpointKind    = "checkpoint_kind"
+	// VarRunLeaseOwner marks a run snapshot as lease-managed by stamping the
+	// owning worker ID. MarkAbandonedRuns only reaps Running runs carrying
+	// this marker, so runs executed by workers without lease coordination are
+	// never mistaken for zombies.
+	VarRunLeaseOwner = "run_lease_owner"
 )
 
 // Hybrid / checkpoint phase values stored under VarExecutionPhase.

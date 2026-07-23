@@ -27,7 +27,7 @@ func (staticTool) Execute(context.Context, core.ToolCall) (core.ToolResult, erro
 // human decision (aligning with the autonomous runtime) instead of failing.
 func TestWorkflowRunnerAlwaysApprovalPausesWhenGateConfigured(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestWorkflowRunnerAlwaysApprovalPausesWhenGateConfigured(t *testing.T) {
 
 func TestWorkflowRunnerFullTrustSkipsToolApprovalPause(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestWorkflowRunnerToolResultErrorFailsNode(t *testing.T) {
 
 func TestWorkflowRunnerPausesToolNodeApproval(t *testing.T) {
 	repo := runstateinmem.NewRepository()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}

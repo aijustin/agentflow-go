@@ -63,7 +63,7 @@ func TestObservabilityHTTPHandlerWithStudioAdapter(t *testing.T) {
 	}
 	savePath := filepath.Join(t.TempDir(), "scenario.yaml")
 	store := agentflow.NewInMemoryEventStore()
-	handler, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+	handler, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{InsecureAllowNoAuth: true, 
 		Store:          store,
 		Hub:            agentflow.NewEventHub(),
 		Framework:      fw,

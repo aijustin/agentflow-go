@@ -27,6 +27,7 @@ func TestHandlerContinueUsesContinuer(t *testing.T) {
 type fakeContinuer struct {
 	calls  int
 	result any
+	err    error
 }
 
 func (f *fakeContinuer) Resume(ctx context.Context, token string, decision core.Decision, amendment json.RawMessage) error {
@@ -35,5 +36,5 @@ func (f *fakeContinuer) Resume(ctx context.Context, token string, decision core.
 
 func (f *fakeContinuer) ResumeAndContinue(ctx context.Context, token string, decision core.Decision, amendment json.RawMessage) (any, error) {
 	f.calls++
-	return f.result, nil
+	return f.result, f.err
 }

@@ -8,6 +8,9 @@ import (
 	nethttp "net/http"
 	"strings"
 
+	"github.com/aijustin/agentflow-go/pkg/audit"
+	"github.com/aijustin/agentflow-go/pkg/identity"
+	"github.com/aijustin/agentflow-go/pkg/security"
 	"github.com/aijustin/agentflow-go/pkg/studio"
 )
 
@@ -45,6 +48,18 @@ type HandlerConfig struct {
 	Run          Runner
 	Save         Saver
 	MaxBodyBytes int64
+	// Policy authorizes the mutating endpoints: studio run as run.submit and
+	// studio save as admin.configure, mirroring the checkpoint handler.
+	// When Policy is nil those endpoints default-deny with 403 auth_required
+	// unless InsecureAllowNoAuth explicitly opts out; the pure-transform
+	// endpoints (validate/codegen/yaml/import-yaml) stay open.
+	Policy security.Policy
+	// Audit receives policy-denied records when configured.
+	Audit audit.Sink
+	// InsecureAllowNoAuth disables the default-deny protection on the
+	// mutating endpoints when no Policy is configured. Only set it behind an
+	// authenticating reverse proxy or in tests.
+	InsecureAllowNoAuth bool
 }
 
 type Handler struct {
@@ -55,6 +70,9 @@ type Handler struct {
 	run          Runner
 	save         Saver
 	maxBodyBytes int64
+	policy       security.Policy
+	audit        audit.Sink
+	insecure     bool
 }
 
 func NewHandler(config HandlerConfig) *Handler {
@@ -70,6 +88,9 @@ func NewHandler(config HandlerConfig) *Handler {
 		run:          config.Run,
 		save:         config.Save,
 		maxBodyBytes: maxBodyBytes,
+		policy:       config.Policy,
+		audit:        config.Audit,
+		insecure:     config.InsecureAllowNoAuth,
 	}
 }
 
@@ -202,6 +223,9 @@ func (h *Handler) handleRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		methodNotAllowed(w, nethttp.MethodPost)
 		return
 	}
+	if !h.requireWriteAuth(w, r, security.ActionRunSubmit, "run") {
+		return
+	}
 	if h.run == nil {
 		writeError(w, nethttp.StatusNotImplemented, "studio run is not configured")
 		return
@@ -241,6 +265,9 @@ func (h *Handler) handleRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 func (h *Handler) handleSave(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodPost {
 		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if !h.requireWriteAuth(w, r, security.ActionAdminConfig, "save") {
 		return
 	}
 	if h.save == nil {
@@ -296,6 +323,49 @@ func writeJSON(w nethttp.ResponseWriter, status int, value any) {
 
 func writeError(w nethttp.ResponseWriter, status int, message string) {
 	writeStudioError(w, status, errors.New(message))
+}
+
+// requireWriteAuth enforces the mutating-endpoint authorization contract,
+// mirroring the checkpoint handler: with a Policy configured the caller must
+// pass it; without one, studio run/save default-deny unless
+// InsecureAllowNoAuth was set explicitly.
+func (h *Handler) requireWriteAuth(w nethttp.ResponseWriter, r *nethttp.Request, action security.Action, id string) bool {
+	if h.policy == nil {
+		if h.insecure {
+			return true
+		}
+		writeJSON(w, nethttp.StatusForbidden, map[string]string{
+			"error":      "studio mutating endpoints require an authorization policy; configure Policy or explicitly set InsecureAllowNoAuth to disable this protection",
+			"error_code": "auth_required",
+		})
+		return false
+	}
+	principal, err := identity.RequirePrincipal(r.Context())
+	if err != nil {
+		h.recordDenied(r, principal, action, id, security.ErrUnauthenticated)
+		writeJSON(w, nethttp.StatusUnauthorized, map[string]string{"error": "unauthorized", "error_code": "unauthenticated"})
+		return false
+	}
+	resource := security.BindTenant(principal, security.Resource{Type: "studio", ID: id})
+	if err := h.policy.Authorize(r.Context(), principal, action, resource); err != nil {
+		h.recordDenied(r, principal, action, id, err)
+		status := nethttp.StatusForbidden
+		code := "forbidden"
+		if errors.Is(err, security.ErrUnauthenticated) {
+			status = nethttp.StatusUnauthorized
+			code = "unauthenticated"
+		}
+		writeJSON(w, status, map[string]string{"error": "forbidden", "error_code": code})
+		return false
+	}
+	return true
+}
+
+func (h *Handler) recordDenied(r *nethttp.Request, principal identity.Principal, action security.Action, id string, reason error) {
+	if h.audit == nil {
+		return
+	}
+	_ = h.audit.Record(r.Context(), audit.Event{Type: audit.EventPolicyDenied, Principal: principal, Action: action, Resource: security.Resource{Type: "studio", ID: id}, Outcome: "denied", Reason: reason.Error()})
 }
 
 func writeStudioError(w nethttp.ResponseWriter, status int, err error) {

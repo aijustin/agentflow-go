@@ -20,7 +20,10 @@ func ContextWithEventTee(ctx context.Context, sink core.EventSink) context.Conte
 	return context.WithValue(ctx, eventTeeKey{}, sink)
 }
 
-func eventTeeFromContext(ctx context.Context) core.EventSink {
+// EventTeeFromContext returns the side-channel sink attached by
+// ContextWithEventTee, or nil. The Framework-level event sink consults it so
+// engine, workflow-runner, and facade emissions all reach a StreamRun tee.
+func EventTeeFromContext(ctx context.Context) core.EventSink {
 	if ctx == nil {
 		return nil
 	}

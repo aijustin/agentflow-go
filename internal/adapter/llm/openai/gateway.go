@@ -153,7 +153,7 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		finish := func(doneChunk llm.ChatChunk) {
 			if normalizeTools {
 				if doneChunk.Error != "" {
-					send(llm.ChatChunk{Done: true, Error: doneChunk.Error, Usage: usage})
+					send(llm.ChatChunk{Done: true, Error: doneChunk.Error, Err: doneChunk.Err, Usage: usage})
 					return
 				}
 				if calls := finalizeStreamToolCalls(nativeCalls); len(calls) > 0 {
@@ -196,7 +196,7 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 				return
 			}
 			if doneChunk.Error != "" {
-				send(llm.ChatChunk{Done: true, Error: doneChunk.Error, Usage: usage})
+				send(llm.ChatChunk{Done: true, Error: doneChunk.Error, Err: doneChunk.Err, Usage: usage})
 				return
 			}
 			send(llm.ChatChunk{Done: true, Usage: usage})
@@ -215,9 +215,16 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 				finish(llm.ChatChunk{Done: true, Usage: usage})
 				return
 			}
+			if streamErr := decodeStreamErrorPayload([]byte(data)); streamErr != nil {
+				// OpenAI-compatible providers signal mid-stream failures as a
+				// data line carrying an error object; surface it with the
+				// structured error attached so retry classification works.
+				finish(llm.ChatChunk{Done: true, Error: streamErr.Error(), Err: streamErr, Usage: usage})
+				return
+			}
 			delta, err := decodeStreamDelta([]byte(data))
 			if err != nil {
-				finish(llm.ChatChunk{Done: true, Error: err.Error(), Usage: usage})
+				finish(llm.ChatChunk{Done: true, Error: err.Error(), Err: err, Usage: usage})
 				return
 			}
 			if tokenUsagePresent(delta.Usage) {
@@ -248,7 +255,7 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			finish(llm.ChatChunk{Done: true, Error: err.Error(), Usage: usage})
+			finish(llm.ChatChunk{Done: true, Error: err.Error(), Err: err, Usage: usage})
 			return
 		}
 		if normalizeTools || finished {
@@ -489,6 +496,45 @@ func decodeStreamChunk(raw []byte) (llm.ChatChunk, error) {
 		return llm.ChatChunk{}, err
 	}
 	return llm.ChatChunk{Content: delta.Content, Done: delta.Done, Usage: delta.Usage}, nil
+}
+
+// decodeStreamErrorPayload recognizes the error object OpenAI-compatible
+// providers emit as a data line when a stream fails mid-flight
+// ({"error":{"message","type","code"}}). It returns nil for ordinary delta
+// payloads. The mapped llm.APIError keeps retry classification working on
+// the streaming path: numeric codes are honored directly, well-known string
+// codes map to their HTTP equivalents, and anything else is treated as a
+// server-side (retryable) failure because the provider already accepted the
+// request.
+func decodeStreamErrorPayload(raw []byte) error {
+	var decoded struct {
+		Error *struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    any    `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil || decoded.Error == nil {
+		return nil
+	}
+	status := 500
+	switch code := decoded.Error.Code.(type) {
+	case float64:
+		status = int(code)
+	case string:
+		switch code {
+		case "rate_limit_exceeded", "rate_limit_error":
+			status = 429
+		case "context_length_exceeded", "invalid_request_error":
+			status = 400
+		}
+	}
+	return llm.APIError{
+		Provider:   "openai",
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d", status),
+		Body:       decoded.Error.Message,
+	}
 }
 
 func decodeStreamDelta(raw []byte) (streamDelta, error) {

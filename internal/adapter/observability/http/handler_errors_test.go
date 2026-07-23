@@ -64,7 +64,7 @@ func (errStub) SaveStudioGraph(context.Context, any) (any, error) {
 func TestHandlerReturnsBadRequestForStubErrors(t *testing.T) {
 	store := obsinmem.NewStore()
 	stub := errStub{}
-	handler, err := NewHandler(Config{
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true,
 		Store:       store,
 		Steps:       stub,
 		HITLResume:  stub,
@@ -124,7 +124,7 @@ func TestHandlerReturnsBadRequestForStubErrors(t *testing.T) {
 
 func TestHandlerResumeEndpointsRejectInvalidBody(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true,
 		Store:      store,
 		Resume:     resumeStub{value: map[string]any{}},
 		Restore:    checkpointStub{value: map[string]any{}},

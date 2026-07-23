@@ -70,7 +70,7 @@ func TestSamplingStepContextDeniesUnaadvertisedTool(t *testing.T) {
 	}
 	result, err := engine.dispatchToolWithOptions(ctx, "run-step", core.Agent{Name: "assistant", Tools: []string{"echo"}}, llm.ToolCall{
 		ID: "c1", Name: "http", Input: json.RawMessage(`{}`),
-	}, newToolCallTracker(), toolDispatchOptions{skipMemory: true})
+	}, newToolCallTracker(), toolDispatchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestCachedDenySoftDeniesTool(t *testing.T) {
 	}
 	result, err := engine.dispatchToolWithOptions(context.Background(), "run-cached-deny", core.Agent{
 		Name: "assistant", Tools: []string{"echo"},
-	}, llm.ToolCall{ID: "c1", Name: "echo", Input: input}, newToolCallTracker(), toolDispatchOptions{skipMemory: true})
+	}, llm.ToolCall{ID: "c1", Name: "echo", Input: input}, newToolCallTracker(), toolDispatchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,8 +174,14 @@ func TestCachedDenySoftDeniesTool(t *testing.T) {
 }
 
 func TestDrainInterjectionsDeferUntilPostCompact(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-drain", ScenarioName: "scenario", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
 	engine, err := NewEngine(toolScenario(core.ApprovalNever, core.SideEffectRead, 4), Dependencies{
-		Runs: runstateinmem.NewRepository(),
+		Runs: repo,
 		LLM:  llmmock.NewGateway(),
 		InterjectDrain: interjection.DrainPolicy{
 			BeforeSample:          true,

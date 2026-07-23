@@ -128,3 +128,15 @@ func (h *CheckpointHistory) Load(ctx context.Context, runID string, version int6
 	}
 	return snapshot, nil
 }
+
+// Delete drops every recorded revision for a run; a missing run is a no-op.
+func (h *CheckpointHistory) Delete(ctx context.Context, runID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`DELETE FROM %s WHERE run_id = $1`, h.table)
+	if _, err := h.db.ExecContext(ctx, query, runID); err != nil {
+		return fmt.Errorf("postgres checkpoint history: delete: %w", err)
+	}
+	return nil
+}

@@ -40,7 +40,7 @@ func (s *stubPurger) PurgeOrphanBlobs(context.Context) (int, error) {
 
 func TestHandlerPurgePolicy(t *testing.T) {
 	purger := &stubPurger{runsRemoved: 3}
-	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger})
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestHandlerPurgePolicy(t *testing.T) {
 
 func TestHandlerPurgeRuns(t *testing.T) {
 	purger := &stubPurger{runsRemoved: 2}
-	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger})
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestHandlerPurgeRuns(t *testing.T) {
 
 func TestHandlerPurgeExpired(t *testing.T) {
 	purger := &stubPurger{runsRemoved: 1}
-	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger})
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestHandlerPurgeExpired(t *testing.T) {
 
 func TestHandlerPurgeExpiredRejectsInvalidDuration(t *testing.T) {
 	purger := &stubPurger{}
-	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger})
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestHandlerPurgeExpiredRejectsInvalidDuration(t *testing.T) {
 
 func TestHandlerPurgeBlobs(t *testing.T) {
 	purger := &stubPurger{blobsRemoved: 4}
-	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger})
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestHandlerPurgeBlobs(t *testing.T) {
 
 func TestHandlerNotFound(t *testing.T) {
 	purger := &stubPurger{}
-	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger})
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestHandlerPurgeRunsRequiresAuthorizationWhenPolicyConfigured(t *testing.T)
 
 func TestHandlerPurgePolicyRejectsInvalidDuration(t *testing.T) {
 	purger := &stubPurger{}
-	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger})
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestHandlerAuthorizeAllowsAdminPrincipal(t *testing.T) {
 
 func TestHandlerPurgeRunsRejectsMalformedJSON(t *testing.T) {
 	purger := &stubPurger{}
-	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger})
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{Purger: purger, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}

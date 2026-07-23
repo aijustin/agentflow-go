@@ -12,6 +12,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
+	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
@@ -408,6 +409,32 @@ func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw js
 	return RunResult{RunID: runID, Status: runstate.RunStatusCompleted, Output: string(raw), StructuredOutput: raw}, nil
 }
 
+// streamDetachedKey marks caller-detached streaming (see WithStreamDetached
+// on the framework facade): client disconnect must not cancel the run.
+type streamDetachedKey struct{}
+
+// ContextWithStreamDetached marks the stream to keep executing to a terminal
+// state in the background when the caller's context is cancelled (e.g. client
+// disconnect), instead of marking the run Cancelled.
+func ContextWithStreamDetached(ctx context.Context) context.Context {
+	return context.WithValue(ctx, streamDetachedKey{}, true)
+}
+
+func streamDetachedFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(streamDetachedKey{}).(bool)
+	return v
+}
+
+// chunkError returns the structured provider error a failed chunk carries
+// when present, falling back to the wire-safe string form, so retry
+// classification and persisted failure reasons keep the original error type.
+func chunkError(chunk llm.ChatChunk) error {
+	if chunk.Err != nil {
+		return chunk.Err
+	}
+	return errors.New(chunk.Error)
+}
+
 func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
 	agent, err := e.resolveAgent(req.Agent)
 	if err != nil {
@@ -418,22 +445,51 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 	if e.hasBeforeFinalCheckpoint(agent) {
 		return nil, fmt.Errorf("runtime: streaming does not support before_final_answer checkpoint; use Run or RunStructured")
 	}
+	callerCtx := ctx
+	detached := streamDetachedFromContext(ctx)
+	// execCtx drives execution and terminal persistence. In detached mode it
+	// is decoupled from the caller's context so a client disconnect does not
+	// cancel the run; forwarding to the caller still observes callerCtx.
+	execCtx := ctx
+	if detached {
+		execCtx = context.WithoutCancel(ctx)
+	}
 	var cancel context.CancelFunc
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		ctx, cancel = e.withTimeout(ctx, e.scenario.Runtime.Timeout)
+	if _, hasDeadline := execCtx.Deadline(); !hasDeadline {
+		execCtx, cancel = e.withTimeout(execCtx, e.scenario.Runtime.Timeout)
 	} else {
 		cancel = func() {}
 	}
-	ctx = ContextWithTrustMode(ctx, req.TrustMode)
-	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromRequest(req))
-	if err := e.beginRun(ctx, &req); err != nil {
+	if detached {
+		// A detached run ignores caller cancellation, but a lost run lease
+		// must still abort it before another worker takes over the run.
+		watchCtx, watchCancel := context.WithCancelCause(execCtx)
+		execCtx = watchCtx
+		defer func() {
+			// Balances WithCancelCause for the synchronous part of Stream;
+			// the goroutine below takes over cancellation afterwards.
+			_ = watchCancel
+		}()
+		go func() {
+			select {
+			case <-callerCtx.Done():
+				if cause := context.Cause(callerCtx); errors.Is(cause, coordination.ErrRunLeaseLost) {
+					watchCancel(cause)
+				}
+			case <-watchCtx.Done():
+			}
+		}()
+	}
+	execCtx = ContextWithTrustMode(execCtx, req.TrustMode)
+	execCtx = core.ContextWithEpisodeCorrelation(execCtx, episodeCorrelationFromRequest(req))
+	if err := e.beginRun(execCtx, &req); err != nil {
 		cancel()
 		return nil, err
 	}
-	ctx = e.withEpisodeCorrelation(ctx, req)
-	source, agent, streamCancel, err := e.streamAnswer(ctx, req)
+	execCtx = e.withEpisodeCorrelation(execCtx, req)
+	source, agent, streamCancel, err := e.streamAnswer(execCtx, req)
 	if err != nil {
-		e.markRunFailed(ctx, req.RunID, err)
+		e.markRunFailed(execCtx, req.RunID, err)
 		cancel()
 		return nil, err
 	}
@@ -442,20 +498,25 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		defer close(out)
 		defer streamCancel()
 		defer cancel()
+		// forwarding reports whether the caller is still consuming. Once the
+		// caller goes away, a detached run keeps executing (and settling the
+		// run) without sending; a non-detached run applies the existing
+		// cancelled/failed classification and stops.
+		forwarding := true
 		sentTerminal := false
 		sendTerminal := func(c llm.ChatChunk) {
-			if sentTerminal && c.Error == "" {
+			if !forwarding || (sentTerminal && c.Error == "") {
 				return
 			}
 			sentTerminal = true
 			c.Done = true
 			select {
 			case out <- c:
-			case <-ctx.Done():
+			case <-callerCtx.Done():
 			}
 		}
 		send := func(c llm.ChatChunk) bool {
-			if sentTerminal {
+			if !forwarding || sentTerminal {
 				return false
 			}
 			if c.Done {
@@ -465,9 +526,24 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 			select {
 			case out <- c:
 				return true
-			case <-ctx.Done():
+			case <-callerCtx.Done():
 				return false
 			}
+		}
+		// callerGone handles a forwarding failure. It reports whether the
+		// consumer goroutine should stop entirely (non-detached) or keep
+		// executing in the background (detached).
+		callerGone := func() bool {
+			if !detached {
+				if err := callerCtx.Err(); errors.Is(err, context.DeadlineExceeded) {
+					e.markRunFailed(execCtx, req.RunID, err)
+				} else {
+					e.markRunCancelled(execCtx, req.RunID)
+				}
+				return true
+			}
+			forwarding = false
+			return false
 		}
 		var b strings.Builder
 		toolsAgent := len(agent.Tools) > 0 || len(agent.SubAgents) > 0
@@ -499,61 +575,56 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 					// Content already forwarded via deltas; avoid re-emitting on Done.
 					chunk.Content = ""
 				}
-				if !send(chunk) {
-					if err := ctx.Err(); errors.Is(err, context.DeadlineExceeded) {
-						e.markRunFailed(ctx, req.RunID, err)
-					} else {
-						e.markRunCancelled(ctx, req.RunID)
-					}
+				if !send(chunk) && callerGone() {
 					return
 				}
 				if chunk.Paused {
-					if err := e.ensureRunPaused(ctx, req.RunID); err != nil {
-						e.logWarn(ctx, "runtime: failed to persist paused status after stream pause", "run_id", req.RunID, "error", err)
+					if err := e.ensureRunPaused(execCtx, req.RunID); err != nil {
+						e.logWarn(execCtx, "runtime: failed to persist paused status after stream pause", "run_id", req.RunID, "error", err)
 					}
 					return
 				}
 				if chunk.Error != "" {
-					var paused RunPausedError
-					if errorsAsRunPaused(errors.New(chunk.Error), &paused) {
-						return
-					}
-					e.markRunFailed(ctx, req.RunID, errors.New(chunk.Error))
+					e.markRunFailed(execCtx, req.RunID, chunkError(chunk))
 					return
 				}
-				if err := e.completeStreamRun(ctx, req.RunID, agent, req.Prompt, finalOutput); err != nil {
+				if err := e.completeStreamRun(execCtx, req.RunID, agent, req.Prompt, finalOutput); err != nil {
+					// A completion that failed because the caller's context
+					// died while the final Done chunk raced the send must
+					// still settle the run; otherwise a cancelled-caller
+					// stream would leave it Running forever.
+					if ctxErr := execCtx.Err(); ctxErr != nil {
+						e.markRunFailedOrCancelled(execCtx, req.RunID, ctxErr)
+					}
 					sendTerminal(llm.ChatChunk{Error: err.Error()})
 				}
 				return
 			}
 			if !send(chunk) {
-				if err := ctx.Err(); errors.Is(err, context.DeadlineExceeded) {
-					e.markRunFailed(ctx, req.RunID, err)
-				} else {
-					e.markRunCancelled(ctx, req.RunID)
+				if callerGone() {
+					return
 				}
-				return
+				continue
 			}
 			if chunk.Paused {
-				if err := e.ensureRunPaused(ctx, req.RunID); err != nil {
-					e.logWarn(ctx, "runtime: failed to persist paused status after stream pause", "run_id", req.RunID, "error", err)
+				if err := e.ensureRunPaused(execCtx, req.RunID); err != nil {
+					e.logWarn(execCtx, "runtime: failed to persist paused status after stream pause", "run_id", req.RunID, "error", err)
 				}
 				return
 			}
 			if chunk.Error != "" {
-				var paused RunPausedError
-				if errorsAsRunPaused(errors.New(chunk.Error), &paused) {
-					return
-				}
-				e.markRunFailed(ctx, req.RunID, errors.New(chunk.Error))
+				e.markRunFailed(execCtx, req.RunID, chunkError(chunk))
 				return
 			}
 		}
-		if err := ctx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				e.markRunFailed(ctx, req.RunID, err)
+		if err := execCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || detached {
+				// Detached execution is only cancelled by its own scenario
+				// timeout (or a lost lease), never by the caller, so any
+				// execution-context error is a genuine failure.
+				e.markRunFailed(execCtx, req.RunID, err)
 			} else {
-				e.markRunCancelled(ctx, req.RunID)
+				e.markRunCancelled(execCtx, req.RunID)
 			}
 			return
 		}
@@ -561,7 +632,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		// stream was cut off mid-answer. Treating it as a normal completion
 		// would persist a truncated output as the run's final answer.
 		streamErr := errors.New("runtime: llm stream closed without a done chunk")
-		e.markRunFailed(ctx, req.RunID, streamErr)
+		e.markRunFailed(execCtx, req.RunID, streamErr)
 		sendTerminal(llm.ChatChunk{Error: streamErr.Error()})
 	}()
 	return out, nil

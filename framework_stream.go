@@ -18,6 +18,7 @@ type StreamRunOption func(*streamRunOptions)
 
 type streamRunOptions struct {
 	eventPreset core.EventFilterPreset
+	detached    bool
 }
 
 // Event filter presets for StreamRun / EventStore.ListEvents read-side views.
@@ -38,6 +39,29 @@ func WithStreamEventFilterPreset(preset EventFilterPreset) StreamRunOption {
 	}
 }
 
+// WithStreamDetached detaches execution from the caller's context: when the
+// caller's ctx is cancelled (e.g. the SSE client disconnects), the run is NOT
+// marked Cancelled but keeps executing in the background until it reaches a
+// terminal state and persists its result normally. The frame channel closes
+// when the caller goes away; the terminal state is observable afterwards via
+// the run-state repository. An explicit Framework-level cancellation of the
+// run (Cancel API) and a lost run lease still abort it.
+func WithStreamDetached() StreamRunOption {
+	return func(opts *streamRunOptions) {
+		opts.detached = true
+	}
+}
+
+// StreamDetached marks ctx so a run started by Framework.Stream keeps
+// executing to a terminal state in the background when the caller's context
+// is cancelled (client disconnect), instead of being marked Cancelled. It is
+// the context-level equivalent of the WithStreamDetached StreamRun option for
+// callers of the lower-level Stream API. An explicit run Cancel and a lost
+// run lease still abort the run.
+func StreamDetached(ctx context.Context) context.Context {
+	return runtime.ContextWithStreamDetached(ctx)
+}
+
 // StreamFrameKind discriminates unified StreamRun frames.
 type StreamFrameKind string
 
@@ -46,6 +70,11 @@ const (
 	StreamFrameEvent StreamFrameKind = "event"
 	StreamFrameDone  StreamFrameKind = "done"
 	StreamFrameError StreamFrameKind = "error"
+	// StreamFrameEventsLost marks that teed events were dropped because the
+	// frame consumer fell behind; EventsLost carries the cumulative count.
+	// Token frames are never dropped, so the stream stays authoritative for
+	// the answer itself.
+	StreamFrameEventsLost StreamFrameKind = "events_lost"
 )
 
 // StreamFrame is a unified token/event/terminal frame for StreamRun.
@@ -55,12 +84,16 @@ type StreamFrame struct {
 	Event  *core.Event    // for event
 	Err    error
 	Result *RunResult // for done
+	// EventsLost carries the cumulative number of teed events dropped so far
+	// when Kind is StreamFrameEventsLost.
+	EventsLost int64
 }
 
 type streamEventTee struct {
-	runID  string
-	events chan core.Event
-	done   atomic.Bool
+	runID   string
+	events  chan core.Event
+	done    atomic.Bool
+	dropped atomic.Int64
 }
 
 func (t *streamEventTee) Emit(_ context.Context, event core.Event) error {
@@ -74,6 +107,9 @@ func (t *streamEventTee) Emit(_ context.Context, event core.Event) error {
 	case t.events <- event:
 	default:
 		// Drop when the consumer is behind; tokens remain authoritative.
+		// Count every drop so StreamRun can surface an events_lost marker
+		// frame instead of losing events silently.
+		t.dropped.Add(1)
 	}
 	return nil
 }
@@ -104,6 +140,9 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 		events: make(chan core.Event, 64),
 	}
 	ctx = runtime.ContextWithEventTee(ctx, tee)
+	if options.detached {
+		ctx = runtime.ContextWithStreamDetached(ctx)
+	}
 
 	chunks, err := f.Stream(ctx, req)
 	if err != nil {
@@ -118,6 +157,7 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 			paused    bool
 			pauseTok  string
 			output    strings.Builder
+			reported  int64
 		)
 		send := func(frame StreamFrame) bool {
 			select {
@@ -139,6 +179,12 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 						return
 					}
 				default:
+					// Surface dropped teed events as a marker frame (with the
+					// cumulative count) instead of losing them silently.
+					if n := tee.dropped.Load(); n > reported {
+						reported = n
+						send(StreamFrame{Kind: StreamFrameEventsLost, EventsLost: n})
+					}
 					return
 				}
 			}
@@ -207,3 +253,23 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 type streamFrameError string
 
 func (e streamFrameError) Error() string { return string(e) }
+
+// teeEventSink fans every emitted event out to the context-scoped StreamRun
+// tee (when one is attached) in addition to the configured sink. The workflow
+// runner emits straight into a sink — unlike the engine and the facade, which
+// consult the tee in their own emit helpers — so wrapping the sink handed to
+// it is what carries workflow/hybrid node events into the StreamRun frame
+// stream.
+type teeEventSink struct {
+	inner core.EventSink
+}
+
+func (s teeEventSink) Emit(ctx context.Context, event core.Event) error {
+	err := s.inner.Emit(ctx, event)
+	if tee := runtime.EventTeeFromContext(ctx); tee != nil {
+		if teeErr := tee.Emit(ctx, event); teeErr != nil && err == nil {
+			err = teeErr
+		}
+	}
+	return err
+}

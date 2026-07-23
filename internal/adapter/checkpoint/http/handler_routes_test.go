@@ -8,7 +8,7 @@ import (
 )
 
 func TestCheckpointHandlerNotConfiguredRoutes(t *testing.T) {
-	handler := NewHandler(HandlerConfig{})
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true})
 	cases := []struct {
 		method string
 		path   string
@@ -31,7 +31,7 @@ func TestCheckpointHandlerNotConfiguredRoutes(t *testing.T) {
 }
 
 func TestCheckpointHandlerMethodNotAllowedAndNotFound(t *testing.T) {
-	handler := NewHandler(HandlerConfig{Steps: stubCheckpoint{steps: map[string]any{}}})
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true, Steps: stubCheckpoint{steps: map[string]any{}}})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/run-1/steps", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -50,7 +50,7 @@ func TestCheckpointHandlerMethodNotAllowedAndNotFound(t *testing.T) {
 }
 
 func TestCheckpointHandlerCheckpointsLimitValidation(t *testing.T) {
-	handler := NewHandler(HandlerConfig{
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true,
 		History: stubCheckpoint{history: map[string]any{"checkpoints": []any{}}},
 	})
 	rec := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestCheckpointHandlerCheckpointsLimitValidation(t *testing.T) {
 }
 
 func TestCheckpointHandlerInvalidCheckpointVersion(t *testing.T) {
-	handler := NewHandler(HandlerConfig{
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true,
 		Checkpoints: stubCheckpoint{snapshot: map[string]any{"version": 1}},
 	})
 	rec := httptest.NewRecorder()
@@ -77,7 +77,7 @@ func TestCheckpointHandlerInvalidCheckpointVersion(t *testing.T) {
 }
 
 func TestCheckpointHandlerResumeInvalidJSON(t *testing.T) {
-	handler := NewHandler(HandlerConfig{
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true,
 		Checkpoint: stubCheckpoint{result: map[string]any{}},
 	})
 	rec := httptest.NewRecorder()

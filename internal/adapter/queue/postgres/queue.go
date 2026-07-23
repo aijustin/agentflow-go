@@ -215,19 +215,36 @@ func (q *Queue) Fail(ctx context.Context, lease asyncpkg.Lease, cause error) err
 		reason = cause.Error()
 	}
 	now := q.now().UTC()
+	// A retry becomes available after an exponential backoff instead of
+	// immediately, so a job that fails fast (e.g. a permanently poisoned
+	// payload) cannot hot-loop against the queue and the downstream system.
+	retryAt := now.Add(retryBackoff(lease.Attempt))
 	query := fmt.Sprintf(`UPDATE %s
 SET state = CASE WHEN attempts >= max_attempts THEN $1 ELSE $2 END,
 	last_error = $3,
 	available_at = CASE WHEN attempts >= max_attempts THEN available_at ELSE $4 END,
 	lease_worker_id = NULL,
 	lease_expires_at = NULL,
-	updated_at = $4
-WHERE id = $5 AND state = $6 AND lease_worker_id = $7 AND attempts = $8`, q.table)
-	result, err := q.db.ExecContext(ctx, query, string(asyncpkg.JobDeadLetter), string(asyncpkg.JobQueued), nullString(reason), now, lease.JobID, string(asyncpkg.JobRunning), lease.WorkerID, int64(lease.Attempt))
+	updated_at = $5
+WHERE id = $6 AND state = $7 AND lease_worker_id = $8 AND attempts = $9`, q.table)
+	result, err := q.db.ExecContext(ctx, query, string(asyncpkg.JobDeadLetter), string(asyncpkg.JobQueued), nullString(reason), retryAt, now, lease.JobID, string(asyncpkg.JobRunning), lease.WorkerID, int64(lease.Attempt))
 	if err != nil {
 		return fmt.Errorf("postgres queue: fail job %q: %w", lease.JobID, err)
 	}
 	return requireAffected(result)
+}
+
+// retryBackoff returns the delay before a failed job becomes available for
+// its next attempt: 1s doubling with the attempt number, capped at 1 minute.
+func retryBackoff(attempt int) time.Duration {
+	delay := time.Second
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= time.Minute {
+			return time.Minute
+		}
+	}
+	return delay
 }
 
 func (q *Queue) Cancel(ctx context.Context, jobID string) error {

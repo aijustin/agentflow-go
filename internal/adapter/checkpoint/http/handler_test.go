@@ -38,7 +38,7 @@ func (s stubCheckpoint) ResumeFromCheckpoint(context.Context, string, int64) (an
 }
 
 func TestCheckpointHandlerStepsAndResume(t *testing.T) {
-	handler := NewHandler(HandlerConfig{
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true, 
 		Steps:      stubCheckpoint{steps: map[string]any{"run_id": "run-1"}},
 		Checkpoint: stubCheckpoint{result: map[string]any{"status": "completed"}},
 	})
@@ -59,7 +59,7 @@ func TestCheckpointHandlerStepsAndResume(t *testing.T) {
 }
 
 func TestCheckpointHandlerHistoryAndRestore(t *testing.T) {
-	handler := NewHandler(HandlerConfig{
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true, 
 		History:     stubCheckpoint{history: map[string]any{"run_id": "run-1", "checkpoints": []any{}}},
 		Checkpoints: stubCheckpoint{snapshot: map[string]any{"run_id": "run-1", "version": 2}},
 		Restore:     stubCheckpoint{restore: map[string]any{"status": "completed"}},
@@ -96,7 +96,7 @@ func (s stubForker) ForkRun(context.Context, string, int64) (any, error) {
 }
 
 func TestCheckpointHandlerFork(t *testing.T) {
-	handler := NewHandler(HandlerConfig{
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true, 
 		Fork: stubForker{result: map[string]any{"run_id": "run-fork", "parent_run_id": "run-1"}},
 	})
 	rec := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func TestCheckpointHandlerFork(t *testing.T) {
 }
 
 func TestCheckpointHandlerValidationErrors(t *testing.T) {
-	handler := NewHandler(HandlerConfig{
+	handler := NewHandler(HandlerConfig{InsecureAllowNoAuth: true, 
 		Checkpoint: stubCheckpoint{result: map[string]any{"status": "completed"}},
 		Restore:    stubCheckpoint{restore: map[string]any{"status": "completed"}},
 	})

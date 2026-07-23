@@ -2,6 +2,7 @@ package agentflow_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
@@ -134,5 +135,49 @@ func TestFrameworkStreamRunProductUIPresetFiltersInternalEvents(t *testing.T) {
 	}
 	if streamSawInternal {
 		t.Fatal("product_ui StreamRun should hide MemoryRead/ContextPrepared")
+	}
+}
+
+// TestFrameworkStreamRunWorkflowEmitsNodeFrames: workflow node events reach
+// the StreamRun frame stream via the Framework-level tee sink, not just
+// engine emissions.
+func TestFrameworkStreamRunWorkflowEmitsNodeFrames(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "stream-run-wf",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "prepare", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"note":"hi"}}`)},
+				},
+			},
+		},
+	}
+	gateway := &streamGateway{chunks: []llm.ChatChunk{{Content: "hello"}, {Done: true}}}
+	fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(gateway))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, err := fw.StreamRun(context.Background(), agentflow.RunRequest{
+		RunID:  "stream-run-wf-1",
+		Agent:  "assistant",
+		Prompt: "hi",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawStepEvent bool
+	for frame := range frames {
+		if frame.Kind == agentflow.StreamFrameEvent && frame.Event != nil &&
+			(frame.Event.Type == core.EventStepStarted || frame.Event.Type == core.EventStepCompleted) {
+			sawStepEvent = true
+		}
+	}
+	if !sawStepEvent {
+		t.Fatal("expected workflow step events in the frame stream")
 	}
 }

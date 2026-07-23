@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`Framework.ContinueRun(ctx, runID)`**: public idempotent recovery entry point for runs stuck in `Running` with unconsumed checkpoint metadata (gate approved but the continue failed or the worker crashed). A `Completed` run returns its persisted result; other states return classified errors.
+- **Idempotent resume + `ErrResumeInProgress`**: `ResumeAndContinue`/`ResumeRunByID` on an already-`Completed` run return the persisted `RunResult` instead of a token error; a concurrent resume of the same run (with or without run leases) fails fast with the new `ErrResumeInProgress` sentinel instead of racing the pause token into an ambiguous `ErrTokenSuperseded`. Token verification now reports `ErrTokenExpired` (wrapping `ErrInvalidToken`) for expired tokens.
+- **Detached streaming**: `WithStreamDetached()` (StreamRun) and `StreamDetached(ctx)` (Stream) keep a run executing to a terminal state in the background when the caller's context is cancelled (client disconnect), instead of marking it `Cancelled`.
+- **StreamRun event fanout**: workflow/hybrid node events and facade lifecycle emissions now reach the StreamRun frame stream via a Framework-level tee sink; dropped teed events surface as `StreamFrameEventsLost` marker frames with the cumulative count, and `EventHub.DroppedEvents()` exposes the hub-level drop counter.
+- **`RetryFailedRun` supports autonomous runs** with pending checkpoint metadata (continues via `ContinueAfterCheckpoint`); runs without one get an explicit error.
+- **`runstate.CheckpointHistory.Delete`**: retention purges (`PurgeRuns`, `PurgeExpired`) now drop a run's checkpoint revisions alongside its snapshot; `PurgeRuns` skips non-terminal runs unless the new `WithPurgeForce()` option is given.
+- **HTTP authorization for mutating endpoints**: the checkpoint handler (`CheckpointHTTPHandlerConfig.Policy`), Studio handler (`StudioHTTPHandlerConfig.Policy`), observability dashboard (`ObservabilityHTTPHandlerConfig.AuthMiddleware`, mutating routes guarded when absent), and retention handler now authorize writes via `security.Policy` exactly like the async run handler; webhook ingress gained `WebhookHTTPHandlerConfig.VerifySignature` for HMAC-style body validation. `NewProductionHTTPHandler` threads its `Policy`/`Audit` into the checkpoint, studio, and retention sub-handlers.
+- **Tenant-strict mode**: `runstate.ContextWithTenantStrictMode(ctx)` makes `AuthorizeTenant`/`LoadAuthorized` fail closed when the caller has no tenant principal (`ErrTenantRequired`) or the snapshot predates tenant stamping (`ErrTenantMismatch`). Off by default; multi-tenant deployments should enable it in auth middleware.
+- **HITL token rotation**: `runstate.NewTokenSignerWithRotation(primary, secondary)` signs with the primary key (embedding a key id) and verifies with both, so key swaps do not invalidate in-flight tokens; facade option `WithHITLTokenRotation(primary, secondary, tokenWriter)`. `runstate.MinTokenSecretLength` (16) is now enforced for every signer.
+- **`WithResumeAuthorizationHook`**: gates `ResumeRunByID` before it mints a fresh resume token.
+
+### Fixed
+
+- **Lease-lost classification**: a run aborted by a lost lease (`ErrRunLeaseLost`) is persisted as `Failed` with the lease-lost reason in `run_error_message`, never as `Cancelled`; the facade and `pkg/coordination` now share one sentinel. `MarkAbandonedRuns` only reaps `Running` runs stamped with a lease owner, so workers without lease coordination are no longer mistaken for zombies.
+- **Reject with continue**: `ResumeRunByID(reject, continueExecution=true)` restores the legacy reject semantics (run marked Cancelled, terminal result returned) instead of entering `continueRun` against the just-cancelled snapshot.
+- **Streaming retry classification**: mid-stream provider errors keep their structured type (`llm.ChatChunk.Err`, populated by the OpenAI/Anthropic gateways including in-stream error payloads), so `shouldRetry` works on the streaming tool-loop path.
+- **Lifecycle event durability**: `RunCompleted`/`RunPaused`/`RunFailed`/`RunCancelled` emissions retry with backoff (3 attempts) before an error-level log; terminal transitions clear run-scoped approval cache, deny-breaker counters, and interjection buffers; `Interject` rejects unknown or inactive runs.
+- **Pause/commit edges**: `ensureRunPaused` failures propagate instead of being warn-only; a `completionConflict` during continue clears leftover checkpoint variables; async workers back off on lease poll failures, cancel jobs whose lease renewal fails, and retry queue failures with exponential backoff (postgres `available_at`); `handleRun` re-enters failed runs via `RetryFailedRun` instead of re-running from scratch.
+- **HTTP error semantics**: human-gate resume maps errors to 401/410/409/500 with structured `error_code`; event-router and checkpoint handlers distinguish 400/404/409/500 the same way; `NewHumanHTTPHandler` validates a nil framework at construction.
+- **Run ID entropy**: all generators delegate to `runstate.GenerateRunID` (128-bit); stale-snapshot retry loops back off with jitter.
+
+### Security
+
+- **BREAKING (intentional hardening)**: checkpoint write endpoints (`resume-from-step`, `resume-from-checkpoint`, `fork`), Studio `run`/`save`, observability mutating endpoints (HITL resume, resume-from-step/checkpoint, fork, studio run/save), and retention purge endpoints now **default-deny with 403 `auth_required`** when no authorization policy / `AuthMiddleware` is configured. Set the corresponding `Policy` (or `AuthMiddleware`) to authorize them, or explicitly opt out with the new `InsecureAllowNoAuth` field (intended only for tests or deployments behind an authenticating proxy). Read-only endpoints stay open; the observability handler logs a one-time construction warning when no `AuthMiddleware` is set.
+- **BREAKING (intentional hardening)**: `runstate.NewTokenSigner` rejects secrets shorter than 16 bytes. Single-key signers keep the legacy two-segment token format so rolling upgrades do not mix wire formats.
+- `ResumeRunByID` is documented as an indefinite resume capability not bounded by the token TTL; HTTP exposures must authorize it (e.g. with `WithResumeAuthorizationHook`).
+
 ### Fixed
 
 - **HITL pause correctness**: workflow node retries, `parallel_group`/`map` `collect_errors`, and parallel batches no longer swallow or re-run a `WorkflowPausedError`; `RunHybrid`/`RunStructured` map pauses to a paused result instead of marking the run failed; `errorsAsRunPaused` now uses `errors.As` so wrapped pauses are detected.

@@ -7,7 +7,7 @@ import (
 )
 
 func TestTokenSignerRoundTrip(t *testing.T) {
-	signer, err := NewTokenSigner([]byte("secret"))
+	signer, err := NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestTokenSignerRoundTrip(t *testing.T) {
 }
 
 func TestTokenSignerRejectsTampering(t *testing.T) {
-	signer, err := NewTokenSigner([]byte("secret"))
+	signer, err := NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestTokenSignerRejectsTampering(t *testing.T) {
 }
 
 func TestTokenSignerRejectsExpired(t *testing.T) {
-	signer, err := NewTokenSigner([]byte("secret"))
+	signer, err := NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}

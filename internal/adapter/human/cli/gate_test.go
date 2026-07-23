@@ -139,7 +139,7 @@ func TestGateResumeRejectsSupersededToken(t *testing.T) {
 
 func newGateDeps(t *testing.T) (*runstateinmem.Repository, *runstate.TokenSigner, *bytes.Buffer) {
 	t.Helper()
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}

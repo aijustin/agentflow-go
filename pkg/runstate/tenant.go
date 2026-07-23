@@ -7,7 +7,31 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/identity"
 )
 
-var ErrTenantMismatch = errors.New("runstate: tenant mismatch")
+var (
+	ErrTenantMismatch = errors.New("runstate: tenant mismatch")
+	// ErrTenantRequired reports an access in tenant-strict mode where the
+	// caller's context carries no tenant principal at all.
+	ErrTenantRequired = errors.New("runstate: tenant identity required")
+)
+
+type tenantStrictKey struct{}
+
+// ContextWithTenantStrictMode marks the context so AuthorizeTenant (and thus
+// LoadAuthorized) rejects access when the caller has no tenant principal, or
+// when the snapshot predates tenant stamping (empty TenantID). It is off by
+// default for backward compatibility: without it, principal-less contexts
+// and legacy unowned snapshots are accessible to anyone. Multi-tenant
+// deployments should wrap every request context with this (e.g. in the auth
+// middleware) so an unauthenticated or unstamped access path fails closed.
+func ContextWithTenantStrictMode(ctx context.Context) context.Context {
+	return context.WithValue(ctx, tenantStrictKey{}, true)
+}
+
+// TenantStrictModeFromContext reports whether ctx is tenant-strict.
+func TenantStrictModeFromContext(ctx context.Context) bool {
+	strict, _ := ctx.Value(tenantStrictKey{}).(bool)
+	return strict
+}
 
 // StampTenant assigns the principal tenant to new snapshots when present in ctx.
 func StampTenant(ctx context.Context, snapshot *RunSnapshot) {
@@ -25,12 +49,21 @@ func StampTenant(ctx context.Context, snapshot *RunSnapshot) {
 
 // AuthorizeTenant ensures an authenticated principal can access the snapshot tenant.
 // Legacy snapshots without tenant_id remain accessible when no principal is present.
+// In tenant-strict mode (ContextWithTenantStrictMode) both cases fail closed:
+// a missing principal yields ErrTenantRequired, an unstamped snapshot
+// ErrTenantMismatch.
 func AuthorizeTenant(ctx context.Context, snapshot RunSnapshot) error {
 	principal, ok := identity.PrincipalFromContext(ctx)
 	if !ok || principal.Scope.TenantID == "" {
+		if TenantStrictModeFromContext(ctx) {
+			return ErrTenantRequired
+		}
 		return nil
 	}
 	if snapshot.TenantID == "" {
+		if TenantStrictModeFromContext(ctx) {
+			return ErrTenantMismatch
+		}
 		return nil
 	}
 	if snapshot.TenantID != principal.Scope.TenantID {

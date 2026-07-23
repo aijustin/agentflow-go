@@ -158,3 +158,86 @@ func TestPurgeWithPolicyByStatusFilter(t *testing.T) {
 		t.Fatalf("running run should remain: %v", err)
 	}
 }
+
+// TestPurgeRunsSkipsNonTerminalByDefault: a retention sweep must never
+// delete a run that is still executing or awaiting a human, unless the
+// caller explicitly forces it.
+func TestPurgeRunsSkipsNonTerminalByDefault(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	fw, err := New(core.Scenario{
+		Name:   "purge-guard",
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant", LLM: "mock"}},
+		LLMs:   map[string]core.LLMProfileRef{"mock": {Provider: "mock", Model: "test"}},
+	}, WithRunStateRepository(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, snapshot := range []runstate.RunSnapshot{
+		{RunID: "run-running", ScenarioName: "purge-guard", Status: runstate.RunStatusRunning},
+		{RunID: "run-paused", ScenarioName: "purge-guard", Status: runstate.RunStatusPaused},
+		{RunID: "run-done", ScenarioName: "purge-guard", Status: runstate.RunStatusCompleted},
+	} {
+		snapshot := snapshot
+		if err := repo.Save(ctx, &snapshot, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, err := fw.PurgeRuns(ctx, runstate.ListFilter{ScenarioName: "purge-guard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("expected only the terminal run purged, got %d", removed)
+	}
+	if _, err := repo.Load(ctx, "run-running"); err != nil {
+		t.Fatalf("running run must survive: %v", err)
+	}
+	if _, err := repo.Load(ctx, "run-paused"); err != nil {
+		t.Fatalf("paused run must survive: %v", err)
+	}
+	removed, err = fw.PurgeRuns(ctx, runstate.ListFilter{ScenarioName: "purge-guard"}, WithPurgeForce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected force purge of the remaining runs, got %d", removed)
+	}
+}
+
+// TestPurgeRunsDeletesCheckpointHistory: purging a run also drops its
+// recorded checkpoint revisions so time-travel data does not outlive the run.
+func TestPurgeRunsDeletesCheckpointHistory(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	history := runstateinmem.NewCheckpointHistory()
+	fw, err := New(core.Scenario{
+		Name:   "purge-history",
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant", LLM: "mock"}},
+		LLMs:   map[string]core.LLMProfileRef{"mock": {Provider: "mock", Model: "test"}},
+	}, WithRunStateRepository(repo), WithCheckpointHistory(history))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	snapshot := &runstate.RunSnapshot{RunID: "run-hist", ScenarioName: "purge-history", Status: runstate.RunStatusCompleted}
+	if err := repo.Save(ctx, snapshot, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := history.Append(ctx, *snapshot); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := fw.PurgeRuns(ctx, runstate.ListFilter{ScenarioName: "purge-history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("expected one purge, got %d", removed)
+	}
+	checkpoints, err := history.List(ctx, "run-hist", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("expected checkpoint history deleted with the run, got %d entries", len(checkpoints))
+	}
+}

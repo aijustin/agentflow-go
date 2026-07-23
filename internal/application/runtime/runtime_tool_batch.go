@@ -97,7 +97,7 @@ func (e *Engine) executeToolBatch(
 			defer unlock()
 
 			toolCtx := withToolProgressSink(groupCtx, emit)
-			result, err := e.dispatchTool(toolCtx, runID, agent, call, tracker, true)
+			result, err := e.dispatchTool(toolCtx, runID, agent, call, tracker)
 			if err != nil {
 				return err
 			}

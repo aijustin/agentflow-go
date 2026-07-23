@@ -8,8 +8,6 @@ package agentflow
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +65,11 @@ var (
 	ErrRunPaused           = appexec.ErrRunPaused
 	ErrRunFailed           = appexec.ErrRunFailed
 	ErrRunCancelled        = appexec.ErrRunCancelled
+	// ErrResumeInProgress reports that another caller is already resuming or
+	// continuing this run in this process. A concurrent ResumeAndContinue /
+	// ResumeRunByID / ContinueRun on the same run fails fast with it instead
+	// of racing the pause token and surfacing an ambiguous ErrTokenSuperseded.
+	ErrResumeInProgress = runstate.ErrResumeInProgress
 )
 
 // Plan is a resolved scenario plan that library users can inspect before
@@ -104,6 +107,7 @@ type Framework struct {
 	toolOrchestrator  toolorch.ToolOrchestrator
 	approvalStore     toolorch.ApprovalStore
 	turnStopHook      core.TurnStopHook
+	resumeAuthHook    ResumeAuthorizationHook
 	policy            security.Policy
 	audit             audit.Sink
 	toolGov           governance.ToolPolicy
@@ -116,6 +120,14 @@ type Framework struct {
 	runLeaseTTL       time.Duration
 	workflowRunner    *orchestration.WorkflowRunner
 	closers           []func(context.Context) error
+
+	// resumeMu guards resumeInFlight, the in-process set of runs currently
+	// being resumed/continued. It gives concurrent ResumeAndContinue /
+	// ResumeRunByID / ContinueRun calls on the same run a deterministic
+	// ErrResumeInProgress loser even when no distributed run lease is
+	// configured.
+	resumeMu       sync.Mutex
+	resumeInFlight map[string]struct{}
 }
 
 type options struct {
@@ -137,6 +149,7 @@ type options struct {
 	cognitive           map[string]memory.CognitiveMemory
 	jobQueue            async.Queue
 	tokenSecret         []byte
+	tokenSecretSecondary []byte
 	tokenTTL            time.Duration
 	tokenTTLSet         bool
 	tokenWriter         io.Writer
@@ -157,6 +170,7 @@ type options struct {
 	toolOrchestrator    toolorch.ToolOrchestrator
 	approvalStore       toolorch.ApprovalStore
 	turnStopHook        core.TurnStopHook
+	resumeAuthHook      ResumeAuthorizationHook
 }
 
 type toolRegistry struct {
@@ -317,7 +331,13 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		if cfg.gate != nil {
 			return nil, fmt.Errorf("agentflow: WithHumanGate and WithHITLTokenSecret are mutually exclusive")
 		}
-		signer, err := runstate.NewTokenSigner(cfg.tokenSecret)
+		var signer *runstate.TokenSigner
+		var err error
+		if len(cfg.tokenSecretSecondary) > 0 {
+			signer, err = runstate.NewTokenSignerWithRotation(cfg.tokenSecret, cfg.tokenSecretSecondary)
+		} else {
+			signer, err = runstate.NewTokenSigner(cfg.tokenSecret)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -363,6 +383,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		toolOrchestrator:    cfg.toolOrchestrator,
 		approvalStore:       cfg.approvalStore,
 		turnStopHook:        cfg.turnStopHook,
+		resumeAuthHook:      cfg.resumeAuthHook,
 		policy:              cfg.policy,
 		audit:               cfg.audit,
 		toolGov:             cfg.toolGov,
@@ -785,14 +806,55 @@ func tierMigrationObserver(scenario core.Scenario, recorder observability.Record
 	return tier.ChainMigrationObservers(observers...)
 }
 
+// ResumeAuthorizationHook authorizes a ResumeRunByID call before the
+// framework mints a fresh HITL token for runID. A nil error allows the
+// resume; any non-nil error aborts it and is returned to the caller.
+type ResumeAuthorizationHook func(ctx context.Context, runID string) error
+
+// WithResumeAuthorizationHook installs the authorization hook consulted by
+// ResumeRunByID before it signs a new resume token. Without a hook the
+// library keeps its historical behavior (any caller that knows the run ID
+// may resume), so every HTTP exposure of ResumeRunByID must be authorized
+// out-of-band — see the warning on ResumeRunByID.
+func WithResumeAuthorizationHook(hook ResumeAuthorizationHook) Option {
+	return func(o *options) error {
+		if hook == nil {
+			return fmt.Errorf("agentflow: resume authorization hook is nil")
+		}
+		o.resumeAuthHook = hook
+		return nil
+	}
+}
+
 // WithHITLTokenSecret wires the built-in HMAC-token human gate using the same
-// RunStateRepository as the framework. tokenWriter can be nil.
+// RunStateRepository as the framework. tokenWriter can be nil. The secret
+// must be at least runstate.MinTokenSecretLength bytes.
 func WithHITLTokenSecret(secret []byte, tokenWriter io.Writer) Option {
 	return func(o *options) error {
 		if len(secret) == 0 {
 			return fmt.Errorf("agentflow: HITL token secret is required")
 		}
 		o.tokenSecret = append([]byte(nil), secret...)
+		if tokenWriter != nil {
+			o.tokenWriter = tokenWriter
+		}
+		return nil
+	}
+}
+
+// WithHITLTokenRotation wires the built-in human gate with a rotating key
+// pair: new resume tokens are signed with primary, while tokens signed by
+// either primary or secondary still verify. Deploy with (new, old), wait for
+// in-flight tokens to drain, then switch back to WithHITLTokenSecret(new) —
+// no token is invalidated mid-rotation. Both secrets must be at least
+// runstate.MinTokenSecretLength bytes.
+func WithHITLTokenRotation(primary, secondary []byte, tokenWriter io.Writer) Option {
+	return func(o *options) error {
+		if len(primary) == 0 || len(secondary) == 0 {
+			return fmt.Errorf("agentflow: HITL token rotation requires both primary and secondary secrets")
+		}
+		o.tokenSecret = append([]byte(nil), primary...)
+		o.tokenSecretSecondary = append([]byte(nil), secondary...)
 		if tokenWriter != nil {
 			o.tokenWriter = tokenWriter
 		}
@@ -986,10 +1048,11 @@ func pausedChunkChannel(token, kind string) <-chan llm.ChatChunk {
 }
 
 // Resume approves or rejects a paused run via the human gate without continuing
-// execution. When WithRunLease is enabled, an approved run becomes Running with
-// no lease holder; MarkAbandonedRuns will skip it only for one lease TTL after
-// UpdatedAt, so a worker must ResumeAndContinue (or otherwise take the lease)
-// within that grace window.
+// execution. An approved run becomes Running with its checkpoint metadata still
+// attached and no execution driver behind it; call ContinueRun (or
+// ResumeAndContinue) to carry it to a terminal state. Such a run is never
+// reaped by MarkAbandonedRuns, which only touches runs stamped with a lease
+// owner, so the recovery window is unbounded.
 func (f *Framework) Resume(ctx context.Context, token string, decision core.Decision, amendment json.RawMessage) error {
 	if f.gate == nil {
 		return fmt.Errorf("agentflow: human gate is not configured")
@@ -1054,8 +1117,21 @@ func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, 
 	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
 		event.ParentSpanID = parentSpanID
 	}
-	if err := f.events.Emit(ctx, event); err != nil {
-		warnEmitFailure(f.logger, ctx, runID, err)
+	if err := appexec.EmitWithLifecycleRetry(ctx, f.events, event); err != nil {
+		if appexec.IsCriticalLifecycleEvent(typ) {
+			// A lost lifecycle event corrupts downstream state tracking, so
+			// after the bounded retries this is an error, not a warning. The
+			// tee below still runs: a live stream consumer should see the
+			// transition even when the durable sink is down.
+			errorEmitFailure(f.logger, ctx, runID, typ, err)
+		} else {
+			warnEmitFailure(f.logger, ctx, runID, err)
+		}
+	}
+	if tee := appexec.EventTeeFromContext(ctx); tee != nil {
+		if err := tee.Emit(ctx, event); err != nil {
+			warnEmitFailure(f.logger, ctx, runID, err)
+		}
 	}
 }
 
@@ -1089,12 +1165,9 @@ func withScenarioTimeout(ctx context.Context, timeout time.Duration) (context.Co
 }
 
 // generateRunID returns a cryptographically random run identifier with a
-// "run-" prefix.  It falls back to a nanosecond timestamp on the rare occasion
-// that the random reader fails.
+// "run-" prefix. The canonical implementation lives in runstate so the
+// framework facade, engine, event router, and async adapter share one
+// 128-bit generator instead of carrying private 64-bit copies.
 func generateRunID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("run-%d", time.Now().UnixNano())
-	}
-	return "run-" + hex.EncodeToString(b[:])
+	return runstate.GenerateRunID()
 }

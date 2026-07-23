@@ -15,7 +15,7 @@ import (
 // pause and returns the emitted resume token.
 func pauseForToken(t *testing.T, opts ...agentflow.Option) string {
 	t.Helper()
-	opts = append([]agentflow.Option{agentflow.WithHITLTokenSecret([]byte("secret"), nil)}, opts...)
+	opts = append([]agentflow.Option{agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil)}, opts...)
 	fw, err := agentflow.New(builder.MinimalHumanInLoop("assistant"), opts...)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func pauseForToken(t *testing.T, opts ...agentflow.Option) string {
 
 func TestFrameworkHITLTokenExpiresByDefault(t *testing.T) {
 	token := pauseForToken(t)
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestFrameworkHITLTokenExpiresByDefault(t *testing.T) {
 
 func TestFrameworkHITLTokenTTLZeroDisablesExpiry(t *testing.T) {
 	token := pauseForToken(t, agentflow.WithHITLTokenTTL(0))
-	signer, err := runstate.NewTokenSigner([]byte("secret"))
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestFrameworkHITLTokenTTLZeroDisablesExpiry(t *testing.T) {
 func TestFrameworkResumeRunByIDTokenCarriesExpiry(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "approved"}),
 	)
 	if err != nil {

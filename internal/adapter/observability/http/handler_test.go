@@ -20,7 +20,7 @@ func TestHandlerServesDashboardRunsAndEvents(t *testing.T) {
 	ctx := context.Background()
 	store := obsinmem.NewStore()
 	hub := obspkg.NewEventHub()
-	handler, err := NewHandler(Config{Store: store, Hub: hub})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store, Hub: hub})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestHandlerStreamsRuntimeEvents(t *testing.T) {
 	ctx := context.Background()
 	store := obsinmem.NewStore()
 	hub := obspkg.NewEventHub()
-	handler, err := NewHandler(Config{Store: store, Hub: hub})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store, Hub: hub})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestHandlerStreamsRuntimeEvents(t *testing.T) {
 
 func TestHandlerStudioEndpoints(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true,
 		Store:       store,
 		Graph:       graphStub{value: map[string]any{"name": "demo"}},
 		Steps:       stepsStub{value: map[string]any{"run_id": "run-1", "steps": []any{}}},
@@ -158,7 +158,7 @@ func TestHandlerStudioEndpoints(t *testing.T) {
 
 func TestHandlerCompareResumeAndFork(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true,
 		Store:   store,
 		Resume:  resumeStub{value: map[string]any{"status": "completed"}},
 		Restore: checkpointStub{value: map[string]any{"status": "completed"}},
@@ -269,7 +269,7 @@ func (s checkpointStub) ResumeFromCheckpoint(context.Context, string, int64) (an
 }
 
 func TestNewHandlerValidatesConfig(t *testing.T) {
-	if _, err := NewHandler(Config{}); err == nil {
+	if _, err := NewHandler(Config{InsecureAllowNoAuth: true}); err == nil {
 		t.Fatal("expected nil store error")
 	}
 }

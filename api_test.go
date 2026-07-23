@@ -2,6 +2,7 @@ package agentflow_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,11 @@ func TestProductionHTTPHandlerMountsFrameworkRoutes(t *testing.T) {
 	}
 
 	checkpoint := httptest.NewRecorder()
+	// Seed the run first: a missing run now correctly reports 404, which is
+	// indistinguishable from an unmounted route.
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-1", Agent: "support", Prompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
 	handler.ServeHTTP(checkpoint, httptest.NewRequest(http.MethodGet, "/v1/runs/run-1/steps", nil))
 	if checkpoint.Code == http.StatusNotFound {
 		t.Fatal("expected checkpoint routes to be mounted")

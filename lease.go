@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/identity"
@@ -18,8 +19,10 @@ const defaultRunLeaseTTL = 30 * time.Second
 
 // ErrRunLeaseLost reports that this worker no longer holds the run lease
 // (renewal returned not-held or failed) and must stop executing before
-// another worker reaps or takes over the run.
-var ErrRunLeaseLost = errors.New("agentflow: run lease lost")
+// another worker reaps or takes over the run. It aliases the coordination
+// package's sentinel so the runtime engine classifies the same error the
+// facade returns.
+var ErrRunLeaseLost = coordination.ErrRunLeaseLost
 
 // WithRunLease enables distributed run-lease coordination: every Run,
 // RunStructured, ResumeAndContinue, and RetryFailedRun holds (and renews) a
@@ -98,8 +101,10 @@ func (f *Framework) holdRunLease(ctx context.Context, runID string) (context.Con
 	// Child of the caller ctx so caller cancel still stops the run; renewal
 	// uses a WithoutCancel parent so a brief call-site cancel does not stop
 	// lease heartbeats while release is still running. On renewal loss we
-	// cancel this runCtx so execution cannot race a reaper.
-	runCtx, cancelRun := context.WithCancelCause(ctx)
+	// cancel this runCtx so execution cannot race a reaper. The owner is
+	// stamped onto the context so run snapshots created under this lease
+	// record it (MarkAbandonedRuns only reaps owner-marked runs).
+	runCtx, cancelRun := context.WithCancelCause(appexec.ContextWithRunLeaseOwner(ctx, f.runLeaseOwner))
 	renewCtx, cancelRenew := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	go func() {
@@ -149,13 +154,16 @@ func (f *Framework) holdRunLease(ctx context.Context, runID string) (context.Con
 }
 
 // MarkAbandonedRuns scans this scenario's Running runs and marks as Failed
-// (run_error_message="worker lost") every run whose lease is no longer held:
-// its worker crashed or was partitioned away, so nothing will ever move the
-// run out of Running. It returns the IDs of the runs it marked. Requires
-// WithRunLease, and assumes all workers executing this scenario's runs use
-// run-lease coordination as well.
+// (run_error_message="worker lost") every lease-managed run whose lease is no
+// longer held: its worker crashed or was partitioned away, so nothing will
+// ever move the run out of Running. It returns the IDs of the runs it marked.
+// Requires WithRunLease.
 //
-// Tenant scope: when ctx carries a tenant-scoped principal, only that
+// Only runs stamped with a lease owner (run_lease_owner variable, written
+// when the run executes under WithRunLease) are eligible: a Running run
+// without the marker belongs to a worker that does not use lease
+// coordination, and probing its lease would always succeed and reap live
+// work. Tenant scope: when ctx carries a tenant-scoped principal, only that
 // tenant's runs are scanned and reaped; runs belonging to other tenants are
 // never touched even if the repository's List filtering is lax. Without a
 // tenant principal this is an admin operation across all tenants.
@@ -195,6 +203,13 @@ func (f *Framework) MarkAbandonedRuns(ctx context.Context) ([]string, error) {
 	reaperOwner := f.runLeaseOwner + ":reaper"
 	var marked []string
 	for _, snapshot := range snapshots {
+		if variableJSONString(snapshot.Variables, runstate.VarRunLeaseOwner) == "" {
+			// No lease-owner marker: this run is executed by a worker without
+			// lease coordination (or predates owner stamping). Probing its
+			// lease would always succeed, so the old heuristic would have
+			// reaped a live run; skip it instead.
+			continue
+		}
 		if !snapshot.UpdatedAt.IsZero() && time.Since(snapshot.UpdatedAt) < grace {
 			continue
 		}

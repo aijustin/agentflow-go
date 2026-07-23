@@ -55,6 +55,8 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 		checkpointHandler, err := NewCheckpointHTTPHandler(CheckpointHTTPHandlerConfig{
 			Framework:    config.Framework,
 			MaxBodyBytes: config.MaxBodyBytes,
+			Policy:       config.Policy,
+			Audit:        config.Audit,
 		})
 		if err != nil {
 			return nil, err
@@ -64,6 +66,8 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 			Framework:      config.Framework,
 			StudioSavePath: config.StudioSavePath,
 			MaxBodyBytes:   config.MaxBodyBytes,
+			Policy:         config.Policy,
+			Audit:          config.Audit,
 		})
 		if err != nil {
 			return nil, err

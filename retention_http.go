@@ -17,6 +17,10 @@ type RetentionHTTPHandlerConfig struct {
 	Policy       security.Policy
 	Audit        audit.Sink
 	MaxBodyBytes int64
+	// InsecureAllowNoAuth disables the default-deny guard on the purge
+	// endpoints when Policy is nil. Only set it behind an authenticating
+	// reverse proxy or in tests.
+	InsecureAllowNoAuth bool
 }
 
 type retentionAdapter struct {
@@ -54,9 +58,10 @@ func NewRetentionHTTPHandler(config RetentionHTTPHandlerConfig) (http.Handler, e
 		return nil, fmt.Errorf("agentflow: retention handler requires framework")
 	}
 	return retentionhttp.NewHandler(retentionhttp.HandlerConfig{
-		Purger:       &retentionAdapter{framework: config.Framework},
-		Policy:       config.Policy,
-		Audit:        config.Audit,
-		MaxBodyBytes: config.MaxBodyBytes,
+		Purger:              &retentionAdapter{framework: config.Framework},
+		Policy:              config.Policy,
+		Audit:               config.Audit,
+		MaxBodyBytes:        config.MaxBodyBytes,
+		InsecureAllowNoAuth: config.InsecureAllowNoAuth,
 	})
 }

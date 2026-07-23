@@ -150,7 +150,13 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 			}
 			chunk, err := decodeStreamEvent([]byte(data))
 			if err != nil {
-				send(llm.ChatChunk{Done: true, Error: err.Error()})
+				send(llm.ChatChunk{Done: true, Error: err.Error(), Err: err})
+				return
+			}
+			if chunk.Error != "" {
+				// An in-stream error event (e.g. overloaded_error); the chunk
+				// carries the structured error for retry classification.
+				send(llm.ChatChunk{Done: true, Error: chunk.Error, Err: chunk.Err})
 				return
 			}
 			if chunk.Content != "" || chunk.Done || chunk.Usage.TotalTokens > 0 || chunk.Usage.OutputTokens > 0 {
@@ -163,7 +169,7 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			send(llm.ChatChunk{Done: true, Error: err.Error()})
+			send(llm.ChatChunk{Done: true, Error: err.Error(), Err: err})
 		}
 	}()
 	return ch, nil
@@ -362,6 +368,10 @@ func decodeStreamEvent(raw []byte) (llm.ChatChunk, error) {
 			Text       string `json:"text"`
 			StopReason string `json:"stop_reason"`
 		} `json:"delta"`
+		Error *struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
 		Usage struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
@@ -380,6 +390,13 @@ func decodeStreamEvent(raw []byte) (llm.ChatChunk, error) {
 		chunk.Done = decoded.Delta.StopReason != ""
 	case "message_stop":
 		chunk.Done = true
+	case "error":
+		// Anthropic signals mid-stream failures as an error event; attach the
+		// structured APIError so retry classification works on the streaming
+		// path exactly like on the unary path.
+		apiErr := anthropicStreamError(decoded.Error)
+		chunk.Error = apiErr.Error()
+		chunk.Err = apiErr
 	}
 	chunk.Usage = llm.TokenUsage{
 		InputTokens:  decoded.Usage.InputTokens,
@@ -431,4 +448,31 @@ func cloneExtraBody(in map[string]any) map[string]any {
 func anthropicAPIError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	return llm.APIError{Provider: "anthropic", StatusCode: resp.StatusCode, Status: resp.Status, Body: strings.TrimSpace(string(body))}
+}
+
+// anthropicStreamError maps an in-stream error event to the equivalent
+// APIError so streaming and unary failures classify identically. The status
+// codes mirror what the API would have returned for the same condition:
+// overloaded_error -> 529, rate_limit_error -> 429, everything else -> 500
+// (server-side, retryable).
+func anthropicStreamError(errPayload *struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}) llm.APIError {
+	status := 500
+	typ := "api_error"
+	if errPayload != nil && errPayload.Type != "" {
+		typ = errPayload.Type
+	}
+	switch typ {
+	case "overloaded_error":
+		status = 529
+	case "rate_limit_error":
+		status = 429
+	}
+	body := typ
+	if errPayload != nil && errPayload.Message != "" {
+		body = errPayload.Message
+	}
+	return llm.APIError{Provider: "anthropic", StatusCode: status, Status: fmt.Sprintf("%d", status), Body: body}
 }

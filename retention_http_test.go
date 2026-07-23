@@ -32,7 +32,7 @@ func TestNewRetentionHTTPHandlerPurgeRuns(t *testing.T) {
 	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID, Agent: "assistant", Prompt: "hi"}); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := agentflow.NewRetentionHTTPHandler(agentflow.RetentionHTTPHandlerConfig{Framework: fw})
+	handler, err := agentflow.NewRetentionHTTPHandler(agentflow.RetentionHTTPHandlerConfig{Framework: fw, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}

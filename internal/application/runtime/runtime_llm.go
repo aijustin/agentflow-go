@@ -357,7 +357,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 					return
 				}
 				select {
-				case ch <- llm.ChatChunk{Done: true, Error: err.Error()}:
+				case ch <- llm.ChatChunk{Done: true, Error: err.Error(), Err: err}:
 				case <-ctx.Done():
 				}
 				return
@@ -809,7 +809,11 @@ func (e *Engine) collectStreamChatWithTools(
 	finishReason := "stop"
 	for chunk := range ch {
 		if chunk.Error != "" {
-			return llm.ToolCallResponse{}, fmt.Errorf("%s", chunk.Error)
+			// Preserve the structured provider error (when the gateway
+			// attached one) so retry classification — e.g.
+			// llm.APIError.Retryable — works on the streaming path exactly
+			// like on the unary path, instead of seeing an opaque string.
+			return llm.ToolCallResponse{}, chunkError(chunk)
 		}
 		if chunk.Usage.TotalTokens > 0 || chunk.Usage.InputTokens > 0 || chunk.Usage.OutputTokens > 0 {
 			usage = chunk.Usage

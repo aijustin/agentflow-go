@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,13 +86,22 @@ func TestFrameworkMarkAbandonedRunsMarksZombie(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := fw.RunStateRepository()
-	// A Running run with no lease: its worker crashed without releasing.
-	zombie := runstate.RunSnapshot{RunID: "run-zombie", ScenarioName: "wf-retry", Status: runstate.RunStatusRunning}
+	// A Running run with no lease: its worker crashed without releasing. The
+	// lease-owner marker identifies it as lease-managed and thus reapable.
+	leaseManaged := func(runID, scenarioName, owner string) runstate.RunSnapshot {
+		return runstate.RunSnapshot{
+			RunID:        runID,
+			ScenarioName: scenarioName,
+			Status:       runstate.RunStatusRunning,
+			Variables:    map[string]json.RawMessage{runstate.VarRunLeaseOwner: json.RawMessage(`"` + owner + `"`)},
+		}
+	}
+	zombie := leaseManaged("run-zombie", "wf-retry", "dead-worker")
 	if err := repo.Save(context.Background(), &zombie, 0); err != nil {
 		t.Fatal(err)
 	}
 	// A Running run whose lease is held by a live worker must be skipped.
-	alive := runstate.RunSnapshot{RunID: "run-alive", ScenarioName: "wf-retry", Status: runstate.RunStatusRunning}
+	alive := leaseManaged("run-alive", "wf-retry", "live-worker")
 	if err := repo.Save(context.Background(), &alive, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -100,13 +110,20 @@ func TestFrameworkMarkAbandonedRunsMarksZombie(t *testing.T) {
 	}
 	// A Running run leased by this very worker (Acquire is reentrant for the
 	// holding owner) must not be reaped either.
-	own := runstate.RunSnapshot{RunID: "run-own", ScenarioName: "wf-retry", Status: runstate.RunStatusRunning}
+	own := leaseManaged("run-own", "wf-retry", "reaper")
 	if err := repo.Save(context.Background(), &own, 0); err != nil {
 		t.Fatal(err)
 	}
 	// Hold own lease longer than the grace sleep so it is not free for reaping.
 	if _, ok, err := locker.Acquire(context.Background(), "run:run-own", "reaper", time.Minute); err != nil || !ok {
 		t.Fatalf("failed to pre-acquire own lease: ok=%v err=%v", ok, err)
+	}
+	// A Running run WITHOUT the lease-owner marker belongs to a worker that
+	// does not use lease coordination; the reaper must not touch it even
+	// though no lease protects it.
+	unmanaged := runstate.RunSnapshot{RunID: "run-unmanaged", ScenarioName: "wf-retry", Status: runstate.RunStatusRunning}
+	if err := repo.Save(context.Background(), &unmanaged, 0); err != nil {
+		t.Fatal(err)
 	}
 
 	time.Sleep(1100 * time.Millisecond)
@@ -140,6 +157,13 @@ func TestFrameworkMarkAbandonedRunsMarksZombie(t *testing.T) {
 	}
 	if stillOwn.Status != runstate.RunStatusRunning {
 		t.Fatalf("this worker's own run must stay running, got %s", stillOwn.Status)
+	}
+	stillUnmanaged, err := repo.Load(context.Background(), "run-unmanaged")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stillUnmanaged.Status != runstate.RunStatusRunning {
+		t.Fatalf("unmanaged run must never be reaped, got %s", stillUnmanaged.Status)
 	}
 }
 
@@ -192,8 +216,10 @@ func TestFrameworkMarkAbandonedRunsHonorsTenantScope(t *testing.T) {
 	}
 	repo := fw.RunStateRepository()
 	for _, run := range []runstate.RunSnapshot{
-		{RunID: "run-tenant-a", ScenarioName: "wf-retry", TenantID: "tenant-a", Status: runstate.RunStatusRunning},
-		{RunID: "run-tenant-b", ScenarioName: "wf-retry", TenantID: "tenant-b", Status: runstate.RunStatusRunning},
+		{RunID: "run-tenant-a", ScenarioName: "wf-retry", TenantID: "tenant-a", Status: runstate.RunStatusRunning,
+			Variables: map[string]json.RawMessage{runstate.VarRunLeaseOwner: json.RawMessage(`"worker-a"`)}},
+		{RunID: "run-tenant-b", ScenarioName: "wf-retry", TenantID: "tenant-b", Status: runstate.RunStatusRunning,
+			Variables: map[string]json.RawMessage{runstate.VarRunLeaseOwner: json.RawMessage(`"worker-b"`)}},
 	} {
 		snapshot := run
 		if err := repo.Save(context.Background(), &snapshot, 0); err != nil {
@@ -235,7 +261,8 @@ func TestFrameworkMarkAbandonedRunsSkipsRecentRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := fw.RunStateRepository()
-	fresh := runstate.RunSnapshot{RunID: "run-fresh", ScenarioName: "wf-retry", Status: runstate.RunStatusRunning}
+	fresh := runstate.RunSnapshot{RunID: "run-fresh", ScenarioName: "wf-retry", Status: runstate.RunStatusRunning,
+		Variables: map[string]json.RawMessage{runstate.VarRunLeaseOwner: json.RawMessage(`"worker-fresh"`)}}
 	if err := repo.Save(context.Background(), &fresh, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +386,7 @@ func TestFrameworkResumeAndContinueHoldsLease(t *testing.T) {
 	}
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithToolExecutor("slow", slowTool{delay: 200 * time.Millisecond}),
 		agentflow.WithRunLease(locker, "worker-a", time.Minute),
 	)
@@ -466,5 +493,66 @@ func TestFrameworkAbortsWhenLeaseRenewalFails(t *testing.T) {
 	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-lease-lost", Prompt: "go"})
 	if err == nil || !errors.Is(err, agentflow.ErrRunLeaseLost) {
 		t.Fatalf("expected ErrRunLeaseLost after renew failure, got %v", err)
+	}
+	// The lease-lost run must persist as Failed with the lease-lost reason,
+	// never as Cancelled: it is a worker-ownership failure, not a caller
+	// cancel.
+	snapshot, err := runstate.LoadAuthorized(context.Background(), fw.RunStateRepository(), "run-lease-lost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusFailed {
+		t.Fatalf("expected Failed after lease loss, got %s", snapshot.Status)
+	}
+	if msg := snapshot.Variables[runstate.VarRunErrorMessage]; !strings.Contains(string(msg), "lease lost") {
+		t.Fatalf("expected lease-lost reason on snapshot, got %s", msg)
+	}
+}
+
+// TestFrameworkAutonomousLeaseLostMarksFailed covers the same lease-lost
+// classification on the autonomous engine path (markRunFailedOrCancelled),
+// where a cancel caused by ErrRunLeaseLost previously persisted Cancelled
+// because the cause was discarded.
+func TestFrameworkAutonomousLeaseLostMarksFailed(t *testing.T) {
+	inner := agentflow.NewInMemoryLocker()
+	locker := &renewFailLocker{inner: inner, failAfter: 0}
+	scenario := core.Scenario{
+		Name: "lease-lost-auto",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default", Tools: []string{"slow"}},
+		},
+		Tools: map[string]core.Tool{
+			"slow": {Name: "slow", Type: "builtin.slow", Approval: core.ApprovalNever},
+		},
+	}
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "c1", Name: "slow", Input: json.RawMessage(`{}`)}},
+	})
+	gateway.QueueChat("default", llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}})
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("slow", slowTool{delay: 250 * time.Millisecond}),
+		agentflow.WithRunLease(locker, "worker-a", 60*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-lease-lost-auto", Agent: "assistant", Prompt: "go"})
+	if err == nil || !errors.Is(err, agentflow.ErrRunLeaseLost) {
+		t.Fatalf("expected ErrRunLeaseLost after renew failure, got %v", err)
+	}
+	snapshot, err := runstate.LoadAuthorized(context.Background(), fw.RunStateRepository(), "run-lease-lost-auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusFailed {
+		t.Fatalf("expected Failed after lease loss, got %s", snapshot.Status)
+	}
+	if msg := snapshot.Variables[runstate.VarRunErrorMessage]; !strings.Contains(string(msg), "lease lost") {
+		t.Fatalf("expected lease-lost reason on snapshot, got %s", msg)
 	}
 }

@@ -18,7 +18,7 @@ import (
 func TestFrameworkResumeAndContinueAutonomousHITL(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "approved answer"}),
 	)
 	if err != nil {
@@ -58,7 +58,7 @@ func TestFrameworkResumeAndContinueWorkflowHITL(t *testing.T) {
 			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("secret"), nil))
+	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestFrameworkStreamReturnsPausedChunkForWorkflowPause(t *testing.T) {
 			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("secret"), nil))
+	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestFrameworkWorkflowAgentNodePropagatesToolApprovalPause(t *testing.T) {
 	}
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(gateway),
 		agentflow.WithToolExecutor("echo", noopTool{}),
 	)
@@ -215,7 +215,7 @@ func TestFrameworkResumeAndContinueFixedWorkflowToolApprovalPause(t *testing.T) 
 	}
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(gateway),
 		agentflow.WithToolExecutor("echo", countingTool{calls: &toolCalls}),
 	)
@@ -273,7 +273,7 @@ func (t countingTool) Execute(_ context.Context, call core.ToolCall) (core.ToolR
 func TestFrameworkResumeRunByIDDeclarativeInterrupt(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalDeclarativeInterrupt(),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -329,7 +329,7 @@ func TestFrameworkResumeAndContinueToolApprovalPause(t *testing.T) {
 	})
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(gateway),
 		agentflow.WithToolExecutor("echo", noopTool{}),
 	)
@@ -395,7 +395,7 @@ func TestFrameworkResumeAndContinueHybridWorkflowHITL(t *testing.T) {
 	}
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "hybrid answer"}),
 	)
 	if err != nil {
@@ -449,7 +449,7 @@ func TestFrameworkResumeAndContinueHybridBeforeFinalHITL(t *testing.T) {
 	}
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "final hybrid answer"}),
 	)
 	if err != nil {
@@ -499,7 +499,7 @@ func TestFrameworkResumeAndContinueHybridToolApprovalPause(t *testing.T) {
 	})
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(gateway),
 		agentflow.WithToolExecutor("echo", noopTool{}),
 	)
@@ -526,7 +526,7 @@ func TestFrameworkResumeAndContinueReject(t *testing.T) {
 	var tokenOut bytes.Buffer
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), &tokenOut),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), &tokenOut),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -562,7 +562,7 @@ func TestFrameworkResumeAndContinueWorkflowAmendment(t *testing.T) {
 			HumanInLoop: core.HumanInLoopPolicy{Enabled: true},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("secret"), nil))
+	fw, err := agentflow.New(scenario, agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,7 +604,7 @@ func TestFrameworkResumeAndContinueRequiresGate(t *testing.T) {
 func TestFrameworkResumeRunByIDWithoutContinue(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -629,7 +629,7 @@ func TestFrameworkResumeRunByIDWithoutContinue(t *testing.T) {
 func TestFrameworkResumeRunByIDWithoutContinueClearsCheckpoint(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -668,23 +668,39 @@ func TestFrameworkResumeRunByIDWithoutContinueClearsCheckpoint(t *testing.T) {
 func TestFrameworkResumeRunByIDRejectsNonPaused(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalAutonomous("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-active", Agent: "assistant", Prompt: "hi"})
-	if err != nil {
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-active", Agent: "assistant", Prompt: "hi"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err = fw.ResumeRunByID(context.Background(), "run-active", core.DecisionApprove, nil, false)
-	if err == nil {
-		t.Fatal("expected not paused error")
+	// A Completed run resumes idempotently: the persisted result comes back
+	// instead of a "not paused" error.
+	result, err := fw.ResumeRunByID(context.Background(), "run-active", core.DecisionApprove, nil, false)
+	if err != nil {
+		t.Fatalf("expected idempotent resume of completed run, got %v", err)
+	}
+	if result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("expected completed result, got %+v", result)
+	}
+	// A run in any other non-paused status still rejects.
+	repo := fw.RunStateRepository()
+	failed := &runstate.RunSnapshot{RunID: "run-failed", ScenarioName: "minimal-autonomous", Status: runstate.RunStatusFailed}
+	if err := repo.Save(context.Background(), failed, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.ResumeRunByID(context.Background(), "run-failed", core.DecisionApprove, nil, false); err == nil {
+		t.Fatal("expected not paused error for failed run")
 	}
 }
 
-func TestFrameworkRetryFailedRunRejectsAutonomousMode(t *testing.T) {
+// Autonomous mode is supported since RetryFailedRun learned to re-enter from
+// checkpoint metadata (see framework_recovery_test.go for the full matrix);
+// this pins the remaining error case: the run must exist and be Failed.
+func TestFrameworkRetryFailedRunRejectsUnknownRun(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalAutonomous("assistant"),
 		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
@@ -692,8 +708,7 @@ func TestFrameworkRetryFailedRunRejectsAutonomousMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fw.RetryFailedRun(context.Background(), "run-1")
-	if err == nil {
-		t.Fatal("expected orchestration mode error")
+	if _, err := fw.RetryFailedRun(context.Background(), "run-1"); err == nil {
+		t.Fatal("expected not-found error for unknown run")
 	}
 }

@@ -34,7 +34,7 @@ func (studioStub) SaveStudioGraph(_ context.Context, _ any) (any, error) {
 }
 
 func TestHandlerStudioRoutes(t *testing.T) {
-	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{
+	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{InsecureAllowNoAuth: true,
 		Validate:   studioStub{},
 		Codegen:    studioStub{},
 		YAML:       studioStub{},
@@ -67,7 +67,7 @@ func TestHandlerStudioRoutes(t *testing.T) {
 }
 
 func TestHandlerStudioRouteErrors(t *testing.T) {
-	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{})
+	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{InsecureAllowNoAuth: true})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/studio/run", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -86,7 +86,7 @@ func TestHandlerStudioRouteErrors(t *testing.T) {
 }
 
 func TestHandlerStudioRunRoute(t *testing.T) {
-	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{
+	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{InsecureAllowNoAuth: true,
 		Run: studioStub{},
 	})
 	rec := httptest.NewRecorder()
@@ -105,7 +105,7 @@ func TestHandlerStudioRunRoute(t *testing.T) {
 }
 
 func TestHandlerStudioImportAndSaveErrors(t *testing.T) {
-	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{
+	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{InsecureAllowNoAuth: true,
 		ImportYAML: studioStub{},
 		Run:        studioStub{},
 	})

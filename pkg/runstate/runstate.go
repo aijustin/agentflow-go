@@ -18,6 +18,11 @@ var (
 	ErrInvalidStatus     = errors.New("runstate: invalid status")
 	ErrInvalidTransition = errors.New("runstate: invalid status transition")
 	ErrTokenSuperseded   = errors.New("humangate: token superseded by newer version")
+	// ErrResumeInProgress reports that another caller is already resuming or
+	// continuing this run in this process. It replaces the ambiguous bare
+	// ErrTokenSuperseded a concurrent resume used to surface when both callers
+	// raced the same pause token. The framework facade re-exports it.
+	ErrResumeInProgress = errors.New("humangate: resume already in progress for run")
 )
 
 type RunStatus string

@@ -177,6 +177,7 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 		if completeRun {
 			result, err := e.completeStructuredRun(ctx, req.RunID, raw)
 			if err != nil {
+				e.clearCheckpointOnCompletionConflict(ctx, &snapshot, err)
 				return RunResult{}, err
 			}
 			if err := e.clearCheckpointState(ctx, &snapshot, "before_final_answer"); err != nil {
@@ -202,6 +203,7 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 	if completeRun {
 		result, err := e.completeRun(ctx, req.RunID, output)
 		if err != nil {
+			e.clearCheckpointOnCompletionConflict(ctx, &snapshot, err)
 			return RunResult{}, err
 		}
 		if err := e.clearCheckpointState(ctx, &snapshot, "before_final_answer"); err != nil {
@@ -427,6 +429,29 @@ func clearHumanAmendment(snapshot *runstate.RunSnapshot) {
 		return
 	}
 	delete(snapshot.Variables, humanAmendmentVar)
+}
+
+// clearCheckpointOnCompletionConflict drops leftover checkpoint variables
+// when the completion save lost the race to a concurrent writer that moved
+// the run out of Running (completionConflictError). Without the cleanup the
+// unconsumed checkpoint would survive into the winner's chosen terminal
+// state and look resumable. A Paused winner keeps its metadata: the new
+// pause owns the checkpoint vars and clearing them would break its resume.
+func (e *Engine) clearCheckpointOnCompletionConflict(ctx context.Context, snapshot *runstate.RunSnapshot, err error) {
+	var conflict completionConflictError
+	if !errors.As(err, &conflict) || conflict.status == runstate.RunStatusPaused {
+		return
+	}
+	if clearErr := e.saveSnapshotWithRetry(ctx, snapshot.RunID, func(loaded *runstate.RunSnapshot) error {
+		if loaded.Variables == nil {
+			return nil
+		}
+		clearHumanAmendment(loaded)
+		clearCheckpointVariables(loaded.Variables)
+		return nil
+	}); clearErr != nil {
+		e.logWarn(ctx, "runtime: failed to clear checkpoint variables after completion conflict", "run_id", snapshot.RunID, "error", clearErr)
+	}
 }
 
 func checkpointStepsConsumed(vars map[string]json.RawMessage) int {
@@ -707,7 +732,12 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		return nil, err
 	}
 	if err := e.ensureRunPaused(ctx, runID); err != nil {
-		e.logWarn(ctx, "runtime: failed to persist paused status", "run_id", runID, "error", err)
+		// The gate already persisted the Paused status and issued the token,
+		// so the pause itself is valid; surfacing the error (instead of only
+		// warning) lets the caller distinguish "paused but status
+		// normalization failed" from a clean pause. The run stays Paused with
+		// its checkpoint intact, so no rollback here.
+		return nil, fmt.Errorf("runtime: persist paused status for run %q: %w", runID, err)
 	}
 	e.emitJSON(ctx, core.EventRunPaused, runID, pausePayload)
 	paused := RunPausedError{RunID: runID, Token: token, Kind: "tool_approval"}

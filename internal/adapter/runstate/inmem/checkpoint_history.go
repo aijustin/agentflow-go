@@ -75,6 +75,17 @@ func (h *CheckpointHistory) Load(ctx context.Context, runID string, version int6
 	return runstate.RunSnapshot{}, runstate.ErrNotFound
 }
 
+// Delete drops every recorded revision for a run; a missing run is a no-op.
+func (h *CheckpointHistory) Delete(ctx context.Context, runID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.records, runID)
+	return nil
+}
+
 func summarize(record checkpointRecord) runstate.CheckpointSummary {
 	return runstate.CheckpointSummary{
 		RunID:         record.snapshot.RunID,

@@ -36,6 +36,11 @@ type HandlerConfig struct {
 	Policy       security.Policy
 	Audit        audit.Sink
 	MaxBodyBytes int64
+	// InsecureAllowNoAuth disables the default-deny guard on purge endpoints
+	// when Policy is nil. Purge endpoints are destructive admin operations,
+	// so they reject every request with 403 auth_required unless a Policy is
+	// configured or this opt-out is set explicitly.
+	InsecureAllowNoAuth bool
 }
 
 type Handler struct {
@@ -43,6 +48,7 @@ type Handler struct {
 	policy       security.Policy
 	audit        audit.Sink
 	maxBodyBytes int64
+	insecure     bool
 }
 
 type purgeResponse struct {
@@ -80,6 +86,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		policy:       config.Policy,
 		audit:        config.Audit,
 		maxBodyBytes: maxBodyBytes,
+		insecure:     config.InsecureAllowNoAuth,
 	}, nil
 }
 
@@ -199,7 +206,16 @@ func (h *Handler) handlePurgeBlobs(w nethttp.ResponseWriter, r *nethttp.Request)
 
 func (h *Handler) authorize(w nethttp.ResponseWriter, r *nethttp.Request, action security.Action, resource security.Resource) (identity.Principal, bool) {
 	if h.policy == nil {
-		return identity.Principal{}, true
+		if h.insecure {
+			return identity.Principal{}, true
+		}
+		// Purge endpoints are destructive admin operations: without a policy
+		// they default-deny instead of running open.
+		writeJSON(w, nethttp.StatusForbidden, map[string]string{
+			"error":      "retention purge endpoints require an authorization policy; configure Policy or explicitly set InsecureAllowNoAuth to disable this protection",
+			"error_code": "auth_required",
+		})
+		return identity.Principal{}, false
 	}
 	principal, err := identity.RequirePrincipal(r.Context())
 	if err != nil {

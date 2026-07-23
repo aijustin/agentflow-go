@@ -10,7 +10,7 @@ import (
 
 func TestHandlerNotConfiguredEndpoints(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestHandlerNotConfiguredEndpoints(t *testing.T) {
 
 func TestHandlerMethodNotAllowed(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store, Graph: graphStub{value: map[string]any{}}})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store, Graph: graphStub{value: map[string]any{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestHandlerMethodNotAllowed(t *testing.T) {
 
 func TestHandlerDashboardNotFoundSubpath(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store})
 	if err != nil {
 		t.Fatal(err)
 	}

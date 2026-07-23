@@ -16,10 +16,46 @@ type RetentionPolicy struct {
 	Limit        int
 }
 
-// PurgeRuns deletes run snapshots matching the filter.
-func (f *Framework) PurgeRuns(ctx context.Context, filter runstate.ListFilter) (int, error) {
+type purgeRunsOptions struct {
+	force bool
+}
+
+// PurgeRunsOption customizes PurgeRuns.
+type PurgeRunsOption func(*purgeRunsOptions)
+
+// WithPurgeForce lets PurgeRuns delete runs in any status, including Running
+// and Paused. Without it, non-terminal runs are skipped so a retention sweep
+// can never delete a run that is still executing or awaiting a human.
+func WithPurgeForce() PurgeRunsOption {
+	return func(opts *purgeRunsOptions) {
+		opts.force = true
+	}
+}
+
+// isTerminalRunStatus reports whether the run can never execute again, so
+// deleting its snapshot (and checkpoint history) cannot orphan live work.
+func isTerminalRunStatus(status runstate.RunStatus) bool {
+	switch status {
+	case runstate.RunStatusCompleted, runstate.RunStatusFailed, runstate.RunStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// PurgeRuns deletes run snapshots matching the filter. Non-terminal runs
+// (Running, Paused) are skipped unless WithPurgeForce is given. Each deleted
+// run's checkpoint history is deleted alongside when a history store is
+// configured, so time-travel data does not outlive its run.
+func (f *Framework) PurgeRuns(ctx context.Context, filter runstate.ListFilter, opts ...PurgeRunsOption) (int, error) {
 	if f.runs == nil {
 		return 0, nil
+	}
+	options := purgeRunsOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
 	}
 	snapshots, err := f.runs.List(ctx, filter)
 	if err != nil {
@@ -27,12 +63,29 @@ func (f *Framework) PurgeRuns(ctx context.Context, filter runstate.ListFilter) (
 	}
 	removed := 0
 	for _, snapshot := range snapshots {
-		if err := f.runs.Delete(ctx, snapshot.RunID); err != nil {
+		if !options.force && !isTerminalRunStatus(snapshot.Status) {
+			continue
+		}
+		if err := f.deleteRunAndHistory(ctx, snapshot.RunID); err != nil {
 			return removed, err
 		}
 		removed++
 	}
 	return removed, nil
+}
+
+// deleteRunAndHistory removes the run snapshot and, when a checkpoint history
+// store is configured, every recorded revision of the run.
+func (f *Framework) deleteRunAndHistory(ctx context.Context, runID string) error {
+	if err := f.runs.Delete(ctx, runID); err != nil {
+		return err
+	}
+	if f.checkpointHistory != nil {
+		if err := f.checkpointHistory.Delete(ctx, runID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PurgeExpired deletes terminal run snapshots whose UpdatedAt is before now-maxAge.
@@ -62,7 +115,7 @@ func (f *Framework) PurgeExpired(ctx context.Context, maxAge time.Duration) (int
 			return removed, err
 		}
 		for _, snapshot := range snapshots {
-			if err := f.runs.Delete(ctx, snapshot.RunID); err != nil {
+			if err := f.deleteRunAndHistory(ctx, snapshot.RunID); err != nil {
 				return removed, err
 			}
 			removed++
@@ -103,6 +156,12 @@ func (f *Framework) purgeExpiredWithLimit(ctx context.Context, policy RetentionP
 		if status == "" {
 			continue
 		}
+		// A policy that explicitly targets a non-terminal status would
+		// otherwise delete live runs; clamp it to the terminal set unless the
+		// caller goes through PurgeRuns with WithPurgeForce.
+		if !isTerminalRunStatus(status) {
+			continue
+		}
 		filter := runstate.ListFilter{
 			Status:        status,
 			ScenarioName:  policy.ScenarioName,
@@ -127,7 +186,7 @@ func (f *Framework) purgeExpiredWithLimit(ctx context.Context, policy RetentionP
 			return removed, err
 		}
 		for _, snapshot := range snapshots {
-			if err := f.runs.Delete(ctx, snapshot.RunID); err != nil {
+			if err := f.deleteRunAndHistory(ctx, snapshot.RunID); err != nil {
 				return removed, err
 			}
 			removed++

@@ -10,7 +10,7 @@ import (
 )
 
 func TestHandlerStudioValidationErrors(t *testing.T) {
-	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{
+	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{InsecureAllowNoAuth: true,
 		Validate:   studioStub{},
 		Codegen:    studioStub{},
 		YAML:       studioStub{},
@@ -36,7 +36,7 @@ func TestHandlerStudioValidationErrors(t *testing.T) {
 }
 
 func TestHandlerStudioNotConfiguredPerRoute(t *testing.T) {
-	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{})
+	handler := studiohttp.NewHandler(studiohttp.HandlerConfig{InsecureAllowNoAuth: true})
 	cases := []string{
 		"/v1/studio/validate",
 		"/v1/studio/codegen",

@@ -14,6 +14,7 @@ import (
 	observabilitypostgres "github.com/aijustin/agentflow-go/internal/adapter/observability/postgres"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	oteladapter "github.com/aijustin/agentflow-go/pkg/observability/otel"
 	promrecorder "github.com/aijustin/agentflow-go/pkg/observability/prometheus"
@@ -37,6 +38,14 @@ type ObservabilityHTTPHandlerConfig struct {
 	StudioSavePath string
 	// TraceExploreURL is an optional trace UI link template, e.g. https://jaeger.example.com/trace/{trace_id}.
 	TraceExploreURL string
+	// InsecureAllowNoAuth disables the default-deny guard on mutating
+	// endpoints (HITL resume, resume-from-step/checkpoint, fork, studio
+	// run/save) when AuthMiddleware is nil. Only set it behind an
+	// authenticating reverse proxy or in tests.
+	InsecureAllowNoAuth bool
+	// Logger receives the one-time construction warning emitted when
+	// AuthMiddleware is nil; nil discards it.
+	Logger log.Logger
 }
 
 func NewSlogEventSink(logger *stdslog.Logger) core.EventSink {
@@ -82,10 +91,12 @@ func NewEventFanoutSink(sinks ...core.EventSink) core.EventSink {
 
 func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Handler, error) {
 	httpConfig := observabilityhttp.Config{
-		Store:           config.Store,
-		Hub:             config.Hub,
-		AuthMiddleware:  config.AuthMiddleware,
-		TraceExploreURL: config.TraceExploreURL,
+		Store:               config.Store,
+		Hub:                 config.Hub,
+		AuthMiddleware:      config.AuthMiddleware,
+		TraceExploreURL:     config.TraceExploreURL,
+		InsecureAllowNoAuth: config.InsecureAllowNoAuth,
+		Logger:              config.Logger,
 	}
 	if config.Framework != nil {
 		adapter := &studioFramework{framework: config.Framework, savePath: config.StudioSavePath}

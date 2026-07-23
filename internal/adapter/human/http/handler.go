@@ -3,10 +3,13 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	nethttp "net/http"
 
+	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 const DefaultMaxBodyBytes = int64(1 << 20)
@@ -77,7 +80,7 @@ func (h *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
 		}
 		result, err := h.continuer.ResumeAndContinue(r.Context(), req.Token, req.Decision, req.Amendment)
 		if err != nil {
-			nethttp.Error(w, err.Error(), nethttp.StatusConflict)
+			writeResumeError(w, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -89,9 +92,46 @@ func (h *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	if err := h.gate.Resume(r.Context(), req.Token, req.Decision, req.Amendment); err != nil {
-		nethttp.Error(w, err.Error(), nethttp.StatusConflict)
+		writeResumeError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+// errorResponse is the structured error body for resume failures. ErrorCode
+// is a stable machine-readable classifier so clients can branch without
+// parsing the human-readable message.
+type errorResponse struct {
+	Error     string `json:"error"`
+	ErrorCode string `json:"error_code"`
+}
+
+// classifyResumeError maps the classified resume/run sentinels onto HTTP
+// status codes: expired credentials 410, malformed/invalid credentials 401,
+// every lost race (superseded token, resume or run already in flight) 409,
+// and anything else 500 so unexpected failures are not misreported as client
+// conflicts. ErrTokenExpired wraps ErrInvalidToken, so it is checked first.
+func classifyResumeError(err error) (int, string) {
+	switch {
+	case errors.Is(err, runstate.ErrTokenExpired):
+		return nethttp.StatusGone, "token_expired"
+	case errors.Is(err, runstate.ErrInvalidToken):
+		return nethttp.StatusUnauthorized, "invalid_token"
+	case errors.Is(err, runstate.ErrTokenSuperseded):
+		return nethttp.StatusConflict, "token_superseded"
+	case errors.Is(err, runstate.ErrResumeInProgress):
+		return nethttp.StatusConflict, "resume_in_progress"
+	case errors.Is(err, appexec.ErrRunInProgress):
+		return nethttp.StatusConflict, "run_in_progress"
+	default:
+		return nethttp.StatusInternalServerError, "internal_error"
+	}
+}
+
+func writeResumeError(w nethttp.ResponseWriter, err error) {
+	status, code := classifyResumeError(err)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error(), ErrorCode: code})
 }

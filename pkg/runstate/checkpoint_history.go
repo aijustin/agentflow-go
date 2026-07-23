@@ -20,4 +20,8 @@ type CheckpointHistory interface {
 	Append(ctx context.Context, snapshot RunSnapshot) error
 	List(ctx context.Context, runID string, limit int) ([]CheckpointSummary, error)
 	Load(ctx context.Context, runID string, version int64) (RunSnapshot, error)
+	// Delete drops every recorded revision for a run. Retention purges call it
+	// alongside Repository.Delete so time-travel data does not outlive the run
+	// it belongs to. Implementations must treat a missing run as a no-op.
+	Delete(ctx context.Context, runID string) error
 }

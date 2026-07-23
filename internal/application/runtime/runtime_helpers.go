@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"context"
-	cryptorand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -166,6 +165,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) error {
 		return e.saveSnapshotWithRetry(saveCtx, req.RunID, func(snapshot *runstate.RunSnapshot) error {
 			snapshot.Status = runstate.RunStatusRunning
 			saveResumeMetadata(snapshot, *req)
+			stampLeaseOwner(ctx, snapshot)
 			return nil
 		})
 	}
@@ -183,6 +183,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) error {
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
 	saveResumeMetadata(&snapshot, *req)
+	stampLeaseOwner(ctx, &snapshot)
 	runstate.StampTenant(ctx, &snapshot)
 	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
 		if errors.Is(err, runstate.ErrStaleSnapshot) {
@@ -237,11 +238,21 @@ func autonomousRunInProgress(snapshot runstate.RunSnapshot) bool {
 
 // markRunFailedOrCancelled classifies err and persists the run as Cancelled
 // when it stems from the caller's context being explicitly cancelled, or as
-// Failed otherwise (a deadline timeout is still a genuine failure). This
-// mirrors the classification Stream already applies to its tool-loop
-// goroutine, so a caller-initiated cancellation is never recorded - and
-// counted in metrics - as a run failure.
+// Failed otherwise (a deadline timeout is still a genuine failure). A
+// cancellation whose cause is a lost run lease is a worker-ownership failure,
+// never a caller cancel: it is persisted as Failed with the lease-lost
+// reason. This mirrors the classification Stream already applies to its
+// tool-loop goroutine, so a caller-initiated cancellation is never recorded -
+// and counted in metrics - as a run failure.
 func (e *Engine) markRunFailedOrCancelled(ctx context.Context, runID string, err error) {
+	if cause := context.Cause(ctx); cause != nil && errors.Is(cause, coordination.ErrRunLeaseLost) {
+		e.markRunFailedLease(ctx, runID, cause)
+		return
+	}
+	if errors.Is(err, coordination.ErrRunLeaseLost) {
+		e.markRunFailedLease(ctx, runID, err)
+		return
+	}
 	if errors.Is(err, context.Canceled) {
 		e.markRunCancelled(ctx, runID)
 		return
@@ -434,6 +445,40 @@ func TrustModeFromContext(ctx context.Context) TrustMode {
 	return TrustMode(core.TrustModeFromContext(ctx))
 }
 
+type runLeaseOwnerKey struct{}
+
+// ContextWithRunLeaseOwner stamps the identity of the worker holding the
+// run's distributed lease onto the context, so run snapshots created while
+// the lease is held record ownership. MarkAbandonedRuns only reaps Running
+// runs carrying this marker; runs executed without lease coordination never
+// look like zombies.
+func ContextWithRunLeaseOwner(ctx context.Context, owner string) context.Context {
+	if owner == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, runLeaseOwnerKey{}, owner)
+}
+
+// RunLeaseOwnerFromContext returns the lease owner attached by
+// ContextWithRunLeaseOwner, or "".
+func RunLeaseOwnerFromContext(ctx context.Context) string {
+	owner, _ := ctx.Value(runLeaseOwnerKey{}).(string)
+	return owner
+}
+
+// stampLeaseOwner records the context's lease owner on the snapshot so a
+// later reaper can tell lease-managed runs from unmanaged ones.
+func stampLeaseOwner(ctx context.Context, snapshot *runstate.RunSnapshot) {
+	owner := RunLeaseOwnerFromContext(ctx)
+	if owner == "" || snapshot == nil {
+		return
+	}
+	if snapshot.Variables == nil {
+		snapshot.Variables = make(map[string]json.RawMessage)
+	}
+	snapshot.Variables[runstate.VarRunLeaseOwner] = json.RawMessage(fmt.Sprintf("%q", owner))
+}
+
 func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) error {
 	for attempt := 0; attempt < 5; attempt++ {
 		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
@@ -447,6 +492,11 @@ func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate
 		}
 		if err := e.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
 			if errors.Is(err, runstate.ErrStaleSnapshot) {
+				// Back off with jitter before re-colliding on the same version
+				// so concurrent writers serialize instead of stampeding.
+				if delayErr := retryDelay(ctx, attempt); delayErr != nil {
+					return delayErr
+				}
 				continue
 			}
 			return err
@@ -477,6 +527,11 @@ func (e *Engine) pauseWithRetry(ctx context.Context, runID string, build func(ve
 		}
 		if !errors.Is(err, runstate.ErrStaleSnapshot) {
 			return "", err
+		}
+		// Back off with jitter before reloading so a concurrent writer does
+		// not keep winning the version race on every immediate retry.
+		if delayErr := retryDelay(ctx, attempt); delayErr != nil {
+			return "", delayErr
 		}
 	}
 	return "", fmt.Errorf("runtime: failed to pause run %q after stale snapshot retries", runID)
@@ -561,7 +616,7 @@ func (e *Engine) persistRunCompleted(ctx context.Context, runID string, finalRaw
 	}); err != nil {
 		return runstate.RunSnapshot{}, err
 	}
-	e.clearInterjections(runID)
+	e.clearRunScopedState(runID)
 	e.recordRunCompleted(ctx, saved)
 	e.emit(ctx, core.EventRunCompleted, runID, finalRef.Inline)
 	return saved, nil
@@ -586,15 +641,28 @@ func nonRunningCompletionResult(runID string, status runstate.RunStatus) (RunRes
 }
 
 func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
+	e.markRunFailedMode(ctx, runID, cause, false)
+}
+
+// markRunFailedLease persists a lease-lost failure. Unlike ordinary failures
+// it does not spare a snapshot carrying tool-approval checkpoint metadata:
+// losing the lease means no worker will drive a pending resume, so the run
+// must still reach Failed (the checkpoint stays intact for RetryFailedRun /
+// ContinueRun to re-enter from).
+func (e *Engine) markRunFailedLease(ctx context.Context, runID string, cause error) {
+	e.markRunFailedMode(ctx, runID, cause, true)
+}
+
+func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause error, force bool) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
-	defer e.clearInterjections(runID)
+	defer e.clearRunScopedState(runID)
 	if snapshot, err := runstate.LoadAuthorized(persistCtx, e.runs, runID); err == nil {
 		if snapshot.Status == runstate.RunStatusCancelled {
 			e.emit(persistCtx, core.EventRunCancelled, runID, nil)
 			return
 		}
-		if snapshot.Status == runstate.RunStatusPaused || snapshotHasToolApprovalCheckpoint(&snapshot) {
+		if snapshot.Status == runstate.RunStatusPaused || (!force && snapshotHasToolApprovalCheckpoint(&snapshot)) {
 			return
 		}
 		if snapshot.Status != runstate.RunStatusFailed && !snapshot.Status.CanTransitionTo(runstate.RunStatusFailed) {
@@ -621,7 +689,7 @@ func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
-	defer e.clearInterjections(runID)
+	defer e.clearRunScopedState(runID)
 	if snapshot, err := runstate.LoadAuthorized(persistCtx, e.runs, runID); err == nil {
 		if snapshot.Status != runstate.RunStatusCancelled {
 			if !snapshot.Status.CanTransitionTo(runstate.RunStatusCancelled) {
@@ -636,6 +704,28 @@ func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 		}
 	}
 	e.emit(persistCtx, core.EventRunCancelled, runID, nil)
+}
+
+// clearRunScopedState drops every run-keyed in-memory bookkeeping entry
+// (cached approval decisions, deny-breaker counters, buffered interjections)
+// once a run reaches a terminal state, so a long-lived worker does not
+// accumulate stale entries for runs that will never execute again.
+func (e *Engine) clearRunScopedState(runID string) {
+	if e.approvalStore != nil {
+		e.approvalStore.Clear(runID)
+	}
+	if e.denyBreaker != nil {
+		e.denyBreaker.Clear(runID)
+	}
+	e.clearInterjections(runID)
+}
+
+// ClearRunScopedState exposes clearRunScopedState for the framework facade,
+// whose workflow-mode terminal transitions (completeWorkflowRun,
+// markWorkflowFailed) persist outside the engine's own terminal helpers but
+// share the same run-scoped bookkeeping.
+func (e *Engine) ClearRunScopedState(runID string) {
+	e.clearRunScopedState(runID)
 }
 
 func (e *Engine) stepOutputRef(ctx context.Context, runID, key string, raw json.RawMessage) (runstate.StepOutputRef, error) {
@@ -727,14 +817,53 @@ func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, pay
 	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
 		event.ParentSpanID = parentSpanID
 	}
-	if err := e.events.Emit(ctx, event); err != nil {
-		warnEmitFailure(e.logger, ctx, runID, err)
+	if err := EmitWithLifecycleRetry(ctx, e.events, event); err != nil {
+		if IsCriticalLifecycleEvent(typ) {
+			e.logError(ctx, "runtime: lifecycle event emit failed after retries", "event_type", string(typ), "run_id", runID, "error", err)
+		} else {
+			warnEmitFailure(e.logger, ctx, runID, err)
+		}
 	}
-	if tee := eventTeeFromContext(ctx); tee != nil {
+	// The context-scoped tee carries the event into a StreamRun frame stream.
+	// It runs even when the durable emit failed: a live consumer should still
+	// observe the transition.
+	if tee := EventTeeFromContext(ctx); tee != nil {
 		if err := tee.Emit(ctx, event); err != nil {
 			warnEmitFailure(e.logger, ctx, runID, err)
 		}
 	}
+}
+
+// lifecycleEmitAttempts bounds how many times a critical lifecycle event is
+// delivered before giving up (first try plus backoff-spaced retries).
+const lifecycleEmitAttempts = 3
+
+// IsCriticalLifecycleEvent reports whether typ is a run-lifecycle event whose
+// silent loss would corrupt downstream state tracking (RunCompleted /
+// RunPaused / RunFailed / RunCancelled). Delivery of these events is retried
+// with backoff before being given up.
+func IsCriticalLifecycleEvent(typ core.EventType) bool {
+	switch typ {
+	case core.EventRunCompleted, core.EventRunPaused, core.EventRunFailed, core.EventRunCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// EmitWithLifecycleRetry delivers one event via sink. Critical lifecycle
+// events are retried a limited number of times with backoff so a transient
+// sink outage (e.g. a DB blip) does not silently drop them; all other events
+// are delivered on a best-effort single attempt.
+func EmitWithLifecycleRetry(ctx context.Context, sink core.EventSink, event core.Event) error {
+	err := sink.Emit(ctx, event)
+	for attempt := 1; err != nil && IsCriticalLifecycleEvent(event.Type) && attempt < lifecycleEmitAttempts; attempt++ {
+		if delayErr := retryDelay(ctx, attempt); delayErr != nil {
+			break
+		}
+		err = sink.Emit(ctx, event)
+	}
+	return err
 }
 
 // logWarn logs a warning message if a Logger is configured; otherwise it is
@@ -742,6 +871,14 @@ func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, pay
 func (e *Engine) logWarn(ctx context.Context, msg string, keysAndValues ...any) {
 	if e.logger != nil {
 		e.logger.Warn(ctx, msg, keysAndValues...)
+	}
+}
+
+// logError logs an error message if a Logger is configured; otherwise it is
+// silently discarded.
+func (e *Engine) logError(ctx context.Context, msg string, keysAndValues ...any) {
+	if e.logger != nil {
+		e.logger.Error(ctx, msg, keysAndValues...)
 	}
 }
 
@@ -799,14 +936,11 @@ func (e *Engine) startSpan(ctx context.Context, name observability.SpanName, att
 }
 
 // generateRunID returns a cryptographically random run identifier with a
-// "run-" prefix.  Falls back to a nanosecond timestamp on the rare occasion
-// that the random reader fails.
+// "run-" prefix. The canonical implementation lives in runstate so the
+// framework facade, engine, event router, and async adapter share one
+// 128-bit generator instead of carrying private 64-bit copies.
 func generateRunID() string {
-	var b [8]byte
-	if _, err := cryptorand.Read(b[:]); err != nil {
-		return fmt.Sprintf("run-%d", time.Now().UnixNano())
-	}
-	return "run-" + hex.EncodeToString(b[:])
+	return runstate.GenerateRunID()
 }
 
 func snapshotHasToolApprovalCheckpoint(snapshot *runstate.RunSnapshot) bool {

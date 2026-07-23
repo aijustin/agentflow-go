@@ -55,7 +55,7 @@ func TestAsyncJobHandlerEventAndResume(t *testing.T) {
 func TestWebhookAndHumanHTTPHandlers(t *testing.T) {
 	fw, err := agentflow.New(
 		testAutonomousScenario(),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "ok"}),
 		agentflow.WithToolExecutor("echo", noopTool{}),
 	)
@@ -102,7 +102,7 @@ func TestAsyncJobHandlerEventAndResumeContinue(t *testing.T) {
 	}
 	hitlFW, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
 	)
 	if err != nil {
@@ -128,7 +128,7 @@ func TestAsyncJobHandlerEventAndResumeContinue(t *testing.T) {
 func TestHumanHTTPHandlerResumeWithoutContinue(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
 	)
 	if err != nil {

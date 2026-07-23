@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	eventrouterhttp "github.com/aijustin/agentflow-go/internal/adapter/eventrouter/http"
@@ -76,4 +78,44 @@ func TestNewHandlerRequiresFramework(t *testing.T) {
 		t.Fatal("expected nil framework error")
 	}
 	_ = context.Background()
+}
+
+// TestSignatureVerifierRejectsBadSignature: with a verifier configured, a
+// failing signature check rejects the request with 401 before decoding.
+func TestSignatureVerifierRejectsBadSignature(t *testing.T) {
+	calls := 0
+	handler, err := eventrouterhttp.NewHandler(eventrouterhttp.HandlerConfig{
+		Framework: &stubRunner{},
+		VerifySignature: func(r *http.Request, body []byte) error {
+			calls++
+			if r.Header.Get("X-Signature") != "valid" {
+				return errors.New("bad signature")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := `{"type":"ticket.created","payload":{}}`
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(event)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for bad signature, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid_signature") {
+		t.Fatalf("expected invalid_signature code, got %s", rec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(event))
+	req.Header.Set("X-Signature", "valid")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid signature, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("expected two verifier calls, got %d", calls)
+	}
 }

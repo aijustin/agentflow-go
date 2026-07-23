@@ -1,14 +1,20 @@
 package eventrouter
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
+)
+
+// Classified resolution errors so HTTP adapters can distinguish a malformed
+// event (400) from an unroutable one (404) without string matching.
+var (
+	ErrEventTypeRequired = errors.New("eventrouter: event type is required")
+	ErrNoTrigger         = errors.New("eventrouter: no trigger configured for event")
 )
 
 // Router maps external events to run requests using scenario trigger definitions.
@@ -23,11 +29,11 @@ func NewRouter(scenario core.Scenario) *Router {
 func (r *Router) Resolve(event Event) (RunRequest, error) {
 	eventType := strings.TrimSpace(event.Type)
 	if eventType == "" {
-		return RunRequest{}, fmt.Errorf("eventrouter: event type is required")
+		return RunRequest{}, ErrEventTypeRequired
 	}
 	trigger, ok := r.matchTrigger(eventType)
 	if !ok {
-		return RunRequest{}, fmt.Errorf("eventrouter: no trigger configured for event %q", eventType)
+		return RunRequest{}, fmt.Errorf("%w %q", ErrNoTrigger, eventType)
 	}
 	if trigger.Agent != "" {
 		if _, ok := r.scenario.Agents[trigger.Agent]; !ok {
@@ -100,10 +106,9 @@ func defaultPromptFromPayload(payload json.RawMessage) string {
 	return ""
 }
 
+// generateRunID delegates to the canonical 128-bit generator in runstate so
+// the event router, framework facade, engine, and async adapter share one
+// implementation instead of carrying private 64-bit copies.
 func generateRunID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("run-%d", time.Now().UnixNano())
-	}
-	return "run-" + hex.EncodeToString(b[:])
+	return runstate.GenerateRunID()
 }

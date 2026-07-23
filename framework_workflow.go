@@ -8,9 +8,25 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
+	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
+
+// stampRunLeaseOwner records the context's lease owner on a freshly created
+// workflow/hybrid snapshot, matching the stamping the engine performs in
+// beginRun for autonomous runs. MarkAbandonedRuns only reaps owner-marked
+// runs, so unmanaged executions must stay unmarked.
+func stampRunLeaseOwner(ctx context.Context, snapshot *runstate.RunSnapshot) {
+	owner := appexec.RunLeaseOwnerFromContext(ctx)
+	if owner == "" {
+		return
+	}
+	if snapshot.Variables == nil {
+		snapshot.Variables = make(map[string]json.RawMessage)
+	}
+	snapshot.Variables[runstate.VarRunLeaseOwner] = quoteJSONString(owner)
+}
 
 func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult, error) {
 	return f.runWorkflowScenario(ctx, f.currentScenario(), req)
@@ -39,6 +55,7 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 	}
 	resolvedAgent, _ := f.currentEngine().ResolveAgentName(req.Agent)
 	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
+	stampRunLeaseOwner(ctx, &snapshot)
 	runstate.StampTenant(ctx, &snapshot)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
 		if errors.Is(err, runstate.ErrStaleSnapshot) {
@@ -103,6 +120,7 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 	}
 	resolvedAgent, _ := f.currentEngine().ResolveAgentName(req.Agent)
 	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
+	stampRunLeaseOwner(ctx, &snapshot)
 	runstate.StampTenant(ctx, &snapshot)
 	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
 		if errors.Is(err, runstate.ErrStaleSnapshot) {
@@ -222,11 +240,20 @@ func (f *Framework) completeWorkflowRun(ctx context.Context, runID string, mutat
 		}
 		return runstate.RunSnapshot{}, err
 	}
+	f.currentEngine().ClearRunScopedState(runID)
 	f.emit(ctx, core.EventRunCompleted, runID, nil)
 	return loaded, nil
 }
 
 func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause error) {
+	// A cancellation caused by a lost run lease is a worker-ownership
+	// failure, not a caller cancel: persist the lease-lost reason (matching
+	// the engine's markRunFailedLease) so the snapshot explains why the run
+	// died instead of recording a bare "context canceled".
+	if ctxCause := context.Cause(ctx); errors.Is(ctxCause, ErrRunLeaseLost) {
+		cause = ctxCause
+	}
+	defer f.currentEngine().ClearRunScopedState(runID)
 	// Persist the failure with a context stripped of the caller's own
 	// cancellation/deadline: cause is frequently the caller's context being
 	// cancelled or timing out, and using that same context here would make

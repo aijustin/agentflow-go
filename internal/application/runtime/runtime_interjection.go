@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
@@ -11,7 +12,9 @@ import (
 )
 
 // Interject queues a mid-turn user message for runID. Drain timing follows
-// Engine.interjectDrain (Codex-style steer alignment).
+// Engine.interjectDrain (Codex-style steer alignment). The run must exist and
+// still be active (Running): messages for unknown or terminal/paused runs are
+// rejected instead of being buffered forever.
 func (e *Engine) Interject(runID, text string) error {
 	if e == nil {
 		return fmt.Errorf("runtime: engine is nil")
@@ -23,6 +26,13 @@ func (e *Engine) Interject(runID, text string) error {
 	}
 	if text == "" {
 		return fmt.Errorf("runtime: interject text is required")
+	}
+	// Interject has no caller context (the API predates run validation), so
+	// the existence/active check runs on a short detached context.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := e.ensureRunActive(ctx, runID); err != nil {
+		return err
 	}
 	if e.interjections == nil {
 		e.interjections = interjection.NewBuffer()

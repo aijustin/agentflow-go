@@ -17,7 +17,7 @@ import (
 func TestHandlerEventsAndRunsFilters(t *testing.T) {
 	ctx := context.Background()
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store, TraceExploreURL: "https://trace.example"})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store, TraceExploreURL: "https://trace.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestHandlerEventsAndRunsFilters(t *testing.T) {
 func TestHandlerEventsPresetProductUI(t *testing.T) {
 	ctx := context.Background()
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestHandlerEventsPresetProductUI(t *testing.T) {
 func TestHandlerRunsFilterByStatus(t *testing.T) {
 	ctx := context.Background()
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestHandlerRunsFilterByStatus(t *testing.T) {
 }
 
 func TestHandlerRunsRejectsNonGet(t *testing.T) {
-	handler, err := NewHandler(Config{Store: obsinmem.NewStore()})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: obsinmem.NewStore()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestHandlerRunsRejectsNonGet(t *testing.T) {
 
 func TestHandlerStreamEndpointReturnsEventStream(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestHandlerStreamEndpointReturnsEventStream(t *testing.T) {
 
 func TestHandlerEventsMethodNotAllowed(t *testing.T) {
 	store := obsinmem.NewStore()
-	handler, err := NewHandler(Config{Store: store})
+	handler, err := NewHandler(Config{InsecureAllowNoAuth: true, Store: store})
 	if err != nil {
 		t.Fatal(err)
 	}

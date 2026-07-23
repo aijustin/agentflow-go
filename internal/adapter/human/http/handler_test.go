@@ -25,7 +25,7 @@ func TestHandlerServeHTTP(t *testing.T) {
 		{name: "wrong method", method: http.MethodGet, wantStatus: http.StatusMethodNotAllowed},
 		{name: "bad json", method: http.MethodPost, body: `{`, wantStatus: http.StatusBadRequest},
 		{name: "invalid decision", method: http.MethodPost, body: `{"token":"t","decision":"skip"}`, wantStatus: http.StatusBadRequest},
-		{name: "gate conflict", method: http.MethodPost, body: `{"token":"t","decision":"reject"}`, gateErr: errors.New("conflict"), wantStatus: http.StatusConflict, wantCalls: 1},
+		{name: "gate unexpected error", method: http.MethodPost, body: `{"token":"t","decision":"reject"}`, gateErr: errors.New("db exploded"), wantStatus: http.StatusInternalServerError, wantCalls: 1},
 	}
 
 	for _, tt := range tests {

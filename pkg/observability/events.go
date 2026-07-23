@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -150,6 +151,11 @@ type EventHub struct {
 	mu          sync.RWMutex
 	nextID      uint64
 	subscribers map[uint64]eventSubscriber
+	// dropped counts events that could not be delivered because a
+	// subscriber's buffer was full. It is monotonic for the lifetime of the
+	// hub and exported via DroppedEvents so operators can alert on
+	// silently-lost fanout.
+	dropped atomic.Int64
 }
 
 type eventSubscriber struct {
@@ -223,9 +229,20 @@ func (hub *EventHub) PublishEvent(ctx context.Context, record EventRecord) error
 		select {
 		case subscriber.events <- CloneEventRecord(record):
 		default:
+			hub.dropped.Add(1)
 		}
 	}
 	return nil
+}
+
+// DroppedEvents reports how many event deliveries were dropped because a
+// subscriber's buffer was full. A growing value means consumers are falling
+// behind and events are being lost.
+func (hub *EventHub) DroppedEvents() int64 {
+	if hub == nil {
+		return 0
+	}
+	return hub.dropped.Load()
 }
 
 func NormalizeRunQuery(query RunQuery) RunQuery {

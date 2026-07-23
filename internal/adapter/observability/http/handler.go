@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	nethttp "net/http"
@@ -12,6 +13,7 @@ import (
 
 	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/studio"
 )
 
@@ -36,6 +38,14 @@ type Config struct {
 	Compare        RunComparer
 	Thread         ThreadLister
 	Fork           RunForker
+	// InsecureAllowNoAuth disables the default-deny guard on mutating
+	// endpoints (HITL resume, resume-from-step/checkpoint, fork, studio
+	// run/save) when AuthMiddleware is nil. Only set it behind an
+	// authenticating reverse proxy or in tests.
+	InsecureAllowNoAuth bool
+	// Logger receives the one-time construction warning emitted when
+	// AuthMiddleware is nil; nil discards it.
+	Logger log.Logger
 }
 
 type StepsLister interface {
@@ -122,6 +132,9 @@ type Handler struct {
 	thread     ThreadLister
 	fork       RunForker
 	traceExploreURL string
+	// guardMutating default-denies mutating endpoints when no AuthMiddleware
+	// is configured and InsecureAllowNoAuth was not set explicitly.
+	guardMutating bool
 	mux        *nethttp.ServeMux
 	handler    nethttp.Handler
 }
@@ -151,6 +164,16 @@ func NewHandler(config Config) (*Handler, error) {
 		fork:       config.Fork,
 		traceExploreURL: config.TraceExploreURL,
 		mux:        nethttp.NewServeMux(),
+	}
+	if config.AuthMiddleware == nil {
+		handler.guardMutating = !config.InsecureAllowNoAuth
+		if config.Logger != nil {
+			// One-time construction warning: read endpoints are public, and
+			// mutating endpoints are either default-denied or (with the
+			// explicit insecure opt-out) wide open — production deployments
+			// should always configure AuthMiddleware.
+			config.Logger.Warn(context.Background(), "observability http: AuthMiddleware is not configured; read-only endpoints are publicly accessible and mutating endpoints rely on the default-deny guard or InsecureAllowNoAuth — configure AuthMiddleware in production")
+		}
 	}
 	handler.routes()
 	handler.handler = handler.mux
@@ -289,6 +312,9 @@ func (handler *Handler) handleRunHITLResume(w nethttp.ResponseWriter, r *nethttp
 		methodNotAllowed(w, nethttp.MethodPost)
 		return
 	}
+	if handler.mutatingForbidden(w) {
+		return
+	}
 	if handler.hitlResume == nil {
 		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("run HITL resume is not configured"))
 		return
@@ -316,6 +342,9 @@ func (handler *Handler) handleRunHITLResume(w nethttp.ResponseWriter, r *nethttp
 func (handler *Handler) handleResumeFromStep(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
 	if r.Method != nethttp.MethodPost {
 		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.mutatingForbidden(w) {
 		return
 	}
 	if handler.resume == nil {
@@ -385,6 +414,9 @@ func (handler *Handler) handleCheckpointVersion(w nethttp.ResponseWriter, r *net
 func (handler *Handler) handleResumeFromCheckpoint(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
 	if r.Method != nethttp.MethodPost {
 		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.mutatingForbidden(w) {
 		return
 	}
 	if handler.restore == nil {
@@ -533,6 +565,9 @@ func (handler *Handler) handleStudioRun(w nethttp.ResponseWriter, r *nethttp.Req
 		methodNotAllowed(w, nethttp.MethodPost)
 		return
 	}
+	if handler.mutatingForbidden(w) {
+		return
+	}
 	if handler.runStudio == nil {
 		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio run is not configured"))
 		return
@@ -567,6 +602,9 @@ func (handler *Handler) handleStudioRun(w nethttp.ResponseWriter, r *nethttp.Req
 func (handler *Handler) handleStudioSave(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodPost {
 		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.mutatingForbidden(w) {
 		return
 	}
 	if handler.studioSave == nil {
@@ -606,6 +644,9 @@ func (handler *Handler) handleRunThread(w nethttp.ResponseWriter, r *nethttp.Req
 func (handler *Handler) handleRunFork(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {
 	if r.Method != nethttp.MethodPost {
 		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.mutatingForbidden(w) {
 		return
 	}
 	if handler.fork == nil {
@@ -861,6 +902,26 @@ func writeJSON(w nethttp.ResponseWriter, status int, value any) {
 
 func writeError(w nethttp.ResponseWriter, status int, err error) {
 	writeStudioError(w, status, err)
+}
+
+// errAuthRequired is reported (403, auth_required) when a mutating endpoint
+// is reached without an AuthMiddleware and without the explicit insecure
+// opt-out.
+var errAuthRequired = errors.New("mutating endpoints require AuthMiddleware; configure it or explicitly set InsecureAllowNoAuth to disable this protection")
+
+// mutatingForbidden writes the default-deny response and reports true when a
+// mutating endpoint is guarded (no AuthMiddleware configured and
+// InsecureAllowNoAuth not set). Mounting resume/fork/studio-mutating routes
+// without any auth layer is exactly the exposure this guard exists for.
+func (handler *Handler) mutatingForbidden(w nethttp.ResponseWriter) bool {
+	if !handler.guardMutating {
+		return false
+	}
+	writeJSON(w, nethttp.StatusForbidden, map[string]string{
+		"error":      errAuthRequired.Error(),
+		"error_code": "auth_required",
+	})
+	return true
 }
 
 func writeStudioError(w nethttp.ResponseWriter, status int, err error) {

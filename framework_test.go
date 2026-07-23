@@ -367,7 +367,7 @@ func TestFrameworkJobHandlerExecutesResumeContinueJob(t *testing.T) {
 	var tokenOut bytes.Buffer
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), &tokenOut),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), &tokenOut),
 		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
 	)
 	if err != nil {
@@ -404,7 +404,7 @@ func TestFrameworkHITLPauseResume(t *testing.T) {
 	var tokenOut bytes.Buffer
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
-		agentflow.WithHITLTokenSecret([]byte("secret"), &tokenOut),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), &tokenOut),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -570,7 +570,7 @@ func TestFrameworkHybridResumeWithNullInputContext(t *testing.T) {
 	}
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithHITLTokenSecret([]byte("secret"), nil),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
 		agentflow.WithLLMGateway(fakeGateway{content: "hybrid answer"}),
 	)
 	if err != nil {

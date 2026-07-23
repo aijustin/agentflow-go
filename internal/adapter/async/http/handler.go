@@ -2,8 +2,6 @@ package http
 
 import (
 	"context"
-	cryptorand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -514,13 +512,9 @@ func principalFromContext(ctx context.Context) identity.Principal {
 	return principal
 }
 
-// generateRunID returns a cryptographically random run identifier with a
-// "run-" prefix.  Falls back to a nanosecond timestamp on the rare occasion
-// that the random reader fails.
+// generateRunID delegates to the canonical 128-bit generator in runstate so
+// the async adapter, framework facade, engine, and event router share one
+// implementation instead of carrying private 64-bit copies.
 func generateRunID() string {
-	var b [8]byte
-	if _, err := cryptorand.Read(b[:]); err != nil {
-		return fmt.Sprintf("run-%d", time.Now().UnixNano())
-	}
-	return "run-" + hex.EncodeToString(b[:])
+	return runstate.GenerateRunID()
 }

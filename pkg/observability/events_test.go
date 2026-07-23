@@ -134,3 +134,20 @@ func TestNoopRecorderAndTracer(t *testing.T) {
 	span.SetAttributes(Attribute{Key: "run_id", Value: "run-1"})
 	span.End()
 }
+
+// TestEventHubCountsDroppedDeliveries: a subscriber that falls behind must
+// not lose events silently — the hub's monotonic drop counter exposes them.
+func TestEventHubCountsDroppedDeliveries(t *testing.T) {
+	hub := NewEventHub()
+	subscription := hub.Subscribe(context.Background(), EventSubscriptionFilter{Buffer: 1})
+	defer subscription.Cancel()
+	record := EventRecord{Event: core.Event{Type: core.EventRunStarted, RunID: "run-1"}}
+	for i := 0; i < 3; i++ {
+		if err := hub.PublishEvent(context.Background(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := hub.DroppedEvents(); got != 2 {
+		t.Fatalf("expected 2 dropped deliveries with a 1-deep buffer and no reader, got %d", got)
+	}
+}

@@ -109,10 +109,15 @@ const (
 )
 
 type ChatChunk struct {
-	Kind         ChunkKind       `json:"kind,omitempty"`
-	Content      string          `json:"content,omitempty"`
-	Done         bool            `json:"done,omitempty"`
-	Error        string          `json:"error,omitempty"`
+	Kind    ChunkKind `json:"kind,omitempty"`
+	Content string    `json:"content,omitempty"`
+	Done    bool      `json:"done,omitempty"`
+	Error   string    `json:"error,omitempty"`
+	// Err carries the structured provider error behind Error when one exists,
+	// so retry classification (e.g. APIError.Retryable) survives the streaming
+	// path instead of being flattened into an opaque string. It is process-local
+	// only and never serialized.
+	Err          error           `json:"-"`
 	Usage        TokenUsage      `json:"usage,omitempty"`
 	Paused       bool            `json:"paused,omitempty"`
 	PauseToken   string          `json:"pause_token,omitempty"`

@@ -392,3 +392,95 @@ func TestWorkerPausesJobOnRunPausedError(t *testing.T) {
 	}
 	t.Fatal("expected paused job state")
 }
+
+// flakyLeaseQueue fails Lease a fixed number of times before delegating, to
+// prove a transient queue outage no longer kills the worker loop.
+type flakyLeaseQueue struct {
+	Queue
+	failures atomic.Int32
+}
+
+func (q *flakyLeaseQueue) Lease(ctx context.Context, workerID string, ttl time.Duration) (Lease, bool, error) {
+	if q.failures.Load() > 0 {
+		q.failures.Add(-1)
+		return Lease{}, false, errors.New("queue temporarily unavailable")
+	}
+	return q.Queue.Lease(ctx, workerID, ttl)
+}
+
+func TestWorkerSurvivesTransientLeaseErrors(t *testing.T) {
+	queue := &flakyLeaseQueue{Queue: newTestQueue()}
+	queue.failures.Store(3)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	handler := HandlerFunc(func(ctx context.Context, job Job) error {
+		close(done)
+		return nil
+	})
+	worker, err := NewWorker(queue, handler, WorkerConfig{
+		WorkerID:     "worker-flaky",
+		PollInterval: 5 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(context.Background(), Job{ID: "job-flaky", Type: RunJobType, MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	workerErr := make(chan error, 1)
+	go func() { workerErr <- worker.Run(ctx) }()
+	select {
+	case <-done:
+	case err := <-workerErr:
+		t.Fatalf("worker exited on transient lease errors: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("job was not processed after transient lease errors")
+	}
+	cancel()
+}
+
+// failRenewQueue reports every renewal as not-held, so the worker must cancel
+// the in-flight job instead of letting it run unowned.
+type failRenewQueue struct {
+	Queue
+}
+
+func (q *failRenewQueue) Renew(ctx context.Context, lease Lease, ttl time.Duration) (Lease, bool, error) {
+	return Lease{}, false, nil
+}
+
+func TestWorkerCancelsJobWhenRenewalFails(t *testing.T) {
+	queue := &failRenewQueue{Queue: newTestQueue()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cancelled := make(chan struct{})
+	handler := HandlerFunc(func(jobCtx context.Context, job Job) error {
+		select {
+		case <-jobCtx.Done():
+			close(cancelled)
+			return jobCtx.Err()
+		case <-time.After(3 * time.Second):
+			return nil
+		}
+	})
+	worker, err := NewWorker(queue, handler, WorkerConfig{
+		WorkerID:      "worker-lost",
+		PollInterval:  5 * time.Millisecond,
+		LeaseTTL:      time.Minute,
+		RenewInterval: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(context.Background(), Job{ID: "job-lost", Type: RunJobType, MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = worker.Run(ctx) }()
+	select {
+	case <-cancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("job context was not cancelled after lease renewal failure")
+	}
+	cancel()
+}
