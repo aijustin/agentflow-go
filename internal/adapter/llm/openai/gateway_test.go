@@ -669,6 +669,33 @@ func TestGatewayEmbed(t *testing.T) {
 	}
 }
 
+func TestGatewayEmbedHTMLBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<!doctype html><html><body>spa</body></html>`))
+	}))
+	defer server.Close()
+
+	// Endpoint without /v1 mimics a misconfigured OpenAI-compatible base_url that
+	// serves an HTML SPA for unknown paths with HTTP 200.
+	gateway := NewGateway([]llm.Profile{{Name: "embed", Model: "embed-model", Endpoint: server.URL, Capabilities: []llm.Capability{llm.CapEmbed}}}, server.Client())
+	_, err := gateway.Embed(context.Background(), "embed", []string{"hello"})
+	if err == nil {
+		t.Fatal("expected non-JSON embed error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "HTML body") {
+		t.Fatalf("expected HTML body hint, got %v", err)
+	}
+	if !strings.Contains(msg, "content-type=") {
+		t.Fatalf("expected content-type in error, got %v", err)
+	}
+	if !strings.Contains(msg, "invalid character") {
+		t.Fatalf("expected wrapped json error, got %v", err)
+	}
+}
+
 func TestGatewayChatErrors(t *testing.T) {
 	t.Run("unknown profile", func(t *testing.T) {
 		_, err := NewGateway(nil, nil).Chat(context.Background(), "missing", llm.ChatRequest{})

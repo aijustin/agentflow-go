@@ -305,7 +305,7 @@ func (g *Gateway) Embed(ctx context.Context, profileName string, input []string)
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return nil, err
+		return nil, embedNonJSONError(endpoint+"/embeddings", resp, raw, err)
 	}
 	if len(decoded.Data) != len(input) {
 		return nil, fmt.Errorf("openai: embedding response count %d did not match input count %d", len(decoded.Data), len(input))
@@ -400,6 +400,23 @@ func authorizeRequest(httpReq *http.Request, profile llm.Profile) {
 func openAIAPIError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	return llm.APIError{Provider: "openai", StatusCode: resp.StatusCode, Status: resp.Status, Body: strings.TrimSpace(string(body))}
+}
+
+// embedNonJSONError wraps json.Unmarshal failures for 2xx embedding responses that are
+// HTML/SPA fallbacks or other non-JSON bodies (often caused by a base_url missing /v1).
+func embedNonJSONError(url string, resp *http.Response, raw []byte, cause error) error {
+	preview := strings.TrimSpace(string(raw))
+	if len(preview) > 160 {
+		preview = preview[:160]
+	}
+	ct := resp.Header.Get("Content-Type")
+	kind := "non-JSON"
+	trimmed := strings.TrimLeft(preview, " \t\r\n")
+	if strings.HasPrefix(trimmed, "<") {
+		kind = "HTML"
+	}
+	return fmt.Errorf("openai: embed %s returned %s body (status=%d content-type=%q): %w; body_prefix=%q",
+		url, kind, resp.StatusCode, ct, cause, preview)
 }
 
 func decodeChatResponse(raw []byte) (llm.ToolCallResponse, error) {
