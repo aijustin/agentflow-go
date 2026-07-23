@@ -41,6 +41,12 @@ var (
 	ErrRunPaused           = errors.New("runtime: run is paused")
 	ErrRunFailed           = errors.New("runtime: run has failed")
 	ErrRunCancelled        = errors.New("runtime: run is cancelled")
+	// ErrLLMGatewayRequired reports that a run needs an LLM call but no
+	// gateway is wired. It is a permanent configuration error: blind retries
+	// can never succeed, so checkpoint-continue paths classify it as
+	// permanent (run marked Failed) instead of keeping the run Running for a
+	// transient retry.
+	ErrLLMGatewayRequired = errors.New("runtime: llm gateway is required")
 )
 
 func (e *Engine) maxAttempts(agent core.Agent) int {
@@ -698,6 +704,18 @@ func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
 // must still reach Failed (the checkpoint stays intact for RetryFailedRun /
 // ContinueRun to re-enter from).
 func (e *Engine) markRunFailedLease(ctx context.Context, runID string, cause error) {
+	e.markRunFailedMode(ctx, runID, cause, true)
+}
+
+// markRunFailedPermanent persists a permanent continue failure. Like the
+// lease-lost variant it forces past the tool-approval checkpoint
+// preservation: a permanent error (missing gateway, corrupt checkpoint
+// metadata, unconfigured agent/profile) can never succeed on a blind retry,
+// so the run must reach Failed instead of lingering in Running. The
+// checkpoint variables themselves are intentionally kept: once the
+// underlying configuration is fixed, RetryFailedRun / ContinueRun re-enter
+// from them.
+func (e *Engine) markRunFailedPermanent(ctx context.Context, runID string, cause error) {
 	e.markRunFailedMode(ctx, runID, cause, true)
 }
 

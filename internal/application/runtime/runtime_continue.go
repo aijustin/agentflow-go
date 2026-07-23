@@ -170,6 +170,9 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 			if errorsAsRunPaused(err, &paused) {
 				return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 			}
+			if isPermanentContinueError(err) {
+				return RunResult{}, e.failContinuePermanent(ctx, req.RunID, err)
+			}
 			// Checkpoint vars stay intact; keep the run Running so the caller
 			// can retry ContinueAfterCheckpoint after a transient error.
 			return RunResult{}, err
@@ -196,6 +199,9 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
+		if isPermanentContinueError(err) {
+			return RunResult{}, e.failContinuePermanent(ctx, req.RunID, err)
+		}
 		// Checkpoint vars stay intact; keep the run Running so the caller
 		// can retry ContinueAfterCheckpoint after a transient error.
 		return RunResult{}, err
@@ -221,29 +227,29 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	agentName := variableString(snapshot.Variables, checkpointAgentVar)
 	agent, err := e.resolveAgent(agentName)
 	if err != nil {
-		return RunResult{}, err
+		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, err)
 	}
 	var pending []llm.ToolCall
 	if raw := snapshot.Variables[checkpointToolCallsVar]; len(raw) > 0 {
 		if err := json.Unmarshal(raw, &pending); err != nil {
-			return RunResult{}, fmt.Errorf("runtime: decode checkpoint tool calls: %w", err)
+			return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: decode checkpoint tool calls: %w", err))
 		}
 	}
 	var messages []llm.Message
 	if raw := snapshot.Variables[checkpointMessagesVar]; len(raw) > 0 {
 		resolved, err := e.resolveCheckpointVar(ctx, raw)
 		if err != nil {
-			return RunResult{}, fmt.Errorf("runtime: resolve checkpoint messages: %w", err)
+			return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: resolve checkpoint messages: %w", err))
 		}
 		if err := json.Unmarshal(resolved, &messages); err != nil {
-			return RunResult{}, fmt.Errorf("runtime: decode checkpoint messages: %w", err)
+			return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: decode checkpoint messages: %w", err))
 		}
 	}
 	tracker := newToolCallTracker()
 	if raw := snapshot.Variables[checkpointToolCountsVar]; len(raw) > 0 {
 		decoded, err := decodeToolCallTracker(raw)
 		if err != nil {
-			return RunResult{}, fmt.Errorf("runtime: decode checkpoint tool counts: %w", err)
+			return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: decode checkpoint tool counts: %w", err))
 		}
 		tracker = decoded
 	}
@@ -253,7 +259,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		// checkpoint state was already consumed by a prior resume (it is
 		// cleared by clearCheckpointState); continuing with an empty
 		// conversation would silently re-run the tool loop from nothing.
-		return RunResult{}, fmt.Errorf("runtime: checkpoint messages for run %q are missing; the checkpoint may already have been consumed by a prior resume", snapshot.RunID)
+		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: checkpoint messages for run %q are missing; the checkpoint may already have been consumed by a prior resume", snapshot.RunID))
 	}
 	prompt := applyHumanAmendment(snapshot.Variables, variableString(snapshot.Variables, checkpointPromptVar))
 	// Capture the amendment text before clearCheckpointState clears it; it
@@ -264,11 +270,11 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	amendment := humanAmendmentText(snapshot.Variables)
 	profile, err := e.llmProfile(agent.LLM)
 	if err != nil {
-		return RunResult{}, err
+		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, err)
 	}
 	caller, ok := e.llm.(llm.ToolCaller)
 	if !ok || !e.llm.Supports(agent.LLM, llm.CapToolCall) {
-		return RunResult{}, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM)
+		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM))
 	}
 	stepsConsumed := checkpointStepsConsumed(snapshot.Variables)
 	// Cumulative across the whole run (including replans before this pause)
@@ -279,6 +285,9 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		var paused RunPausedError
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
+		}
+		if isPermanentContinueError(err) {
+			return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, err)
 		}
 		// Checkpoint vars are still intact; keep the run Running so the
 		// caller can retry ContinueAfterCheckpoint after a transient error.
@@ -579,6 +588,25 @@ func errorsAsRunPaused(err error, target *RunPausedError) bool {
 		return false
 	}
 	return errors.As(err, target)
+}
+
+// isPermanentContinueError reports whether a continue failure can never
+// succeed on a blind retry (as opposed to transient, retryable failures such
+// as provider 429/5xx or network timeouts). Only explicitly classified
+// errors are permanent; unknown errors stay transient, preserving the
+// Running + checkpoint state for a later ContinueRun.
+func isPermanentContinueError(err error) bool {
+	return errors.Is(err, ErrLLMGatewayRequired)
+}
+
+// failContinuePermanent persists the run as Failed with the error as its
+// reason and returns the error. The checkpoint metadata is intentionally
+// kept (markRunFailedPermanent forces past the checkpoint preservation
+// without clearing the variables) so RetryFailedRun / ContinueRun can
+// re-enter once the underlying configuration is fixed.
+func (e *Engine) failContinuePermanent(ctx context.Context, runID string, err error) error {
+	e.markRunFailedPermanent(ctx, runID, err)
+	return err
 }
 
 func (e *Engine) persistUserPromptIfNeeded(ctx context.Context, runID string, agent core.Agent, prompt string) error {

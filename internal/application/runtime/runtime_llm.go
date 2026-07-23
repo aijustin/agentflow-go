@@ -25,7 +25,7 @@ func (e *Engine) answer(ctx context.Context, req RunRequest) (string, error) {
 
 func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.Agent) (string, error) {
 	if e.llm == nil {
-		return "", fmt.Errorf("runtime: llm gateway is required; wire WithLLMGateway or use WithRequireLLM at construction")
+		return "", fmt.Errorf("%w; wire WithLLMGateway or use WithRequireLLM at construction", ErrLLMGatewayRequired)
 	}
 	ctx, cancel := e.withTimeout(ctx, agent.Policy.Timeout)
 	defer cancel()
@@ -223,7 +223,7 @@ func formatAutonomousPlan(raw []byte, maxSteps int) string {
 
 func (e *Engine) structuredAnswer(ctx context.Context, req RunRequest) (json.RawMessage, error) {
 	if e.llm == nil {
-		return nil, fmt.Errorf("runtime: structured output requires llm gateway")
+		return nil, fmt.Errorf("%w (structured output)", ErrLLMGatewayRequired)
 	}
 	agent, err := e.resolveAgent(req.Agent)
 	if err != nil {

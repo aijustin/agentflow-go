@@ -497,3 +497,69 @@ func TestFrameworkHITLWeakSecretRejected(t *testing.T) {
 		t.Fatal("expected weak secret rejection at framework construction")
 	}
 }
+
+// TestFrameworkResumeApproveWithoutGatewayFailsAndRecovers: the reported
+// regression — resume approve with no LLM gateway must surface the error AND
+// mark the run Failed (not strand it in Running), keeping the checkpoint so
+// RetryFailedRun completes once a gateway is wired.
+func TestFrameworkResumeApproveWithoutGatewayFailsAndRecovers(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	fw, err := agentflow.New(
+		builder.MinimalHumanInLoop("assistant"),
+		agentflow.WithRunStateRepository(repo),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused := &runstate.RunSnapshot{
+		RunID:        "run-resume-no-gw",
+		ScenarioName: "human-in-loop-demo",
+		Status:       runstate.RunStatusPaused,
+		Variables: map[string]json.RawMessage{
+			"checkpoint_kind":   json.RawMessage(`"before_final_answer"`),
+			"checkpoint_prompt": json.RawMessage(`"finish me"`),
+			"checkpoint_agent":  json.RawMessage(`"assistant"`),
+			"resume_agent":      json.RawMessage(`"assistant"`),
+		},
+	}
+	if err := repo.Save(context.Background(), paused, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.ResumeRunByID(context.Background(), "run-resume-no-gw", core.DecisionApprove, nil, true)
+	if err == nil || !strings.Contains(err.Error(), "llm gateway is required") {
+		t.Fatalf("expected gateway-required error, got %v", err)
+	}
+	snapshot, err := runstate.LoadAuthorized(context.Background(), repo, "run-resume-no-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusFailed {
+		t.Fatalf("expected Failed (not stranded Running), got %s", snapshot.Status)
+	}
+	if got := string(snapshot.Variables["run_error_message"]); !strings.Contains(got, "llm gateway is required") {
+		t.Fatalf("expected gateway reason on snapshot, got %s", got)
+	}
+	if got := string(snapshot.Variables["checkpoint_kind"]); got != `"before_final_answer"` {
+		t.Fatalf("checkpoint must be kept for RetryFailedRun, got %s", got)
+	}
+
+	// Wire a gateway (second framework over the same repository): the failed
+	// run recovers from its intact checkpoint.
+	fw2, err := agentflow.New(
+		builder.MinimalHumanInLoop("assistant"),
+		agentflow.WithRunStateRepository(repo),
+		agentflow.WithHITLTokenSecret([]byte("test-secret-012345"), nil),
+		agentflow.WithLLMGateway(fakeGateway{content: "recovered answer"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw2.RetryFailedRun(context.Background(), "run-resume-no-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || !strings.Contains(result.Output, "recovered answer") {
+		t.Fatalf("expected recovery via RetryFailedRun, got %+v", result)
+	}
+}
