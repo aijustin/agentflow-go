@@ -14,8 +14,12 @@ test:
 test-integration:
 	CGO_ENABLED=0 go test -ldflags="$(GO_TEST_LDFLAGS)" -tags=integration ./...
 
+# Mirrors the CI unit-test job (.github/workflows/test.yml): full suite with
+# the race detector and shuffled test order. Plain `make test` does not run
+# the race detector, so run this before pushing concurrency/shared-state
+# changes instead of discovering data races in CI.
 test-race:
-	go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem ./internal/adapter/blob/inmem
+	go test -race -shuffle=on -coverprofile=coverage.out ./...
 
 test-realmodel:
 	CGO_ENABLED=0 go test -ldflags="$(GO_TEST_LDFLAGS)" -tags=realmodel -run TestRealModel -v .

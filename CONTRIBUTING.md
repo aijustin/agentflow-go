@@ -33,7 +33,7 @@ Run integration tests:
 make test-integration
 ```
 
-Run race tests for concurrent adapters:
+Run the full test suite with the race detector and shuffled test order (mirrors the CI unit-test job exactly):
 
 ```sh
 make test-race
@@ -61,6 +61,7 @@ See [docs/release-checklist.md](docs/release-checklist.md) for the full checklis
 - Add integration tests with `//go:build integration` when a change wires multiple packages together.
 - Keep external network calls mocked with `httptest` or mock adapters.
 - Run `make test` and `make vet` before submitting changes.
+- Run `make test-race` before pushing changes that touch concurrency or shared state. Plain `make test` skips the race detector, while CI runs the same `go test -race -shuffle=on ./...` and fails on data races.
 
 ## Public API changes
 
