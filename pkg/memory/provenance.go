@@ -17,6 +17,11 @@ const (
 	// between framework runs (for example chat transcript hydration).
 	ProvenanceIntegrator = "integrator"
 
+	// ProvenanceChatHydrate marks messages seeded from a chat transcript
+	// hydrate (the AF-014 contract). It is the suggested marker for hosts
+	// backfilling session memory via tier.MessageRecord before a run.
+	ProvenanceChatHydrate = "chat_hydrate"
+
 	// ProvenanceUntracked marks messages with no provenance metadata. This
 	// usually indicates data written before provenance tracking or by an
 	// external writer that did not set metadata.provenance.

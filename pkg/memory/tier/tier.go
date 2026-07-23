@@ -113,3 +113,13 @@ func DefaultPolicy() Policy {
 		DemoteIdle:    7 * 24 * time.Hour,
 	}
 }
+
+// SingleLevelPolicy returns a Policy with no promotion, demotion, TTL expiry,
+// or capacity eviction: every record stays in the tier its store assigns.
+// Use it when one durable store (e.g. the Postgres tier store) backs the
+// whole manager without a composite or a reconcile queue, so recall-time
+// bookkeeping never migrates records out of the durable tier and the
+// store's level is the single source of truth.
+func SingleLevelPolicy() Policy {
+	return Policy{}
+}
