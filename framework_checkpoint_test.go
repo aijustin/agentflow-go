@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
@@ -155,7 +156,7 @@ func TestFrameworkCheckpointHistory(t *testing.T) {
 			},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()))
+	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +235,7 @@ func TestFrameworkResumeFromCheckpointUnknownVersion(t *testing.T) {
 			},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()))
+	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +338,7 @@ func TestFrameworkHybridCheckpointPhaseStamp(t *testing.T) {
 		scenario,
 		agentflow.WithLLMGateway(fakeGateway{content: "hybrid done"}),
 		agentflow.WithToolExecutor("echo", noopTool{}),
-		agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+		agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()),
 	)
 	if err != nil {
 		t.Fatal(err)

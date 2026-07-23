@@ -17,7 +17,7 @@
 ### 接线
 
 ```go
-dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
     Store:     eventStore,
     Hub:       eventHub,
     Framework: fw, // 启用 graph / steps / resume-from-step
@@ -46,7 +46,7 @@ result, err := fw.ResumeFromStep(ctx, runID, "review")
 
 ```go
 fw, err := agentflow.New(scenario,
-    agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+    agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()),
 )
 ```
 
@@ -104,7 +104,7 @@ HTTP：
 Migration: [migrations/postgres/0003_agentflow_studio_thread_checkpoint.up.sql](../migrations/postgres/0003_agentflow_studio_thread_checkpoint.up.sql)
 
 ```go
-history, err := agentflow.NewPostgresCheckpointHistory(db)
+history, err := adapters.NewPostgresCheckpointHistory(db)
 fw, err := agentflow.New(scenario,
     agentflow.WithRunStateRepository(runRepo),
     agentflow.WithCheckpointHistory(history),
@@ -146,13 +146,13 @@ HTTP：
 
 ```go
 savePath := "/etc/agentflow/scenario.yaml"
-dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
     Store: eventStore,
     Hub:   eventHub,
     Framework: fw,
     StudioSavePath: savePath,
 })
-prod, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+prod, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
     Queue: queue,
     Framework: fw,
     StudioSavePath: savePath,

@@ -2,6 +2,7 @@ package agentflow
 
 import (
 	"context"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"testing"
 	"time"
 
@@ -12,15 +13,15 @@ import (
 )
 
 func TestTierMemoryWrappers(t *testing.T) {
-	if NewInMemoryTierHotStore() == nil {
+	if adapters.NewInMemoryTierHotStore() == nil {
 		t.Fatal("expected hot store")
 	}
 	manager := tier.NewManager(tierinmem.NewStore(), tier.DefaultPolicy(), tier.NoopMigrationObserver{})
-	cog := NewCognitiveTierMemory(manager, tier.RecallWeights{})
+	cog := adapters.NewCognitiveTierMemory(manager, tier.RecallWeights{})
 	if cog == nil {
 		t.Fatal("expected cognitive tier memory")
 	}
-	summarizer := NewLLMTierSummarizer(stubChatter{}, "chat")
+	summarizer := adapters.NewLLMTierSummarizer(stubChatter{}, "chat")
 	if summarizer == nil {
 		t.Fatal("expected summarizer")
 	}
@@ -47,12 +48,12 @@ func (stubChatter) StructuredChat(context.Context, string, []byte, llm.ChatReque
 func TestCompositeTierStoreWarmColdSurvivesHotRestart(t *testing.T) {
 	ctx := context.Background()
 	warm := tierinmem.NewStore()
-	cold, err := NewFileTierColdStore(t.TempDir())
+	cold, err := adapters.NewFileTierColdStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	hotA := tierinmem.NewStore()
-	compositeA := NewCompositeTierStore(CompositeTierStoreConfig{Hot: hotA, Warm: warm, Cold: cold})
+	compositeA := adapters.NewCompositeTierStore(adapters.CompositeTierStoreConfig{Hot: hotA, Warm: warm, Cold: cold})
 	policy := tier.Policy{HotCapacity: 1, WarmCapacity: 10, ColdCapacity: 10, PromoteAccess: 99}
 	managerA := tier.NewManager(compositeA, policy, tier.NoopMigrationObserver{})
 	ns := memory.Namespace{Scope: memory.ScopeSession, SessionID: "persist:assistant", Agent: "assistant"}
@@ -72,7 +73,7 @@ func TestCompositeTierStoreWarmColdSurvivesHotRestart(t *testing.T) {
 	}
 
 	hotB := tierinmem.NewStore()
-	compositeB := NewCompositeTierStore(CompositeTierStoreConfig{Hot: hotB, Warm: warm, Cold: cold})
+	compositeB := adapters.NewCompositeTierStore(adapters.CompositeTierStoreConfig{Hot: hotB, Warm: warm, Cold: cold})
 	managerB := tier.NewManager(compositeB, policy, tier.NoopMigrationObserver{})
 	got, err := managerB.Recall(ctx, ns, "", tier.RecallBudget{Total: 5, Hot: 2, Warm: 3}.Normalize())
 	if err != nil {

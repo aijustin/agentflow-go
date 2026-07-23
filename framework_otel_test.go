@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 )
 
 func TestFrameworkRunWithOpenTelemetryTracer(t *testing.T) {
 	ctx := context.Background()
-	provider, err := agentflow.NewOpenTelemetryStdoutTracerProvider(ctx, agentflow.OpenTelemetryTracerProviderConfig{
+	provider, err := adapters.NewOpenTelemetryStdoutTracerProvider(ctx, adapters.OpenTelemetryTracerProviderConfig{
 		ServiceName:    "agentflow-test",
 		ServiceVersion: "test",
 	})
@@ -20,7 +21,7 @@ func TestFrameworkRunWithOpenTelemetryTracer(t *testing.T) {
 		_ = provider.Shutdown(ctx)
 	}()
 
-	tracer := agentflow.OpenTelemetryTracerFromProvider(provider, "test")
+	tracer := adapters.OpenTelemetryTracerFromProvider(provider, "test")
 	fw, err := agentflow.New(testAutonomousScenario(),
 		agentflow.WithLLMGateway(fakeGateway{content: "ok"}),
 		agentflow.WithToolExecutor("echo", noopTool{}),

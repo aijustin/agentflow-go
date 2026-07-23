@@ -7,10 +7,12 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 )
 
 func TestNewCheckpointHTTPHandlerRequiresFramework(t *testing.T) {
-	if _, err := agentflow.NewCheckpointHTTPHandler(agentflow.CheckpointHTTPHandlerConfig{}); err == nil {
+	if _, err := httpx.NewCheckpointHTTPHandler(httpx.CheckpointHTTPHandlerConfig{}); err == nil {
 		t.Fatal("expected framework required error")
 	}
 }
@@ -20,7 +22,7 @@ func TestNewCheckpointHTTPHandlerListsSteps(t *testing.T) {
 		testAutonomousScenario(),
 		agentflow.WithLLMGateway(fakeGateway{content: "ok"}),
 		agentflow.WithToolExecutor("echo", noopTool{}),
-		agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+		agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +31,7 @@ func TestNewCheckpointHTTPHandlerListsSteps(t *testing.T) {
 	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID, Agent: "assistant", Prompt: "hi"}); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := agentflow.NewCheckpointHTTPHandler(agentflow.CheckpointHTTPHandlerConfig{Framework: fw})
+	handler, err := httpx.NewCheckpointHTTPHandler(httpx.CheckpointHTTPHandlerConfig{Framework: fw})
 	if err != nil {
 		t.Fatal(err)
 	}

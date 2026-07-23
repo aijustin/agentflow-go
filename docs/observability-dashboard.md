@@ -40,16 +40,16 @@ func main() {
     db.SetMaxIdleConns(5)
     db.SetConnMaxLifetime(30 * time.Minute)
 
-    eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{DB: db})
+    eventStore, err := adapters.NewPostgresEventStore(ctx, adapters.PostgresEventStoreConfig{DB: db})
     if err != nil {
         log.Fatal(err)
     }
-    eventHub := agentflow.NewEventHub()
+    eventHub := adapters.NewEventHub()
 
     scenario := builder.MinimalAutonomous("assistant")
-fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFanoutSink(
-            agentflow.NewEventStoreSink(eventStore, eventHub),
-            agentflow.NewSlogEventSink(nil),
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventFanoutSink(
+            adapters.NewEventStoreSink(eventStore, eventHub),
+            adapters.NewSlogEventSink(nil),
         )),
     )
     if err != nil {
@@ -57,7 +57,7 @@ fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFan
     }
     _ = fw
 
-    dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+    dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
         Store: eventStore,
         Hub:   eventHub,
     })
@@ -78,11 +78,11 @@ Open `http://localhost:7070/observability/` to view live runs.
 Use the in-memory store when persistence is not required:
 
 ```go
-eventStore := agentflow.NewInMemoryEventStore()
-eventHub := agentflow.NewEventHub()
+eventStore := adapters.NewInMemoryEventStore()
+eventHub := adapters.NewEventHub()
 
 scenario := builder.MinimalAutonomous("assistant")
-fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventStoreSink(eventStore, eventHub)),
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventStoreSink(eventStore, eventHub)),
 )
 ```
 
@@ -117,7 +117,7 @@ The constructor also creates these indexes:
 Use a custom table name when the application owns a schema prefix:
 
 ```go
-eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{
+eventStore, err := adapters.NewPostgresEventStore(ctx, adapters.PostgresEventStoreConfig{
     DB:        db,
     TableName: "agentflow.runtime_events",
 })
@@ -126,7 +126,7 @@ eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventS
 For production environments where DDL must be reviewed, run outside application startup, or coordinated for large existing tables, apply [migrations/postgres/0001_agentflow_core.up.sql](../migrations/postgres/0001_agentflow_core.up.sql) and then disable automatic schema setup:
 
 ```go
-eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{
+eventStore, err := adapters.NewPostgresEventStore(ctx, adapters.PostgresEventStoreConfig{
     DB:              db,
     SkipSchemaSetup: true,
 })
@@ -180,7 +180,7 @@ authMiddleware, err := agentflow.NewJWTMiddleware(agentflow.JWTMiddlewareConfig{
 if err != nil {
     log.Fatal(err)
 }
-dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
     Store:          eventStore,
     Hub:            eventHub,
     Framework:      fw,
@@ -196,7 +196,7 @@ Production API (when `ProductionHTTPHandlerConfig.Framework` is set):
 - `GET /v1/runs/{run_id}/checkpoints/{version}`
 - `POST /v1/runs/{run_id}/resume-from-checkpoint` with `{"version":3}`
 
-Checkpoint history requires `WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory())` (or a custom `runstate.CheckpointHistory` adapter).
+Checkpoint history requires `WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory())` (or a custom `runstate.CheckpointHistory` adapter).
 
 See [studio-roadmap.md](./studio-roadmap.md). Example: `go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7060/observability/`.
 
@@ -208,7 +208,7 @@ See [studio-roadmap.md](./studio-roadmap.md). Example: `go run ./examples/go/htt
 - Optional external trace UI:
 
 ```go
-dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
     Store:           eventStore,
     Hub:             eventHub,
     Framework:       fw,
@@ -231,13 +231,13 @@ Minimum wiring for **timeline-only** vs **full Studio**:
 
 ```go
 // Timeline + SSE only
-agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
     Store: store,
     Hub:   hub,
 })
 
 // Full Studio (graph, editor, time travel, compare, thread)
-agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
     Store:          store,
     Hub:            hub,
     Framework:      fw,

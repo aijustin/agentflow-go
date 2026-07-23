@@ -12,29 +12,31 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func TestObservabilityWrappers(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if agentflow.NewSlogEventSink(logger) == nil {
+	if adapters.NewSlogEventSink(logger) == nil {
 		t.Fatal("expected slog event sink")
 	}
-	if agentflow.NewVerboseSlogEventSink(logger) == nil {
+	if adapters.NewVerboseSlogEventSink(logger) == nil {
 		t.Fatal("expected verbose slog event sink")
 	}
-	if agentflow.NewSlogAuditSink(logger) == nil {
+	if adapters.NewSlogAuditSink(logger) == nil {
 		t.Fatal("expected slog audit sink")
 	}
-	store := agentflow.NewInMemoryEventStore()
-	hub := agentflow.NewEventHub()
-	sink := agentflow.NewEventStoreSink(store, hub)
+	store := adapters.NewInMemoryEventStore()
+	hub := adapters.NewEventHub()
+	sink := adapters.NewEventStoreSink(store, hub)
 	if sink == nil {
 		t.Fatal("expected event store sink")
 	}
-	recorder := agentflow.NewPrometheusRecorder()
-	if recorder == nil || agentflow.PrometheusMetricsHandler(recorder) == nil {
+	recorder := adapters.NewPrometheusRecorder()
+	if recorder == nil || adapters.PrometheusMetricsHandler(recorder) == nil {
 		t.Fatal("expected prometheus recorder handler")
 	}
 }
@@ -56,16 +58,16 @@ func TestObservabilityHTTPHandlerWithStudioAdapter(t *testing.T) {
 	}
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+		agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	savePath := filepath.Join(t.TempDir(), "scenario.yaml")
-	store := agentflow.NewInMemoryEventStore()
-	handler, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{InsecureAllowNoAuth: true, 
+	store := adapters.NewInMemoryEventStore()
+	handler, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{InsecureAllowNoAuth: true, 
 		Store:          store,
-		Hub:            agentflow.NewEventHub(),
+		Hub:            adapters.NewEventHub(),
 		Framework:      fw,
 		StudioSavePath: savePath,
 		TraceExploreURL: "https://trace.example/{trace_id}",

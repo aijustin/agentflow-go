@@ -14,6 +14,8 @@ import (
 
 	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	configyaml "github.com/aijustin/agentflow-go/internal/adapter/config/yaml"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/observability"
@@ -28,7 +30,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	recorder := agentflow.NewPrometheusRecorder()
+	recorder := adapters.NewPrometheusRecorder()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -36,7 +38,7 @@ func main() {
 
 	var tracer observability.Tracer
 	if os.Getenv("AGENTFLOW_OTEL_STDOUT") == "1" {
-		provider, err := agentflow.NewOpenTelemetryStdoutTracerProvider(ctx, agentflow.OpenTelemetryTracerProviderConfig{
+		provider, err := adapters.NewOpenTelemetryStdoutTracerProvider(ctx, adapters.OpenTelemetryTracerProviderConfig{
 			ServiceName:    "agentflow-http-worker",
 			ServiceVersion: agentflow.Version,
 		})
@@ -48,25 +50,25 @@ func main() {
 			defer shutdownCancel()
 			_ = provider.Shutdown(shutdownCtx)
 		}()
-		tracer = agentflow.OpenTelemetryTracerFromProvider(provider, "github.com/aijustin/agentflow-go/examples/http-worker")
+		tracer = adapters.OpenTelemetryTracerFromProvider(provider, "github.com/aijustin/agentflow-go/examples/http-worker")
 		fmt.Println("OpenTelemetry stdout tracing enabled (AGENTFLOW_OTEL_STDOUT=1)")
 	}
 
-	eventStore := agentflow.NewInMemoryEventStore()
-	eventHub := agentflow.NewEventHub()
-	eventSink := agentflow.NewObservabilityEventSink(
+	eventStore := adapters.NewInMemoryEventStore()
+	eventHub := adapters.NewEventHub()
+	eventSink := adapters.NewObservabilityEventSink(
 		recorder,
 		tracer,
-		agentflow.NewEventFanoutSink(
-			agentflow.NewEventStoreSink(eventStore, eventHub),
-			agentflow.NewSlogEventSink(logger),
+		adapters.NewEventFanoutSink(
+			adapters.NewEventStoreSink(eventStore, eventHub),
+			adapters.NewSlogEventSink(logger),
 		),
 	)
 
-	queue := agentflow.NewInMemoryJobQueue()
+	queue := adapters.NewInMemoryJobQueue()
 	opts = append(opts,
 		agentflow.WithJobQueue(queue),
-		agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+		agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()),
 		agentflow.WithHITLTokenSecret([]byte("dev-secret"), os.Stderr),
 		agentflow.WithRecorder(recorder),
 		agentflow.WithEventSink(eventSink),
@@ -93,19 +95,19 @@ func main() {
 		}
 	}
 
-	handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+	handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
 		Queue:          queue,
 		Policy:         security.NewDefaultRolePolicy(),
 		Framework:      fw,
 		Version:        agentflow.Version,
-		MetricsHandler: agentflow.PrometheusMetricsHandler(recorder),
+		MetricsHandler: adapters.PrometheusMetricsHandler(recorder),
 		StudioSavePath: studioSavePath,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+	dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
 		Store:          eventStore,
 		Hub:            eventHub,
 		Framework:      fw,

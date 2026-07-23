@@ -25,6 +25,8 @@ import (
 
 	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -43,7 +45,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	recorder := agentflow.NewPrometheusRecorder()
+	recorder := adapters.NewPrometheusRecorder()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -59,11 +61,11 @@ func main() {
 		if err := db.PingContext(ctx); err != nil {
 			log.Fatal(err)
 		}
-		repo, err := agentflow.NewPostgresRunStateRepository(db)
+		repo, err := adapters.NewPostgresRunStateRepository(db)
 		if err != nil {
 			log.Fatal(err)
 		}
-		queue, err = agentflow.NewPostgresJobQueue(db)
+		queue, err = adapters.NewPostgresJobQueue(db)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -80,7 +82,7 @@ func main() {
 		)
 		fmt.Printf("using postgres run-state, job queue, and composite tier store (cold=%s)\n", coldDir)
 	} else {
-		queue = agentflow.NewInMemoryJobQueue()
+		queue = adapters.NewInMemoryJobQueue()
 		fmt.Println("AGENT_POSTGRES_DSN not set; using in-memory queue and default in-memory tier store")
 	}
 
@@ -88,7 +90,7 @@ func main() {
 		agentflow.WithJobQueue(queue),
 		agentflow.WithHITLTokenSecret([]byte("dev-secret"), os.Stderr),
 		agentflow.WithRecorder(recorder),
-		agentflow.WithEventSink(agentflow.NewObservabilityEventSink(recorder, nil, agentflow.NewSlogEventSink(logger))),
+		agentflow.WithEventSink(adapters.NewObservabilityEventSink(recorder, nil, adapters.NewSlogEventSink(logger))),
 	)
 	if err := agentflow.ValidateWiring(scenario, opts...); err != nil {
 		log.Fatal(err)
@@ -99,12 +101,12 @@ func main() {
 	}
 	defer fw.Close(context.Background())
 
-	handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+	handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
 		Queue:          queue,
 		Policy:         security.NewDefaultRolePolicy(),
 		Framework:      fw,
 		Version:        agentflow.Version,
-		MetricsHandler: agentflow.PrometheusMetricsHandler(recorder),
+		MetricsHandler: adapters.PrometheusMetricsHandler(recorder),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -164,7 +166,7 @@ func main() {
 }
 
 func newCompositeTierStore(_ context.Context, db *sql.DB) (tier.Store, string, error) {
-	warm, err := agentflow.NewPostgresTierWarmStore(agentflow.PostgresTierWarmStoreConfig{DB: db})
+	warm, err := adapters.NewPostgresTierWarmStore(adapters.PostgresTierWarmStoreConfig{DB: db})
 	if err != nil {
 		return nil, "", err
 	}
@@ -172,8 +174,8 @@ func newCompositeTierStore(_ context.Context, db *sql.DB) (tier.Store, string, e
 	if err != nil {
 		return nil, "", err
 	}
-	store := agentflow.NewCompositeTierStore(agentflow.CompositeTierStoreConfig{
-		Hot:  agentflow.NewInMemoryTierHotStore(),
+	store := adapters.NewCompositeTierStore(adapters.CompositeTierStoreConfig{
+		Hot:  adapters.NewInMemoryTierHotStore(),
 		Warm: warm,
 		Cold: cold,
 	})
@@ -194,7 +196,7 @@ func newColdTierStore() (tier.Store, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		cold, err := agentflow.NewBlobTierColdStore(agentflow.BlobTierColdStoreConfig{
+		cold, err := adapters.NewBlobTierColdStore(adapters.BlobTierColdStoreConfig{
 			Blobs:    blobs,
 			IndexDir: indexDir,
 		})
@@ -210,7 +212,7 @@ func newColdTierStore() (tier.Store, string, error) {
 		if err := os.MkdirAll(coldDir, 0o700); err != nil {
 			return nil, "", err
 		}
-		cold, err := agentflow.NewFileTierColdStore(coldDir)
+		cold, err := adapters.NewFileTierColdStore(coldDir)
 		if err != nil {
 			return nil, "", err
 		}
@@ -220,7 +222,7 @@ func newColdTierStore() (tier.Store, string, error) {
 
 func openBlobAdmin() (runstate.BlobAdmin, string, error) {
 	if endpoint := os.Getenv("AGENT_S3_ENDPOINT"); endpoint != "" {
-		store, err := agentflow.NewS3BlobStore(agentflow.S3BlobStoreConfig{
+		store, err := adapters.NewS3BlobStore(adapters.S3BlobStoreConfig{
 			Endpoint:        endpoint,
 			Bucket:          envOr("AGENT_S3_BUCKET", "agentflow"),
 			Region:          envOr("AGENT_S3_REGION", "us-east-1"),
@@ -244,7 +246,7 @@ func openBlobAdmin() (runstate.BlobAdmin, string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, "", err
 	}
-	store, err := agentflow.NewFileBlobStore(dir)
+	store, err := adapters.NewFileBlobStore(dir)
 	if err != nil {
 		return nil, "", err
 	}

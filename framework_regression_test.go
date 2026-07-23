@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"strings"
 	"testing"
 	"time"
@@ -86,7 +87,7 @@ func (g *contextCapturingStructuredGateway) StructuredChat(_ context.Context, _ 
 }
 
 func TestFrameworkJobHandlerRunReturnsPausedError(t *testing.T) {
-	repo := agentflow.NewInMemoryRunStateRepository()
+	repo := adapters.NewInMemoryRunStateRepository()
 	fw, err := agentflow.New(
 		builder.MinimalHumanInLoop("assistant"),
 		agentflow.WithRunStateRepository(repo),
@@ -131,7 +132,7 @@ func TestFrameworkJobHandlerRunReturnsPausedError(t *testing.T) {
 }
 
 func TestAsyncWorkerPauseJob(t *testing.T) {
-	queue := agentflow.NewInMemoryJobQueue()
+	queue := adapters.NewInMemoryJobQueue()
 	job, err := queue.Enqueue(context.Background(), asyncpkg.Job{
 		ID:          "job-pause-queue",
 		Type:        asyncpkg.RunJobType,

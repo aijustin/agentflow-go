@@ -10,6 +10,7 @@ import (
 
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -63,7 +64,7 @@ func TestWebhookHTTPHandlerDispatchesEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := agentflow.NewWebhookHTTPHandler(agentflow.WebhookHTTPHandlerConfig{Framework: fw})
+	handler, err := httpx.NewWebhookHTTPHandler(httpx.WebhookHTTPHandlerConfig{Framework: fw})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,6 @@
 # SQL 工具执行器
 
-`agentflow.NewSQLToolExecutor` 将受约束的只读 SQL 查询暴露为普通的 `core.ToolExecutor`。它适合运维看板、工单元数据、报表表，以及 Agent 需要数据库上下文的其他低风险查询流程。
+`adapters.NewSQLToolExecutor` 将受约束的只读 SQL 查询暴露为普通的 `core.ToolExecutor`。它适合运维看板、工单元数据、报表表，以及 Agent 需要数据库上下文的其他低风险查询流程。
 
 ## 安全模型
 
@@ -23,7 +23,7 @@
 SQL 工具与具体数据库驱动解耦。框架接受 `*sql.DB`，不导入具体驱动，因此宿主应用负责选择驱动和 DSN。查询占位符不会被重写，请使用所选驱动期望的占位符语法。
 
 ```go
-sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
+sqlTool, err := adapters.NewSQLToolExecutor(adapters.SQLToolConfig{
   DB: db,
   AllowedQueries: map[string]string{
     "tickets.by_status": "SELECT id, title, status FROM tickets WHERE status = $1 ORDER BY created_at DESC",
@@ -53,7 +53,7 @@ if err != nil {
   log.Fatal(err)
 }
 
-sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
+sqlTool, err := adapters.NewSQLToolExecutor(adapters.SQLToolConfig{
   DB: db,
   AllowedQueries: map[string]string{
     "tickets.by_status": "SELECT `id`, `title`, `status` FROM `tickets` WHERE `status` = ? ORDER BY `created_at` DESC",
@@ -76,7 +76,7 @@ if err != nil {
   log.Fatal(err)
 }
 
-sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
+sqlTool, err := adapters.NewSQLToolExecutor(adapters.SQLToolConfig{
   DB: db,
   AllowedQueries: map[string]string{
     "events.hourly": "WITH toStartOfHour(ts) AS bucket SELECT bucket, count() AS total FROM events WHERE ts >= ? GROUP BY bucket ORDER BY bucket DESC LIMIT ?",

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/builder"
@@ -122,7 +124,7 @@ func TestFrameworkWithToolResolverResolvesToolLazily(t *testing.T) {
 		},
 	}
 	resolveCalls := 0
-	resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
+	resolver := adapters.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -156,19 +158,19 @@ func TestFrameworkWithToolResolverResolvesToolLazily(t *testing.T) {
 
 func TestProviderConstructorsExposeBuiltInGateways(t *testing.T) {
 	profile := llm.Profile{Name: "default", Provider: "openai-compatible", Model: "test"}
-	openAI := agentflow.NewOpenAICompatibleGateway([]llm.Profile{profile}, nil)
+	openAI := adapters.NewOpenAICompatibleGateway([]llm.Profile{profile}, nil)
 	if !openAI.Supports("default", llm.CapChat) || !openAI.Supports("default", llm.CapToolCall) {
 		t.Fatalf("openai-compatible gateway did not expose expected capabilities")
 	}
-	provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{{Name: "embed", Provider: "openai-compatible", Model: "test", Capabilities: []llm.Capability{llm.CapEmbed}}}, nil)
+	provider := adapters.NewOpenAICompatibleProvider([]llm.Profile{{Name: "embed", Provider: "openai-compatible", Model: "test", Capabilities: []llm.Capability{llm.CapEmbed}}}, nil)
 	if !provider.Supports("embed", llm.CapEmbed) {
 		t.Fatalf("openai-compatible provider did not expose embedding capability")
 	}
-	local := agentflow.NewLocalGateway([]llm.Profile{profile}, nil)
+	local := adapters.NewLocalGateway([]llm.Profile{profile}, nil)
 	if !local.Supports("default", llm.CapStream) {
 		t.Fatalf("local gateway should expose OpenAI-compatible streaming")
 	}
-	anthropic := agentflow.NewAnthropicGateway([]llm.Profile{profile}, nil)
+	anthropic := adapters.NewAnthropicGateway([]llm.Profile{profile}, nil)
 	if !anthropic.Supports("default", llm.CapChat) ||
 		!anthropic.Supports("default", llm.CapToolCall) ||
 		!anthropic.Supports("default", llm.CapStructuredOutput) ||
@@ -176,27 +178,27 @@ func TestProviderConstructorsExposeBuiltInGateways(t *testing.T) {
 		anthropic.Supports("default", llm.CapEmbed) {
 		t.Fatalf("anthropic gateway capability set was unexpected")
 	}
-	router := agentflow.NewLLMRouter(map[string]llm.Gateway{"default": openAI})
+	router := adapters.NewLLMRouter(map[string]llm.Gateway{"default": openAI})
 	if !router.Supports("default", llm.CapStructuredOutput) {
 		t.Fatalf("router did not expose routed structured output support")
 	}
-	providerRouter := agentflow.NewLLMProviderRouter(map[string]llm.Gateway{"embed": provider})
+	providerRouter := adapters.NewLLMProviderRouter(map[string]llm.Gateway{"embed": provider})
 	if !providerRouter.Supports("embed", llm.CapEmbed) {
 		t.Fatalf("provider router did not expose routed embedding support")
 	}
 }
 
 func TestPostgresRunStateConstructorRejectsInvalidInputs(t *testing.T) {
-	if _, err := agentflow.NewPostgresRunStateRepository(nil); err == nil {
+	if _, err := adapters.NewPostgresRunStateRepository(nil); err == nil {
 		t.Fatal("expected nil db error")
 	}
-	if _, err := agentflow.NewPostgresRunStateRepository(nil, "one", "two"); err == nil {
+	if _, err := adapters.NewPostgresRunStateRepository(nil, "one", "two"); err == nil {
 		t.Fatal("expected too many table names error")
 	}
 }
 
 func TestS3BlobStoreConstructorRejectsInvalidInputs(t *testing.T) {
-	if _, err := agentflow.NewS3BlobStore(agentflow.S3BlobStoreConfig{}); err == nil {
+	if _, err := adapters.NewS3BlobStore(adapters.S3BlobStoreConfig{}); err == nil {
 		t.Fatal("expected empty config error")
 	}
 }
@@ -208,7 +210,7 @@ func TestRedisLockerConstructorRejectsInvalidInputs(t *testing.T) {
 }
 
 func TestRedisRunStateConstructorRejectsInvalidInputs(t *testing.T) {
-	if _, err := agentflow.NewRedisRunStateRepository(agentflow.RedisRunStateRepositoryConfig{}); err == nil {
+	if _, err := adapters.NewRedisRunStateRepository(adapters.RedisRunStateRepositoryConfig{}); err == nil {
 		t.Fatal("expected empty config error")
 	}
 }
@@ -266,19 +268,19 @@ func TestFrameworkSecurityOptionsRejectInvalidInputs(t *testing.T) {
 }
 
 func TestAuditConstructorsRejectInvalidInputs(t *testing.T) {
-	if agentflow.NewNoopAuditSink() == nil {
+	if adapters.NewNoopAuditSink() == nil {
 		t.Fatal("expected noop audit sink")
 	}
-	if agentflow.NewInMemoryAuditSink(10) == nil {
+	if adapters.NewInMemoryAuditSink(10) == nil {
 		t.Fatal("expected in-memory audit sink")
 	}
-	if _, err := agentflow.NewFileAuditSink(""); err == nil {
+	if _, err := adapters.NewFileAuditSink(""); err == nil {
 		t.Fatal("expected missing file path error")
 	}
 }
 
 func TestAsyncRunHTTPHandlerConstructorRejectsInvalidInputs(t *testing.T) {
-	if _, err := agentflow.NewAsyncRunHTTPHandler(agentflow.AsyncRunHTTPHandlerConfig{}); err == nil {
+	if _, err := httpx.NewAsyncRunHTTPHandler(httpx.AsyncRunHTTPHandlerConfig{}); err == nil {
 		t.Fatal("expected missing queue error")
 	}
 }
@@ -449,13 +451,13 @@ func TestFrameworkWithToolExecutorValidation(t *testing.T) {
 }
 
 func TestFileBackedConstructors(t *testing.T) {
-	if _, err := agentflow.NewFileRunStateRepository(t.TempDir()); err != nil {
+	if _, err := adapters.NewFileRunStateRepository(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentflow.NewFileBlobStore(t.TempDir()); err != nil {
+	if _, err := adapters.NewFileBlobStore(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentflow.NewFileMemoryRepository(t.TempDir()); err != nil {
+	if _, err := adapters.NewFileMemoryRepository(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 }

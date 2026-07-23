@@ -10,11 +10,12 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func TestNewRetentionHTTPHandlerRequiresFramework(t *testing.T) {
-	if _, err := agentflow.NewRetentionHTTPHandler(agentflow.RetentionHTTPHandlerConfig{}); err == nil {
+	if _, err := httpx.NewRetentionHTTPHandler(httpx.RetentionHTTPHandlerConfig{}); err == nil {
 		t.Fatal("expected framework required error")
 	}
 }
@@ -32,7 +33,7 @@ func TestNewRetentionHTTPHandlerPurgeRuns(t *testing.T) {
 	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID, Agent: "assistant", Prompt: "hi"}); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := agentflow.NewRetentionHTTPHandler(agentflow.RetentionHTTPHandlerConfig{Framework: fw, InsecureAllowNoAuth: true})
+	handler, err := httpx.NewRetentionHTTPHandler(httpx.RetentionHTTPHandlerConfig{Framework: fw, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}

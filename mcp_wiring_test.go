@@ -7,6 +7,7 @@ import (
 
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"github.com/aijustin/agentflow-go/pkg/mcp"
 )
 
@@ -35,7 +36,7 @@ func TestMCPWiringOptionsSingleServerInfersMetadata(t *testing.T) {
 			"docs.search": {Name: "docs.search", Type: "mcp.tool", Metadata: map[string]string{"mcp_tool": "search"}},
 		},
 	}
-	opts, err := agentflow.MCPWiringOptions(context.Background(), scenario, agentflow.MCPRegistry{
+	opts, err := httpx.MCPWiringOptions(context.Background(), scenario, httpx.MCPRegistry{
 		Clients: map[string]mcp.Client{"docs": stubMCPClient{}},
 	})
 	if err != nil {
@@ -66,7 +67,7 @@ func TestWireMCPToolsDelegatesToMCPWiringOptions(t *testing.T) {
 			"docs.search": {Name: "docs.search", Type: "mcp.tool", Metadata: map[string]string{"mcp_tool": "search"}},
 		},
 	}
-	opts, err := agentflow.WireMCPTools(context.Background(), scenario, agentflow.MCPRegistry{
+	opts, err := httpx.WireMCPTools(context.Background(), scenario, httpx.MCPRegistry{
 		Clients: map[string]mcp.Client{"docs": stubMCPClient{}},
 	})
 	if err != nil || len(opts) != 1 {

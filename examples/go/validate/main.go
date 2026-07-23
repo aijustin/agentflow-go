@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 )
 
@@ -32,7 +32,7 @@ func main() {
 }
 
 func validateTool(path string) {
-	tool, err := agentflow.LoadToolManifestFile(path)
+	tool, err := adapters.LoadToolManifestFile(path)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func validateTool(path string) {
 }
 
 func validateSkill(path string) {
-	skill, err := agentflow.LoadSkillManifestFile(path)
+	skill, err := adapters.LoadSkillManifestFile(path)
 	if err != nil {
 		log.Fatal(err)
 	}

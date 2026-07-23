@@ -10,6 +10,7 @@ import (
 
 	examplescenario "github.com/aijustin/agentflow-go/examples/go/scenario"
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -32,7 +33,7 @@ func main() {
 		if err := db.Ping(); err != nil {
 			log.Fatal(err)
 		}
-		repo, err := agentflow.NewPostgresRunStateRepository(db)
+		repo, err := adapters.NewPostgresRunStateRepository(db)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -44,11 +45,11 @@ func main() {
 			log.Fatal(err)
 		}
 		defer os.RemoveAll(stateDir)
-		repo, err := agentflow.NewFileRunStateRepository(filepath.Join(stateDir, "runs"))
+		repo, err := adapters.NewFileRunStateRepository(filepath.Join(stateDir, "runs"))
 		if err != nil {
 			log.Fatal(err)
 		}
-		blobs, err := agentflow.NewFileBlobStore(filepath.Join(stateDir, "blobs"))
+		blobs, err := adapters.NewFileBlobStore(filepath.Join(stateDir, "blobs"))
 		if err != nil {
 			log.Fatal(err)
 		}

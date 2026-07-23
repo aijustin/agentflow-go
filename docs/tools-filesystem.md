@@ -1,6 +1,6 @@
 # 文件系统工具执行器
 
-`agentflow.NewFilesystemToolExecutor` 将受约束的只读文件系统访问暴露为普通的 `core.ToolExecutor`。它适合可信的本地运行手册、策略文件、已检出的文档、生成报告，以及 Agent 在工作流中可能需要查看的其他文本资产。
+`adapters.NewFilesystemToolExecutor` 将受约束的只读文件系统访问暴露为普通的 `core.ToolExecutor`。它适合可信的本地运行手册、策略文件、已检出的文档、生成报告，以及 Agent 在工作流中可能需要查看的其他文本资产。
 
 ## 安全模型
 
@@ -19,7 +19,7 @@
 ## 装配
 
 ```go
-filesystemTool, err := agentflow.NewFilesystemToolExecutor(agentflow.FilesystemToolConfig{
+filesystemTool, err := adapters.NewFilesystemToolExecutor(adapters.FilesystemToolConfig{
   AllowedRoots: []string{"/srv/agentflow/runbooks", "/srv/agentflow/reports"},
   MaxBytes:     1 << 20,
 })

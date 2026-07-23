@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/graph"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -63,7 +64,7 @@ func TestFrameworkForkAndCompareRuns(t *testing.T) {
 			},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()))
+	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +205,7 @@ func TestFrameworkRunStudioGraph(t *testing.T) {
 			},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(agentflow.NewInMemoryRunStateRepository()))
+	fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(adapters.NewInMemoryRunStateRepository()))
 	if err != nil {
 		t.Fatal(err)
 	}

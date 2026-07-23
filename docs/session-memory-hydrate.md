@@ -62,6 +62,6 @@ context:
 
 ## Production HTTP（AF-010）
 
-`agentflow.NewProductionHTTPHandler` 已提供健康检查、异步 job、HITL resume 等生产路由；详见 [async-runtime.md](./async-runtime.md)。
+`httpx.NewProductionHTTPHandler` 已提供健康检查、异步 job、HITL resume 等生产路由；详见 [async-runtime.md](./async-runtime.md)。
 
 取消与 context 贯通：`POST /v1/runs/{run_id}/cancel` / `POST /v1/jobs/{job_id}/cancel` 会取消 Worker 侧 job 上下文，正在执行的 `Framework.Run` / `HandleEvent` / `ResumeAndContinue` 收到 `context.Canceled`（见 async-runtime 文档「取消」一节）。

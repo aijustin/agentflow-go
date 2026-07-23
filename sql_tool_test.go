@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,7 @@ func TestSQLToolRootConstructor(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	executor, err := NewSQLToolExecutor(SQLToolConfig{DB: db, AllowedQueries: map[string]string{"users.list": "SELECT id FROM users"}})
+	executor, err := adapters.NewSQLToolExecutor(adapters.SQLToolConfig{DB: db, AllowedQueries: map[string]string{"users.list": "SELECT id FROM users"}})
 	if err != nil {
 		t.Fatal(err)
 	}

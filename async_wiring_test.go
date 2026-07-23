@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -16,12 +18,12 @@ import (
 )
 
 func TestTierMemoryWrappers(t *testing.T) {
-	hot := agentflow.NewInMemoryTierHotStore()
-	composite := agentflow.NewCompositeTierStore(agentflow.CompositeTierStoreConfig{Hot: hot})
+	hot := adapters.NewInMemoryTierHotStore()
+	composite := adapters.NewCompositeTierStore(adapters.CompositeTierStoreConfig{Hot: hot})
 	if composite == nil || hot == nil {
 		t.Fatal("expected tier stores")
 	}
-	summarizer := agentflow.NewLLMTierSummarizer(fakeGateway{content: "summary"}, "default")
+	summarizer := adapters.NewLLMTierSummarizer(fakeGateway{content: "summary"}, "default")
 	if summarizer == nil {
 		t.Fatal("expected summarizer")
 	}
@@ -47,7 +49,7 @@ func TestAsyncJobHandlerEventAndResume(t *testing.T) {
 	if err := handler.HandleJob(ctx, asyncpkg.Job{Type: asyncpkg.RunJobType, Payload: runPayload}); err != nil {
 		t.Fatal(err)
 	}
-	if agentflow.NewInMemoryJobQueue() == nil {
+	if adapters.NewInMemoryJobQueue() == nil {
 		t.Fatal("expected in-memory job queue")
 	}
 }
@@ -62,10 +64,10 @@ func TestWebhookAndHumanHTTPHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentflow.NewWebhookHTTPHandler(agentflow.WebhookHTTPHandlerConfig{Framework: fw}); err != nil {
+	if _, err := httpx.NewWebhookHTTPHandler(httpx.WebhookHTTPHandlerConfig{Framework: fw}); err != nil {
 		t.Fatal(err)
 	}
-	if agentflow.NewHumanHTTPHandler(agentflow.HumanHTTPHandlerConfig{Framework: fw}) == nil {
+	if httpx.NewHumanHTTPHandler(httpx.HumanHTTPHandlerConfig{Framework: fw}) == nil {
 		t.Fatal("expected human handler")
 	}
 }
@@ -138,7 +140,7 @@ func TestHumanHTTPHandlerResumeWithoutContinue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := agentflow.NewHumanHTTPHandler(agentflow.HumanHTTPHandlerConfig{Framework: fw})
+	handler := httpx.NewHumanHTTPHandler(httpx.HumanHTTPHandlerConfig{Framework: fw})
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"token":"` + result.Token + `","decision":"approve"}`)
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/resume", body))
@@ -163,7 +165,7 @@ func TestWebhookHTTPHandlerAcceptsEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := agentflow.NewWebhookHTTPHandler(agentflow.WebhookHTTPHandlerConfig{Framework: fw})
+	handler, err := httpx.NewWebhookHTTPHandler(httpx.WebhookHTTPHandlerConfig{Framework: fw})
 	if err != nil {
 		t.Fatal(err)
 	}

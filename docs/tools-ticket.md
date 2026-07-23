@@ -1,11 +1,11 @@
 # Ticket 工具执行器
 
-`agentflow.NewTicketToolExecutor` 将工单读写操作暴露为普通的 `core.ToolExecutor`。它适合客服分派、工单摘要和人工审批前上下文收集等场景。
+`adapters.NewTicketToolExecutor` 将工单读写操作暴露为普通的 `core.ToolExecutor`。它适合客服分派、工单摘要和人工审批前上下文收集等场景。
 
 ## 安全模型
 
 - 宿主应用必须提供 `TicketStore` 实现。
-- 演示和测试可使用 `agentflow.NewMemoryTicketStore`。
+- 演示和测试可使用 `adapters.NewMemoryTicketStore`。
 - 生产环境应接入真实工单系统 adapter，并在 store 层 enforce 租户隔离和 RBAC。
 
 Ticket 工具不会自动连接外部 SaaS；store 由宿主应用注入。
@@ -15,11 +15,11 @@ Ticket 工具不会自动连接外部 SaaS；store 由宿主应用注入。
 场景 YAML 中声明 `type: builtin.ticket`，宿主应用通过 `WithToolExecutor` 绑定 executor。
 
 ```go
-store := agentflow.NewMemoryTicketStore(map[string]agentflow.Ticket{
+store := adapters.NewMemoryTicketStore(map[string]adapters.Ticket{
   "T-9": {ID: "T-9", Title: "Login issue", Status: "open"},
 })
 
-ticketTool, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{
+ticketTool, err := adapters.NewTicketToolExecutor(adapters.TicketToolConfig{
   Store: store,
 })
 if err != nil {

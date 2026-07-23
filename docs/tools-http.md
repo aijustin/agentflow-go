@@ -1,6 +1,6 @@
 # HTTP 工具执行器
 
-`agentflow.NewHTTPToolExecutor` 将受约束的 HTTP 客户端暴露为普通的 `core.ToolExecutor`。它适合只读集成，例如内部状态 API、文档网关和服务元数据端点。
+`adapters.NewHTTPToolExecutor` 将受约束的 HTTP 客户端暴露为普通的 `core.ToolExecutor`。它适合只读集成，例如内部状态 API、文档网关和服务元数据端点。
 
 ## 安全模型
 
@@ -17,7 +17,7 @@
 ## 装配
 
 ```go
-httpTool, err := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{
+httpTool, err := adapters.NewHTTPToolExecutor(adapters.HTTPToolConfig{
   AllowedHosts:     []string{"https://status.example.internal"},
   AllowedMethods:   []string{"GET", "HEAD"},
   DefaultHeaders:   map[string]string{"Accept": "application/json"},

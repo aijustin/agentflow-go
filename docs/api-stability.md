@@ -31,6 +31,15 @@
 
 框架避免通过根模块强行引入具体基础设施依赖。宿主应用负责提供自己的数据库驱动、对象存储凭证、HTTP 客户端、LLM gateway 和企业集成，然后通过稳定接口或根门面的配置传入 agentflow-go。
 
+### v0.3 适配器迁移
+
+v0.3 把根包的便利构造器层整体外迁（BREAKING，迁移表见 CHANGELOG）：
+
+- **`pkg/adapters`**：具体适配器构造器（run-state/blob/memory 存储、job 队列、LLM providers、catalog manifests、knowledge、MCP、工具执行器、分层记忆、observability sinks/stores）。该包**不依赖根包**，仅需这些构造器的应用可以单独依赖它。
+- **`pkg/httpx`**：HTTP 适配器构造器（checkpoint、retention、studio、webhook/human-gate、async jobs、生产组合、observability dashboard）与返回 `[]agentflow.Option` 的 knowledge/MCP 接线函数；其配置引用根包 `Framework`/`Option`，因此允许依赖根包。
+- **`pkg/testutil`**：mock LLM gateway（`NewMockLLMGateway`）与既有测试接线。
+- 根包不再保留任何转发壳/别名。`ProductionHTTPHandlerConfig`/`NewProductionHTTPHandler` 因组合引用其他 HTTP 构造器且根包不能反向依赖 httpx，随迁 `pkg/httpx`；`ValidateWiring`/`WiringOptions`/`WithRequireLLM` 与根 `options` 机器不可分，保留在根包。
+
 ## 测试辅助
 
 `pkg/testutil` 提供 mock LLM 与 demo 工具接线（`WiringOptions`），仅用于测试和 `examples/`，不属于生产稳定面。

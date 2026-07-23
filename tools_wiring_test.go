@@ -3,17 +3,17 @@ package agentflow_test
 import (
 	"testing"
 
-	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 )
 
 func TestTicketToolWrappers(t *testing.T) {
-	store := agentflow.NewMemoryTicketStore(map[string]agentflow.Ticket{
+	store := adapters.NewMemoryTicketStore(map[string]adapters.Ticket{
 		"T-1": {ID: "T-1", Title: "issue"},
 	})
 	if store == nil {
 		t.Fatal("expected ticket store")
 	}
-	executor, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{Store: store})
+	executor, err := adapters.NewTicketToolExecutor(adapters.TicketToolConfig{Store: store})
 	if err != nil {
 		t.Fatal(err)
 	}

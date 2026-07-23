@@ -2,6 +2,7 @@ package agentflow_test
 
 import (
 	"context"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"testing"
 
 	"github.com/aijustin/agentflow-go"
@@ -43,7 +44,7 @@ func TestKnowledgeWiringOptionsBindsCollection(t *testing.T) {
 			"knowledge.retrieve": {Name: "knowledge.retrieve", Type: "knowledge.retriever"},
 		},
 	}
-	opts, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+	opts, err := httpx.KnowledgeWiringOptions(scenario, httpx.KnowledgeRegistry{
 		Embedder: stubEmbedder{},
 		Store:    stubVectorStore{},
 	})
@@ -65,7 +66,7 @@ func TestKnowledgeWiringOptionsRejectsMissingRegistry(t *testing.T) {
 			Collections: []core.KnowledgeCollection{{Name: "docs", Namespace: "docs"}},
 		},
 	}
-	if _, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{}); err == nil {
+	if _, err := httpx.KnowledgeWiringOptions(scenario, httpx.KnowledgeRegistry{}); err == nil {
 		t.Fatal("expected embedder/store required error")
 	}
 }
@@ -82,7 +83,7 @@ func TestKnowledgeWiringOptionsRejectsMissingTool(t *testing.T) {
 			}},
 		},
 	}
-	_, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+	_, err := httpx.KnowledgeWiringOptions(scenario, httpx.KnowledgeRegistry{
 		Embedder: stubEmbedder{},
 		Store:    stubVectorStore{},
 	})
@@ -107,7 +108,7 @@ func TestKnowledgeWiringOptionsHybridSearchMode(t *testing.T) {
 			"knowledge.retrieve": {Name: "knowledge.retrieve", Type: "knowledge.retriever"},
 		},
 	}
-	opts, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+	opts, err := httpx.KnowledgeWiringOptions(scenario, httpx.KnowledgeRegistry{
 		Embedder: stubEmbedder{},
 		Store:    stubVectorStore{},
 	})
@@ -134,7 +135,7 @@ func TestKnowledgeWiringOptionsDefaultToolName(t *testing.T) {
 			"knowledge.docs": {Name: "knowledge.docs", Type: "knowledge.retriever"},
 		},
 	}
-	opts, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+	opts, err := httpx.KnowledgeWiringOptions(scenario, httpx.KnowledgeRegistry{
 		Embedder: stubEmbedder{},
 		Store:    stubVectorStore{},
 	})
@@ -156,7 +157,7 @@ func TestMCPWiringOptionsRequiresMetadata(t *testing.T) {
 			"docs.search": {Name: "docs.search", Type: "mcp.tool"},
 		},
 	}
-	_, err := agentflow.MCPWiringOptions(context.Background(), scenario, agentflow.MCPRegistry{})
+	_, err := httpx.MCPWiringOptions(context.Background(), scenario, httpx.MCPRegistry{})
 	if err == nil {
 		t.Fatal("expected metadata error")
 	}

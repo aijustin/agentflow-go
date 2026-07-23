@@ -7,6 +7,7 @@ import (
 	"time"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
 	"github.com/aijustin/agentflow-go/pkg/builder"
@@ -233,7 +234,7 @@ func TestFrameworkMemoryAndTierOptions(t *testing.T) {
 		agentflow.WithLLMGateway(fakeGateway{content: "ok"}),
 		agentflow.WithToolExecutor("echo", noopTool{}),
 		agentflow.WithCognitiveMemory("session", cog),
-		agentflow.WithTierColdSummarizer("session", agentflow.NewLLMTierSummarizer(fakeGateway{content: "summary"}, "default")),
+		agentflow.WithTierColdSummarizer("session", adapters.NewLLMTierSummarizer(fakeGateway{content: "summary"}, "default")),
 	)
 	if err != nil {
 		t.Fatal(err)

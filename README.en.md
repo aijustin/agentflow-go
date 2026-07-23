@@ -176,7 +176,7 @@ fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(myLLMGateway),
 Built-in provider constructors are exposed from the root package for common LLM wiring:
 
 ```go
-gateway := agentflow.NewOpenAICompatibleGateway([]llm.Profile{{
+gateway := adapters.NewOpenAICompatibleGateway([]llm.Profile{{
   Name:      "default",
   Provider:  "openai-compatible",
   Model:     "qwen/qwen3.6-35b-a3b",
@@ -191,7 +191,7 @@ fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(gateway))
 For OpenAI-compatible chat plus embeddings, use `NewOpenAICompatibleProvider` and declare profile capabilities explicitly:
 
 ```go
-provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
+provider := adapters.NewOpenAICompatibleProvider([]llm.Profile{
   {Name: "chat", Provider: "openai-compatible", Model: "qwen/qwen3.6-35b-a3b", Endpoint: "http://127.0.0.1:1234/v1"},
   {Name: "embed", Provider: "openai-compatible", Model: "text-embedding-3-small", Endpoint: "http://127.0.0.1:1234/v1", Capabilities: []llm.Capability{llm.CapEmbed}},
 }, nil)
@@ -200,10 +200,10 @@ provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
 For mixed-provider applications, `NewLLMProviderRouter` routes chat/tool/structured/stream and embedding calls by profile name. Capabilities are explicit: unsupported features fail clearly instead of being silently emulated.
 
 ```go
-openaiProvider := agentflow.NewOpenAICompatibleProvider(openaiProfiles, nil)
-anthropicGateway := agentflow.NewAnthropicGateway(anthropicProfiles, nil)
+openaiProvider := adapters.NewOpenAICompatibleProvider(openaiProfiles, nil)
+anthropicGateway := adapters.NewAnthropicGateway(anthropicProfiles, nil)
 
-provider := agentflow.NewLLMProviderRouter(map[string]llm.Gateway{
+provider := adapters.NewLLMProviderRouter(map[string]llm.Gateway{
   "chat":  anthropicGateway,
   "embed": openaiProvider,
 })
@@ -273,9 +273,9 @@ if result.Token != "" {
 Use file-backed persistence when runs must survive process restarts:
 
 ```go
-runs, _ := agentflow.NewFileRunStateRepository("./data/runs")
-blobs, _ := agentflow.NewFileBlobStore("./data/blobs")
-memoryRepo, _ := agentflow.NewFileMemoryRepository("./data/memory")
+runs, _ := adapters.NewFileRunStateRepository("./data/runs")
+blobs, _ := adapters.NewFileBlobStore("./data/blobs")
+memoryRepo, _ := adapters.NewFileMemoryRepository("./data/memory")
 
 scenario := builder.MinimalAutonomous("assistant")
 fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(runs),
@@ -291,7 +291,7 @@ db, err := sql.Open("pgx", os.Getenv("AGENTFLOW_POSTGRES_DSN"))
 if err != nil {
   log.Fatal(err)
 }
-runs, err := agentflow.NewPostgresRunStateRepository(db)
+runs, err := adapters.NewPostgresRunStateRepository(db)
 if err != nil {
   log.Fatal(err)
 }
@@ -306,7 +306,7 @@ See [docs/persistence/postgres-runstate.md](docs/persistence/postgres-runstate.m
 Redis-backed run state is also available when you want low-latency CAS snapshots without a SQL database:
 
 ```go
-runs, err := agentflow.NewRedisRunStateRepository(agentflow.RedisRunStateRepositoryConfig{
+runs, err := adapters.NewRedisRunStateRepository(adapters.RedisRunStateRepositoryConfig{
   Addr:      os.Getenv("AGENTFLOW_REDIS_ADDR"),
   Password:  os.Getenv("AGENTFLOW_REDIS_PASSWORD"),
   KeyPrefix: "agentflow:runstate:",
@@ -321,7 +321,7 @@ See [docs/persistence/redis-runstate.md](docs/persistence/redis-runstate.md) for
 For asynchronous production execution, use a queue plus workers. The PostgreSQL queue adapter uses `database/sql` and does not force a driver dependency:
 
 ```go
-queue, err := agentflow.NewPostgresJobQueue(db)
+queue, err := adapters.NewPostgresJobQueue(db)
 if err != nil {
   log.Fatal(err)
 }
@@ -340,16 +340,16 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`agentflow.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, async run/event/resume job APIs, and—when `Framework` is set—sync `/v1/events` and `/v1/hitl/resume`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
+`httpx.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, async run/event/resume job APIs, and—when `Framework` is set—sync `/v1/events` and `/v1/hitl/resume`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
 
 MCP servers can be adapted into regular governed tools without changing the runtime core:
 
 ```go
-mcpClient, err := agentflow.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
+mcpClient, err := adapters.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
 if err != nil {
   log.Fatal(err)
 }
-searchTool, err := agentflow.NewMCPToolExecutor(mcpClient, "search")
+searchTool, err := adapters.NewMCPToolExecutor(mcpClient, "search")
 if err != nil {
   log.Fatal(err)
 }
@@ -363,7 +363,7 @@ See [docs/mcp-tools.md](docs/mcp-tools.md) for the adapter model and security no
 Heavy or tenant-scoped tools do not need to be constructed during framework startup. Declare their manifest in `scenario.tools`, then resolve the executor only after the runtime has checked the agent allowlist, approval policy, RBAC, governance policy, and rate caps:
 
 ```go
-resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
+resolver := adapters.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
   switch tool.Type {
   case "builtin.sql":
     return newTenantSQLTool(ctx, tool.Metadata)
@@ -384,7 +384,7 @@ fw, err := agentflow.New(scenario, agentflow.WithToolResolver(resolver),
 For read-only internal API calls, register the constrained HTTP tool executor:
 
 ```go
-httpTool, err := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{
+httpTool, err := adapters.NewHTTPToolExecutor(adapters.HTTPToolConfig{
   AllowedHosts: []string{"https://status.example.internal"},
 })
 if err != nil {
@@ -400,7 +400,7 @@ The executor requires an explicit host allowlist and defaults to `GET`/`HEAD`. S
 For local runbooks and checked-out documentation, register the constrained filesystem read tool executor:
 
 ```go
-filesystemTool, err := agentflow.NewFilesystemToolExecutor(agentflow.FilesystemToolConfig{
+filesystemTool, err := adapters.NewFilesystemToolExecutor(adapters.FilesystemToolConfig{
   AllowedRoots: []string{"/srv/agentflow/runbooks"},
 })
 if err != nil {
@@ -416,7 +416,7 @@ The executor requires explicit root allowlists, rejects traversal and symlink es
 For database-backed lookups, register the constrained SQL query tool executor with named allowlisted queries:
 
 ```go
-sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
+sqlTool, err := adapters.NewSQLToolExecutor(adapters.SQLToolConfig{
   DB: db,
   AllowedQueries: map[string]string{
     "tickets.open": "SELECT id, title, status FROM tickets WHERE status = $1",
@@ -438,7 +438,7 @@ The SQL tool accepts any `database/sql` driver, including PostgreSQL, MySQL, and
 For code review pipelines, register the read-only Git tool executor:
 
 ```go
-gitTool, err := agentflow.NewGitToolExecutor(agentflow.GitToolConfig{
+gitTool, err := adapters.NewGitToolExecutor(adapters.GitToolConfig{
   AllowedRoots: []string{"/workspace/repos"},
 })
 if err != nil {
@@ -454,10 +454,10 @@ See [docs/tools-git.md](docs/tools-git.md). Tool executors must be registered ex
 For support-ticket workflows, register the ticket tool with a store adapter:
 
 ```go
-store := agentflow.NewMemoryTicketStore(map[string]agentflow.Ticket{
+store := adapters.NewMemoryTicketStore(map[string]adapters.Ticket{
   "T-9": {ID: "T-9", Title: "Login issue", Status: "open"},
 })
-ticketTool, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{Store: store})
+ticketTool, err := adapters.NewTicketToolExecutor(adapters.TicketToolConfig{Store: store})
 if err != nil {
   log.Fatal(err)
 }
@@ -471,11 +471,11 @@ See [docs/tools-ticket.md](docs/tools-ticket.md).
 For RAG workloads, combine an embedder, vector store, and retriever tool:
 
 ```go
-store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{DB: db})
+store, err := adapters.NewPostgresVectorStore(adapters.PostgresVectorStoreConfig{DB: db})
 if err != nil {
   log.Fatal(err)
 }
-retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
+retriever, err := adapters.NewRetrieverTool(adapters.RetrieverToolConfig{
   Embedder:     provider,
   Store:        store,
   Profile:      "embed",
@@ -498,7 +498,7 @@ Apply PostgreSQL schema from [migrations/postgres](migrations/postgres) with you
 For S3-compatible blob storage, configure the blob store separately from run state:
 
 ```go
-blobs, err := agentflow.NewS3BlobStore(agentflow.S3BlobStoreConfig{
+blobs, err := adapters.NewS3BlobStore(adapters.S3BlobStoreConfig{
   Endpoint:        os.Getenv("AGENTFLOW_S3_ENDPOINT"),
   Bucket:          os.Getenv("AGENTFLOW_S3_BUCKET"),
   Region:          os.Getenv("AGENTFLOW_S3_REGION"),
@@ -521,8 +521,8 @@ Enterprise observability and governance hooks are optional and dependency-light:
 
 ```go
 scenario := builder.MinimalAutonomous("assistant")
-fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewSlogEventSink(logger)),
-  agentflow.WithAuditSink(agentflow.NewSlogAuditSink(logger)),
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewSlogEventSink(logger)),
+  agentflow.WithAuditSink(adapters.NewSlogAuditSink(logger)),
   agentflow.WithToolGovernancePolicy(governance.ChainToolPolicies(
     governance.NewToolBudgetPolicy(8),
     governance.NewMaxSideEffectPolicy(core.SideEffectRead),
@@ -536,20 +536,20 @@ Governance policies run before tool execution, and output redaction is applied b
 AgentFlow also ships a runtime observability dashboard for live sessions and event detail drill-downs. The PostgreSQL event store creates its table and indexes automatically by default, so enabling the panel only requires wiring an event sink and mounting the handler:
 
 ```go
-eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{DB: db})
+eventStore, err := adapters.NewPostgresEventStore(ctx, adapters.PostgresEventStoreConfig{DB: db})
 if err != nil {
   log.Fatal(err)
 }
-eventHub := agentflow.NewEventHub()
+eventHub := adapters.NewEventHub()
 
 scenario := builder.MinimalAutonomous("assistant")
-fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFanoutSink(
-    agentflow.NewEventStoreSink(eventStore, eventHub),
-    agentflow.NewSlogEventSink(logger),
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventFanoutSink(
+    adapters.NewEventStoreSink(eventStore, eventHub),
+    adapters.NewSlogEventSink(logger),
   )),
 )
 
-dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
   Store: eventStore,
   Hub:   eventHub,
 })
@@ -658,6 +658,8 @@ Public packages:
 | Package | Purpose |
 | --- | --- |
 | root package | Framework facade: validate, run, resume, handle events, Studio interchange, and wire options. |
+| `pkg/adapters` | Concrete adapter constructors (run-state/blob/memory stores, job queues, LLM providers, knowledge, MCP, tool executors, tiered memory, observability); never imports the root facade. |
+| `pkg/httpx` | HTTP adapter constructors (checkpoint, retention, studio, webhook/HITL, async jobs, production composition, observability dashboard) and knowledge/MCP wiring. |
 | `pkg/async` | Job queue, lease, handler, and worker contracts for asynchronous execution. |
 | `pkg/eventrouter` | External event types and trigger-to-run routing for `scenario.triggers`. |
 | `pkg/audit` | Audit event model and sink contract for compliance records. |
@@ -727,7 +729,7 @@ See [docs/persistence/redis-locker.md](docs/persistence/redis-locker.md) for lea
 Example: run jobs through the async worker foundation.
 
 ```go
-queue := agentflow.NewInMemoryJobQueue()
+queue := adapters.NewInMemoryJobQueue()
 worker, err := async.NewWorker(
   queue,
   async.HandlerFunc(func(ctx context.Context, job async.Job) error {
@@ -745,8 +747,8 @@ See [docs/async-runtime.md](docs/async-runtime.md) for queue states, worker beha
 Example: expose async run/event/resume job endpoints.
 
 ```go
-queue := agentflow.NewInMemoryJobQueue()
-handler, err := agentflow.NewAsyncRunHTTPHandler(agentflow.AsyncRunHTTPHandlerConfig{
+queue := adapters.NewInMemoryJobQueue()
+handler, err := httpx.NewAsyncRunHTTPHandler(httpx.AsyncRunHTTPHandlerConfig{
   Queue:  queue,
   Policy: security.NewDefaultRolePolicy(),
   Audit:  auditSink,
@@ -760,7 +762,7 @@ http.Handle("/v1/", middleware(handler))
 Production handler with optional sync event/HITL routes:
 
 ```go
-api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+api, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
   Queue:     queue,
   Framework: fw,
   Policy:    security.NewDefaultRolePolicy(),
@@ -845,7 +847,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{RunID: "run-1", Agent: "assistan
 Example: record audit events to an append-only JSONL file.
 
 ```go
-auditSink, err := agentflow.NewFileAuditSink("./data/audit/events.jsonl")
+auditSink, err := adapters.NewFileAuditSink("./data/audit/events.jsonl")
 if err != nil {
   log.Fatal(err)
 }

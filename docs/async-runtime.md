@@ -6,12 +6,12 @@
 
 - `pkg/async` 中的公共任务、租约、队列、Handler 和 Worker 契约。
 - 用于测试和本地开发的内存队列适配器。
-- 用于生产 Worker 的 PostgreSQL 队列适配器，通过 `agentflow.NewPostgresJobQueue` 暴露。
+- 用于生产 Worker 的 PostgreSQL 队列适配器，通过 `adapters.NewPostgresJobQueue` 暴露。
 - Worker 循环支持有界并发、上下文取消、轮询、任务超时、租约完成和失败上报。
-- 本地队列根构造函数：`agentflow.NewInMemoryJobQueue()`。
-- 异步 run / event / resume.continue submit/status/cancel 的根 HTTP handler：`agentflow.NewAsyncRunHTTPHandler(...)`。
+- 本地队列根构造函数：`adapters.NewInMemoryJobQueue()`。
+- 异步 run / event / resume.continue submit/status/cancel 的根 HTTP handler：`httpx.NewAsyncRunHTTPHandler(...)`。
 - 框架 Worker Handler：`agentflow.NewFrameworkJobHandler(...)`。
-- 带健康检查、异步 API，以及可选同步事件/HITL 路由的生产 HTTP Handler：`agentflow.NewProductionHTTPHandler(...)`。
+- 带健康检查、异步 API，以及可选同步事件/HITL 路由的生产 HTTP Handler：`httpx.NewProductionHTTPHandler(...)`。
 
 ## 任务类型
 
@@ -48,7 +48,7 @@ queued/running -> cancelled
 ## Worker 使用方式
 
 ```go
-queue, err := agentflow.NewPostgresJobQueue(db)
+queue, err := adapters.NewPostgresJobQueue(db)
 if err != nil {
     log.Fatal(err)
 }
@@ -91,10 +91,10 @@ if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 ## HTTP 提交/状态/取消用法
 
 ```go
-queue := agentflow.NewInMemoryJobQueue()
-auditSink := agentflow.NewInMemoryAuditSink(1000)
+queue := adapters.NewInMemoryJobQueue()
+auditSink := adapters.NewInMemoryAuditSink(1000)
 
-handler, err := agentflow.NewAsyncRunHTTPHandler(agentflow.AsyncRunHTTPHandlerConfig{
+handler, err := httpx.NewAsyncRunHTTPHandler(httpx.AsyncRunHTTPHandlerConfig{
     Queue:  queue,
     Policy: security.NewDefaultRolePolicy(),
     Audit:  auditSink,
@@ -175,7 +175,7 @@ if err != nil {
     log.Fatal(err)
 }
 
-api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+api, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
     Queue:          queue,
     Framework:      fw,
     AuthMiddleware: apiKeyMiddleware,
@@ -236,8 +236,8 @@ http.ListenAndServe(":7070", api)
 也可单独构造同步 Handler：
 
 ```go
-events, _ := agentflow.NewWebhookHTTPHandler(agentflow.WebhookHTTPHandlerConfig{Framework: fw})
-hitl := agentflow.NewHumanHTTPHandler(agentflow.HumanHTTPHandlerConfig{Framework: fw})
+events, _ := httpx.NewWebhookHTTPHandler(httpx.WebhookHTTPHandlerConfig{Framework: fw})
+hitl := httpx.NewHumanHTTPHandler(httpx.HumanHTTPHandlerConfig{Framework: fw})
 ```
 
 ## 示例等价操作

@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	blobinmem "github.com/aijustin/agentflow-go/internal/adapter/blob/inmem"
@@ -27,6 +28,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -1164,4 +1166,184 @@ func withScenarioTimeout(ctx context.Context, timeout time.Duration) (context.Co
 // 128-bit generator instead of carrying private 64-bit copies.
 func generateRunID() string {
 	return runstate.GenerateRunID()
+}
+
+// --- Emit Failure Logging ---
+
+// emitWarnGate prevents recursive Warn if the logger itself emits events.
+var emitWarnGate atomic.Bool
+
+func warnEmitFailure(logger log.Logger, ctx context.Context, runID string, err error) {
+	if logger == nil || err == nil {
+		return
+	}
+	if !emitWarnGate.CompareAndSwap(false, true) {
+		return
+	}
+	defer emitWarnGate.Store(false)
+	logger.Warn(ctx, "agentflow: event emit failed", "run_id", runID, "error", err)
+}
+
+// errorEmitFailure reports a lifecycle event that could not be delivered even
+// after the bounded retries. Unlike warnEmitFailure it logs at error level:
+// losing RunCompleted/RunPaused/RunFailed/RunCancelled corrupts downstream
+// state tracking and must page an operator.
+func errorEmitFailure(logger log.Logger, ctx context.Context, runID string, typ core.EventType, err error) {
+	if logger == nil || err == nil {
+		return
+	}
+	if !emitWarnGate.CompareAndSwap(false, true) {
+		return
+	}
+	defer emitWarnGate.Store(false)
+	logger.Error(ctx, "agentflow: lifecycle event emit failed after retries", "run_id", runID, "event_type", string(typ), "error", err)
+}
+
+// --- Async Job Handler ---
+
+type FrameworkRunJobHandlerConfig struct {
+	Framework *Framework
+}
+
+type frameworkJobHandler struct {
+	framework *Framework
+}
+
+func NewFrameworkJobHandler(config FrameworkRunJobHandlerConfig) (async.Handler, error) {
+	if config.Framework == nil {
+		return nil, fmt.Errorf("agentflow: framework is nil")
+	}
+	return &frameworkJobHandler{framework: config.Framework}, nil
+}
+
+func (handler *frameworkJobHandler) HandleJob(ctx context.Context, job async.Job) error {
+	switch job.Type {
+	case async.RunJobType:
+		return handler.handleRun(ctx, job)
+	case async.EventJobType:
+		return handler.handleEvent(ctx, job)
+	case async.ResumeContinueJobType:
+		return handler.handleResumeContinue(ctx, job)
+	case async.MemoryReconcileJobType:
+		return handler.handleMemoryReconcile(ctx, job)
+	default:
+		return fmt.Errorf("agentflow: unsupported async job type %q", job.Type)
+	}
+}
+
+func (handler *frameworkJobHandler) handleRun(ctx context.Context, job async.Job) error {
+	var payload async.RunPayload
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("agentflow: decode run job payload: %w", err)
+		}
+	}
+	if payload.RunID == "" {
+		payload.RunID = job.RunID
+	}
+	if payload.RunID == "" {
+		payload.RunID = job.ID
+	}
+	ctx, err := withJobPrincipal(ctx, payload.Principal)
+	if err != nil {
+		return err
+	}
+	// A redelivered run job for a run that already Failed cannot re-run from
+	// scratch (Run rejects it with ErrRunFailed, so every queue retry would
+	// fail identically until dead-letter). Re-enter through RetryFailedRun,
+	// which resumes from the persisted checkpoint instead.
+	if snapshot, loadErr := runstate.LoadAuthorized(ctx, handler.framework.runs, payload.RunID); loadErr == nil &&
+		snapshot.Status == runstate.RunStatusFailed {
+		result, err := handler.framework.RetryFailedRun(ctx, payload.RunID)
+		if err != nil {
+			return err
+		}
+		if result.Status == runstate.RunStatusPaused {
+			return async.RunPausedError{RunID: result.RunID, Token: result.Token}
+		}
+		return nil
+	}
+	result, err := handler.framework.Run(ctx, RunRequest{
+		RunID:   payload.RunID,
+		Agent:   payload.Agent,
+		Prompt:  payload.Prompt,
+		Context: payload.Context,
+	})
+	if err != nil {
+		return err
+	}
+	if result.Status == runstate.RunStatusPaused {
+		return async.RunPausedError{RunID: result.RunID, Token: result.Token}
+	}
+	return nil
+}
+
+func (handler *frameworkJobHandler) handleEvent(ctx context.Context, job async.Job) error {
+	var payload async.EventPayload
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("agentflow: decode event job payload: %w", err)
+		}
+	}
+	ctx, err := withJobPrincipal(ctx, payload.Principal)
+	if err != nil {
+		return err
+	}
+	result, err := handler.framework.HandleEvent(ctx, payload.Event())
+	if err != nil {
+		return err
+	}
+	if result.Status == runstate.RunStatusPaused {
+		return async.RunPausedError{RunID: result.RunID, Token: result.Token}
+	}
+	return nil
+}
+
+func (handler *frameworkJobHandler) handleResumeContinue(ctx context.Context, job async.Job) error {
+	var payload async.ResumeContinuePayload
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("agentflow: decode resume.continue job payload: %w", err)
+		}
+	}
+	if payload.Token == "" || !payload.Decision.Valid() {
+		return fmt.Errorf("agentflow: resume.continue job requires token and valid decision")
+	}
+	ctx, err := withJobPrincipal(ctx, payload.Principal)
+	if err != nil {
+		return err
+	}
+	_, err = handler.framework.ResumeAndContinue(ctx, payload.Token, payload.Decision, payload.Amendment)
+	return err
+}
+
+func (handler *frameworkJobHandler) handleMemoryReconcile(ctx context.Context, job async.Job) error {
+	var payload async.MemoryReconcilePayload
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("agentflow: decode memory.reconcile job payload: %w", err)
+		}
+	}
+	if payload.MemoryName == "" || payload.Agent == "" {
+		return fmt.Errorf("agentflow: memory.reconcile job requires memory_name and agent")
+	}
+	ctx, err := withJobPrincipal(ctx, payload.Principal)
+	if err != nil {
+		return err
+	}
+	runID := payload.RunID
+	if runID == "" {
+		runID = job.RunID
+	}
+	return handler.framework.engine.ReconcileTierMemory(ctx, runID, payload.MemoryName, payload.Agent)
+}
+
+func withJobPrincipal(ctx context.Context, principal identity.Principal) (context.Context, error) {
+	if principal.ID == "" && principal.Type == "" && principal.Scope.TenantID == "" {
+		return ctx, nil
+	}
+	if err := principal.Validate(); err != nil {
+		return ctx, fmt.Errorf("agentflow: invalid async job principal: %w", err)
+	}
+	return identity.WithPrincipal(ctx, principal), nil
 }

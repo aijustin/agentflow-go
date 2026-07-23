@@ -13,7 +13,7 @@ MCP server -> MCP client adapter -> core.ToolExecutor -> AgentFlow runtime
 当 MCP server 通过 HTTP JSON-RPC 端点暴露时，使用 `NewMCPHTTPClient`：
 
 ```go
-mcpClient, err := agentflow.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
+mcpClient, err := adapters.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
 if err != nil {
   log.Fatal(err)
 }
@@ -26,7 +26,7 @@ if err != nil {
 当 MCP server 以本地子进程方式运行时，使用 `NewMCPStdioClient`：
 
 ```go
-mcpClient, err := agentflow.NewMCPStdioClient(ctx, agentflow.MCPStdioClientConfig{
+mcpClient, err := adapters.NewMCPStdioClient(ctx, adapters.MCPStdioClientConfig{
   Command: "node",
   Args:    []string{"./mcp-server.js"},
   Env:     []string{"MCP_MODE=stdio"},
@@ -45,7 +45,7 @@ Stdio 客户端同样支持 `tools/list` 和 `tools/call`，并通过 `exec.Comm
 将一个 MCP server 工具包装为普通 AgentFlow `core.ToolExecutor`：
 
 ```go
-searchTool, err := agentflow.NewMCPToolExecutor(mcpClient, "search")
+searchTool, err := adapters.NewMCPToolExecutor(mcpClient, "search")
 if err != nil {
   log.Fatal(err)
 }

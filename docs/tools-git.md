@@ -1,6 +1,6 @@
 # Git 工具执行器
 
-`agentflow.NewGitToolExecutor` 将受约束的只读 Git 命令暴露为普通的 `core.ToolExecutor`。它适合代码审查流水线、变更摘要和仓库状态检查等场景。
+`adapters.NewGitToolExecutor` 将受约束的只读 Git 命令暴露为普通的 `core.ToolExecutor`。它适合代码审查流水线、变更摘要和仓库状态检查等场景。
 
 ## 安全模型
 
@@ -17,7 +17,7 @@ Git 工具不会替代代码托管平台的权限模型；生产环境应配合�
 工具声明与执行器注册分离。场景 YAML 中声明 `type: builtin.git`，宿主应用通过 `WithToolExecutor` 绑定 executor。库不会自动注册 Git executor；`testutil.WiringOptions` 仅在测试与 examples 中注册 demo 工具。
 
 ```go
-gitTool, err := agentflow.NewGitToolExecutor(agentflow.GitToolConfig{
+gitTool, err := adapters.NewGitToolExecutor(adapters.GitToolConfig{
   AllowedRoots: []string{"/workspace/repos"},
 })
 if err != nil {

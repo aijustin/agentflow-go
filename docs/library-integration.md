@@ -76,8 +76,8 @@ fw, _ := agentflow.New(scenario,
   agentflow.WithToolExecutor("ticket", executor),
   agentflow.WithHITLTokenSecret(secret, os.Stderr),
 )
-queue, _ := agentflow.NewPostgresJobQueue(db) // or NewInMemoryJobQueue()
-handler, _ := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+queue, _ := adapters.NewPostgresJobQueue(db) // or NewInMemoryJobQueue()
+handler, _ := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
   Queue: queue, Policy: policy, Framework: fw,
 })
 jobHandler, _ := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})

@@ -58,7 +58,7 @@ go run ./examples/go/validate -kind builder autonomous-echo
 
 ```go
 // 库集成示例
-httpTool, _ := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{AllowedHosts: []string{"https://status.internal"}})
+httpTool, _ := adapters.NewHTTPToolExecutor(adapters.HTTPToolConfig{AllowedHosts: []string{"https://status.internal"}})
 fw, err := agentflow.New(scenario,
     agentflow.WithLLMGateway(gateway),
     agentflow.WithToolExecutor("http.status", httpTool),
@@ -149,7 +149,7 @@ go run ./examples/go/hitl-resume/main.go
 
 **含义**：测试用 mock gateway 没有为 profile queue 响应。
 
-**修复**：在测试中 `gateway.QueueChat(profile, response)` 或使用 `NewMockLLMGateway` / Fallback。
+**修复**：在测试中 `gateway.QueueChat(profile, response)` 或使用 `testutil.NewMockLLMGateway` / Fallback。
 
 ---
 
@@ -181,7 +181,7 @@ go run ./examples/go/hitl-resume/main.go
 **修复**
 
 ```go
-knowledgeOpts, _ := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+knowledgeOpts, _ := httpx.KnowledgeWiringOptions(scenario, httpx.KnowledgeRegistry{
     Embedder: embedder,
     Store:    store,
 })

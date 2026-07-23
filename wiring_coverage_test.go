@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 )
@@ -19,29 +21,29 @@ import (
 func TestObservabilitySinkWrappers(t *testing.T) {
 	recorder := observability.NoopRecorder{}
 	tracer := observability.NoopTracer{}
-	next := agentflow.NewSlogEventSink(nil)
-	sink := agentflow.NewObservabilityEventSink(recorder, tracer, next)
+	next := adapters.NewSlogEventSink(nil)
+	sink := adapters.NewObservabilityEventSink(recorder, tracer, next)
 	if sink == nil {
 		t.Fatal("expected observability event sink")
 	}
-	store := agentflow.NewInMemoryEventStore()
-	fanout := agentflow.NewEventFanoutSink(agentflow.NewEventStoreSink(store))
+	store := adapters.NewInMemoryEventStore()
+	fanout := adapters.NewEventFanoutSink(adapters.NewEventStoreSink(store))
 	if fanout == nil {
 		t.Fatal("expected fanout sink")
 	}
 }
 
 func TestKnowledgeRerankerWrappers(t *testing.T) {
-	if agentflow.NewScoreReranker() == nil {
+	if adapters.NewScoreReranker() == nil {
 		t.Fatal("expected score reranker")
 	}
-	if agentflow.NewLLMReranker(fakeGateway{content: "rank"}, "default") == nil {
+	if adapters.NewLLMReranker(fakeGateway{content: "rank"}, "default") == nil {
 		t.Fatal("expected llm reranker")
 	}
 }
 
 func TestInMemoryBlobStoreWrapper(t *testing.T) {
-	store := agentflow.NewInMemoryBlobStore()
+	store := adapters.NewInMemoryBlobStore()
 	if store == nil {
 		t.Fatal("expected blob store")
 	}
@@ -124,15 +126,15 @@ func TestObservabilityHTTPHandlerStudioAdapterRoutes(t *testing.T) {
 	}
 	fw, err := agentflow.New(
 		scenario,
-		agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+		agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	savePath := filepath.Join(t.TempDir(), "scenario.yaml")
-	handler, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
-		Store:          agentflow.NewInMemoryEventStore(),
-		Hub:            agentflow.NewEventHub(),
+	handler, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
+		Store:          adapters.NewInMemoryEventStore(),
+		Hub:            adapters.NewEventHub(),
 		Framework:      fw,
 		StudioSavePath: savePath,
 	})

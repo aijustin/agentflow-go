@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 )
 
 func TestProductionHTTPHandlerMountsFrameworkRoutes(t *testing.T) {
@@ -30,8 +32,8 @@ func TestProductionHTTPHandlerMountsFrameworkRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queue := agentflow.NewInMemoryJobQueue()
-	handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+	queue := adapters.NewInMemoryJobQueue()
+	handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
 		Queue:          queue,
 		Framework:      fw,
 		Version:        "test",

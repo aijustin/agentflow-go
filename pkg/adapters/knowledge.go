@@ -1,4 +1,4 @@
-package agentflow
+package adapters
 
 import (
 	"database/sql"

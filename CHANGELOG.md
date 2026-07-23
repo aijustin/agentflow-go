@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-07-23
+
+### Changed
+
+- **BREAKING — convenience constructors moved out of the root package.** The root package now contains only the Framework core (`Framework`, `RunRequest`, options, lifecycle, retention, lease, wiring validation). Nothing was renamed and no signatures changed; only the import paths below moved. There are no deprecated forwarding shims or type aliases left behind.
+- **BREAKING — `api.go` (`ProductionHTTPHandlerConfig`, `NewProductionHTTPHandler`) moved to `pkg/httpx` as well**: it composes the other HTTP constructors, and root cannot import `pkg/httpx` (which itself imports root). `ValidateWiring`/`WiringOptions`/`WithRequireLLM` stay in root: their signature and bodies are inseparable from the unexported root options machinery.
+- Migration table (old `agentflow.X` → new):
+
+  | Symbols | New import |
+  |---|---|
+  | HTTP constructors: `CheckpointHTTPHandlerConfig`, `NewCheckpointHTTPHandler`, `RetentionHTTPHandlerConfig`, `NewRetentionHTTPHandler`, `StudioHTTPHandlerConfig`, `NewStudioHTTPHandler`, `WebhookHTTPHandlerConfig`, `HumanHTTPHandlerConfig`, `NewWebhookHTTPHandler`, `NewHumanHTTPHandler`, `AsyncRunHTTPHandlerConfig`, `NewAsyncRunHTTPHandler`, `ProductionHTTPHandlerConfig`, `NewProductionHTTPHandler`, `ObservabilityHTTPHandlerConfig`, `NewObservabilityHTTPHandler`, `KnowledgeRegistry`, `KnowledgeWiringOptions`, `MCPRegistry`, `WireMCPTools`, `MCPWiringOptions` | `github.com/aijustin/agentflow-go/pkg/httpx` |
+  | Run-state / blob / memory / queue: `NewInMemoryRunStateRepository`, `NewInMemoryCheckpointHistory`, `NewPostgresCheckpointHistory`, `NewInMemoryBlobStore`, `NewFileRunStateRepository`, `NewPostgresRunStateRepository`, `RedisRunStateRepositoryConfig`, `NewRedisRunStateRepository`, `NewFileBlobStore`, `NewFileMemoryRepository`, `S3BlobStoreConfig`, `NewS3BlobStore`, `NewInMemoryJobQueue`, `NewPostgresJobQueue` | `github.com/aijustin/agentflow-go/pkg/adapters` |
+  | LLM providers: `OpenAICompatibleProvider`, `LLMProviderRouter`, `NewOpenAICompatibleGateway`, `NewOpenAICompatibleProvider`, `NewOpenAICompatibleEmbedder`, `NewLocalGateway`, `NewAnthropicGateway`, `NewLLMRouter`, `NewLLMProviderRouter` | `github.com/aijustin/agentflow-go/pkg/adapters` |
+  | Catalog manifests: `LoadToolManifestFile`, `LoadToolManifest`, `ValidateToolManifest`, `LoadSkillManifestFile`, `LoadSkillManifest`, `ValidateSkillManifest` | `github.com/aijustin/agentflow-go/pkg/adapters` |
+  | Knowledge: `RetrieverToolConfig`, `PostgresVectorStoreConfig`, `FileKnowledgeLoaderConfig`, `HTTPKnowledgeLoaderConfig`, `KnowledgeIndexerConfig`, `NewRetrieverTool`, `NewPostgresVectorStore`, `NewFileKnowledgeLoader`, `NewHTTPKnowledgeLoader`, `NewScoreReranker`, `NewLLMReranker`, `NewKnowledgeIndexer` | `github.com/aijustin/agentflow-go/pkg/adapters` |
+  | MCP: `NewMCPHTTPClient`, `MCPStdioClientConfig`, `MCPStdioClient`, `NewMCPStdioClient`, `NewMCPToolExecutor` | `github.com/aijustin/agentflow-go/pkg/adapters` |
+  | Tool executors: `HTTPToolConfig`, `FilesystemToolConfig`, `SQLToolConfig`, `GitToolConfig`, `TicketToolConfig`, `NewHTTPToolExecutor`, `NewFilesystemToolExecutor`, `NewSQLToolExecutor`, `NewGitToolExecutor`, `NewTicketToolExecutor`, `NewMemoryTicketStore`, `Ticket`, `TicketStore`, `ToolResolver`, `ToolResolverFunc` | `github.com/aijustin/agentflow-go/pkg/adapters` |
+  | Tiered memory: `PostgresTierWarmStoreConfig`, `NewPostgresTierWarmStore`, `NewFileTierColdStore`, `BlobTierColdStoreConfig`, `NewBlobTierColdStore`, `TierColdSummaryIndexerConfig`, `NewTierColdSummaryIndexer`, `CompositeTierStoreConfig`, `NewCompositeTierStore`, `NewInMemoryTierHotStore`, `NewLLMTierSummarizer`, `NewCognitiveTierMemory` | `github.com/aijustin/agentflow-go/pkg/adapters` |
+  | Observability: `NewSlogEventSink`, `NewVerboseSlogEventSink`, `NewSlogAuditSink`, `NewObservabilityEventSink`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, `PostgresEventStoreConfig`, `NewInMemoryEventStore`, `NewPostgresEventStore`, `NewEventHub`, `NewEventStoreSink`, `NewEventFanoutSink`, `PrometheusRecorder`, `NewPrometheusRecorder`, `PrometheusMetricsHandler`, `OpenTelemetryTracer`, `OpenTelemetryTracerProviderConfig`, `NewOpenTelemetryTracer`, `NewOpenTelemetryStdoutTracerProvider`, `OpenTelemetryTracerFromProvider` | `github.com/aijustin/agentflow-go/pkg/adapters` |
+  | Mock LLM gateway: `NewMockLLMGateway` | `github.com/aijustin/agentflow-go/pkg/testutil` |
+
+- `pkg/adapters` never imports the root facade (verified: `go list -deps ./pkg/adapters` contains no root package), so applications that only need these constructors can depend on it alone.
+
 ## [Unreleased]
 
 ### Added

@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -75,13 +77,13 @@ func TestFrameworkJobHandlerRejectsInvalidPrincipal(t *testing.T) {
 }
 
 func TestProductionHTTPHandlerMountsMetrics(t *testing.T) {
-	recorder := agentflow.NewPrometheusRecorder()
+	recorder := adapters.NewPrometheusRecorder()
 	recorder.IncCounter(context.Background(), observability.MetricRuntimeEventsTotal)
-	queue := agentflow.NewInMemoryJobQueue()
-	handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+	queue := adapters.NewInMemoryJobQueue()
+	handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
 		Queue:          queue,
 		Version:        "test",
-		MetricsHandler: agentflow.PrometheusMetricsHandler(recorder),
+		MetricsHandler: adapters.PrometheusMetricsHandler(recorder),
 	})
 	if err != nil {
 		t.Fatal(err)

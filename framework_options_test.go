@@ -8,6 +8,7 @@ import (
 
 	agentflow "github.com/aijustin/agentflow-go"
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
@@ -104,7 +105,7 @@ func TestFrameworkClassifyExistingRunStates(t *testing.T) {
 func TestFrameworkWiringOptionsSmoke(t *testing.T) {
 	scenario := testAutonomousScenario()
 	var emitted bool
-	memRepo, err := agentflow.NewFileMemoryRepository(t.TempDir())
+	memRepo, err := adapters.NewFileMemoryRepository(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func TestFrameworkResumeRequiresGate(t *testing.T) {
 }
 
 func TestFrameworkWithJobQueueOption(t *testing.T) {
-	queue := agentflow.NewInMemoryJobQueue()
+	queue := adapters.NewInMemoryJobQueue()
 	fw, err := agentflow.New(
 		testAutonomousScenario(),
 		agentflow.WithLLMGateway(fakeGateway{content: "ok"}),
@@ -232,7 +233,7 @@ func TestFrameworkWiringOptionsRejectNil(t *testing.T) {
 
 func TestFrameworkWithMemoryAndTierOptionsRejectInvalid(t *testing.T) {
 	scenario := testAutonomousScenario()
-	memRepo, err := agentflow.NewFileMemoryRepository(t.TempDir())
+	memRepo, err := adapters.NewFileMemoryRepository(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +303,7 @@ func TestFrameworkToolResolverRejectsNilExecutor(t *testing.T) {
 			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{{ID: "echo", Kind: core.NodeTool, Ref: "echo"}}},
 		},
 	}
-	fw, err := agentflow.New(scenario, agentflow.WithToolResolver(agentflow.ToolResolverFunc(func(context.Context, core.Tool) (core.ToolExecutor, error) {
+	fw, err := agentflow.New(scenario, agentflow.WithToolResolver(adapters.ToolResolverFunc(func(context.Context, core.Tool) (core.ToolExecutor, error) {
 		return nil, nil
 	})))
 	if err != nil {

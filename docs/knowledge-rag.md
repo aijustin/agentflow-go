@@ -11,7 +11,7 @@ RAG 基础由几个公共契约组成：
 根包为常见路径提供生产可用的装配辅助函数：
 
 ```go
-provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
+provider := adapters.NewOpenAICompatibleProvider([]llm.Profile{
   {
     Name:         "chat",
     Provider:     "openai-compatible",
@@ -29,7 +29,7 @@ provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
   },
 }, nil)
 
-store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{
+store, err := adapters.NewPostgresVectorStore(adapters.PostgresVectorStoreConfig{
   DB:        db,
   TableName: "agentflow_knowledge_embeddings",
 })
@@ -37,7 +37,7 @@ if err != nil {
   log.Fatal(err)
 }
 
-retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
+retriever, err := adapters.NewRetrieverTool(adapters.RetrieverToolConfig{
   Embedder:     provider,
   Store:        store,
   Profile:      "embed",
@@ -78,7 +78,7 @@ fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(provider),
 检索工具会在 `mode: hybrid` 且底层 store 实现 `HybridSearcher` 时调用混合检索；否则自动回退到普通向量查询。配置了 `Reranker` 时，工具会先扩大候选集，再重排并截断到用户请求的 `limit`：
 
 ```go
-retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
+retriever, err := adapters.NewRetrieverTool(adapters.RetrieverToolConfig{
   Embedder:            provider,
   Store:               store,
   Profile:             "embed",
@@ -97,7 +97,7 @@ retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
 使用文件系统加载器、文本切分器和索引器将文档加载到向量存储：
 
 ```go
-loader, err := agentflow.NewFileKnowledgeLoader(agentflow.FileKnowledgeLoaderConfig{
+loader, err := adapters.NewFileKnowledgeLoader(adapters.FileKnowledgeLoaderConfig{
   Paths:     []string{"./docs"},
   Namespace: "tenant-a/docs",
   Metadata:  map[string]string{"collection": "handbook"},
@@ -120,7 +120,7 @@ if err != nil {
   log.Fatal(err)
 }
 
-indexer, err := agentflow.NewKnowledgeIndexer(agentflow.KnowledgeIndexerConfig{
+indexer, err := adapters.NewKnowledgeIndexer(adapters.KnowledgeIndexerConfig{
   Embedder:  provider,
   Store:     store,
   Profile:   "embed",
@@ -142,7 +142,7 @@ fmt.Printf("indexed %d documents into %d chunks\n", result.Documents, result.Chu
 HTTP 来源使用同一个加载器契约：
 
 ```go
-loader, err := agentflow.NewHTTPKnowledgeLoader(agentflow.HTTPKnowledgeLoaderConfig{
+loader, err := adapters.NewHTTPKnowledgeLoader(adapters.HTTPKnowledgeLoaderConfig{
   URLs:      []string{"https://docs.example.test/handbook"},
   Namespace: "tenant-a/docs",
   Metadata:  map[string]string{"collection": "handbook"},
@@ -192,10 +192,10 @@ knowledge:
 
 ```go
 scenario := builder.MinimalRAG("assistant")
-knowledgeOpts, err := agentflow.KnowledgeWiringOptions(scenario, agentflow.KnowledgeRegistry{
+knowledgeOpts, err := httpx.KnowledgeWiringOptions(scenario, httpx.KnowledgeRegistry{
   Embedder: provider,
   Store:    store,
-  Reranker: agentflow.NewScoreReranker(),
+  Reranker: adapters.NewScoreReranker(),
 })
 fw, err := agentflow.New(builder.MinimalRAG("assistant"),
   append(knowledgeOpts,

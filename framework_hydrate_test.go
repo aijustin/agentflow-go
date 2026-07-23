@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -56,7 +57,7 @@ func TestFrameworkHybridRunMergesUserContextWithWorkflowSteps(t *testing.T) {
 func TestFrameworkResumeFromCheckpointRejectsAutonomousMode(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalAutonomous("assistant"),
-		agentflow.WithCheckpointHistory(agentflow.NewInMemoryCheckpointHistory()),
+		agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()),
 	)
 	if err != nil {
 		t.Fatal(err)

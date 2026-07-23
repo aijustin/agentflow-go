@@ -6,25 +6,26 @@ import (
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 )
 
 func TestPostgresWrapperValidation(t *testing.T) {
-	if _, err := agentflow.NewPostgresJobQueue(nil, "jobs", "extra"); err == nil {
+	if _, err := adapters.NewPostgresJobQueue(nil, "jobs", "extra"); err == nil {
 		t.Fatal("expected too many table names error")
 	}
-	if _, err := agentflow.NewPostgresJobQueue(nil); err == nil {
+	if _, err := adapters.NewPostgresJobQueue(nil); err == nil {
 		t.Fatal("expected nil db error")
 	}
-	if _, err := agentflow.NewPostgresCheckpointHistory(nil, "history", "extra"); err == nil {
+	if _, err := adapters.NewPostgresCheckpointHistory(nil, "history", "extra"); err == nil {
 		t.Fatal("expected too many checkpoint table names error")
 	}
-	if _, err := agentflow.NewPostgresCheckpointHistory(nil); err == nil {
+	if _, err := adapters.NewPostgresCheckpointHistory(nil); err == nil {
 		t.Fatal("expected nil db error for checkpoint history")
 	}
-	if _, err := agentflow.NewPostgresRunStateRepository(nil, "runs", "extra"); err == nil {
+	if _, err := adapters.NewPostgresRunStateRepository(nil, "runs", "extra"); err == nil {
 		t.Fatal("expected too many runstate table names error")
 	}
 }
@@ -62,7 +63,7 @@ func TestAsyncJobHandlerRejectsInvalidPayloads(t *testing.T) {
 
 func TestFrameworkTierOptionValidation(t *testing.T) {
 	scenario := builder.MinimalAutonomous("assistant")
-	if _, err := agentflow.New(scenario, agentflow.WithTierColdSummarizer("", agentflow.NewLLMTierSummarizer(fakeGateway{content: "s"}, "default"))); err == nil {
+	if _, err := agentflow.New(scenario, agentflow.WithTierColdSummarizer("", adapters.NewLLMTierSummarizer(fakeGateway{content: "s"}, "default"))); err == nil {
 		t.Fatal("expected missing memory name error")
 	}
 	if _, err := agentflow.New(scenario, agentflow.WithTierColdSummarizer("session", nil)); err == nil {

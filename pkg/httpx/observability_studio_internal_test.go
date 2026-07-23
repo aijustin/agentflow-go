@@ -1,8 +1,10 @@
-package agentflow
+package httpx
 
 import (
 	"context"
 	"encoding/json"
+	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,14 +28,14 @@ func TestStudioFrameworkDelegatesToFramework(t *testing.T) {
 			},
 		},
 	}
-	fw, err := New(scenario, WithCheckpointHistory(NewInMemoryCheckpointHistory()))
+	fw, err := agentflow.New(scenario, agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	savePath := filepath.Join(t.TempDir(), "scenario.yaml")
 	adapter := &studioFramework{framework: fw, savePath: savePath}
 	runID := "studio-delegate-run"
-	if _, err := fw.Run(context.Background(), RunRequest{RunID: runID}); err != nil {
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := adapter.ListRunSteps(context.Background(), runID); err != nil {
@@ -82,7 +84,7 @@ func TestStudioFrameworkDelegatesToFramework(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gen, ok := yamlResult.(CodegenResult)
+	gen, ok := yamlResult.(agentflow.CodegenResult)
 	if !ok || gen.Code == "" {
 		t.Fatalf("unexpected yaml result: %#v", yamlResult)
 	}
@@ -110,7 +112,7 @@ func TestStudioFrameworkDelegatesToFramework(t *testing.T) {
 }
 
 func TestStudioFrameworkSaveRequiresPath(t *testing.T) {
-	fw, err := New(core.Scenario{
+	fw, err := agentflow.New(core.Scenario{
 		Name: "empty",
 		Agents: map[string]core.Agent{
 			"noop": {Name: "noop"},

@@ -6,7 +6,7 @@
 
 ### 日志
 
-使用 `log/slog` 输出结构化日志。运行时事件和审计的 `slog` sink 可通过 `agentflow.NewSlogEventSink` 与 `agentflow.NewSlogAuditSink` 使用。标准字段包括：
+使用 `log/slog` 输出结构化日志。运行时事件和审计的 `slog` sink 可通过 `adapters.NewSlogEventSink` 与 `adapters.NewSlogAuditSink` 使用。标准字段包括：
 
 - `run_id`
 - `job_id`
@@ -23,14 +23,14 @@
 
 ### 指标
 
-框架已提供轻量级指标端口 `pkg/observability.Recorder` 和事件适配器 `agentflow.NewObservabilityEventSink`。`agentflow.NewPrometheusRecorder` 提供零依赖的 Prometheus text exposition，`PrometheusMetricsHandler` 可挂载到 `NewProductionHTTPHandler` 的 `/metrics` 路由。
+框架已提供轻量级指标端口 `pkg/observability.Recorder` 和事件适配器 `adapters.NewObservabilityEventSink`。`adapters.NewPrometheusRecorder` 提供零依赖的 Prometheus text exposition，`PrometheusMetricsHandler` 可挂载到 `NewProductionHTTPHandler` 的 `/metrics` 路由。
 
 ```go
-recorder := agentflow.NewPrometheusRecorder()
-eventSink := agentflow.NewObservabilityEventSink(
+recorder := adapters.NewPrometheusRecorder()
+eventSink := adapters.NewObservabilityEventSink(
 	recorder,
 	otelTracer,
-	agentflow.NewSlogEventSink(logger),
+	adapters.NewSlogEventSink(logger),
 )
 
 scenario := builder.MinimalAutonomous("assistant")
@@ -38,10 +38,10 @@ fw, err := agentflow.New(scenario, agentflow.WithRecorder(recorder),
 	agentflow.WithEventSink(eventSink),
 )
 
-handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
 	Queue:          queue,
 	Framework:      fw,
-	MetricsHandler: agentflow.PrometheusMetricsHandler(recorder),
+	MetricsHandler: adapters.PrometheusMetricsHandler(recorder),
 })
 ```
 
@@ -68,20 +68,20 @@ handler, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandl
 最小接入方式：
 
 ```go
-eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{DB: db})
+eventStore, err := adapters.NewPostgresEventStore(ctx, adapters.PostgresEventStoreConfig{DB: db})
 if err != nil {
 	log.Fatal(err)
 }
-eventHub := agentflow.NewEventHub()
+eventHub := adapters.NewEventHub()
 
 scenario := builder.MinimalAutonomous("assistant")
-fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFanoutSink(
-		agentflow.NewEventStoreSink(eventStore, eventHub),
-		agentflow.NewObservabilityEventSink(recorder, tracer, agentflow.NewSlogEventSink(logger)),
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventFanoutSink(
+		adapters.NewEventStoreSink(eventStore, eventHub),
+		adapters.NewObservabilityEventSink(recorder, tracer, adapters.NewSlogEventSink(logger)),
 	)),
 )
 
-dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
 	Store: eventStore,
 	Hub:   eventHub,
 })
@@ -99,7 +99,7 @@ OpenTelemetry 接入方式：
 2. **本地开发**：使用 `NewOpenTelemetryStdoutTracerProvider` 导出 JSON span 到 stdout。
 
 ```go
-provider, err := agentflow.NewOpenTelemetryStdoutTracerProvider(ctx, agentflow.OpenTelemetryTracerProviderConfig{
+provider, err := adapters.NewOpenTelemetryStdoutTracerProvider(ctx, adapters.OpenTelemetryTracerProviderConfig{
 	ServiceName:    "my-service",
 	ServiceVersion: agentflow.Version,
 })
@@ -108,14 +108,14 @@ if err != nil {
 }
 defer provider.Shutdown(ctx)
 
-tracer := agentflow.OpenTelemetryTracerFromProvider(provider, "my-service/agentflow")
+tracer := adapters.OpenTelemetryTracerFromProvider(provider, "my-service/agentflow")
 
 scenario := builder.MinimalAutonomous("assistant")
 fw, err := agentflow.New(scenario, agentflow.WithTracer(tracer),
-	agentflow.WithEventSink(agentflow.NewObservabilityEventSink(
+	agentflow.WithEventSink(adapters.NewObservabilityEventSink(
 		recorder,
 		tracer,
-		agentflow.NewSlogEventSink(logger),
+		adapters.NewSlogEventSink(logger),
 	)),
 )
 ```

@@ -8,6 +8,7 @@ import (
 
 	agentflow "github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/internal/adapter/tool/builtin"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
@@ -31,7 +32,7 @@ func WiringOptions(scenario core.Scenario, config WiringConfig) ([]agentflow.Opt
 	if err != nil {
 		return nil, fmt.Errorf("testutil: resolve work dir: %w", err)
 	}
-	opts := []agentflow.Option{agentflow.WithLLMGateway(agentflow.NewMockLLMGateway(scenario))}
+	opts := []agentflow.Option{agentflow.WithLLMGateway(NewMockLLMGateway(scenario))}
 	for name, tool := range scenario.Tools {
 		executor, err := demoToolExecutor(name, tool, absWorkDir, config.GitRoots)
 		if err != nil {
@@ -51,9 +52,9 @@ func demoToolExecutor(name string, tool core.Tool, workDir string, gitRoots []st
 		return builtin.NewEchoTool(), nil
 	case "builtin.git":
 		roots := demoGitRoots(workDir, gitRoots)
-		return agentflow.NewGitToolExecutor(agentflow.GitToolConfig{AllowedRoots: roots})
+		return adapters.NewGitToolExecutor(adapters.GitToolConfig{AllowedRoots: roots})
 	case "builtin.ticket":
-		return agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{Store: agentflow.NewMemoryTicketStore(nil)})
+		return adapters.NewTicketToolExecutor(adapters.TicketToolConfig{Store: adapters.NewMemoryTicketStore(nil)})
 	case "":
 		return nil, fmt.Errorf("testutil: tool %q is missing type", name)
 	default:

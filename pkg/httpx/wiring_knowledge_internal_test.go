@@ -1,10 +1,11 @@
-package agentflow
+package httpx
 
 import (
 	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/knowledge"
@@ -37,7 +38,7 @@ func TestFirstEmbedProfile(t *testing.T) {
 }
 
 func TestTenantScopedRetrieverInjectsNamespace(t *testing.T) {
-	inner, err := NewRetrieverTool(RetrieverToolConfig{
+	inner, err := adapters.NewRetrieverTool(adapters.RetrieverToolConfig{
 		Embedder: rootEmbedder{},
 		Store:    &capturingVectorStore{},
 		Profile:  "embed",
@@ -66,9 +67,21 @@ type capturingVectorStore struct {
 	lastQuery knowledge.Query
 }
 
-func (s *capturingVectorStore) Upsert(context.Context, []knowledge.DocumentEmbedding) error { return nil }
+func (s *capturingVectorStore) Upsert(context.Context, []knowledge.DocumentEmbedding) error {
+	return nil
+}
 func (s *capturingVectorStore) Query(_ context.Context, q knowledge.Query) ([]knowledge.SearchResult, error) {
 	s.lastQuery = q
 	return nil, nil
 }
 func (s *capturingVectorStore) Delete(context.Context, knowledge.DeleteRequest) error { return nil }
+
+type rootEmbedder struct{}
+
+func (rootEmbedder) Embed(_ context.Context, _ string, inputs []string) ([][]float32, error) {
+	out := make([][]float32, len(inputs))
+	for i := range inputs {
+		out[i] = []float32{1, 0, 0}
+	}
+	return out, nil
+}

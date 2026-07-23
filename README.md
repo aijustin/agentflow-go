@@ -177,7 +177,7 @@ fw, err := agentflow.New(
 常见 LLM Provider 的构造函数已从根包暴露：
 
 ```go
-gateway := agentflow.NewOpenAICompatibleGateway([]llm.Profile{{
+gateway := adapters.NewOpenAICompatibleGateway([]llm.Profile{{
   Name:      "default",
   Provider:  "openai-compatible",
   Model:     "qwen/qwen3.6-35b-a3b",
@@ -192,7 +192,7 @@ fw, err := agentflow.New(scenario, agentflow.WithLLMGateway(gateway))
 如果需要同时接 OpenAI-compatible 聊天与 Embedding，可使用 `NewOpenAICompatibleProvider`，并显式声明 profile 能力：
 
 ```go
-provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
+provider := adapters.NewOpenAICompatibleProvider([]llm.Profile{
   {Name: "chat", Provider: "openai-compatible", Model: "qwen/qwen3.6-35b-a3b", Endpoint: "http://127.0.0.1:1234/v1"},
   {Name: "embed", Provider: "openai-compatible", Model: "text-embedding-3-small", Endpoint: "http://127.0.0.1:1234/v1", Capabilities: []llm.Capability{llm.CapEmbed}},
 }, nil)
@@ -201,10 +201,10 @@ provider := agentflow.NewOpenAICompatibleProvider([]llm.Profile{
 混合 Provider 场景可使用 `NewLLMProviderRouter` 按 profile 路由 chat/tool/structured/stream 和 embedding 调用。能力会显式检查：Provider 不支持的能力会清晰失败，不会被静默模拟。
 
 ```go
-openaiProvider := agentflow.NewOpenAICompatibleProvider(openaiProfiles, nil)
-anthropicGateway := agentflow.NewAnthropicGateway(anthropicProfiles, nil)
+openaiProvider := adapters.NewOpenAICompatibleProvider(openaiProfiles, nil)
+anthropicGateway := adapters.NewAnthropicGateway(anthropicProfiles, nil)
 
-provider := agentflow.NewLLMProviderRouter(map[string]llm.Gateway{
+provider := adapters.NewLLMProviderRouter(map[string]llm.Gateway{
   "chat":  anthropicGateway,
   "embed": openaiProvider,
 })
@@ -274,9 +274,9 @@ if result.Token != "" {
 需要进程重启后仍能恢复运行时，可使用文件持久化适配器：
 
 ```go
-runs, _ := agentflow.NewFileRunStateRepository("./data/runs")
-blobs, _ := agentflow.NewFileBlobStore("./data/blobs")
-memoryRepo, _ := agentflow.NewFileMemoryRepository("./data/memory")
+runs, _ := adapters.NewFileRunStateRepository("./data/runs")
+blobs, _ := adapters.NewFileBlobStore("./data/blobs")
+memoryRepo, _ := adapters.NewFileMemoryRepository("./data/memory")
 
 scenario := builder.MinimalAutonomous("assistant")
 fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(runs),
@@ -292,7 +292,7 @@ db, err := sql.Open("pgx", os.Getenv("AGENTFLOW_POSTGRES_DSN"))
 if err != nil {
   log.Fatal(err)
 }
-runs, err := agentflow.NewPostgresRunStateRepository(db)
+runs, err := adapters.NewPostgresRunStateRepository(db)
 if err != nil {
   log.Fatal(err)
 }
@@ -307,7 +307,7 @@ fw, err := agentflow.New(scenario, agentflow.WithRunStateRepository(runs),
 如果希望使用 Redis 存储低延迟 CAS RunState，也可以使用 Redis RunState 适配器：
 
 ```go
-runs, err := agentflow.NewRedisRunStateRepository(agentflow.RedisRunStateRepositoryConfig{
+runs, err := adapters.NewRedisRunStateRepository(adapters.RedisRunStateRepositoryConfig{
   Addr:      os.Getenv("AGENTFLOW_REDIS_ADDR"),
   Password:  os.Getenv("AGENTFLOW_REDIS_PASSWORD"),
   KeyPrefix: "agentflow:runstate:",
@@ -322,7 +322,7 @@ if err != nil {
 生产环境异步执行可使用队列和 Worker。PostgreSQL 队列适配器基于 `database/sql`，不强制绑定具体驱动：
 
 ```go
-queue, err := agentflow.NewPostgresJobQueue(db)
+queue, err := adapters.NewPostgresJobQueue(db)
 if err != nil {
   log.Fatal(err)
 }
@@ -341,16 +341,16 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`agentflow.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz`、异步 run/event/resume job API；当配置 `Framework` 时还会挂载同步 `/v1/events` 和 `/v1/hitl/resume`。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
+`httpx.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz`、异步 run/event/resume job API；当配置 `Framework` 时还会挂载同步 `/v1/events` 和 `/v1/hitl/resume`。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
 
 MCP Server 可以通过适配器变成普通受治理工具，无需改变 runtime core：
 
 ```go
-mcpClient, err := agentflow.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
+mcpClient, err := adapters.NewMCPHTTPClient("http://127.0.0.1:3333/mcp", nil)
 if err != nil {
   log.Fatal(err)
 }
-searchTool, err := agentflow.NewMCPToolExecutor(mcpClient, "search")
+searchTool, err := adapters.NewMCPToolExecutor(mcpClient, "search")
 if err != nil {
   log.Fatal(err)
 }
@@ -364,7 +364,7 @@ fw, err := agentflow.New(builder.MinimalMCPTool("assistant"),
 重型或租户隔离的工具不需要在框架启动时全部构造。可以先在 `scenario.tools` 声明 manifest，然后通过 `WithToolResolver` 在运行时完成 allowlist、审批、RBAC、治理策略和 rate cap 检查后，再按需解析真正的 executor：
 
 ```go
-resolver := agentflow.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
+resolver := adapters.ToolResolverFunc(func(ctx context.Context, tool core.Tool) (core.ToolExecutor, error) {
   switch tool.Type {
   case "builtin.sql":
     return newTenantSQLTool(ctx, tool.Metadata)
@@ -385,7 +385,7 @@ fw, err := agentflow.New(scenario, agentflow.WithToolResolver(resolver),
 读取内部 API 可注册受限 HTTP Tool Executor：
 
 ```go
-httpTool, err := agentflow.NewHTTPToolExecutor(agentflow.HTTPToolConfig{
+httpTool, err := adapters.NewHTTPToolExecutor(adapters.HTTPToolConfig{
   AllowedHosts: []string{"https://status.example.internal"},
 })
 if err != nil {
@@ -401,7 +401,7 @@ fw, err := agentflow.New(builder.MinimalHTTPTool("assistant"),
 读取本地 runbook 或已检出的文档，可注册受限文件系统读取 Tool Executor：
 
 ```go
-filesystemTool, err := agentflow.NewFilesystemToolExecutor(agentflow.FilesystemToolConfig{
+filesystemTool, err := adapters.NewFilesystemToolExecutor(adapters.FilesystemToolConfig{
   AllowedRoots: []string{"/srv/agentflow/runbooks"},
 })
 if err != nil {
@@ -417,7 +417,7 @@ fw, err := agentflow.New(builder.MinimalFilesystemTool("assistant"),
 需要读取业务库、工单库或报表库时，可注册受限 SQL 查询 Tool Executor，并使用命名 allowlist 查询：
 
 ```go
-sqlTool, err := agentflow.NewSQLToolExecutor(agentflow.SQLToolConfig{
+sqlTool, err := adapters.NewSQLToolExecutor(adapters.SQLToolConfig{
   DB: db,
   AllowedQueries: map[string]string{
     "tickets.open": "SELECT id, title, status FROM tickets WHERE status = $1",
@@ -439,7 +439,7 @@ SQL 工具可接入任意 `database/sql` 驱动，包括 PostgreSQL、MySQL 和 
 代码审查流水线可注册只读 Git 工具：
 
 ```go
-gitTool, err := agentflow.NewGitToolExecutor(agentflow.GitToolConfig{
+gitTool, err := adapters.NewGitToolExecutor(adapters.GitToolConfig{
   AllowedRoots: []string{"/workspace/repos"},
 })
 fw, err := agentflow.New(builder.CodeReviewPipeline(),
@@ -452,10 +452,10 @@ fw, err := agentflow.New(builder.CodeReviewPipeline(),
 客服工单场景可注册 ticket 工具并注入 store：
 
 ```go
-store := agentflow.NewMemoryTicketStore(map[string]agentflow.Ticket{
+store := adapters.NewMemoryTicketStore(map[string]adapters.Ticket{
   "T-9": {ID: "T-9", Title: "Login issue", Status: "open"},
 })
-ticketTool, err := agentflow.NewTicketToolExecutor(agentflow.TicketToolConfig{Store: store})
+ticketTool, err := adapters.NewTicketToolExecutor(adapters.TicketToolConfig{Store: store})
 fw, err := agentflow.New(builder.MinimalTicketHandling("support"),
   agentflow.WithToolExecutor("ticket", ticketTool),
 )
@@ -466,11 +466,11 @@ fw, err := agentflow.New(builder.MinimalTicketHandling("support"),
 RAG 场景可组合 Embedder、VectorStore 和 Retriever Tool：
 
 ```go
-store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{DB: db})
+store, err := adapters.NewPostgresVectorStore(adapters.PostgresVectorStoreConfig{DB: db})
 if err != nil {
   log.Fatal(err)
 }
-retriever, err := agentflow.NewRetrieverTool(agentflow.RetrieverToolConfig{
+retriever, err := adapters.NewRetrieverTool(adapters.RetrieverToolConfig{
   Embedder:     provider,
   Store:        store,
   Profile:      "embed",
@@ -493,7 +493,7 @@ fw, err := agentflow.New(builder.MinimalRAG("assistant"),
 大输出需要进入 S3-compatible 对象存储时，可单独配置 BlobStore：
 
 ```go
-blobs, err := agentflow.NewS3BlobStore(agentflow.S3BlobStoreConfig{
+blobs, err := adapters.NewS3BlobStore(adapters.S3BlobStoreConfig{
   Endpoint:        os.Getenv("AGENTFLOW_S3_ENDPOINT"),
   Bucket:          os.Getenv("AGENTFLOW_S3_BUCKET"),
   Region:          os.Getenv("AGENTFLOW_S3_REGION"),
@@ -516,8 +516,8 @@ fw, err := agentflow.New(scenario, agentflow.WithBlobStore(blobs),
 
 ```go
 scenario := builder.MinimalAutonomous("assistant")
-fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewSlogEventSink(logger)),
-  agentflow.WithAuditSink(agentflow.NewSlogAuditSink(logger)),
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewSlogEventSink(logger)),
+  agentflow.WithAuditSink(adapters.NewSlogAuditSink(logger)),
   agentflow.WithToolGovernancePolicy(governance.ChainToolPolicies(
     governance.NewToolBudgetPolicy(8),
     governance.NewMaxSideEffectPolicy(core.SideEffectRead),
@@ -531,20 +531,20 @@ fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewSlogEven
 AgentFlow 也内置了运行时可观测面板，用于查看实时会话、编排时序和事件详情。PostgreSQL 事件仓库默认自动创建表和索引，开启面板只需要接入事件 sink 并挂载 HTTP handler：
 
 ```go
-eventStore, err := agentflow.NewPostgresEventStore(ctx, agentflow.PostgresEventStoreConfig{DB: db})
+eventStore, err := adapters.NewPostgresEventStore(ctx, adapters.PostgresEventStoreConfig{DB: db})
 if err != nil {
   log.Fatal(err)
 }
-eventHub := agentflow.NewEventHub()
+eventHub := adapters.NewEventHub()
 
 scenario := builder.MinimalAutonomous("assistant")
-fw, err := agentflow.New(scenario, agentflow.WithEventSink(agentflow.NewEventFanoutSink(
-    agentflow.NewEventStoreSink(eventStore, eventHub),
-    agentflow.NewSlogEventSink(logger),
+fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventFanoutSink(
+    adapters.NewEventStoreSink(eventStore, eventHub),
+    adapters.NewSlogEventSink(logger),
   )),
 )
 
-dashboard, err := agentflow.NewObservabilityHTTPHandler(agentflow.ObservabilityHTTPHandlerConfig{
+dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
   Store: eventStore,
   Hub:   eventHub,
 })
@@ -656,6 +656,8 @@ import agentflow "github.com/aijustin/agentflow-go"
 | 包 | 作用 |
 | --- | --- |
 | root package | 框架门面：校验、运行、恢复、事件处理、Studio 互操作与扩展注入。 |
+| `pkg/adapters` | 具体适配器构造器（run-state/blob/memory 存储、job 队列、LLM providers、knowledge、MCP、工具执行器、分层记忆、observability），不依赖根包。 |
+| `pkg/httpx` | HTTP 适配器构造器（checkpoint、retention、studio、webhook/HITL、async jobs、生产组合、observability dashboard）与 knowledge/MCP 接线。 |
 | `pkg/async` | 异步执行所需的 Job Queue、Lease、Handler 和 Worker 契约。 |
 | `pkg/eventrouter` | 外部事件类型与 `scenario.triggers` 到 RunRequest 的路由。 |
 | `pkg/audit` | 合规记录所需的 Audit Event 模型和 Sink 契约。 |
@@ -725,7 +727,7 @@ if acquired {
 通过 async worker foundation 执行异步任务：
 
 ```go
-queue := agentflow.NewInMemoryJobQueue()
+queue := adapters.NewInMemoryJobQueue()
 worker, err := async.NewWorker(
   queue,
   async.HandlerFunc(func(ctx context.Context, job async.Job) error {
@@ -743,8 +745,8 @@ if err != nil {
 暴露异步 run/event/resume job endpoints：
 
 ```go
-queue := agentflow.NewInMemoryJobQueue()
-handler, err := agentflow.NewAsyncRunHTTPHandler(agentflow.AsyncRunHTTPHandlerConfig{
+queue := adapters.NewInMemoryJobQueue()
+handler, err := httpx.NewAsyncRunHTTPHandler(httpx.AsyncRunHTTPHandlerConfig{
   Queue:  queue,
   Policy: security.NewDefaultRolePolicy(),
   Audit:  auditSink,
@@ -758,7 +760,7 @@ http.Handle("/v1/", middleware(handler))
 生产 Handler 可同时挂载可选的同步 event/HITL 路由：
 
 ```go
-api, err := agentflow.NewProductionHTTPHandler(agentflow.ProductionHTTPHandlerConfig{
+api, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
   Queue:     queue,
   Framework: fw,
   Policy:    security.NewDefaultRolePolicy(),
@@ -843,7 +845,7 @@ result, err := fw.Run(ctx, agentflow.RunRequest{RunID: "run-1", Agent: "assistan
 将审计事件写入 append-only JSONL 文件：
 
 ```go
-auditSink, err := agentflow.NewFileAuditSink("./data/audit/events.jsonl")
+auditSink, err := adapters.NewFileAuditSink("./data/audit/events.jsonl")
 if err != nil {
   log.Fatal(err)
 }

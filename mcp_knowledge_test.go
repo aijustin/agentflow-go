@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	nethttp "net/http"
 	"net/http/httptest"
 	"os"
@@ -17,7 +18,7 @@ import (
 
 func TestMCPRootConstructors(t *testing.T) {
 	client := &rootMCPClient{}
-	executor, err := NewMCPToolExecutor(client, "search")
+	executor, err := adapters.NewMCPToolExecutor(client, "search")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +28,7 @@ func TestMCPRootConstructors(t *testing.T) {
 	if client.called.Name != "search" {
 		t.Fatalf("unexpected call: %+v", client.called)
 	}
-	if _, err := NewMCPHTTPClient("", nil); err == nil {
+	if _, err := adapters.NewMCPHTTPClient("", nil); err == nil {
 		t.Fatal("expected endpoint validation error")
 	}
 }
@@ -38,7 +39,7 @@ func TestKnowledgeIngestionRootConstructors(t *testing.T) {
 	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	loader, err := NewFileKnowledgeLoader(FileKnowledgeLoaderConfig{Paths: []string{path}, Namespace: "tenant-a/docs"})
+	loader, err := adapters.NewFileKnowledgeLoader(adapters.FileKnowledgeLoaderConfig{Paths: []string{path}, Namespace: "tenant-a/docs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestKnowledgeIngestionRootConstructors(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &rootVectorStore{}
-	indexer, err := NewKnowledgeIndexer(KnowledgeIndexerConfig{Embedder: rootEmbedder{}, Store: store, Profile: "embed"})
+	indexer, err := adapters.NewKnowledgeIndexer(adapters.KnowledgeIndexerConfig{Embedder: rootEmbedder{}, Store: store, Profile: "embed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestHTTPKnowledgeLoaderRootConstructor(t *testing.T) {
 		_, _ = w.Write([]byte("remote doc"))
 	}))
 	defer server.Close()
-	loader, err := NewHTTPKnowledgeLoader(HTTPKnowledgeLoaderConfig{URLs: []string{server.URL}, Namespace: "tenant-a/web", Client: server.Client()})
+	loader, err := adapters.NewHTTPKnowledgeLoader(adapters.HTTPKnowledgeLoaderConfig{URLs: []string{server.URL}, Namespace: "tenant-a/web", Client: server.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestHTTPKnowledgeLoaderRootConstructor(t *testing.T) {
 }
 
 func TestRetrieverRootConstructor(t *testing.T) {
-	retriever, err := NewRetrieverTool(RetrieverToolConfig{Embedder: rootEmbedder{}, Store: &rootVectorStore{}, Profile: "embed"})
+	retriever, err := adapters.NewRetrieverTool(adapters.RetrieverToolConfig{Embedder: rootEmbedder{}, Store: &rootVectorStore{}, Profile: "embed"})
 	if err != nil {
 		t.Fatal(err)
 	}

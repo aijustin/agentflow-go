@@ -4,20 +4,20 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
 func TestCatalogManifestWrappers(t *testing.T) {
 	toolPath := filepath.Join("examples", "catalog", "tools", "echo.tool.yaml")
-	tool, err := agentflow.LoadToolManifestFile(toolPath)
+	tool, err := adapters.LoadToolManifestFile(toolPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agentflow.ValidateToolManifest(tool); err != nil {
+	if err := adapters.ValidateToolManifest(tool); err != nil {
 		t.Fatal(err)
 	}
-	rawTool, err := agentflow.LoadToolManifest([]byte("apiVersion: agentflow.dev/v1\nkind: Tool\nmetadata:\n  name: echo\n  version: \"1.0.0\"\nspec:\n  type: builtin.echo\n  description: Echo\n  side_effect: none\n  approval: never\n"))
+	rawTool, err := adapters.LoadToolManifest([]byte("apiVersion: agentflow.dev/v1\nkind: Tool\nmetadata:\n  name: echo\n  version: \"1.0.0\"\nspec:\n  type: builtin.echo\n  description: Echo\n  side_effect: none\n  approval: never\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,14 +26,14 @@ func TestCatalogManifestWrappers(t *testing.T) {
 	}
 
 	skillPath := filepath.Join("examples", "catalog", "skills", "code_review.skill.yaml")
-	skill, err := agentflow.LoadSkillManifestFile(skillPath)
+	skill, err := adapters.LoadSkillManifestFile(skillPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agentflow.ValidateSkillManifest(skill); err != nil {
+	if err := adapters.ValidateSkillManifest(skill); err != nil {
 		t.Fatal(err)
 	}
-	rawSkill, err := agentflow.LoadSkillManifest([]byte("apiVersion: agentflow.dev/v1\nkind: Skill\nmetadata:\n  name: demo\n  version: \"1.0.0\"\nspec:\n  description: Demo skill\n  prompt_fragments:\n    - name: system\n      content: Hello\n"))
+	rawSkill, err := adapters.LoadSkillManifest([]byte("apiVersion: agentflow.dev/v1\nkind: Skill\nmetadata:\n  name: demo\n  version: \"1.0.0\"\nspec:\n  description: Demo skill\n  prompt_fragments:\n    - name: system\n      content: Hello\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
