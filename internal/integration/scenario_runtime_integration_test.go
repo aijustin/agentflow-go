@@ -24,7 +24,10 @@ func TestAutonomousScenarioRuntimeIntegration(t *testing.T) {
 	scenario := builder.MinimalAutonomous("assistant", builder.MinimalScenarioName("autonomous-echo"))
 	repo := runstateinmem.NewRepository()
 	gateway := llmmock.NewGateway()
-	gateway.QueueChat("default", llm.ChatResponse{Message: llm.Message{Content: "hello from llm"}})
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "hello from llm"}},
+	})
 	engine, err := appexec.NewEngine(scenario, appexec.Dependencies{Runs: repo, LLM: gateway})
 	if err != nil {
 		t.Fatal(err)
