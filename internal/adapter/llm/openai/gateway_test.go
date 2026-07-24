@@ -448,6 +448,43 @@ func TestGatewayStreamChatWithToolsAssemblesNativeToolCallDeltas(t *testing.T) {
 	}
 }
 
+func TestGatewayStreamChatWithToolsNormalizesTruncatedArguments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{\\\"title\\\":\"}}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	ch, err := gateway.StreamChatWithTools(context.Background(), "default", llm.ToolCallRequest{
+		ChatRequest: llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}},
+		Tools:       []llm.ToolSpec{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []llm.ChatChunk
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatal(chunk.Error)
+		}
+		if chunk.Kind == llm.ChunkKindToolCall {
+			calls = append(calls, chunk)
+		}
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls=%#v", calls)
+	}
+	if string(calls[0].ToolInput) != `{}` {
+		t.Fatalf("ToolInput=%s want {}", calls[0].ToolInput)
+	}
+	if _, err := json.Marshal(calls[0].ToolInput); err != nil {
+		t.Fatalf("ToolInput must be marshalable: %v", err)
+	}
+}
+
 func TestGatewayStreamChatWithToolsStreamsPreambleThenNativeToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

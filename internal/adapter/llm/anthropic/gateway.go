@@ -424,17 +424,7 @@ func toolInputValue(raw json.RawMessage) any {
 }
 
 func normalizeToolInput(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage(`{}`)
-	}
-	var encoded string
-	if err := json.Unmarshal(raw, &encoded); err == nil {
-		if strings.TrimSpace(encoded) == "" {
-			return json.RawMessage(`{}`)
-		}
-		return json.RawMessage(encoded)
-	}
-	return raw
+	return llm.NormalizeToolArguments(raw)
 }
 
 func cloneExtraBody(in map[string]any) map[string]any {

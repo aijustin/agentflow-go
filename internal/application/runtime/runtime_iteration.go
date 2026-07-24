@@ -75,7 +75,7 @@ func (e *Engine) autonomousIterationPersistenceEnabled(ctx context.Context) bool
 // optimistic-concurrency conflict with another writer (tool outputs, plan
 // updates) is retried rather than lost.
 func (e *Engine) persistAutonomousIteration(ctx context.Context, runID string, iteration int, messages []llm.Message) error {
-	raw, err := json.Marshal(messages)
+	raw, err := json.Marshal(llm.NormalizeMessageToolInputs(messages))
 	if err != nil {
 		return err
 	}

@@ -156,6 +156,70 @@ func TestEnginePlanningExecuteTracksPlanSteps(t *testing.T) {
 	}
 }
 
+func TestEnginePausesWhenToolCallArgumentsAreTruncatedJSON(t *testing.T) {
+	// Regression: truncated model tool arguments used to fail HITL checkpoint
+	// persistence with MarshalJSON unexpected end of JSON input.
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{
+			ID:    "call-1",
+			Name:  "risky",
+			Input: json.RawMessage(`{"title":"需要您的输入","fields":[`),
+		}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Tools["risky"] = core.Tool{
+		Name:        "risky",
+		Type:        "builtin.echo",
+		Description: "Risky echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Approval:    core.ApprovalPause,
+		SideEffect:  core.SideEffectWrite,
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Tools = []string{"echo", "risky"}
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"echo": echoTool{}, "risky": echoTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-trunc-args", Agent: "assistant", Prompt: "你好"})
+	if err != nil {
+		t.Fatalf("expected pause, not run failure: %v", err)
+	}
+	if paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected paused status, got %+v", paused)
+	}
+	snapshot, err := repo.Load(context.Background(), "run-trunc-args")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending []llm.ToolCall
+	if raw := snapshot.Variables[checkpointToolCallsVar]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &pending); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(pending) != 1 || pending[0].Name != "risky" {
+		t.Fatalf("pending=%+v", pending)
+	}
+	if string(pending[0].Input) != `{}` {
+		t.Fatalf("normalized input=%s want {}", pending[0].Input)
+	}
+}
+
 func TestEngineContinueAfterMultiToolApprovalPause(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))

@@ -683,11 +683,13 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	// Persist every still-pending call from this assistant turn (the one
 	// awaiting approval plus any that follow it) so resume executes all of
 	// them and never leaves orphaned tool_call IDs without a tool response.
-	toolCallsRaw, err := json.Marshal(pending)
+	// Normalize tool inputs first: truncated/malformed json.RawMessage values
+	// fail MarshalJSON and would abort the pause before HITL can recover.
+	toolCallsRaw, err := json.Marshal(llm.NormalizeToolCallInputs(pending))
 	if err != nil {
 		return nil, err
 	}
-	messagesRaw, err := json.Marshal(messages)
+	messagesRaw, err := json.Marshal(llm.NormalizeMessageToolInputs(messages))
 	if err != nil {
 		return nil, err
 	}

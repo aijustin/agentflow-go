@@ -727,17 +727,7 @@ func openAIToolCalls(calls []llm.ToolCall) []map[string]any {
 }
 
 func normalizeToolArguments(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage(`{}`)
-	}
-	var encoded string
-	if err := json.Unmarshal(raw, &encoded); err == nil {
-		if strings.TrimSpace(encoded) == "" {
-			return json.RawMessage(`{}`)
-		}
-		return json.RawMessage(encoded)
-	}
-	return raw
+	return llm.NormalizeToolArguments(raw)
 }
 
 func tokenUsagePresent(usage llm.TokenUsage) bool {

@@ -573,7 +573,8 @@ func (e *Engine) answerWithToolsFrom(
 		}
 		assistant := resp.Message
 		assistant.Role = llm.RoleAssistant
-		assistant.ToolCalls = resp.ToolCalls
+		assistant.ToolCalls = llm.NormalizeToolCallInputs(resp.ToolCalls)
+		resp.ToolCalls = assistant.ToolCalls
 		messages = append(messages, assistant)
 		if len(resp.ToolCalls) == 0 {
 			if strings.TrimSpace(resp.Message.Content) == "" && resp.FinishReason == "length" {
@@ -920,7 +921,7 @@ func (e *Engine) collectStreamChatWithTools(
 			toolCalls = append(toolCalls, llm.ToolCall{
 				ID:    chunk.ToolCallID,
 				Name:  chunk.ToolName,
-				Input: chunk.ToolInput,
+				Input: llm.NormalizeToolArguments(chunk.ToolInput),
 			})
 			finishReason = "tool_calls"
 		default:
