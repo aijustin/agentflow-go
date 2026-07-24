@@ -57,6 +57,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 
+- Bump `golang.org/x/text` to v0.39.0 (GO-2026-5970: infinite loop on invalid UTF-8 in `norm`).
 - **BREAKING (intentional hardening)**: checkpoint write endpoints (`resume-from-step`, `resume-from-checkpoint`, `fork`), Studio `run`/`save`, observability mutating endpoints (HITL resume, resume-from-step/checkpoint, fork, studio run/save), and retention purge endpoints now **default-deny with 403 `auth_required`** when no authorization policy / `AuthMiddleware` is configured. Set the corresponding `Policy` (or `AuthMiddleware`) to authorize them, or explicitly opt out with the new `InsecureAllowNoAuth` field (intended only for tests or deployments behind an authenticating proxy). Read-only endpoints stay open; the observability handler logs a one-time construction warning when no `AuthMiddleware` is set.
 - **BREAKING (intentional hardening)**: `runstate.NewTokenSigner` rejects secrets shorter than 16 bytes. Single-key signers keep the legacy two-segment token format so rolling upgrades do not mix wire formats.
 - `ResumeRunByID` is documented as an indefinite resume capability not bounded by the token TTL; HTTP exposures must authorize it (e.g. with `WithResumeAuthorizationHook`).
