@@ -1,15 +1,19 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	nethttp "net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/mcp"
 )
 
@@ -18,16 +22,31 @@ import (
 // returning an unbounded response.
 const DefaultMaxResponseBytes int64 = 16 << 20
 
+const sseScanBuf = 4 * 1024 * 1024
+
 type Client struct {
 	endpoint         string
 	client           *nethttp.Client
 	nextID           atomic.Int64
 	maxResponseBytes int64
+
+	// initMu serializes the initialize handshake; sessionID/ready are only
+	// written under it and read under the same lock, so concurrent first
+	// calls cannot double-initialize or race on the session header.
+	initMu    sync.Mutex
+	sessionID string
+	ready     bool
 }
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      int64           `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type rpcNotification struct {
+	JSONRPC string          `json:"jsonrpc"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -55,14 +74,38 @@ func NewClient(endpoint string, client *nethttp.Client) (*Client, error) {
 	return &Client{endpoint: endpoint, client: client, maxResponseBytes: DefaultMaxResponseBytes}, nil
 }
 
+// maxListToolsPages bounds nextCursor pagination so a misbehaving server
+// cannot keep the client listing forever.
+const maxListToolsPages = 100
+
 func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
-	var decoded struct {
-		Tools []mcp.Tool `json:"tools"`
+	var all []mcp.Tool
+	var cursor string
+	for page := 0; ; page++ {
+		var params json.RawMessage
+		if cursor != "" {
+			raw, err := json.Marshal(map[string]string{"cursor": cursor})
+			if err != nil {
+				return nil, err
+			}
+			params = raw
+		}
+		var decoded struct {
+			Tools      []mcp.Tool `json:"tools"`
+			NextCursor string     `json:"nextCursor"`
+		}
+		if err := c.call(ctx, "tools/list", params, &decoded); err != nil {
+			return nil, err
+		}
+		all = append(all, decoded.Tools...)
+		if decoded.NextCursor == "" {
+			return all, nil
+		}
+		cursor = decoded.NextCursor
+		if page+1 >= maxListToolsPages {
+			return nil, fmt.Errorf("mcp http: tools/list exceeded %d pages", maxListToolsPages)
+		}
 	}
-	if err := c.call(ctx, "tools/list", nil, &decoded); err != nil {
-		return nil, err
-	}
-	return decoded.Tools, nil
 }
 
 func (c *Client) CallTool(ctx context.Context, req mcp.CallToolRequest) (mcp.CallToolResult, error) {
@@ -80,47 +123,239 @@ func (c *Client) CallTool(ctx context.Context, req mcp.CallToolRequest) (mcp.Cal
 	return result, nil
 }
 
-func (c *Client) call(ctx context.Context, method string, params json.RawMessage, out any) error {
-	if err := ctx.Err(); err != nil {
-		return err
+// SessionID returns the MCP session id assigned during initialize (empty until
+// the handshake has completed).
+func (c *Client) SessionID() string {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	return c.sessionID
+}
+
+// Terminate ends the server-side session (HTTP DELETE per the MCP streamable
+// HTTP transport) and resets local handshake state so the next call
+// re-initializes. It is a no-op when no session was established.
+func (c *Client) Terminate(ctx context.Context) error {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	if c.sessionID == "" {
+		c.ready = false
+		return nil
 	}
-	reqBody, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: c.nextID.Add(1), Method: method, Params: params})
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodDelete, c.endpoint, nil)
 	if err != nil {
 		return err
 	}
-	httpReq, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, c.endpoint, bytes.NewReader(reqBody))
-	if err != nil {
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-	resp, err := c.client.Do(httpReq)
+	req.Header.Set("Mcp-Session-Id", c.sessionID)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("mcp http: unexpected status %s", resp.Status)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	c.sessionID = ""
+	c.ready = false
+	if resp.StatusCode >= 400 && resp.StatusCode != nethttp.StatusNotFound && resp.StatusCode != nethttp.StatusMethodNotAllowed {
+		return fmt.Errorf("mcp http: terminate session: unexpected status %s", resp.Status)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
+	return nil
+}
+
+// errSessionGone marks a 404 on a session-scoped request: the server forgot
+// our session (restart or idle TTL), so the client must re-handshake.
+var errSessionGone = errors.New("mcp http: session expired")
+
+func (c *Client) call(ctx context.Context, method string, params json.RawMessage, out any) error {
+	if err := c.ensureInitialized(ctx); err != nil {
+		return err
+	}
+	err := c.rpc(ctx, method, params, out)
+	if errors.Is(err, errSessionGone) {
+		// Re-handshake once with a fresh session instead of failing the call.
+		c.initMu.Lock()
+		c.sessionID = ""
+		c.ready = false
+		c.initMu.Unlock()
+		if err := c.ensureInitialized(ctx); err != nil {
+			return err
+		}
+		return c.rpc(ctx, method, params, out)
+	}
+	return err
+}
+
+// ensureInitialized performs the MCP handshake once: initialize, capture the
+// Mcp-Session-Id response header, then the initialized notification.
+func (c *Client) ensureInitialized(ctx context.Context) error {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	if c.ready {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	version := core.FrameworkVersion()
+	if version == "" {
+		version = "dev"
+	}
+	params, err := json.Marshal(map[string]any{
+		"protocolVersion": mcp.ProtocolVersion,
+		"capabilities":    map[string]any{},
+		"clientInfo": map[string]any{
+			"name":    "agentflow-go",
+			"version": version,
+		},
+	})
 	if err != nil {
 		return err
 	}
+	sessionID, err := c.rpcLocked(ctx, "initialize", params, nil)
+	if err != nil {
+		return fmt.Errorf("mcp http: initialize: %w", err)
+	}
+	c.sessionID = sessionID
+	if err := c.notifyLocked(ctx, "notifications/initialized", nil); err != nil {
+		return fmt.Errorf("mcp http: initialized notification: %w", err)
+	}
+	c.ready = true
+	return nil
+}
+
+func (c *Client) rpc(ctx context.Context, method string, params json.RawMessage, out any) error {
+	c.initMu.Lock()
+	sessionID := c.sessionID
+	c.initMu.Unlock()
+	_, err := c.roundTrip(ctx, method, params, sessionID, out)
+	return err
+}
+
+// rpcLocked is rpc for the initialize path: initMu is already held, and the
+// response's Mcp-Session-Id header is returned to the caller.
+func (c *Client) rpcLocked(ctx context.Context, method string, params json.RawMessage, out any) (string, error) {
+	return c.roundTrip(ctx, method, params, "", out)
+}
+
+func (c *Client) roundTrip(ctx context.Context, method string, params json.RawMessage, sessionID string, out any) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	id := c.nextID.Add(1)
+	reqBody, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, c.endpoint, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
+	if sessionID != "" {
+		httpReq.Header.Set("Mcp-Session-Id", sessionID)
+	}
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == nethttp.StatusNotFound && sessionID != "" {
+		return "", errSessionGone
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("mcp http: unexpected status %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
+	if err != nil {
+		return "", err
+	}
 	if int64(len(body)) > c.maxResponseBytes {
-		return fmt.Errorf("mcp http: response exceeds max bytes")
+		return "", fmt.Errorf("mcp http: response exceeds max bytes")
+	}
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		body, err = extractSSEResponse(body, id)
+		if err != nil {
+			return "", err
+		}
 	}
 	var decoded rpcResponse
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		return err
+		return "", err
 	}
 	if decoded.Error != nil {
-		return fmt.Errorf("mcp http: rpc error %d: %s", decoded.Error.Code, decoded.Error.Message)
+		return "", fmt.Errorf("mcp http: rpc error %d: %s", decoded.Error.Code, decoded.Error.Message)
 	}
-	if out == nil || len(decoded.Result) == 0 {
-		return nil
+	if out != nil && len(decoded.Result) > 0 {
+		if err := json.Unmarshal(decoded.Result, out); err != nil {
+			return "", err
+		}
 	}
-	if err := json.Unmarshal(decoded.Result, out); err != nil {
+	return resp.Header.Get("Mcp-Session-Id"), nil
+}
+
+// notifyLocked sends a JSON-RPC notification (no id, no response expected).
+// initMu must be held.
+func (c *Client) notifyLocked(ctx context.Context, method string, params json.RawMessage) error {
+	raw, err := json.Marshal(rpcNotification{JSONRPC: "2.0", Method: method, Params: params})
+	if err != nil {
 		return err
 	}
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, c.endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if c.sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 400 && resp.StatusCode != nethttp.StatusAccepted {
+		return fmt.Errorf("mcp http: notification: unexpected status %s", resp.Status)
+	}
 	return nil
+}
+
+var _ mcp.SessionClient = (*Client)(nil)
+
+// extractSSEResponse pulls JSON-RPC messages out of an SSE body and returns
+// the one matching the request id, falling back to the last message (some
+// servers stream progress notifications before the result).
+func extractSSEResponse(body []byte, wantID int64) ([]byte, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, sseScanBuf), sseScanBuf)
+	var last []byte
+	var matched []byte
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		raw := []byte(payload)
+		last = raw
+		var probe struct {
+			ID int64 `json:"id"`
+		}
+		if json.Unmarshal(raw, &probe) == nil && probe.ID == wantID {
+			matched = raw
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("mcp http: read SSE stream: %w", err)
+	}
+	if matched != nil {
+		return matched, nil
+	}
+	if last != nil {
+		return last, nil
+	}
+	return nil, fmt.Errorf("mcp http: empty SSE stream")
 }

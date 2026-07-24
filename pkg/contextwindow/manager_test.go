@@ -149,6 +149,19 @@ func TestEstimateTokens(t *testing.T) {
 	}
 }
 
+func TestEstimateTokensCJK(t *testing.T) {
+	// runes/3 would score 4 CJK characters as a single token; modern
+	// tokenizers sit near one token per character, so the estimator must not
+	// undercount Chinese-heavy text.
+	if got := EstimateTokens("你好世界"); got < 4 {
+		t.Fatalf("expected at least 4 tokens for 4 CJK runes, got %d", got)
+	}
+	mixed := EstimateTokens("你好 world")
+	if mixed < EstimateTokens("world")+2 {
+		t.Fatalf("mixed text should count CJK runes separately, got %d", mixed)
+	}
+}
+
 func TestManagerUnknownStrategyFallsBackToTrim(t *testing.T) {
 	messages := []Message{
 		{Role: RoleSystem, Content: "system"},

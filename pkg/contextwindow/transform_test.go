@@ -60,3 +60,24 @@ func TestApplyToolOutputTransformIntegrator(t *testing.T) {
 		t.Fatalf("unexpected out %s", out)
 	}
 }
+
+func TestByteTruncateCJKHonorsTokenBudget(t *testing.T) {
+	// CJK runes estimate near one token each; a fixed runes*3 cut would
+	// exceed the budget threefold.
+	raw := []byte(strings.Repeat("排", 100))
+	out, meta := ByteTruncate(raw, 10)
+	if !meta.Truncated {
+		t.Fatal("expected truncation")
+	}
+	if got := EstimateTokens(string(out)); got > 10 {
+		t.Fatalf("truncated output still over budget: %d tokens", got)
+	}
+}
+
+func TestByteTruncateShortInputUnchanged(t *testing.T) {
+	raw := []byte("short ascii")
+	out, meta := ByteTruncate(raw, 100)
+	if meta.Truncated || string(out) != string(raw) {
+		t.Fatalf("short input should pass through, got %q meta=%+v", out, meta)
+	}
+}

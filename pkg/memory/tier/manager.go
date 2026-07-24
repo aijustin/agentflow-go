@@ -117,6 +117,27 @@ func (m *defaultManager) Recall(ctx context.Context, ns memory.Namespace, query 
 			appendCandidate(record)
 		}
 	}
+	// Single-level stores pin every record to one tier, so the per-level
+	// budget split would cap recall at that tier's slice (e.g. a Total of 200
+	// with everything in warm only ever surfaced the warm share). Top up from
+	// every level until the total budget is reachable.
+	if len(candidates) < budget.Total {
+		for _, level := range []Level{LevelHot, LevelWarm, LevelCold} {
+			if len(candidates) >= budget.Total {
+				break
+			}
+			if budgetForLevel(budget, level) >= budget.Total {
+				continue // first pass already listed up to the total cap
+			}
+			records, err := m.store.List(ctx, ns, level, budget.Total*2)
+			if err != nil {
+				return nil, err
+			}
+			for _, record := range records {
+				appendCandidate(record)
+			}
+		}
+	}
 	if budget.Cold > 0 && strings.TrimSpace(query) != "" && m.coldSummary != nil {
 		ids, err := m.coldSummary.SearchRecordIDs(ctx, ns, query, budget.Cold*2)
 		if err != nil {

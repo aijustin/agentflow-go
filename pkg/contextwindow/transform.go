@@ -92,7 +92,9 @@ func JSONAwareTruncate(raw []byte, limit int) ([]byte, TransformMeta) {
 	return fallback, meta
 }
 
-// ByteTruncate cuts raw bytes on a rune boundary and marks truncation.
+// ByteTruncate cuts raw bytes on a rune boundary and marks truncation. The
+// cut point is chosen against EstimateTokens (not a fixed runes-per-token
+// ratio) so CJK-heavy payloads honor the same budget as Latin text.
 func ByteTruncate(raw []byte, limit int) ([]byte, TransformMeta) {
 	meta := TransformMeta{OriginalBytes: len(raw), Strategy: TransformStrategyByteCut, Truncated: true}
 	if limit <= 0 {
@@ -101,17 +103,24 @@ func ByteTruncate(raw []byte, limit int) ([]byte, TransformMeta) {
 		meta.Strategy = TransformStrategyNone
 		return raw, meta
 	}
-	runeLimit := limit * 3
-	runes := []rune(string(raw))
-	if len(runes) <= runeLimit {
+	if EstimateTokens(string(raw)) <= limit {
 		meta.TruncatedBytes = len(raw)
-		if EstimateTokens(string(raw)) <= limit {
-			meta.Truncated = false
-			meta.Strategy = TransformStrategyNone
-		}
+		meta.Truncated = false
+		meta.Strategy = TransformStrategyNone
 		return raw, meta
 	}
+	runes := []rune(string(raw))
+	// Start optimistic for Latin text (~3 runes/token), then halve until the
+	// estimator accepts the cut — CJK text lands near limit runes.
+	runeLimit := limit * 3
+	if runeLimit > len(runes) {
+		runeLimit = len(runes)
+	}
 	out := string(runes[:runeLimit]) + "..."
+	for EstimateTokens(out) > limit && runeLimit > 1 {
+		runeLimit /= 2
+		out = string(runes[:runeLimit]) + "..."
+	}
 	meta.TruncatedBytes = len(out)
 	return []byte(out), meta
 }

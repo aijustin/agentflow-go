@@ -40,6 +40,38 @@ func TestManagerRecallRespectsBudget(t *testing.T) {
 	}
 }
 
+func TestManagerRecallBackfillsSingleLevelStore(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore()
+	manager := NewManager(store, SingleLevelPolicy(), NoopMigrationObserver{})
+	ns := memory.Namespace{Scope: memory.ScopeSession, SessionID: "backfill:assistant", Agent: "assistant"}
+	now := time.Now().UTC()
+
+	// A single-level durable store pins every record to one tier; the
+	// per-level budget split must not cap recall at that tier's share.
+	for i := 0; i < 8; i++ {
+		if err := manager.Remember(ctx, ns, Record{
+			CognitiveRecord: memory.CognitiveRecord{
+				ID:        fmt.Sprintf("msg-%d", i),
+				Content:   "message",
+				CreatedAt: now.Add(time.Duration(i) * time.Minute),
+			},
+			Tier:         LevelWarm,
+			LastAccessAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := manager.Recall(ctx, ns, "", RecallBudget{Total: 8}.Normalize())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 8 {
+		t.Fatalf("expected recall to backfill up to the total budget, got %d of 8", len(got))
+	}
+}
+
 func TestManagerPromoteOnAccess(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore()

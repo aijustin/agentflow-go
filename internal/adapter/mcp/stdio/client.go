@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/mcp"
 )
 
@@ -36,11 +37,21 @@ type Client struct {
 	// so once a read is abandoned mid-flight there is no safe way to tell
 	// which later call an eventually-arriving line belongs to.
 	broken error
+	// initMu serializes the initialize handshake so concurrent first calls
+	// cannot double-initialize; ready flips once the handshake completes.
+	initMu sync.Mutex
+	ready  bool
 }
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      int64           `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type rpcNotification struct {
+	JSONRPC string          `json:"jsonrpc"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -56,6 +67,11 @@ type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
+
+// DefaultMaxLineBytes caps one JSON-RPC message on the pipe. The bufio
+// default (64KiB) breaks tools/list on servers with many tools and large
+// tool results; the cap keeps a misbehaving server from exhausting memory.
+const DefaultMaxLineBytes = 16 << 20
 
 func NewClient(ctx context.Context, config Config) (*Client, error) {
 	if err := ctx.Err(); err != nil {
@@ -84,17 +100,43 @@ func NewClient(ctx context.Context, config Config) (*Client, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("mcp stdio: start command: %w", err)
 	}
-	return &Client{cmd: cmd, stdin: stdin, scanner: bufio.NewScanner(stdout)}, nil
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), DefaultMaxLineBytes)
+	return &Client{cmd: cmd, stdin: stdin, scanner: scanner}, nil
 }
 
+// maxListToolsPages bounds nextCursor pagination so a misbehaving server
+// cannot keep the client listing forever.
+const maxListToolsPages = 100
+
 func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
-	var decoded struct {
-		Tools []mcp.Tool `json:"tools"`
+	var all []mcp.Tool
+	var cursor string
+	for page := 0; ; page++ {
+		var params json.RawMessage
+		if cursor != "" {
+			raw, err := json.Marshal(map[string]string{"cursor": cursor})
+			if err != nil {
+				return nil, err
+			}
+			params = raw
+		}
+		var decoded struct {
+			Tools      []mcp.Tool `json:"tools"`
+			NextCursor string     `json:"nextCursor"`
+		}
+		if err := c.call(ctx, "tools/list", params, &decoded); err != nil {
+			return nil, err
+		}
+		all = append(all, decoded.Tools...)
+		if decoded.NextCursor == "" {
+			return all, nil
+		}
+		cursor = decoded.NextCursor
+		if page+1 >= maxListToolsPages {
+			return nil, fmt.Errorf("mcp stdio: tools/list exceeded %d pages", maxListToolsPages)
+		}
 	}
-	if err := c.call(ctx, "tools/list", nil, &decoded); err != nil {
-		return nil, err
-	}
-	return decoded.Tools, nil
 }
 
 func (c *Client) CallTool(ctx context.Context, req mcp.CallToolRequest) (mcp.CallToolResult, error) {
@@ -128,6 +170,69 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) call(ctx context.Context, method string, params json.RawMessage, out any) error {
+	if method != "initialize" {
+		if err := c.ensureInitialized(ctx); err != nil {
+			return err
+		}
+	}
+	return c.roundTrip(ctx, method, params, out)
+}
+
+// ensureInitialized performs the MCP handshake once: initialize followed by
+// the initialized notification. stdio carries no session header, so only the
+// message exchange is required.
+func (c *Client) ensureInitialized(ctx context.Context) error {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	if c.ready {
+		return nil
+	}
+	version := core.FrameworkVersion()
+	if version == "" {
+		version = "dev"
+	}
+	params, err := json.Marshal(map[string]any{
+		"protocolVersion": mcp.ProtocolVersion,
+		"capabilities":    map[string]any{},
+		"clientInfo": map[string]any{
+			"name":    "agentflow-go",
+			"version": version,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if err := c.roundTrip(ctx, "initialize", params, nil); err != nil {
+		return fmt.Errorf("mcp stdio: initialize: %w", err)
+	}
+	if err := c.notify(ctx, "notifications/initialized", nil); err != nil {
+		return fmt.Errorf("mcp stdio: initialized notification: %w", err)
+	}
+	c.ready = true
+	return nil
+}
+
+// notify writes a JSON-RPC notification (no id, no response expected).
+func (c *Client) notify(ctx context.Context, method string, params json.RawMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.broken != nil {
+		return c.broken
+	}
+	payload, err := json.Marshal(rpcNotification{JSONRPC: "2.0", Method: method, Params: params})
+	if err != nil {
+		return err
+	}
+	if _, err := c.stdin.Write(append(payload, '\n')); err != nil {
+		return fmt.Errorf("mcp stdio: write notification: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) roundTrip(ctx context.Context, method string, params json.RawMessage, out any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

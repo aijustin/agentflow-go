@@ -3,6 +3,7 @@ package contextwindow
 import (
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -187,9 +188,24 @@ func EstimateTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	runes := utf8.RuneCountInString(text)
+	// runes/3 alone systematically underestimates CJK text: modern tokenizers
+	// sit near one token per CJK character, so a Chinese-heavy conversation
+	// could silently overflow the window. Count CJK runes closer to parity
+	// and keep the cheaper ASCII heuristic for Latin text.
+	var ascii, cjk, other int
+	for _, r := range text {
+		switch {
+		case r < utf8.RuneSelf:
+			ascii++
+		case unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
+			unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r):
+			cjk++
+		default:
+			other++
+		}
+	}
+	estimate := ascii/3 + cjk + other/3
 	words := len(strings.Fields(text))
-	estimate := runes / 3
 	if words > estimate {
 		estimate = words
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,50 @@ func TestClientCallCancelledMidReadPoisonsClientInsteadOfHanging(t *testing.T) {
 	}
 }
 
+func TestClientHandlesLargeResponses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := NewClient(ctx, Config{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestStdioHelperProcess"},
+		Env:     []string{"AGENTFLOW_TEST_MCP_STDIO=1", "AGENTFLOW_TEST_MCP_STDIO_BIG=1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	tools, err := client.ListTools(ctx)
+	if err != nil {
+		t.Fatalf("large response must not break the client: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name != "big" || len(tools[0].Description) != 128*1024 {
+		t.Fatalf("unexpected tools: %+v", tools)
+	}
+}
+
+func TestClientListToolsPagination(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := NewClient(ctx, Config{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestStdioHelperProcess"},
+		Env:     []string{"AGENTFLOW_TEST_MCP_STDIO=1", "AGENTFLOW_TEST_MCP_STDIO_PAGED=1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	tools, err := client.ListTools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 2 || tools[0].Name != "search" || tools[1].Name != "second" {
+		t.Fatalf("expected both pages, got %+v", tools)
+	}
+}
+
 func TestStdioHelperProcess(t *testing.T) {
 	if os.Getenv("AGENTFLOW_TEST_MCP_STDIO") != "1" {
 		return
@@ -94,10 +139,37 @@ func TestStdioHelperProcess(t *testing.T) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
+		if req.ID == 0 {
+			// Notifications (e.g. notifications/initialized) carry no id and
+			// must not be answered, or the reply would be misread as the
+			// response to a later request.
+			continue
+		}
 		var result any
 		switch req.Method {
+		case "initialize":
+			result = map[string]any{
+				"protocolVersion": mcp.ProtocolVersion,
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]any{"name": "stub", "version": "0"},
+			}
 		case "tools/list":
-			result = map[string]any{"tools": []map[string]any{{"name": "search", "description": "Search docs"}}}
+			switch {
+			case os.Getenv("AGENTFLOW_TEST_MCP_STDIO_BIG") == "1":
+				// A single JSON-RPC line larger than bufio's 64KiB default;
+				// the client must not die with "token too long".
+				result = map[string]any{"tools": []map[string]any{{"name": "big", "description": strings.Repeat("x", 128*1024)}}}
+			case os.Getenv("AGENTFLOW_TEST_MCP_STDIO_PAGED") == "1":
+				var params map[string]any
+				_ = json.Unmarshal(req.Params, &params)
+				if params["cursor"] == "p2" {
+					result = map[string]any{"tools": []map[string]any{{"name": "second"}}}
+				} else {
+					result = map[string]any{"tools": []map[string]any{{"name": "search"}}, "nextCursor": "p2"}
+				}
+			default:
+				result = map[string]any{"tools": []map[string]any{{"name": "search", "description": "Search docs"}}}
+			}
 		case "tools/call":
 			result = map[string]any{"content": []map[string]any{{"type": "text", "text": "ok"}}}
 		case "hang":
