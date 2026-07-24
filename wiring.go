@@ -1,12 +1,18 @@
 package agentflow
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
+	runstaterecording "github.com/aijustin/agentflow-go/internal/adapter/runstate/recording"
+	schemamigrations "github.com/aijustin/agentflow-go/migrations/postgres"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 // --- Wiring Validation ---
@@ -109,7 +115,68 @@ func validateWiring(scenario core.Scenario, cfg options, autoMemory map[string]b
 			return fmt.Errorf("agentflow: wiring: human-in-the-loop is enabled but no HumanGate or HITL token secret is configured")
 		}
 	}
+	// A job queue shared across workers plus a shared run-state repository is
+	// a multi-node deployment; without run-lease coordination a crashed worker
+	// leaves its runs in Running forever and redelivered run jobs dead-letter
+	// on ErrRunInProgress. Warn loudly but do not fail: single-node and
+	// in-memory setups are legitimate without a lease.
+	if cfg.jobQueue != nil && cfg.runLocker == nil && cfg.runs != nil && !isInMemoryRunState(cfg.runs) && cfg.logger != nil {
+		cfg.logger.Warn(context.Background(), "agentflow: wiring: job queue and shared run-state repository configured without WithRunLease: a crashed worker leaves runs stuck in Running and redelivered run jobs dead-letter; configure WithRunLease (and consider WithRunReaper) for multi-node deployments")
+	}
+	// A PostgreSQL run-state repository must sit on a schema new enough for
+	// the columns the code writes (fence_token, added in migration 0004).
+	// Failing here turns a runtime "column does not exist" into a boot-time
+	// error that names the fix.
+	if err := checkRunStateSchemaVersion(cfg.runs); err != nil {
+		return err
+	}
 	return nil
+}
+
+// schemaVersionChecker is implemented by run-state repositories that can
+// report the applied schema migration version (the PostgreSQL adapter).
+type schemaVersionChecker interface {
+	SchemaVersion(ctx context.Context) (int, error)
+}
+
+func checkRunStateSchemaVersion(repo runstate.Repository) error {
+	checker, ok := unwrapRunState(repo).(schemaVersionChecker)
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	version, err := checker.SchemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("agentflow: wiring: could not verify run-state schema version: %w", err)
+	}
+	if version < schemamigrations.RequiredVersion {
+		return fmt.Errorf("agentflow: wiring: run-state schema version %d is older than required version %d: apply the PostgreSQL migrations first (migrations/postgres, e.g. examples/deploy/init/apply-migrations.sh)", version, schemamigrations.RequiredVersion)
+	}
+	return nil
+}
+
+// unwrapRunState peels the checkpoint-history recording wrapper so capability
+// checks (in-memory detection, schema version) reach the real repository.
+func unwrapRunState(repo runstate.Repository) runstate.Repository {
+	if recording, ok := repo.(*runstaterecording.Repository); ok {
+		return recording.Inner
+	}
+	return repo
+}
+
+// isInMemoryRunState reports whether repo is the built-in in-process
+// run-state repository (optionally wrapped by checkpoint-history recording),
+// in which case a missing run lease is not a multi-node hazard.
+func isInMemoryRunState(repo runstate.Repository) bool {
+	switch repo := repo.(type) {
+	case *runstateinmem.Repository:
+		return true
+	case *runstaterecording.Repository:
+		return isInMemoryRunState(repo.Inner)
+	default:
+		return false
+	}
 }
 
 func scenarioNeedsLLM(scenario core.Scenario, rules WiringOptions) bool {

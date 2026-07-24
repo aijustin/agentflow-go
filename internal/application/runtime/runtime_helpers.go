@@ -108,7 +108,7 @@ func (e *Engine) ensureRunPaused(ctx context.Context, runID string) error {
 		return nil
 	}
 	snapshot.Status = runstate.RunStatusPaused
-	return e.runs.Save(ctx, &snapshot, snapshot.Version)
+	return e.saveRunSnapshot(ctx, &snapshot, snapshot.Version)
 }
 
 func (e *Engine) resolveAgent(name string) (core.Agent, error) {
@@ -191,7 +191,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) error {
 	saveResumeMetadata(&snapshot, *req)
 	stampLeaseOwner(ctx, &snapshot)
 	runstate.StampTenant(ctx, &snapshot)
-	if err := e.runs.Save(ctx, &snapshot, 0); err != nil {
+	if err := e.saveRunSnapshot(ctx, &snapshot, 0); err != nil {
 		if errors.Is(err, runstate.ErrStaleSnapshot) {
 			// Another caller created this run first between our
 			// not-found load and this save; the conflict is a race, not
@@ -245,17 +245,23 @@ func autonomousRunInProgress(snapshot runstate.RunSnapshot) bool {
 // markRunFailedOrCancelled classifies err and persists the run as Cancelled
 // when it stems from the caller's context being explicitly cancelled, or as
 // Failed otherwise (a deadline timeout is still a genuine failure). A
-// cancellation whose cause is a lost run lease is a worker-ownership failure,
-// never a caller cancel: it is persisted as Failed with the lease-lost
-// reason. This mirrors the classification Stream already applies to its
-// tool-loop goroutine, so a caller-initiated cancellation is never recorded -
-// and counted in metrics - as a run failure.
+// cancellation whose cause is a lost run lease — or a save rejected with
+// ErrStaleFence, which means the same thing: a newer lease holder owns the
+// run — is a worker-ownership failure, never a caller cancel: it is
+// persisted as Failed with the lease-lost reason. This mirrors the
+// classification Stream already applies to its tool-loop goroutine, so a
+// caller-initiated cancellation is never recorded - and counted in metrics -
+// as a run failure.
 func (e *Engine) markRunFailedOrCancelled(ctx context.Context, runID string, err error) {
 	if cause := context.Cause(ctx); cause != nil && errors.Is(cause, coordination.ErrRunLeaseLost) {
 		e.markRunFailedLease(ctx, runID, cause)
 		return
 	}
 	if errors.Is(err, coordination.ErrRunLeaseLost) {
+		e.markRunFailedLease(ctx, runID, err)
+		return
+	}
+	if errors.Is(err, runstate.ErrStaleFence) {
 		e.markRunFailedLease(ctx, runID, err)
 		return
 	}
@@ -351,7 +357,7 @@ func (e *Engine) saveStepOutput(ctx context.Context, runID, key string, value an
 			return err
 		}
 		snapshot.StepOutputs[key] = ref
-		err = e.runs.Save(ctx, &snapshot, snapshot.Version)
+		err = e.saveRunSnapshot(ctx, &snapshot, snapshot.Version)
 		if err == nil {
 			return nil
 		}
@@ -399,7 +405,7 @@ func (e *Engine) saveStepOutputs(ctx context.Context, runID string, outputs map[
 			}
 			snapshot.StepOutputs[key] = ref
 		}
-		err = e.runs.Save(ctx, &snapshot, snapshot.Version)
+		err = e.saveRunSnapshot(ctx, &snapshot, snapshot.Version)
 		if err == nil {
 			return nil
 		}
@@ -544,7 +550,10 @@ func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate
 				return err
 			}
 		}
-		if err := e.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+		if err := e.saveRunSnapshot(ctx, &snapshot, snapshot.Version); err != nil {
+			// ErrStaleFence passes straight through: the run's lease was
+			// superseded by a newer holder, so retrying can never succeed
+			// and must not race the new owner's writes.
 			if errors.Is(err, runstate.ErrStaleSnapshot) {
 				// Back off with jitter before re-colliding on the same version
 				// so concurrent writers serialize instead of stampeding.
@@ -558,6 +567,21 @@ func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate
 		return nil
 	}
 	return fmt.Errorf("runtime: failed to save snapshot %q after stale retries", runID)
+}
+
+// saveRunSnapshot persists a run snapshot with lease fencing: when the
+// context carries a fence token (the run executes under WithRunLease) and
+// the repository implements runstate.FencedRepository, the save presents
+// the token and a superseded writer fails with runstate.ErrStaleFence.
+// Without a token it is exactly runs.Save. When the repository cannot
+// fence, the save falls back to a plain Save and warns once — a superseded
+// lease holder can still write, so multi-node deployments are unsafe.
+func (e *Engine) saveRunSnapshot(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
+	fellBack, err := runstate.SaveWithFence(ctx, e.runs, snapshot, expectedVersion)
+	if fellBack && e.fenceFallbackWarned.CompareAndSwap(false, true) {
+		e.logWarn(ctx, "runtime: runstate repository does not implement FencedRepository; leased run saves are not fence-protected (multi-node unsafe)")
+	}
+	return err
 }
 
 // pauseWithRetry pauses through the human gate, retrying the whole
@@ -695,7 +719,11 @@ func nonRunningCompletionResult(runID string, status runstate.RunStatus) (RunRes
 }
 
 func (e *Engine) markRunFailed(ctx context.Context, runID string, cause error) {
-	e.markRunFailedMode(ctx, runID, cause, false)
+	// A stale-fence failure means a newer lease holder owns the run: it
+	// settles exactly like a lost lease, forcing past tool-approval
+	// checkpoint preservation so the run still reaches Failed (or is left
+	// for the reaper when the fence rejects even that write).
+	e.markRunFailedMode(ctx, runID, cause, errors.Is(cause, runstate.ErrStaleFence))
 }
 
 // markRunFailedLease persists a lease-lost failure. Unlike ordinary failures
@@ -744,7 +772,7 @@ func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause erro
 		// separate diagnostic tool, or after the event bus has rotated old
 		// events out) would otherwise give no indication of why it failed.
 		snapshot.Variables[runErrorMessageVar] = json.RawMessage(fmt.Sprintf("%q", cause.Error()))
-		if saveErr := e.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
+		if saveErr := e.saveRunSnapshot(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
 			e.logWarn(persistCtx, "runtime: failed to persist run failure status", "run_id", runID, "save_error", saveErr)
 			return
 		}
@@ -763,7 +791,7 @@ func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 				return
 			}
 			snapshot.Status = runstate.RunStatusCancelled
-			if saveErr := e.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
+			if saveErr := e.saveRunSnapshot(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
 				e.logWarn(persistCtx, "runtime: failed to persist run cancellation status", "run_id", runID, "save_error", saveErr)
 				return
 			}

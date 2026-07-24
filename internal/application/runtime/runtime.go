@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
@@ -42,6 +43,7 @@ type Engine struct {
 	audit                  audit.Sink
 	toolGov                governance.ToolPolicy
 	redactor               governance.OutputRedactor
+	llmPayloadCapture      bool
 	recorder               observability.Recorder
 	tracer                 observability.Tracer
 	logger                 log.Logger
@@ -54,6 +56,10 @@ type Engine struct {
 	approvalStore          toolorch.ApprovalStore
 	denyBreaker            *toolorch.DenyBreaker
 	turnStopHook           core.TurnStopHook
+	// fenceFallbackWarned rate-limits the warning emitted when the run-state
+	// repository cannot fence snapshot saves while a run executes under a
+	// lease (multi-node unsafe).
+	fenceFallbackWarned atomic.Bool
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -78,6 +84,10 @@ type Dependencies struct {
 	Audit                 audit.Sink
 	ToolPolicy            governance.ToolPolicy
 	OutputRedactor        governance.OutputRedactor
+	// LLMPayloadCapture controls whether LLMCalled events include message and
+	// prompt plaintext. Default false: payloads carry only message count,
+	// per-message lengths, and a truncated content hash.
+	LLMPayloadCapture     bool
 	// Recorder receives metric observations. If nil, metrics are discarded.
 	Recorder observability.Recorder
 	// Tracer receives distributed tracing spans. If nil, tracing is a no-op.
@@ -152,6 +162,7 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		audit:                  deps.Audit,
 		toolGov:                deps.ToolPolicy,
 		redactor:               deps.OutputRedactor,
+		llmPayloadCapture:      deps.LLMPayloadCapture,
 		recorder:               recorder,
 		tracer:                 tracer,
 		logger:                 deps.Logger,
@@ -279,20 +290,12 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	ctx = ContextWithTrustMode(ctx, req.TrustMode)
 	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromRequest(req))
 	if err := e.beginRun(ctx, &req); err != nil {
+		runSpan.RecordError(err)
 		return RunResult{}, err
 	}
 	ctx = e.withEpisodeCorrelation(ctx, req)
 	failRun := func(err error) (RunResult, error) {
-		runSpan.RecordError(err)
-		eventType := core.EventRunFailed
-		if errors.Is(err, context.Canceled) {
-			eventType = core.EventRunCancelled
-		}
-		e.markRunFailedOrCancelled(ctx, req.RunID, err)
-		e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
-			observability.Attribute{Key: "event", Value: string(eventType)},
-			observability.Attribute{Key: "scenario", Value: e.scenario.Name})
-		return RunResult{}, err
+		return e.failRun(ctx, runSpan, req.RunID, err)
 	}
 
 	agent, agentErr := e.resolveAgent(req.Agent)
@@ -335,6 +338,23 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	// pause that raced this call, or a cancellation) between answer()
 	// returning and the completion save; such a state is never clobbered.
 	return e.completeRun(ctx, req.RunID, output)
+}
+
+// failRun settles a run failure: records the error on the run span, persists
+// the failed/cancelled status, and counts the terminal runtime event. Run and
+// RunHybrid share it so every failure branch is visible in traces and metrics
+// instead of only marking the snapshot failed.
+func (e *Engine) failRun(ctx context.Context, runSpan observability.Span, runID string, err error) (RunResult, error) {
+	runSpan.RecordError(err)
+	eventType := core.EventRunFailed
+	if errors.Is(err, context.Canceled) {
+		eventType = core.EventRunCancelled
+	}
+	e.markRunFailedOrCancelled(ctx, runID, err)
+	e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
+		observability.Attribute{Key: "event", Value: string(eventType)},
+		observability.Attribute{Key: "scenario", Value: e.scenario.Name})
+	return RunResult{}, err
 }
 
 func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, error) {
@@ -470,7 +490,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 			// the goroutine below takes over cancellation afterwards.
 			_ = watchCancel
 		}()
-		go func() {
+		safecall.GoSafe("runtime: detached lease watcher", nil, func() {
 			select {
 			case <-callerCtx.Done():
 				if cause := context.Cause(callerCtx); errors.Is(cause, coordination.ErrRunLeaseLost) {
@@ -478,7 +498,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 				}
 			case <-watchCtx.Done():
 			}
-		}()
+		})
 	}
 	execCtx = ContextWithTrustMode(execCtx, req.TrustMode)
 	execCtx = core.ContextWithEpisodeCorrelation(execCtx, episodeCorrelationFromRequest(req))
@@ -494,7 +514,14 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		return nil, err
 	}
 	out := make(chan llm.ChatChunk, 1)
-	go func() {
+	safecall.GoSafe("runtime: stream consumer", func(err error) {
+		// The deferred cancel/streamCancel/close(out) above have already run.
+		// Settle the run instead of leaving it Running forever: a crashed
+		// consumer is a worker-side failure, so fail the run on a detached
+		// persistence context (the consumer's own defers cancelled execCtx).
+		e.markRunFailed(context.WithoutCancel(execCtx), req.RunID, err)
+		e.logError(context.WithoutCancel(execCtx), "runtime: stream consumer crashed; run marked failed", "run_id", req.RunID, "error", err)
+	}, func() {
 		defer close(out)
 		defer streamCancel()
 		defer cancel()
@@ -634,7 +661,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		streamErr := errors.New("runtime: llm stream closed without a done chunk")
 		e.markRunFailed(execCtx, req.RunID, streamErr)
 		sendTerminal(llm.ChatChunk{Error: streamErr.Error()})
-	}()
+	})
 	return out, nil
 }
 
@@ -734,27 +761,23 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	defer runSpan.End()
 	agent, agentErr := e.resolveAgent(req.Agent)
 	if agentErr != nil {
-		e.markRunFailed(ctx, req.RunID, agentErr)
-		return RunResult{}, agentErr
+		return e.failRun(ctx, runSpan, req.RunID, agentErr)
 	}
 	if len(agent.Policy.OutputSchema) > 0 {
 		// See the identical check in Run(): this path also ends in a plain
 		// text answer() call, so an output_schema would silently be
 		// ignored otherwise.
 		err := fmt.Errorf("runtime: agent %q has an output_schema configured; use RunStructured instead of Run", agent.Name)
-		e.markRunFailed(ctx, req.RunID, err)
-		return RunResult{}, err
+		return e.failRun(ctx, runSpan, req.RunID, err)
 	}
 	if e.hasBeforeFinalCheckpoint(agent) && !e.isBeforeFinalResumed(loaded) {
 		if e.gate == nil {
 			err := fmt.Errorf("runtime: human gate required for configured checkpoint")
-			e.markRunFailed(ctx, req.RunID, err)
-			return RunResult{}, err
+			return e.failRun(ctx, runSpan, req.RunID, err)
 		}
 		result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &loaded, checkpointPauseOptions{})
 		if err != nil {
-			e.markRunFailed(ctx, req.RunID, err)
-			return RunResult{}, err
+			return e.failRun(ctx, runSpan, req.RunID, err)
 		}
 		return result, nil
 	}
@@ -764,8 +787,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		if errorsAsRunPaused(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		e.markRunFailedOrCancelled(ctx, req.RunID, err)
-		return RunResult{}, err
+		return e.failRun(ctx, runSpan, req.RunID, err)
 	}
 	return e.completeRun(ctx, req.RunID, output)
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
@@ -124,6 +125,18 @@ scheduleLoop:
 		go func(index int, item any) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// A panic in user-injected dependencies (event sink, repository,
+			// registry) becomes a branch error so the map settles as Failed
+			// instead of crashing the process. Deferred last so Recover runs
+			// first while unwinding, ahead of this reporter and the slot
+			// release above.
+			var panicErr error
+			defer func() {
+				if panicErr != nil {
+					errs <- panicErr
+				}
+			}()
+			defer safecall.Recover("orchestration: map node "+node.ID, &panicErr)
 			childInput, err := buildMapBranchInput(spec.Branch, item, itemField)
 			if err != nil {
 				if collectErrors {

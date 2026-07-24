@@ -150,6 +150,8 @@ The handler serves both the UI and JSON/SSE APIs. When mounted under `/observabi
 
 `Framework.StreamRun` accepts the same choice via `WithStreamEventFilterPreset(core.EventFilterProductUI)` / `EventFilterDiagnostic`. `EventStore.ListEvents` takes `EventQuery.Preset`.
 
+Note on `LLMCalled` payloads: by default they are redacted - only `message_count`, per-message `role`/`content_chars`, and a truncated `messages_hash` are persisted, so debug drawers show metadata-only LLM cards. Message/prompt plaintext (the LLM 入参 view) is stored only when the framework is constructed with `WithLLMPayloadCapture(true)`; even then it passes through the configured output redactor first. See [docs/observability-governance.md](observability-governance.md#llm-事件-payload-脱敏).
+
 When `ObservabilityHTTPHandlerConfig.Framework` is set, Studio endpoints are also available:
 
 - `GET /observability/api/graph` — scenario workflow topology (nested subgraphs).

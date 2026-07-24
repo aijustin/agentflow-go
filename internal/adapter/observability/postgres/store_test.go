@@ -178,6 +178,20 @@ type testState struct {
 	execs  []string
 	nextID int64
 	rows   []testRow
+	// outbox models the agentflow_outbox fallback table written by OutboxSink.
+	outbox []testOutboxRow
+	// failAppend, when true, makes the event INSERT fail so OutboxSink falls
+	// back to parking the event in the outbox.
+	failAppend bool
+}
+
+type testOutboxRow struct {
+	id           int64
+	runID        string
+	sequence     int64
+	eventType    string
+	scenarioName string
+	payload      []byte
 }
 
 type testRow struct {
@@ -213,14 +227,74 @@ type testTx struct{}
 func (testTx) Commit() error   { return nil }
 func (testTx) Rollback() error { return nil }
 
-func (c *testConn) ExecContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+func (c *testConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	normalized := strings.ToUpper(strings.TrimSpace(query))
 	c.state.mu.Lock()
 	c.state.execs = append(c.state.execs, strings.TrimSpace(query))
 	c.state.mu.Unlock()
+	switch {
+	case strings.HasPrefix(normalized, "INSERT INTO") && strings.Contains(normalized, "AGENTFLOW_OUTBOX"):
+		return c.insertOutbox(args)
+	case strings.HasPrefix(normalized, "DELETE FROM") && strings.Contains(normalized, "RUN_ID"):
+		return c.deleteEventsForRun(args)
+	case strings.HasPrefix(normalized, "DELETE FROM") && strings.Contains(normalized, "OCCURRED_AT"):
+		return c.purgeEvents(args)
+	default:
+		return driver.RowsAffected(1), nil
+	}
+}
+
+// insertOutbox models the OutboxSink fallback park INSERT.
+func (c *testConn) insertOutbox(args []driver.NamedValue) (driver.Result, error) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	row := testOutboxRow{
+		id:           int64(len(c.state.outbox)) + 1,
+		runID:        namedString(args[0]),
+		sequence:     namedInt64(args[1].Value),
+		eventType:    namedString(args[2]),
+		scenarioName: namedString(args[3]),
+		payload:      valueBytes(args[4].Value),
+	}
+	c.state.outbox = append(c.state.outbox, row)
 	return driver.RowsAffected(1), nil
+}
+
+func (c *testConn) deleteEventsForRun(args []driver.NamedValue) (driver.Result, error) {
+	runID := namedString(args[0])
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	kept := c.state.rows[:0]
+	var removed int64
+	for _, row := range c.state.rows {
+		if row.runID == runID {
+			removed++
+			continue
+		}
+		kept = append(kept, row)
+	}
+	c.state.rows = kept
+	return driver.RowsAffected(removed), nil
+}
+
+func (c *testConn) purgeEvents(args []driver.NamedValue) (driver.Result, error) {
+	cutoff, _ := args[0].Value.(time.Time)
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	kept := c.state.rows[:0]
+	var removed int64
+	for _, row := range c.state.rows {
+		if row.occurredAt.Before(cutoff) {
+			removed++
+			continue
+		}
+		kept = append(kept, row)
+	}
+	c.state.rows = kept
+	return driver.RowsAffected(removed), nil
 }
 
 func (c *testConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
@@ -231,8 +305,12 @@ func (c *testConn) QueryContext(ctx context.Context, query string, args []driver
 	switch {
 	case strings.HasPrefix(normalized, "SELECT COALESCE(MAX(SEQUENCE)"):
 		return c.nextSequence(args)
+	case strings.HasPrefix(normalized, "SELECT GREATEST"):
+		return c.nextOutboxSequence(args)
 	case strings.HasPrefix(normalized, "INSERT INTO"):
 		return c.insertEvent(args)
+	case strings.HasPrefix(normalized, "SELECT ID, CREATED_AT FROM"):
+		return c.readEventID(args)
 	case strings.HasPrefix(normalized, "SELECT ID, SEQUENCE") && strings.Contains(normalized, "EPISODE_ID = $1"):
 		return c.listScopedEvents(args, "episode")
 	case strings.HasPrefix(normalized, "SELECT ID, SEQUENCE") && strings.Contains(normalized, "SESSION_ID = $1"):
@@ -259,15 +337,61 @@ func (c *testConn) nextSequence(args []driver.NamedValue) (driver.Rows, error) {
 	return newTestRows([]string{"sequence"}, [][]driver.Value{{maxSequence + 1}}), nil
 }
 
+// nextOutboxSequence backs the OutboxSink sequence minting:
+// GREATEST(max(events.sequence), max(outbox.sequence)) + 1 for the run.
+func (c *testConn) nextOutboxSequence(args []driver.NamedValue) (driver.Rows, error) {
+	runID := namedString(args[0])
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	var maxSequence int64
+	for _, row := range c.state.rows {
+		if row.runID == runID && row.sequence > maxSequence {
+			maxSequence = row.sequence
+		}
+	}
+	for _, row := range c.state.outbox {
+		if row.runID == runID && row.sequence > maxSequence {
+			maxSequence = row.sequence
+		}
+	}
+	return newTestRows([]string{"sequence"}, [][]driver.Value{{maxSequence + 1}}), nil
+}
+
+// readEventID backs the AppendSequenced conflict read-back.
+func (c *testConn) readEventID(args []driver.NamedValue) (driver.Rows, error) {
+	runID := namedString(args[0])
+	sequence := namedInt64(args[1].Value)
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	for _, row := range c.state.rows {
+		if row.runID == runID && row.sequence == sequence {
+			return newTestRows([]string{"id", "created_at"}, [][]driver.Value{{row.id, row.createdAt}}), nil
+		}
+	}
+	return newTestRows([]string{"id", "created_at"}, nil), nil
+}
+
 func (c *testConn) insertEvent(args []driver.NamedValue) (driver.Rows, error) {
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
+	if c.state.failAppend {
+		return nil, fmt.Errorf("injected append failure")
+	}
+	runID := namedString(args[0])
+	sequence := namedInt64(args[1].Value)
+	for _, row := range c.state.rows {
+		// ON CONFLICT (run_id, sequence) DO NOTHING: the insert returns no
+		// row when the sequence is already taken.
+		if row.runID == runID && row.sequence == sequence {
+			return newTestRows([]string{"id", "created_at"}, nil), nil
+		}
+	}
 	c.state.nextID++
 	createdAt := time.Date(2026, 5, 17, 12, 0, int(c.state.nextID), 0, time.UTC)
 	row := testRow{
 		id:           c.state.nextID,
-		runID:        namedString(args[0]),
-		sequence:     namedInt64(args[1].Value),
+		runID:        runID,
+		sequence:     sequence,
 		eventType:    namedString(args[2]),
 		scenarioName: namedString(args[3]),
 		episodeID:    namedString(args[4]),

@@ -110,3 +110,6 @@ sqlTool, err := adapters.NewSQLToolExecutor(adapters.SQLToolConfig{
 ```
 
 对于探索式分析，请将执行器指向只读副本，保持 `MaxRows` 较低，并且只在可信场景中启用临时查询，同时开启审批和审计。
+## 幂等
+
+内置执行器只允许 `SELECT`，本身无副作用，无需幂等处理。基于该模式自建的 SQL **写**工具应使用 `core.IdempotencyKeyFromContext(ctx)` 取到运行时注入的幂等键，并以它为冲突键做 UPSERT / INSERT IGNORE（或写去重表），保证恢复重放同一逻辑执行时副作用不重复；契约细节见 [tool-idempotency.md](tool-idempotency.md)。

@@ -404,7 +404,7 @@ func (f *Framework) applyWorkflowAmendment(ctx context.Context, runID string) er
 		snapshot.Variables[resumePromptVar] = quoteJSONString(prior + "\n\nHuman feedback: " + amendment)
 	}
 	delete(snapshot.Variables, "human_amendment")
-	return f.runs.Save(ctx, &snapshot, snapshot.Version)
+	return f.saveRunSnapshot(ctx, &snapshot, snapshot.Version)
 }
 
 func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCompleted bool) (RunResult, error) {
@@ -447,8 +447,14 @@ func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCom
 // the request context), and an autonomous run with unconsumed checkpoint
 // metadata (e.g. a lease-lost failure that left a tool-approval checkpoint
 // behind) continues from that checkpoint. An autonomous run without pending
-// checkpoint metadata has no resumable progress and returns an explicit
-// error instead of silently re-running from scratch.
+// checkpoint metadata resumes from the last persisted iteration boundary
+// (StepOutputs["auto:iter:<n>"], written after every completed LLM+tools
+// iteration): completed iterations are not re-sent to the LLM. Side effects
+// of the one iteration that crashed before its boundary was persisted may
+// replay - at-least-once at iteration granularity; side-effecting tools
+// should deduplicate on the run-scoped idempotency key. A failed run with
+// neither checkpoint metadata nor iteration progress has nothing resumable
+// and returns an explicit error instead of silently re-running from scratch.
 func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult, error) {
 	mode := f.currentScenario().Orchestration.Mode
 	if f.runs == nil {
@@ -462,8 +468,8 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 		return RunResult{}, fmt.Errorf("agentflow: run %q is not failed (status=%s)", runID, snapshot.Status)
 	}
 	autonomous := mode != core.OrchestrationFixedWorkflow && mode != core.OrchestrationHybrid
-	if autonomous && !hasPendingCheckpointMetadata(snapshot) {
-		return RunResult{}, fmt.Errorf("agentflow: RetryFailedRun for autonomous run %q requires pending checkpoint metadata; the failure left no resumable checkpoint (status variables carry no checkpoint_kind)", runID)
+	if autonomous && !hasPendingCheckpointMetadata(snapshot) && !appexec.HasAutonomousIterationProgress(snapshot) {
+		return RunResult{}, fmt.Errorf("agentflow: RetryFailedRun for autonomous run %q requires pending checkpoint metadata or persisted iteration progress; the failure left no resumable progress (no checkpoint_kind variable, no auto:iter step outputs)", runID)
 	}
 	if f.runLocker != nil {
 		var release func()
@@ -482,7 +488,7 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 	}
 	appexec.ClearOrphanedCheckpointState(&snapshot)
 	saveCtx := runstate.ContextWithStatusTransitionOverride(ctx)
-	if err := f.runs.Save(saveCtx, &snapshot, snapshot.Version); err != nil {
+	if err := f.saveRunSnapshot(saveCtx, &snapshot, snapshot.Version); err != nil {
 		return RunResult{}, err
 	}
 	corr := core.EpisodeCorrelation{
@@ -510,9 +516,14 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 		return f.continueHybridRun(ctx, runID, snapshot)
 	default:
 		// Autonomous runs retry from the checkpoint the failure left behind
-		// (gated above), re-entering the same continue path a HITL resume
-		// would take.
-		return f.currentEngine().ContinueAfterCheckpoint(ctx, runID)
+		// when one exists, re-entering the same continue path a HITL resume
+		// would take; otherwise they resume from the last persisted
+		// iteration boundary (gated above), skipping the iterations that
+		// already completed.
+		if hasPendingCheckpointMetadata(snapshot) {
+			return f.currentEngine().ContinueAfterCheckpoint(ctx, runID)
+		}
+		return f.currentEngine().ResumeAutonomousFromIteration(ctx, runID)
 	}
 }
 
@@ -565,7 +576,7 @@ func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapsho
 		}
 		snapshot.Variables[executionPhaseVar] = quoteJSONString(executionPhaseAutonomous)
 		snapshot.Status = runstate.RunStatusRunning
-		if err := f.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+		if err := f.saveRunSnapshot(ctx, &snapshot, snapshot.Version); err != nil {
 			return RunResult{}, err
 		}
 		vars = decodeResumeVars(snapshot.Variables)

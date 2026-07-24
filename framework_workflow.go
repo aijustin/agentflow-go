@@ -57,7 +57,7 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
 	stampRunLeaseOwner(ctx, &snapshot)
 	runstate.StampTenant(ctx, &snapshot)
-	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
+	if err := f.saveRunSnapshot(ctx, &snapshot, 0); err != nil {
 		if errors.Is(err, runstate.ErrStaleSnapshot) {
 			return RunResult{}, f.classifyExistingRun(ctx, req.RunID)
 		}
@@ -122,7 +122,7 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
 	stampRunLeaseOwner(ctx, &snapshot)
 	runstate.StampTenant(ctx, &snapshot)
-	if err := f.runs.Save(ctx, &snapshot, 0); err != nil {
+	if err := f.saveRunSnapshot(ctx, &snapshot, 0); err != nil {
 		if errors.Is(err, runstate.ErrStaleSnapshot) {
 			return req, RunResult{}, f.classifyExistingRun(ctx, req.RunID)
 		}
@@ -197,7 +197,8 @@ func (e runNotRunningError) Error() string {
 // saveRunSnapshotWithRetry mirrors the engine's saveSnapshotWithRetry:
 // reload-mutate-save with retries on optimistic-concurrency conflicts, so a
 // single ErrStaleSnapshot from a concurrent writer does not abort a
-// bookkeeping save (e.g. the final Completed transition).
+// bookkeeping save (e.g. the final Completed transition). ErrStaleFence is
+// never retried: it means a newer lease holder owns the run.
 func (f *Framework) saveRunSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) (runstate.RunSnapshot, error) {
 	for attempt := 0; attempt < 5; attempt++ {
 		snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
@@ -207,7 +208,7 @@ func (f *Framework) saveRunSnapshotWithRetry(ctx context.Context, runID string, 
 		if err := mutate(&snapshot); err != nil {
 			return runstate.RunSnapshot{}, err
 		}
-		if err := f.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+		if err := f.saveRunSnapshot(ctx, &snapshot, snapshot.Version); err != nil {
 			if errors.Is(err, runstate.ErrStaleSnapshot) {
 				continue
 			}
@@ -216,6 +217,21 @@ func (f *Framework) saveRunSnapshotWithRetry(ctx context.Context, runID string, 
 		return snapshot, nil
 	}
 	return runstate.RunSnapshot{}, fmt.Errorf("agentflow: failed to save snapshot %q after stale retries", runID)
+}
+
+// saveRunSnapshot persists a run snapshot with lease fencing: when the
+// context carries a fence token (the run executes under WithRunLease) and
+// the repository implements runstate.FencedRepository, the save presents
+// the token and a superseded writer fails with ErrStaleFence. Without a
+// token it is exactly runs.Save. When the repository cannot fence, the save
+// falls back to a plain Save and warns once — a superseded lease holder can
+// still write, so multi-node deployments are unsafe.
+func (f *Framework) saveRunSnapshot(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
+	fellBack, err := runstate.SaveWithFence(ctx, f.runs, snapshot, expectedVersion)
+	if fellBack && f.fenceFallbackWarned.CompareAndSwap(false, true) && f.logger != nil {
+		f.logger.Warn(ctx, "agentflow: runstate repository does not implement FencedRepository; leased run saves are not fence-protected (multi-node unsafe)")
+	}
+	return err
 }
 
 // completeWorkflowRun persists the terminal Completed transition for a
@@ -269,7 +285,7 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 		// failed run's reason survives on the snapshot itself, not just in
 		// the (possibly rotated-out) event stream.
 		snapshot.Variables[runstate.VarRunErrorMessage] = quoteJSONString(cause.Error())
-		if saveErr := f.runs.Save(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
+		if saveErr := f.saveRunSnapshot(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
 			if f.logger != nil {
 				f.logger.Warn(persistCtx, "agentflow: failed to persist workflow failure status", "run_id", runID, "save_error", saveErr)
 			}

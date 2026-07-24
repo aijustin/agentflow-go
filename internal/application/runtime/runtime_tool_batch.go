@@ -149,7 +149,7 @@ func (e *Engine) executeToolBatch(
 				e.logWarn(ctx, "runtime: failed to persist tool output after tool error", "run_id", runID, "tool", items[i].call.Name, "error", err)
 			}
 			e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: toolResource(agent, items[i].call, nil), RunID: runID, Outcome: toolOutcome(items[i].result)})
-			e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": items[i].call.Name, "tool_call_id": items[i].call.ID, "error": items[i].result.Error, "persist_error": err.Error()})
+			e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": items[i].call.Name, "tool_call_id": items[i].call.ID, "idempotency_key": toolIdempotencyKey(runID, agent, items[i].call), "error": items[i].result.Error, "persist_error": err.Error()})
 		}
 	}
 	return items, nil

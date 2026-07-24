@@ -716,3 +716,40 @@ func TestGatewayChatErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestGatewayStreamChatReadsOversizedSSELine(t *testing.T) {
+	// A single SSE data line larger than bufio.Scanner's 64KB default cap
+	// (e.g. a big content delta) must stream through instead of aborting
+	// with bufio.ErrTooLong.
+	big := strings.Repeat("x", 128*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		payload, err := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"delta": map[string]any{"content": big}, "finish_reason": "stop"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte("data: " + string(payload) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	gateway := NewGateway([]llm.Profile{{Name: "default", Model: "test-model", Endpoint: server.URL + "/v1"}}, server.Client())
+	ch, err := gateway.StreamChat(context.Background(), "default", llm.ChatRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	done := false
+	for chunk := range ch {
+		if chunk.Error != "" {
+			t.Fatal(chunk.Error)
+		}
+		got += chunk.Content
+		done = done || chunk.Done
+	}
+	if got != big || !done {
+		t.Fatalf("unexpected stream: len(got)=%d done=%v", len(got), done)
+	}
+}

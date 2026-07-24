@@ -53,3 +53,6 @@ fw, err := agentflow.New(scenario, agentflow.WithToolExecutor("http.status", htt
 ```
 
 对于会修改状态的 API，优先编写带领域校验的专用工具，而不是开放宽泛的 `POST`/`PUT` 能力。
+## 幂等
+
+运行时注入的幂等键非空时，执行器会自动把键放进 `X-Idempotency-Key` 请求头（框架值权威，会覆盖默认头与工具输入头中的同名字段）。恢复重放同一逻辑执行时键不变，上游 API 可按该头去重副作用；键的组成与稳定性契约见 [tool-idempotency.md](tool-idempotency.md)。

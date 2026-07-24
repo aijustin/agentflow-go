@@ -200,6 +200,30 @@ func (queue *Queue) Fail(ctx context.Context, lease asyncpkg.Lease, cause error)
 	return nil
 }
 
+// Release returns a leased job to the queued state without recording a
+// failure, so another worker can lease it again immediately.
+func (queue *Queue) Release(ctx context.Context, lease asyncpkg.Lease) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := lease.Validate(); err != nil {
+		return err
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	job, err := queue.leasedJob(lease)
+	if err != nil {
+		return err
+	}
+	job.State = asyncpkg.JobQueued
+	job.LeaseWorkerID = ""
+	job.LeaseExpiresAt = time.Time{}
+	job.UpdatedAt = queue.now()
+	job.AvailableAt = job.UpdatedAt
+	queue.jobs[job.ID] = job
+	return nil
+}
+
 func (queue *Queue) Cancel(ctx context.Context, jobID string) error {
 	if err := ctx.Err(); err != nil {
 		return err

@@ -3,9 +3,11 @@ package agentflow_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -179,5 +181,88 @@ func TestFrameworkStreamRunWorkflowEmitsNodeFrames(t *testing.T) {
 	}
 	if !sawStepEvent {
 		t.Fatal("expected workflow step events in the frame stream")
+	}
+}
+
+// TestFrameworkStreamRecoversPanickingEventSink: a panicking user EventSink
+// on the engine's stream consumer goroutine must not crash the process. The
+// completion itself was already persisted before the emit panicked, so the
+// run stays settled (Completed) instead of zombie-Running.
+func TestFrameworkStreamRecoversPanickingEventSink(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "stream-sink-panic",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+	gateway := &streamGateway{chunks: []llm.ChatChunk{{Content: "hello"}, {Done: true}}}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithEventSink(core.EventSinkFunc(func(_ context.Context, event core.Event) error {
+			if event.Type == core.EventRunCompleted {
+				panic("sink exploded")
+			}
+			return nil
+		})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := fw.Stream(context.Background(), agentflow.RunRequest{RunID: "stream-sink-panic-1", Agent: "assistant", Prompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range chunks {
+	}
+	awaitRunStatus(t, fw, "stream-sink-panic-1", runstate.RunStatusCompleted)
+}
+
+// panickingFinalSaveRepo simulates a buggy user Repository that panics when
+// the terminal answer is persisted from the stream consumer goroutine.
+type panickingFinalSaveRepo struct {
+	runstate.Repository
+}
+
+func (r panickingFinalSaveRepo) Save(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
+	if _, ok := snapshot.StepOutputs["final"]; ok {
+		panic("repository exploded")
+	}
+	return r.Repository.Save(ctx, snapshot, expectedVersion)
+}
+
+// TestFrameworkStreamRecoversPanickingRepository: a panicking user
+// Repository on the engine's stream consumer goroutine must not crash the
+// process; the run is settled as Failed through the normal persistence path
+// instead of being left Running forever.
+func TestFrameworkStreamRecoversPanickingRepository(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "stream-repo-panic",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+	gateway := &streamGateway{chunks: []llm.ChatChunk{{Content: "hello"}, {Done: true}}}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithRunStateRepository(panickingFinalSaveRepo{Repository: runstateinmem.NewRepository()}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := fw.Stream(context.Background(), agentflow.RunRequest{RunID: "stream-repo-panic-1", Agent: "assistant", Prompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range chunks {
+	}
+	snapshot := awaitRunStatus(t, fw, "stream-repo-panic-1", runstate.RunStatusFailed)
+	if msg := snapshot.Variables[runstate.VarRunErrorMessage]; !strings.Contains(string(msg), "panic recovered") {
+		t.Fatalf("expected panic recovery reason on snapshot, got %s", msg)
 	}
 }

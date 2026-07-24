@@ -71,6 +71,14 @@ func NewExecutor(config Config) (*Executor, error) {
 	return &Executor{db: config.DB, allowedQueries: allowedQueries, allowAdHocQuery: config.AllowAdHocQuery, maxRows: maxRows, timeout: timeout}, nil
 }
 
+// Execute runs a read-only (SELECT/WITH) query; mutating statements are
+// rejected by validateReadOnlyQuery, so this executor performs no side
+// effects and needs no idempotency handling itself. Custom SQL *write* tools
+// built on this pattern must instead deduplicate by the framework-injected
+// idempotency key (core.IdempotencyKeyFromContext): the key is stable across
+// recovery replays of the same logical execution, so writes should use it as
+// a UPSERT conflict key / INSERT IGNORE discriminator or a dedupe-table
+// primary key rather than issuing a bare INSERT.
 func (executor *Executor) Execute(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return core.ToolResult{}, err

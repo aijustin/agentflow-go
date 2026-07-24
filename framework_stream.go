@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/aijustin/agentflow-go/internal/application/runtime"
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -150,7 +151,14 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 	}
 
 	out := make(chan StreamFrame)
-	go func() {
+	safecall.GoSafe("agentflow: stream frame merger", func(err error) {
+		// The deferred close(out) above has already run, so consumers see a
+		// closed channel; the run itself is unaffected (the engine and the
+		// lease forwarder run on their own goroutines).
+		if f.logger != nil {
+			f.logger.Error(context.WithoutCancel(ctx), "agentflow: stream frame merger crashed", "run_id", req.RunID, "error", err)
+		}
+	}, func() {
 		defer close(out)
 		var (
 			streamErr error
@@ -246,7 +254,7 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 			}
 		}
 		send(StreamFrame{Kind: StreamFrameDone, Result: result})
-	}()
+	})
 	return out, nil
 }
 

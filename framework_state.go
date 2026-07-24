@@ -91,6 +91,7 @@ func (f *Framework) engineDependencies(transforms map[string]contextwindow.ToolO
 		Audit:                  f.audit,
 		ToolPolicy:             f.toolGov,
 		OutputRedactor:         f.redactor,
+		LLMPayloadCapture:      f.llmPayloadCapture,
 		Recorder:               f.recorder,
 		Tracer:                 f.tracer,
 		Logger:                 f.logger,

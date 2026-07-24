@@ -15,6 +15,10 @@ const (
 	MetricMemoryTierRecords          MetricName = "agentflow_memory_tier_records"
 	MetricMemoryTierMigrationsTotal  MetricName = "agentflow_memory_tier_migrations_total"
 	MetricMemoryRecallLatencySeconds MetricName = "agentflow_memory_recall_latency_seconds"
+	MetricLLMTokensTotal             MetricName = "agentflow_llm_tokens_total"
+	MetricLLMDurationSeconds         MetricName = "agentflow_llm_duration_seconds"
+	MetricLLMErrorsTotal             MetricName = "agentflow_llm_errors_total"
+	MetricToolErrorsTotal            MetricName = "agentflow_tool_errors_total"
 )
 
 type SpanName string
@@ -23,6 +27,7 @@ const (
 	SpanRuntimeEvent      SpanName = "agentflow.runtime.event"
 	SpanRun               SpanName = "agentflow.run"
 	SpanToolCall          SpanName = "agentflow.tool.call"
+	SpanLLMCall           SpanName = "agentflow.llm.call"
 	SpanQueueJob          SpanName = "agentflow.queue.job"
 	SpanMemoryTierRecall  SpanName = "agentflow.memory.tier.recall"
 	SpanMemoryTierMigrate SpanName = "agentflow.memory.tier.migrate"

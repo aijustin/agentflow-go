@@ -1,12 +1,11 @@
 #!/usr/bin/env sh
+# Applies the agentflow PostgreSQL migrations via the embedded Go runner:
+# versions already recorded in agentflow_schema_migrations are skipped,
+# concurrent runs are serialized with pg_advisory_lock, and every applied
+# version is recorded. Requires Go and network access to the database.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
-DSN="${AGENT_POSTGRES_DSN:-postgres://agentflow:agentflow@127.0.0.1:5432/agentflow?sslmode=disable}"
 
-for file in "$ROOT/migrations/postgres/"*.up.sql; do
-  echo "applying $(basename "$file")"
-  psql "$DSN" -v ON_ERROR_STOP=1 -f "$file"
-done
-
-echo "migrations applied"
+cd "$ROOT"
+go run ./migrations/postgres/cmd/apply-migrations "$@"

@@ -127,6 +127,14 @@ func (e *Executor) Execute(ctx context.Context, call core.ToolCall) (core.ToolRe
 	for key, value := range input.Headers {
 		req.Header.Set(key, value)
 	}
+	// The framework-injected idempotency key is authoritative: a replayed
+	// execution (recovery resume, node rerun) must present the same key so
+	// the upstream API can deduplicate the side effect, and neither the
+	// tool's default headers nor the model-supplied input headers may
+	// override it.
+	if key := core.IdempotencyKeyFromContext(ctx); key != "" {
+		req.Header.Set("X-Idempotency-Key", key)
+	}
 	resp, err := e.client.Do(req)
 	if err != nil {
 		return core.ToolResult{}, fmt.Errorf("http tool: request %q: %w", parsed.String(), err)

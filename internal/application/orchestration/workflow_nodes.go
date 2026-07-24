@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
@@ -77,7 +78,6 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	sem := make(chan struct{}, limit)
 
 	runMember := func(memberKey string, run func(context.Context) error, decode func() (any, error)) {
-		defer wg.Done()
 		if err := groupCtx.Err(); err != nil {
 			return
 		}
@@ -143,6 +143,19 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	for index, ref := range spec.Refs {
 		wg.Add(1)
 		go func(index int, agentName string) {
+			// wg.Done lives here (not in runMember) so a panic anywhere in
+			// the member still balances the WaitGroup; Recover turns the
+			// panic into a member error so the group settles as Failed
+			// instead of crashing the process. Deferred last so Recover
+			// runs first while unwinding.
+			defer wg.Done()
+			var panicErr error
+			defer func() {
+				if panicErr != nil {
+					errs <- panicErr
+				}
+			}()
+			defer safecall.Recover("orchestration: parallel_group node "+node.ID, &panicErr)
 			childID := fmt.Sprintf("%s.agent.%s.%d", node.ID, agentName, index)
 			memberKey := "agent:" + agentName
 			if index > 0 {
@@ -154,7 +167,6 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 					mu.Lock()
 					outputs[memberKey] = value
 					mu.Unlock()
-					wg.Done()
 					return
 				}
 			}
@@ -180,6 +192,15 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 	for index, ref := range spec.Tools {
 		wg.Add(1)
 		go func(index int, toolName string) {
+			// Same panic-safety arrangement as the agent members above.
+			defer wg.Done()
+			var panicErr error
+			defer func() {
+				if panicErr != nil {
+					errs <- panicErr
+				}
+			}()
+			defer safecall.Recover("orchestration: parallel_group node "+node.ID, &panicErr)
 			childID := fmt.Sprintf("%s.tool.%s.%d", node.ID, toolName, index)
 			memberKey := "tool:" + toolName
 			if index > 0 {
@@ -191,7 +212,6 @@ func (r *WorkflowRunner) runParallelGroupNode(ctx context.Context, scenario core
 					mu.Lock()
 					outputs[memberKey] = value
 					mu.Unlock()
-					wg.Done()
 					return
 				}
 			}

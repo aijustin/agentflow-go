@@ -280,33 +280,39 @@ func (r *WorkflowRunner) runBatch(ctx context.Context, scenario core.Scenario, r
 			// node in the batch has already paused (see the pause/cancel
 			// handling below) would otherwise overwrite the paused node's
 			// CurrentNodeID and break resume's "already done" detection.
-			nodeCtx := withSkipCurrentNode(batchCtx)
-			if nodeCtx.Err() != nil {
-				return
-			}
-			enabled, err := r.conditionEnabled(nodeCtx, runID, node.Condition)
-			if err != nil {
-				r.emitJSON(ctx, core.EventStepFailed, scenario.Name, runID, map[string]any{"node_id": node.ID, "error": err.Error()})
-				errs <- err
-				return
-			}
-			if !enabled {
-				r.emitJSON(ctx, core.EventStepCompleted, scenario.Name, runID, map[string]any{"node_id": node.ID, "skipped": true})
-				return
-			}
-			r.emitJSON(ctx, core.EventStepStarted, scenario.Name, runID, map[string]any{"node_id": node.ID})
-			if err := r.runNodeWithRetry(nodeCtx, scenario, node, runID); err != nil {
-				var paused WorkflowPausedError
-				if errors.As(err, &paused) {
-					cancel()
-					errs <- err
-					return
+			// safecall.Do converts a panic in user-injected dependencies
+			// (event sink, repository, registry) into a node error so the
+			// run settles as Failed instead of crashing the process.
+			err := safecall.Do("orchestration: workflow node "+node.ID, func() error {
+				nodeCtx := withSkipCurrentNode(batchCtx)
+				if nodeCtx.Err() != nil {
+					return nil
 				}
-				r.emitJSON(ctx, core.EventStepFailed, scenario.Name, runID, map[string]any{"node_id": node.ID, "error": err.Error()})
+				enabled, err := r.conditionEnabled(nodeCtx, runID, node.Condition)
+				if err != nil {
+					r.emitJSON(ctx, core.EventStepFailed, scenario.Name, runID, map[string]any{"node_id": node.ID, "error": err.Error()})
+					return err
+				}
+				if !enabled {
+					r.emitJSON(ctx, core.EventStepCompleted, scenario.Name, runID, map[string]any{"node_id": node.ID, "skipped": true})
+					return nil
+				}
+				r.emitJSON(ctx, core.EventStepStarted, scenario.Name, runID, map[string]any{"node_id": node.ID})
+				if err := r.runNodeWithRetry(nodeCtx, scenario, node, runID); err != nil {
+					var paused WorkflowPausedError
+					if errors.As(err, &paused) {
+						cancel()
+						return err
+					}
+					r.emitJSON(ctx, core.EventStepFailed, scenario.Name, runID, map[string]any{"node_id": node.ID, "error": err.Error()})
+					return err
+				}
+				r.emitJSON(ctx, core.EventStepCompleted, scenario.Name, runID, map[string]any{"node_id": node.ID})
+				return nil
+			})
+			if err != nil {
 				errs <- err
-				return
 			}
-			r.emitJSON(ctx, core.EventStepCompleted, scenario.Name, runID, map[string]any{"node_id": node.ID})
 		}()
 	}
 	wg.Wait()
@@ -362,7 +368,15 @@ func (r *WorkflowRunner) runNodeWithRetry(ctx context.Context, scenario core.Sce
 			return err
 		}
 		attempted = attempt
-		err := r.runNode(ctx, scenario, node, runID)
+		// One idempotency key per logical node execution attempt:
+		// {run_id}:{node_id}:{attempt}. A recovery replay (RetryFailedRun,
+		// ResumeFromStep) re-enters this loop at attempt 1, so a replayed
+		// execution reuses the same key and side-effecting tools can dedupe;
+		// node-level retries are distinct executions and get distinct keys.
+		// Nested executions (loop/map/subgraph children, agent-node tool
+		// calls on the runtime path) overwrite the key with their own.
+		attemptCtx := core.WithIdempotencyKey(ctx, workflowNodeIdempotencyKey(ctx, runID, node.ID, attempt))
+		err := r.runNode(attemptCtx, scenario, node, runID)
 		if err == nil {
 			if node.Interrupt {
 				return r.pauseForInterrupt(ctx, scenario, node, runID)
@@ -401,6 +415,14 @@ func nodeAutoRetrySafe(scenario core.Scenario, node core.WorkflowNode) bool {
 		return true
 	}
 	return toolinvoke.AutoRetrySafe(tool)
+}
+
+// workflowNodeIdempotencyKey composes the idempotency key for one workflow
+// node execution attempt: {run_id}:{storage_node_id}:{attempt}. The storage
+// node ID includes any loop/subgraph step prefix from ctx, so a loop body
+// node's key is scoped to its iteration (e.g. "run-1:loop.2.body:1").
+func workflowNodeIdempotencyKey(ctx context.Context, runID, nodeID string, attempt int) string {
+	return runID + ":" + storageNodeID(ctx, nodeID) + ":" + strconv.Itoa(attempt)
 }
 
 func (r *WorkflowRunner) runNode(ctx context.Context, scenario core.Scenario, node core.WorkflowNode, runID string) error {
@@ -688,7 +710,9 @@ func (r *WorkflowRunner) saveSnapshotWithRetry(ctx context.Context, runID string
 				return err
 			}
 		}
-		if err := r.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+		if err := r.saveRunSnapshot(ctx, &snapshot, snapshot.Version); err != nil {
+			// ErrStaleFence passes straight through: a newer lease holder
+			// owns the run, so retrying can never succeed.
 			if errors.Is(err, runstate.ErrStaleSnapshot) {
 				continue
 			}
@@ -697,6 +721,16 @@ func (r *WorkflowRunner) saveSnapshotWithRetry(ctx context.Context, runID string
 		return nil
 	}
 	return fmt.Errorf("orchestration: failed to save snapshot %q after stale snapshot retries", runID)
+}
+
+// saveRunSnapshot persists a run snapshot with lease fencing when the
+// context carries a fence token and the repository supports it (see
+// runstate.SaveWithFence). The fallback warning for fencing-incapable
+// repositories is emitted once per process by the framework facade / engine,
+// which always save before the runner does.
+func (r *WorkflowRunner) saveRunSnapshot(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
+	_, err := runstate.SaveWithFence(ctx, r.runs, snapshot, expectedVersion)
+	return err
 }
 
 // pauseWithRetry applies an optional snapshot mutation and then pauses
@@ -786,7 +820,7 @@ func (r *WorkflowRunner) SaveStepOutput(ctx context.Context, scenario core.Scena
 			return err
 		}
 		snapshot.StepOutputs[nodeID] = ref
-		err = r.runs.Save(ctx, &snapshot, snapshot.Version)
+		err = r.saveRunSnapshot(ctx, &snapshot, snapshot.Version)
 		if err == nil {
 			return nil
 		}

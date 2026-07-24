@@ -243,7 +243,7 @@ func (r *WorkflowRunner) RestoreSnapshotAndRun(ctx context.Context, scenario cor
 	}
 	delete(snapshot.StepOutputs, "final")
 	saveCtx := runstate.ContextWithStatusTransitionOverride(ctx)
-	if err := r.runs.Save(saveCtx, &snapshot, current.Version); err != nil {
+	if err := r.saveRunSnapshot(saveCtx, &snapshot, current.Version); err != nil {
 		return err
 	}
 
@@ -313,7 +313,7 @@ func (r *WorkflowRunner) ResumeFromStep(ctx context.Context, scenario core.Scena
 	snapshot.PendingGate = nil
 	delete(snapshot.StepOutputs, "final")
 	saveCtx := runstate.ContextWithStatusTransitionOverride(ctx)
-	if err := r.runs.Save(saveCtx, &snapshot, snapshot.Version); err != nil {
+	if err := r.saveRunSnapshot(saveCtx, &snapshot, snapshot.Version); err != nil {
 		return err
 	}
 

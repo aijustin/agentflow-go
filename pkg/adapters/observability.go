@@ -61,6 +61,58 @@ type PostgresEventStoreConfig struct {
 	SkipSchemaSetup bool
 }
 
+// PostgresOutboxEventSinkConfig configures NewPostgresOutboxEventSink.
+type PostgresOutboxEventSinkConfig struct {
+	DB *sql.DB
+	// EventsTableName overrides the durable event table; see
+	// PostgresEventStoreConfig.TableName.
+	EventsTableName string
+	// OutboxTableName overrides the fallback outbox table (default
+	// agentflow_outbox, migration 0005). It must match the run-state
+	// repository's outbox table when customized.
+	OutboxTableName string
+	SkipSchemaSetup bool
+}
+
+// NewPostgresOutboxEventSink creates the PostgreSQL event store and an
+// outbox-backed event sink for it. The sink appends to the store first; when
+// the durable append fails, the event is parked in the run-state outbox
+// (single INSERT, same database as the run snapshots) and later redelivered
+// by the framework's outbox relay with its minted sequence, so a transient
+// store outage no longer loses lifecycle events. Live publishers (e.g. an
+// EventHub) are notified exactly like with NewEventStoreSink on the success
+// path.
+//
+// Wire the returned store into the framework with WithEventStore and start
+// the relay with WithOutboxRelay, otherwise parked rows are never delivered:
+//
+//	store, sink, err := adapters.NewPostgresOutboxEventSink(ctx, cfg, eventHub)
+//	fw, err := agentflow.New(scenario,
+//		agentflow.WithEventSink(adapters.NewEventFanoutSink(sink, ...)),
+//		agentflow.WithEventStore(store),
+//		agentflow.WithOutboxRelay(0),
+//		agentflow.WithRunStateRepository(pgRuns),
+//	)
+func NewPostgresOutboxEventSink(ctx context.Context, config PostgresOutboxEventSinkConfig, publishers ...observability.EventPublisher) (observability.EventStore, core.EventSink, error) {
+	store, err := observabilitypostgres.NewStore(ctx, observabilitypostgres.Config{
+		DB:              config.DB,
+		TableName:       config.EventsTableName,
+		SkipSchemaSetup: config.SkipSchemaSetup,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	sink, err := observabilitypostgres.NewOutboxSink(observabilitypostgres.OutboxSinkConfig{
+		Store:           store,
+		OutboxTableName: config.OutboxTableName,
+		Publishers:      publishers,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, sink, nil
+}
+
 func NewInMemoryEventStore() observability.EventStore {
 	return observabilityinmem.NewStore()
 }

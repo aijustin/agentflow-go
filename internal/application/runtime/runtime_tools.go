@@ -16,6 +16,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
@@ -33,8 +34,31 @@ func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent c
 	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{approved: true})
 }
 
+// toolIdempotencyKey derives the idempotency key for one logical tool
+// execution on the autonomous (LLM tool-loop) path. The LLM-issued tool call
+// ID is the stable identity of the call: it is persisted with the assistant
+// turn (run memory and the tool_approval checkpoint's pending calls) and
+// re-dispatched unchanged after a resume, and the in-memory retry loop
+// (executeToolWithRetry) reuses the same call — so "runID:call.ID" satisfies
+// the replay-stability contract without a separate attempt component. When a
+// provider returns no call ID there is no persisted identity to replay
+// against; fall back to a unique one-shot key so executors still see a
+// well-formed key, and document that replay-stable idempotency requires
+// provider-issued tool call IDs.
+func toolIdempotencyKey(runID string, agent core.Agent, call llm.ToolCall) string {
+	if call.ID != "" {
+		return runID + ":" + call.ID
+	}
+	return fmt.Sprintf("%s:%s.%s:%s", runID, agent.Name, call.Name, strings.TrimPrefix(runstate.GenerateRunID(), "run-"))
+}
+
 func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker, options toolDispatchOptions) (core.ToolResult, error) {
 	tracker = tracker.ensure()
+	// Attach the idempotency key for this logical tool execution before any
+	// dispatch branch runs, so every downstream consumer (executor ctx,
+	// ToolCalled/ToolReturned event payloads) observes the same key. Nested
+	// dispatches (delegated sub-agent tool calls) overwrite it with their own.
+	ctx = core.WithIdempotencyKey(ctx, toolIdempotencyKey(runID, agent, call))
 	if step, ok := samplingStepFromContext(ctx); ok && step.Frozen() && !step.Allows(call.Name) {
 		result := core.ToolResult{Tool: call.Name, Error: "tool was not advertised in this sampling step"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{
@@ -192,7 +216,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 				e.logWarn(ctx, "runtime: failed to persist tool output after tool error", "run_id", runID, "tool", call.Name, "error", err)
 			}
 			e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
-			e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error, "persist_error": persistErr})
+			e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "idempotency_key": core.IdempotencyKeyFromContext(ctx), "error": result.Error, "persist_error": persistErr})
 			return result, nil
 		}
 	}
@@ -200,7 +224,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	// persistence semantics; the batch persists every item in one
 	// saveStepOutputs after the parallel section.
 	e.recordAudit(ctx, audit.Event{Type: audit.EventToolInvoked, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: toolOutcome(result)})
-	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "error": result.Error})
+	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "idempotency_key": core.IdempotencyKeyFromContext(ctx), "error": result.Error})
 	return result, nil
 }
 
@@ -310,7 +334,7 @@ func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil
 	}
-	e.emitJSON(ctx, core.EventToolCalled, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "sub_agent": subAgentName, "tool_call_id": call.ID})
+	e.emitJSON(ctx, core.EventToolCalled, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "sub_agent": subAgentName, "tool_call_id": call.ID, "idempotency_key": core.IdempotencyKeyFromContext(ctx)})
 	output, err := e.answer(withDelegationDepth(ctx), RunRequest{RunID: runID, Agent: subAgentName, Prompt: input.Prompt, Context: input.Context})
 	result := core.ToolResult{Tool: call.Name}
 	if err != nil {
@@ -344,7 +368,7 @@ func (e *Engine) dispatchSubAgent(ctx context.Context, runID string, parent core
 			result.Error = "persist delegated output: " + err.Error()
 		}
 	}
-	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "sub_agent": subAgentName, "tool_call_id": call.ID, "error": result.Error})
+	e.emitJSON(ctx, core.EventToolReturned, runID, map[string]any{"agent": parent.Name, "tool": call.Name, "sub_agent": subAgentName, "tool_call_id": call.ID, "idempotency_key": core.IdempotencyKeyFromContext(ctx), "error": result.Error})
 	return result, nil
 }
 
@@ -361,7 +385,7 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 		if err := ctx.Err(); err != nil {
 			return core.ToolResult{}, err
 		}
-		e.emitJSON(ctx, core.EventToolCalled, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "attempt": attempt})
+		e.emitJSON(ctx, core.EventToolCalled, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "tool_call_id": call.ID, "idempotency_key": core.IdempotencyKeyFromContext(ctx), "attempt": attempt})
 		start := time.Now()
 		toolCtx, toolSpan := e.startSpan(ctx, observability.SpanToolCall,
 			observability.Attribute{Key: "run_id", Value: runID},
@@ -387,6 +411,9 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 		}
 		toolSpan.RecordError(err)
 		toolSpan.End()
+		e.recorder.IncCounter(ctx, observability.MetricToolErrorsTotal,
+			observability.Attribute{Key: "tool", Value: call.Name},
+			observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 		lastErr = err
 		if !shouldRetry(ctx, err) || attempt == attempts {
 			return core.ToolResult{}, err

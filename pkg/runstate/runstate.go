@@ -13,8 +13,13 @@ import (
 )
 
 var (
-	ErrNotFound          = errors.New("runstate: not found")
-	ErrStaleSnapshot     = errors.New("runstate: snapshot version is stale")
+	ErrNotFound      = errors.New("runstate: not found")
+	ErrStaleSnapshot = errors.New("runstate: snapshot version is stale")
+	// ErrStaleFence reports that a fenced save presented a fencing token lower
+	// than the highest token already recorded for the run: the writer's run
+	// lease was superseded by a newer holder and its writes must be rejected.
+	// The engine treats it like a lost lease (stop executing immediately).
+	ErrStaleFence        = errors.New("runstate: fence token is stale")
 	ErrInvalidStatus     = errors.New("runstate: invalid status")
 	ErrInvalidTransition = errors.New("runstate: invalid status transition")
 	ErrTokenSuperseded   = errors.New("humangate: token superseded by newer version")
@@ -148,6 +153,33 @@ type Repository interface {
 	// List returns snapshots that match the filter. Implementations may
 	// return results in any order. An empty filter matches all snapshots.
 	List(ctx context.Context, filter ListFilter) ([]RunSnapshot, error)
+}
+
+// FencedRepository is an optional Repository extension for multi-node
+// deployments: SaveFenced behaves like Save but additionally requires
+// fenceToken to be at least the highest fencing token already recorded for
+// the run. A stale token fails with ErrStaleFence (a newer lease holder has
+// taken over); a version mismatch still fails with ErrStaleSnapshot, so
+// callers can distinguish "someone else holds the run" from "my view is out
+// of date". The fence token comes from coordination.Lease.Token.
+//
+// Save remains fence-agnostic: existing single-node flows are unaffected.
+type FencedRepository interface {
+	Repository
+	SaveFenced(ctx context.Context, snapshot *RunSnapshot, expectedVersion int64, fenceToken uint64) error
+}
+
+// StaleRepository is an optional Repository extension that pushes the
+// "updated longer ago than grace" test down to the store, so the comparison
+// uses the store's own clock (PostgreSQL NOW()) instead of the caller's —
+// application-clock skew cannot prematurely reap or forever skip runs.
+//
+// ListStale returns snapshots matching filter whose last update is at least
+// grace in the past (snapshots with a zero UpdatedAt are always considered
+// stale, matching the reaper's historical fallback semantics).
+type StaleRepository interface {
+	Repository
+	ListStale(ctx context.Context, filter ListFilter, grace time.Duration) ([]RunSnapshot, error)
 }
 
 // ListFilter controls which snapshots are returned by Repository.List.

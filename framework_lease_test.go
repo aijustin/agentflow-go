@@ -16,6 +16,8 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	llmmock "github.com/aijustin/agentflow-go/pkg/llm/mock"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // renewFailLocker acquires normally, then fails Renew so the Framework must
@@ -554,5 +556,211 @@ func TestFrameworkAutonomousLeaseLostMarksFailed(t *testing.T) {
 	}
 	if msg := snapshot.Variables[runstate.VarRunErrorMessage]; !strings.Contains(string(msg), "lease lost") {
 		t.Fatalf("expected lease-lost reason on snapshot, got %s", msg)
+	}
+}
+
+// leaseMustBeHeld probes the run's lease with a foreign owner — the same
+// probe MarkAbandonedRuns uses to detect zombie runs — and fails the test
+// when the lease is free while the run is expected to be alive.
+func leaseMustBeHeld(t *testing.T, locker coordination.Locker, runID string) {
+	t.Helper()
+	if _, ok, err := locker.Acquire(context.Background(), "run:"+runID, "worker-b", time.Minute); err != nil || ok {
+		t.Fatalf("lease must stay held while the detached run executes: ok=%v err=%v", ok, err)
+	}
+}
+
+// leaseMustBeFreeEventually waits for the run's lease to become acquirable,
+// which is how a completed run releases its lease for other workers.
+func leaseMustBeFreeEventually(t *testing.T, locker coordination.Locker, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok, err := locker.Acquire(context.Background(), "run:"+runID, "worker-b", time.Minute); err == nil && ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("lease should be free after the detached run completed")
+}
+
+// TestFrameworkStreamDetachedHoldsLeaseUntilRunEnds: with WithRunLease +
+// StreamDetached, a client disconnect must NOT release the run lease while
+// the detached run keeps executing in the background — otherwise
+// MarkAbandonedRuns would reap the live run and another worker could take
+// over the same run ID. The lease is released only when the run settles.
+func TestFrameworkStreamDetachedHoldsLeaseUntilRunEnds(t *testing.T) {
+	locker := agentflow.NewInMemoryLocker()
+	gateway := newSlowStreamGateway()
+	fw, err := agentflow.New(
+		streamScenarioForGateway(),
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithRunLease(locker, "worker-a", time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	chunks, err := fw.Stream(agentflow.StreamDetached(ctx), agentflow.RunRequest{RunID: "run-detached-lease", Agent: "assistant", Prompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-gateway.started
+	<-chunks // first chunk
+	// Client disconnects mid-stream; the detached run keeps executing
+	// (the gateway is still blocked on release).
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+	leaseMustBeHeld(t, locker, "run-detached-lease")
+	close(gateway.release)
+	for range chunks {
+	}
+	awaitRunStatus(t, fw, "run-detached-lease", runstate.RunStatusCompleted)
+	leaseMustBeFreeEventually(t, locker, "run-detached-lease")
+}
+
+// TestFrameworkStreamRunDetachedHoldsLeaseUntilRunEnds covers the same
+// invariant through the StreamRun facade with WithStreamDetached, the
+// combination SSE handlers use.
+func TestFrameworkStreamRunDetachedHoldsLeaseUntilRunEnds(t *testing.T) {
+	locker := agentflow.NewInMemoryLocker()
+	gateway := newSlowStreamGateway()
+	fw, err := agentflow.New(
+		streamScenarioForGateway(),
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithRunLease(locker, "worker-a", time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	frames, err := fw.StreamRun(ctx, agentflow.RunRequest{RunID: "run-detached-lease-sr", Agent: "assistant", Prompt: "hi"}, agentflow.WithStreamDetached())
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-gateway.started
+	<-frames // first token frame
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+	leaseMustBeHeld(t, locker, "run-detached-lease-sr")
+	close(gateway.release)
+	for range frames {
+	}
+	awaitRunStatus(t, fw, "run-detached-lease-sr", runstate.RunStatusCompleted)
+	leaseMustBeFreeEventually(t, locker, "run-detached-lease-sr")
+}
+
+// transientRenewLocker fails Renew with a transient error for the first
+// failCount renewals, then delegates to the inner locker. Unlike
+// renewFailLocker (which reports the lease as not-held, a definitive loss),
+// the error path exercises the renewal grace window. The transient failure
+// models an ambiguous-outcome error (e.g. a store timeout after the write
+// applied): the inner lease is still renewed underneath, but the framework
+// only sees the error and must tolerate it.
+type transientRenewLocker struct {
+	inner     coordination.Locker
+	renews    atomic.Int32
+	failCount int32
+}
+
+func (l *transientRenewLocker) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (coordination.Lease, bool, error) {
+	return l.inner.Acquire(ctx, key, owner, ttl)
+}
+
+func (l *transientRenewLocker) Renew(ctx context.Context, lease coordination.Lease, ttl time.Duration) (coordination.Lease, bool, error) {
+	if l.renews.Add(1) <= l.failCount {
+		_, _, _ = l.inner.Renew(ctx, lease, ttl)
+		return coordination.Lease{}, false, errors.New("transient lease store outage")
+	}
+	return l.inner.Renew(ctx, lease, ttl)
+}
+
+func (l *transientRenewLocker) Release(ctx context.Context, lease coordination.Lease) error {
+	return l.inner.Release(ctx, lease)
+}
+
+// TestFrameworkRunLeaseToleratesTransientRenewErrors: a couple of transient
+// renewal errors inside one TTL must not abort the run; once renewals
+// recover, the run completes normally.
+func TestFrameworkRunLeaseToleratesTransientRenewErrors(t *testing.T) {
+	locker := &transientRenewLocker{inner: agentflow.NewInMemoryLocker(), failCount: 2}
+	fw, err := agentflow.New(
+		retryWorkflowScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
+		agentflow.WithToolExecutor("stepA", slowTool{delay: 200 * time.Millisecond}),
+		agentflow.WithToolExecutor("stepB", noopTool{}),
+		// TTL 90ms renews every 30ms and tolerates 3 consecutive transient
+		// failures; 2 must be survived.
+		agentflow.WithRunLease(locker, "worker-a", 90*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-transient-renew", Prompt: "go"}); err != nil {
+		t.Fatalf("transient renew errors within the TTL grace must not abort the run: %v", err)
+	}
+	if got := locker.renews.Load(); got < 3 {
+		t.Fatalf("expected renewals to recover after transient errors, got %d attempts", got)
+	}
+}
+
+// TestFrameworkAbortsWhenRenewErrorsExceedTTL: transient renewal errors that
+// persist for a full TTL mean the lease has genuinely expired, so the run is
+// aborted with ErrRunLeaseLost exactly at the grace limit.
+func TestFrameworkAbortsWhenRenewErrorsExceedTTL(t *testing.T) {
+	locker := &transientRenewLocker{inner: agentflow.NewInMemoryLocker(), failCount: 100}
+	fw, err := agentflow.New(
+		retryWorkflowScenario(),
+		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
+		agentflow.WithToolExecutor("stepA", slowTool{delay: 300 * time.Millisecond}),
+		agentflow.WithToolExecutor("stepB", noopTool{}),
+		// TTL 60ms renews every 20ms, so the grace window is 3 consecutive
+		// transient failures.
+		agentflow.WithRunLease(locker, "worker-a", 60*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-renew-grace-exceeded", Prompt: "go"})
+	if !errors.Is(err, agentflow.ErrRunLeaseLost) {
+		t.Fatalf("expected ErrRunLeaseLost after the grace window, got %v", err)
+	}
+	if got := locker.renews.Load(); got != 3 {
+		t.Fatalf("expected abort exactly at the 3rd consecutive failure, got %d attempts", got)
+	}
+}
+
+func TestRedisLockerFacadeFencingToken(t *testing.T) {
+	server := miniredis.RunT(t)
+	locker, err := agentflow.NewRedisLocker(agentflow.RedisLockerConfig{Addr: server.Addr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = locker.Close() })
+	ctx := context.Background()
+	lease, ok, err := locker.Acquire(ctx, "run:facade", "worker:1", 50*time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("acquire failed: ok=%v err=%v", ok, err)
+	}
+	if lease.Token == 0 {
+		t.Fatal("facade locker must mint a fencing token")
+	}
+	server.FastForward(time.Second)
+	second, ok, err := locker.Acquire(ctx, "run:facade", "worker:2", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("takeover acquire failed: ok=%v err=%v", ok, err)
+	}
+	if second.Token <= lease.Token {
+		t.Fatalf("token must increase: first=%d second=%d", lease.Token, second.Token)
+	}
+	if _, ok, err := locker.Renew(ctx, lease, time.Minute); err != nil || ok {
+		t.Fatalf("stale renew must fail: ok=%v err=%v", ok, err)
+	}
+
+	shared, err := agentflow.NewRedisLockerFromClient(redis.NewClient(&redis.Options{Addr: server.Addr()}), "shared:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := shared.Acquire(ctx, "run:shared", "worker:1", time.Minute); err != nil || !ok {
+		t.Fatalf("shared-client acquire failed: ok=%v err=%v", ok, err)
 	}
 }

@@ -79,6 +79,16 @@ type LeaseRenewer interface {
 	Renew(ctx context.Context, lease Lease, ttl time.Duration) (Lease, bool, error)
 }
 
+// LeaseReleaser is an optional Queue capability that returns a leased job to
+// the queued state without counting a failure, so it becomes leaseable by any
+// worker again. Workers use it as a best-effort fallback when a leased job
+// can neither be loaded nor failed (e.g. the queue is mid-outage); queues
+// without it simply let the lease expire, after which the job is leaseable
+// again anyway.
+type LeaseReleaser interface {
+	Release(ctx context.Context, lease Lease) error
+}
+
 func CloneJob(job Job) Job {
 	if job.Payload != nil {
 		payload := make([]byte, len(job.Payload))

@@ -202,6 +202,11 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 			send(llm.ChatChunk{Done: true, Usage: usage})
 		}
 		scanner := bufio.NewScanner(resp.Body)
+		// SSE frames carry full JSON deltas on one line and OpenAI-compatible
+		// providers emit large single chunks (base64 images, big tool calls);
+		// the 64KB default would abort the stream on them. Align with the MCP
+		// stdio client's 16MB line cap.
+		scanner.Buffer(make([]byte, 64*1024), 16<<20)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, ":") {

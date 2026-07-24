@@ -166,6 +166,27 @@ func (r *Repository) List(ctx context.Context, filter runstate.ListFilter) ([]ru
 	return out, nil
 }
 
+// ListStale implements runstate.StaleRepository with the local clock: a
+// file-backed store is single-process, so caller and store share one clock.
+// A zero UpdatedAt counts as stale, matching the reaper's fallback.
+func (r *Repository) ListStale(ctx context.Context, filter runstate.ListFilter, grace time.Duration) ([]runstate.RunSnapshot, error) {
+	if grace < 0 {
+		grace = 0
+	}
+	cutoff := time.Now().UTC().Add(-grace)
+	snapshots, err := r.List(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	out := snapshots[:0]
+	for _, snapshot := range snapshots {
+		if snapshot.UpdatedAt.IsZero() || !snapshot.UpdatedAt.After(cutoff) {
+			out = append(out, snapshot)
+		}
+	}
+	return out, nil
+}
+
 func (r *Repository) loadLocked(runID string) (runstate.RunSnapshot, error) {
 	data, err := os.ReadFile(r.path(runID))
 	if os.IsNotExist(err) {

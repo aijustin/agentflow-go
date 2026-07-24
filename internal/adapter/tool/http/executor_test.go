@@ -102,3 +102,41 @@ func TestExecutorRejectsOversizedResponses(t *testing.T) {
 		t.Fatal("expected oversized response error")
 	}
 }
+
+func TestExecutorSendsIdempotencyKeyHeader(t *testing.T) {
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if got := r.Header.Get("X-Idempotency-Key"); got != "run-1:call-1" {
+			t.Fatalf("expected framework idempotency key header, got %q", got)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	executor, err := NewExecutor(Config{AllowedHosts: []string{server.URL}, Client: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := core.WithIdempotencyKey(context.Background(), "run-1:call-1")
+	// A caller-supplied header must not override the framework-injected key:
+	// replay stability depends on the runtime's value reaching the upstream.
+	input := `{"url":"` + server.URL + `","headers":{"X-Idempotency-Key":"caller-value"}}`
+	if _, err := executor.Execute(ctx, core.ToolCall{Tool: "http.get", Input: json.RawMessage(input)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExecutorOmitsIdempotencyKeyHeaderWhenAbsent(t *testing.T) {
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if got := r.Header.Get("X-Idempotency-Key"); got != "" {
+			t.Fatalf("expected no idempotency key header without a context key, got %q", got)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	executor, err := NewExecutor(Config{AllowedHosts: []string{server.URL}, Client: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.Execute(context.Background(), core.ToolCall{Tool: "http.get", Input: json.RawMessage(`{"url":"` + server.URL + `"}`)}); err != nil {
+		t.Fatal(err)
+	}
+}

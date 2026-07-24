@@ -2,9 +2,11 @@ package recording
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -115,5 +117,83 @@ func TestRepositoryDelegatesLoadDeleteAndList(t *testing.T) {
 	}
 	if _, err := repo.Load(ctx, "run-2"); err == nil {
 		t.Fatal("expected missing run after delete")
+	}
+}
+
+// bareRepo implements only runstate.Repository, so the wrapper must fall back
+// to local-clock behavior for ListStale and refuse SaveFenced.
+type bareRepo struct {
+	snapshots []runstate.RunSnapshot
+}
+
+func (b *bareRepo) Save(context.Context, *runstate.RunSnapshot, int64) error { return nil }
+func (b *bareRepo) Load(context.Context, string) (runstate.RunSnapshot, error) {
+	return runstate.RunSnapshot{}, runstate.ErrNotFound
+}
+func (b *bareRepo) Delete(context.Context, string) error { return nil }
+func (b *bareRepo) List(context.Context, runstate.ListFilter) ([]runstate.RunSnapshot, error) {
+	return b.snapshots, nil
+}
+
+func TestRepositorySaveFencedDelegatesAndRecords(t *testing.T) {
+	inner := runstateinmem.NewRepository()
+	history := runstateinmem.NewCheckpointHistory()
+	repo := &Repository{Inner: inner, History: history}
+	ctx := context.Background()
+
+	snap := &runstate.RunSnapshot{RunID: "run-fenced", ScenarioName: "demo", Status: runstate.RunStatusRunning}
+	if err := repo.SaveFenced(ctx, snap, 0, 7); err != nil {
+		t.Fatal(err)
+	}
+	list, err := history.List(ctx, "run-fenced", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected fenced save recorded in history, got %d entries", len(list))
+	}
+	// Fence enforcement passes through the wrapper.
+	zombie := &runstate.RunSnapshot{RunID: "run-fenced", ScenarioName: "demo", Status: runstate.RunStatusPaused}
+	if err := repo.SaveFenced(ctx, zombie, 1, 3); !errors.Is(err, runstate.ErrStaleFence) {
+		t.Fatalf("expected ErrStaleFence, got %v", err)
+	}
+}
+
+func TestRepositorySaveFencedUnsupportedInner(t *testing.T) {
+	repo := &Repository{Inner: &bareRepo{}}
+	snap := &runstate.RunSnapshot{RunID: "run-x", ScenarioName: "demo", Status: runstate.RunStatusRunning}
+	err := repo.SaveFenced(context.Background(), snap, 0, 1)
+	if err == nil {
+		t.Fatal("expected unsupported-inner error instead of a silent unfenced save")
+	}
+}
+
+func TestRepositoryListStaleFallbackUsesLocalClock(t *testing.T) {
+	old := runstate.RunSnapshot{RunID: "run-old", Status: runstate.RunStatusRunning, UpdatedAt: time.Now().UTC().Add(-2 * time.Hour)}
+	fresh := runstate.RunSnapshot{RunID: "run-fresh", Status: runstate.RunStatusRunning, UpdatedAt: time.Now().UTC()}
+	repo := &Repository{Inner: &bareRepo{snapshots: []runstate.RunSnapshot{old, fresh}}}
+	stale, err := repo.ListStale(context.Background(), runstate.ListFilter{}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || stale[0].RunID != "run-old" {
+		t.Fatalf("expected only the old run to be stale, got %+v", stale)
+	}
+}
+
+func TestRepositoryListStaleDelegates(t *testing.T) {
+	inner := runstateinmem.NewRepository()
+	repo := &Repository{Inner: inner}
+	ctx := context.Background()
+	snap := &runstate.RunSnapshot{RunID: "run-1", ScenarioName: "demo", Status: runstate.RunStatusRunning}
+	if err := inner.Save(ctx, snap, 0); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := repo.ListStale(ctx, runstate.ListFilter{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("expected delegated ListStale to return the run, got %d", len(stale))
 	}
 }

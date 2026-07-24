@@ -47,15 +47,19 @@ handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig
 
 初始 Prometheus 指标应覆盖：
 
-- 按状态统计运行数量。
-- 运行耗时直方图。
+- 按状态统计运行数量。已通过 `agentflow_runtime_events_total{event, scenario}` 实现。
+- 运行耗时直方图。已通过 `agentflow_run_duration_seconds` 实现。
 - 工作流步骤耗时直方图。
-- LLM 请求数、延迟、token 用量和错误数。
-- 工具请求数、延迟、副作用等级和错误数。
+- LLM 请求数、延迟、token 用量和错误数。已通过 `agentflow_llm_duration_seconds{profile}`、`agentflow_llm_tokens_total{profile, kind=prompt|completion}`、`agentflow_llm_errors_total{profile}` 实现；一次逻辑调用（含重试）计一次延迟/错误，retry attempt 只作为 span 属性。
+- 工具请求数、延迟、副作用等级和错误数。延迟为 `agentflow_tool_duration_seconds{tool, scenario}`，错误数为 `agentflow_tool_errors_total{tool, scenario}`（按失败 attempt 计数，与工具 span 的 RecordError 一致）。
 - 队列深度、租约恢复次数、重试次数和死信数量。
 - HITL 暂停次数和决策次数。
 
 标签必须保持有限基数。使用路由模式和枚举值，不要使用用户 ID 或原始 prompt。
+
+### LLM 事件 payload 脱敏
+
+`LLMCalled` 事件默认不持久化 prompt/messages 明文（可能含 PII）：payload 只携带 `message_count`、各消息的 `role`/`content_chars` 及工具路由元数据，外加截断到 16 个 hex 字符的 `messages_hash`（sha256），用于关联相同输入。调试需要明文时用 `agentflow.WithLLMPayloadCapture(true)` 显式开启；开启后 payload 附带 messages 正文与 `prompt` 字段（Studio / Debug drawer 的 LLM 入参展示仅在此模式下可用），且仍会先经过 `WithOutputRedactor` 配置的脱敏器再写入事件存储。
 
 ### 可观测面板
 
@@ -91,7 +95,9 @@ dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandl
 
 ### 链路追踪
 
-框架已定义 `pkg/observability.Tracer` 与标准 span 名称，例如 `agentflow.runtime.event`、`agentflow.run`、`agentflow.tool.call` 和 `agentflow.queue.job`。`NewObservabilityEventSink` 会把运行时事件映射为追踪 span；运行时 `Run` 与工具调用也会创建对应 span。
+框架已定义 `pkg/observability.Tracer` 与标准 span 名称，例如 `agentflow.runtime.event`、`agentflow.run`、`agentflow.tool.call`、`agentflow.llm.call` 和 `agentflow.queue.job`。`NewObservabilityEventSink` 会把运行时事件映射为追踪 span；运行时 `Run` 与工具调用也会创建对应 span。
+
+`agentflow.llm.call` 包裹一次逻辑 LLM 调用（chat / 工具循环逐步 / structured / 流式 StreamChat）：属性含 `run_id`、`agent`、`profile`、`model`（若 profile 声明）、`attempt`（重试次数，随每次 attempt 更新）、`tools`/`step`/`stream`/`structured`（按路径）；一次逻辑调用一个 span，失败时 `RecordError` + `SetStatus(Error)`。流式 span 随流结束闭合（成功 / 错误 chunk / 取消三路都会 End）。`RunHybrid` 的所有失败分支（agent 解析、output_schema 校验、answer 错误）与 `Run` 一样在 run span 上 `RecordError`。
 
 OpenTelemetry 接入方式：
 

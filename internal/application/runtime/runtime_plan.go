@@ -147,7 +147,7 @@ func (e *Engine) markPlanStepDone(ctx context.Context, runID, toolName string) e
 			snapshot.StepOutputs = make(map[string]runstate.StepOutputRef)
 		}
 		snapshot.StepOutputs["plan"] = runstate.StepOutputRef{Inline: raw}
-		if err := e.runs.Save(ctx, &snapshot, snapshot.Version); err != nil {
+		if err := e.saveRunSnapshot(ctx, &snapshot, snapshot.Version); err != nil {
 			if errors.Is(err, runstate.ErrStaleSnapshot) {
 				continue
 			}

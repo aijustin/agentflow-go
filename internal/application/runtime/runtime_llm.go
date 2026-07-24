@@ -2,16 +2,21 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
+	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
@@ -75,6 +80,7 @@ func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.
 	}
 	if emitUsage := normalizeEmittedUsage(resp.Usage); emitUsage != nil {
 		e.emitJSON(ctx, core.EventLLMTokenUsage, req.RunID, *emitUsage)
+		e.recordLLMUsage(ctx, agent.LLM, emitUsage)
 	}
 	if strings.TrimSpace(resp.Message.Content) == "" && resp.FinishReason == "length" {
 		return "", fmt.Errorf("runtime: llm response was empty after reaching max tokens; increase max_output_tokens or disable reasoning output for profile %q", agent.LLM)
@@ -378,13 +384,66 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		cancel()
 		return nil, core.Agent{}, nil, fmt.Errorf("runtime: llm profile %q does not support streaming", agent.LLM)
 	}
-	e.emitJSON(ctx, core.EventLLMCalled, req.RunID, llmCalledPayload(map[string]any{"profile": agent.LLM, "stream": true}, baseReq.Messages))
-	ch, err := streamer.StreamChat(ctx, agent.LLM, baseReq)
+	e.emitJSON(ctx, core.EventLLMCalled, req.RunID, llmCalledPayload(e.llmPayloadCapture, map[string]any{"profile": agent.LLM, "stream": true}, baseReq.Messages))
+	streamStart := time.Now()
+	streamCtx, llmSpan := e.startLLMCallSpan(ctx, req.RunID, agent, profile,
+		observability.Attribute{Key: "stream", Value: "true"})
+	ch, err := streamer.StreamChat(streamCtx, agent.LLM, baseReq)
 	if err != nil {
+		e.finishLLMCall(ctx, llmSpan, agent.LLM, streamStart, err)
 		cancel()
 		return nil, core.Agent{}, nil, err
 	}
-	return ch, agent, cancel, nil
+	return e.wrapLLMStream(ctx, ch, llmSpan, agent.LLM, streamStart), agent, cancel, nil
+}
+
+// wrapLLMStream forwards provider chunks while keeping the LLM call span open
+// for the whole stream. The span closes when the stream terminates - on a
+// clean done, on an error chunk, or on context cancellation - mirroring the
+// two-path End handling of tool spans.
+func (e *Engine) wrapLLMStream(ctx context.Context, source <-chan llm.ChatChunk, span observability.Span, profileName string, start time.Time) <-chan llm.ChatChunk {
+	out := make(chan llm.ChatChunk, 16)
+	safecall.GoSafe("runtime: llm stream span", nil, func() {
+		defer close(out)
+		var streamErr error
+		var usage llm.TokenUsage
+		sawDone := false
+		defer func() {
+			e.recordLLMUsage(ctx, profileName, normalizeEmittedUsage(usage))
+			e.finishLLMCall(ctx, span, profileName, start, streamErr)
+		}()
+		for chunk := range source {
+			if chunk.Usage.TotalTokens > 0 || chunk.Usage.InputTokens > 0 || chunk.Usage.OutputTokens > 0 {
+				usage = chunk.Usage
+			}
+			if chunk.Error != "" && streamErr == nil {
+				streamErr = chunkError(chunk)
+			}
+			if chunk.Done {
+				sawDone = true
+			}
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				// A consumer that walks away after the terminal done chunk is
+				// not a stream failure; abandoning mid-stream is.
+				if streamErr == nil && !sawDone {
+					streamErr = ctx.Err()
+				}
+				return
+			}
+		}
+		if streamErr == nil && !sawDone {
+			// Mirror the Stream consumer: a provider stream cut off before the
+			// done chunk is a failure, not a clean completion.
+			if err := ctx.Err(); err != nil {
+				streamErr = err
+			} else {
+				streamErr = errors.New("runtime: llm stream closed without a done chunk")
+			}
+		}
+	})
+	return out
 }
 
 // maxReplanAttempts caps how many times the autonomous tool loop may replan
@@ -510,6 +569,7 @@ func (e *Engine) answerWithToolsFrom(
 		}
 		if emitUsage := normalizeEmittedUsage(resp.Usage); emitUsage != nil {
 			e.emitJSON(ctx, core.EventLLMTokenUsage, runID, *emitUsage)
+			e.recordLLMUsage(ctx, agent.LLM, emitUsage)
 		}
 		assistant := resp.Message
 		assistant.Role = llm.RoleAssistant
@@ -571,6 +631,17 @@ func (e *Engine) answerWithToolsFrom(
 		messages, drainErr = e.drainInterjectionsIfAllowed(ctx, runID, agent, messages, interjection.DrainAfterToolBatch, false)
 		if drainErr != nil {
 			return "", drainErr
+		}
+		// Iteration boundary: the LLM response and every tool call it
+		// requested are fully processed, so the conversation is consistent
+		// (no orphaned tool_call IDs). Persist it so a crash before the next
+		// boundary lets RetryFailedRun resume from here instead of from
+		// scratch. A persistence failure fails the run - the already-saved
+		// iterations keep it resumable.
+		if e.autonomousIterationPersistenceEnabled(ctx) {
+			if err := e.persistAutonomousIteration(ctx, runID, stepsConsumedBase+step+1, messages); err != nil {
+				return "", err
+			}
 		}
 	}
 	return e.replanOrFail(
@@ -702,13 +773,20 @@ func (e *Engine) dispatchToolCalls(
 
 func (e *Engine) chatWithRetry(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ChatRequest) (llm.ChatResponse, error) {
 	attempts := e.maxAttempts(agent)
+	// One span for the whole logical call: retry attempts are stamped as an
+	// attribute instead of opening a span per attempt, so a flaky provider
+	// cannot flood the trace.
+	ctx, span := e.startLLMCallSpan(ctx, runID, agent, profile)
+	start := time.Now()
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		span.SetAttributes(observability.Attribute{Key: "attempt", Value: strconv.Itoa(attempt)})
 		if err := ctx.Err(); err != nil {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return llm.ChatResponse{}, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(map[string]any{
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.llmPayloadCapture, map[string]any{
 			"profile": agent.LLM,
 			"tools":   false,
 			"attempt": attempt,
@@ -723,28 +801,43 @@ func (e *Engine) chatWithRetry(ctx context.Context, runID string, agent core.Age
 				"finish_reason": resp.FinishReason,
 				"attempt":       attempt,
 			}, resp.Message.Content))
+			e.finishLLMCall(ctx, span, agent.LLM, start, nil)
 			return resp, nil
 		}
 		lastErr = err
 		if !shouldRetry(ctx, err) || attempt == attempts {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return llm.ChatResponse{}, err
 		}
 		if err := retryDelay(ctx, attempt); err != nil {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return llm.ChatResponse{}, err
 		}
 	}
+	e.finishLLMCall(ctx, span, agent.LLM, start, lastErr)
 	return llm.ChatResponse{}, lastErr
 }
 
 func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req llm.ToolCallRequest, caller llm.ToolCaller, step int, emit streamChunkSink) (llm.ToolCallResponse, error) {
 	attempts := e.maxAttempts(agent)
+	spanAttrs := []observability.Attribute{
+		{Key: "tools", Value: "true"},
+		{Key: "step", Value: strconv.Itoa(step)},
+	}
+	if emit != nil {
+		spanAttrs = append(spanAttrs, observability.Attribute{Key: "stream", Value: "true"})
+	}
+	ctx, span := e.startLLMCallSpan(ctx, runID, agent, profile, spanAttrs...)
+	start := time.Now()
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		span.SetAttributes(observability.Attribute{Key: "attempt", Value: strconv.Itoa(attempt)})
 		if err := ctx.Err(); err != nil {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return llm.ToolCallResponse{}, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(map[string]any{
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.llmPayloadCapture, map[string]any{
 			"profile": agent.LLM,
 			"tools":   true,
 			"step":    step,
@@ -779,16 +872,20 @@ func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent
 				payload["tool_names"] = names
 			}
 			e.emitJSON(ctx, core.EventLLMReturned, runID, llmReturnedPayload(payload, resp.Message.Content))
+			e.finishLLMCall(ctx, span, agent.LLM, start, nil)
 			return resp, nil
 		}
 		lastErr = err
 		if !shouldRetry(ctx, err) || attempt == attempts {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return llm.ToolCallResponse{}, err
 		}
 		if err := retryDelay(ctx, attempt); err != nil {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return llm.ToolCallResponse{}, err
 		}
 	}
+	e.finishLLMCall(ctx, span, agent.LLM, start, lastErr)
 	return llm.ToolCallResponse{}, lastErr
 }
 
@@ -871,13 +968,18 @@ func normalizeEmittedUsage(usage llm.TokenUsage) *llm.TokenUsage {
 
 func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, schema json.RawMessage, req llm.ChatRequest, outputter llm.StructuredOutputter) (json.RawMessage, error) {
 	attempts := e.maxAttempts(agent)
+	ctx, span := e.startLLMCallSpan(ctx, runID, agent, profile,
+		observability.Attribute{Key: "structured", Value: "true"})
+	start := time.Now()
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		span.SetAttributes(observability.Attribute{Key: "attempt", Value: strconv.Itoa(attempt)})
 		if err := ctx.Err(); err != nil {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return nil, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(map[string]any{
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.llmPayloadCapture, map[string]any{
 			"profile":    agent.LLM,
 			"structured": true,
 			"attempt":    attempt,
@@ -892,16 +994,20 @@ func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent co
 				"structured": true,
 				"attempt":    attempt,
 			}, string(raw)))
+			e.finishLLMCall(ctx, span, agent.LLM, start, nil)
 			return raw, nil
 		}
 		lastErr = err
 		if !shouldRetry(ctx, err) || attempt == attempts {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return nil, err
 		}
 		if err := retryDelay(ctx, attempt); err != nil {
+			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return nil, err
 		}
 	}
+	e.finishLLMCall(ctx, span, agent.LLM, start, lastErr)
 	return nil, lastErr
 }
 
@@ -909,38 +1015,120 @@ func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent co
 // EventStore / diagnostic drawers stay usable without unbounded tool dumps.
 const maxLLMCalledMessageChars = 8000
 
-// llmCalledPayload attaches the messages actually sent to the model so Debug
-// drawers can show LLM 入参 (messages / prompt) instead of metadata-only cards.
-func llmCalledPayload(base map[string]any, messages []llm.Message) map[string]any {
+// llmCalledPayloadHashChars truncates the sha256 fingerprint of the redacted
+// LLMCalled payload to 16 hex chars (64 bits) - enough to correlate identical
+// payloads without persisting any plaintext.
+const llmCalledPayloadHashChars = 16
+
+// llmCalledPayload builds the LLMCalled event payload. By default
+// (capture=false) it carries only shape metadata - message count, per-message
+// role/content lengths, and a truncated content hash - so user prompts, which
+// may contain PII, are never persisted to the event store. With capture=true
+// (WithLLMPayloadCapture) the messages actually sent to the model and the last
+// user prompt are attached so Debug drawers can show LLM 入参 instead of
+// metadata-only cards; the payload still passes through the configured output
+// redactor before it is emitted.
+func llmCalledPayload(capture bool, base map[string]any, messages []llm.Message) map[string]any {
 	if base == nil {
 		base = map[string]any{}
 	}
 	if len(messages) == 0 {
 		return base
 	}
+	base["message_count"] = len(messages)
 	obs := make([]map[string]any, 0, len(messages))
+	if !capture {
+		hash := sha256.New()
+		for _, m := range messages {
+			entry := llmCalledMessageMeta(m)
+			entry["content_chars"] = len([]rune(m.Content))
+			obs = append(obs, entry)
+			hash.Write([]byte(string(m.Role)))
+			hash.Write([]byte{0})
+			hash.Write([]byte(m.Content))
+			hash.Write([]byte{0})
+		}
+		base["messages"] = obs
+		base["messages_hash"] = hex.EncodeToString(hash.Sum(nil))[:llmCalledPayloadHashChars]
+		return base
+	}
 	for _, m := range messages {
-		entry := map[string]any{"role": string(m.Role)}
+		entry := llmCalledMessageMeta(m)
 		if c := strings.TrimSpace(m.Content); c != "" {
 			entry["content"] = truncateObservabilityText(c, maxLLMCalledMessageChars)
-		}
-		if id := strings.TrimSpace(m.ToolCallID); id != "" {
-			entry["tool_call_id"] = id
-		}
-		if name := strings.TrimSpace(m.Name); name != "" {
-			entry["name"] = name
-		}
-		if names := toolCallNames(m.ToolCalls); len(names) > 0 {
-			entry["tool_names"] = names
 		}
 		obs = append(obs, entry)
 	}
 	base["messages"] = obs
-	base["message_count"] = len(obs)
 	if prompt := lastUserMessageContent(messages); prompt != "" {
 		base["prompt"] = truncateObservabilityText(prompt, maxLLMCalledMessageChars)
 	}
 	return base
+}
+
+// llmCalledMessageMeta carries the non-content message fields (role, tool
+// routing metadata) that are safe to persist regardless of payload capture.
+func llmCalledMessageMeta(m llm.Message) map[string]any {
+	entry := map[string]any{"role": string(m.Role)}
+	if id := strings.TrimSpace(m.ToolCallID); id != "" {
+		entry["tool_call_id"] = id
+	}
+	if name := strings.TrimSpace(m.Name); name != "" {
+		entry["name"] = name
+	}
+	if names := toolCallNames(m.ToolCalls); len(names) > 0 {
+		entry["tool_names"] = names
+	}
+	return entry
+}
+
+// startLLMCallSpan opens one span for a logical LLM invocation. Retry
+// attempts are stamped as an "attempt" attribute on this span instead of
+// opening a span per attempt, so a flaky provider cannot flood the trace.
+func (e *Engine) startLLMCallSpan(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, attrs ...observability.Attribute) (context.Context, observability.Span) {
+	base := []observability.Attribute{
+		{Key: "run_id", Value: runID},
+		{Key: "agent", Value: agent.Name},
+		{Key: "profile", Value: agent.LLM},
+		{Key: "scenario_name", Value: e.scenario.Name},
+	}
+	if profile.Model != "" {
+		base = append(base, observability.Attribute{Key: "model", Value: profile.Model})
+	}
+	return e.startSpan(ctx, observability.SpanLLMCall, append(base, attrs...)...)
+}
+
+// finishLLMCall closes an LLM call span: a failure is recorded on the span
+// and counted, and the logical-call latency is observed either way.
+func (e *Engine) finishLLMCall(ctx context.Context, span observability.Span, profileName string, start time.Time, err error) {
+	attrs := []observability.Attribute{{Key: "profile", Value: profileName}}
+	e.recorder.ObserveHistogram(ctx, observability.MetricLLMDurationSeconds, time.Since(start).Seconds(), attrs...)
+	if err != nil {
+		span.RecordError(err)
+		e.recorder.IncCounter(ctx, observability.MetricLLMErrorsTotal, attrs...)
+	}
+	span.End()
+}
+
+// recordLLMUsage accumulates token counters wherever an LLMTokenUsage event is
+// emitted, so metrics consumers get usage without scanning the event store.
+func (e *Engine) recordLLMUsage(ctx context.Context, profileName string, usage *llm.TokenUsage) {
+	if usage == nil {
+		return
+	}
+	for _, bucket := range []struct {
+		kind   string
+		tokens int
+	}{
+		{"prompt", usage.InputTokens},
+		{"completion", usage.OutputTokens},
+	} {
+		for i := 0; i < bucket.tokens; i++ {
+			e.recorder.IncCounter(ctx, observability.MetricLLMTokensTotal,
+				observability.Attribute{Key: "profile", Value: profileName},
+				observability.Attribute{Key: "kind", Value: bucket.kind})
+		}
+	}
 }
 
 // llmReturnedPayload attaches assistant text for Debug/EventStore consumers.

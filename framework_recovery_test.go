@@ -10,10 +10,12 @@ import (
 	"time"
 
 	agentflow "github.com/aijustin/agentflow-go"
+	blobinmem "github.com/aijustin/agentflow-go/internal/adapter/blob/inmem"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	llmmock "github.com/aijustin/agentflow-go/pkg/llm/mock"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -224,10 +226,10 @@ func TestFrameworkConcurrentResumeReturnsResumeInProgress(t *testing.T) {
 	}
 }
 
-// TestFrameworkRetryFailedRunAutonomousWithoutCheckpoint: an autonomous
-// failed run with no resumable checkpoint gets an explicit reason instead of
-// the old blanket mode rejection.
-func TestFrameworkRetryFailedRunAutonomousWithoutCheckpoint(t *testing.T) {
+// TestFrameworkRetryFailedRunAutonomousWithoutProgress: an autonomous failed
+// run with neither checkpoint metadata nor persisted iteration progress gets
+// an explicit reason instead of silently re-running from scratch.
+func TestFrameworkRetryFailedRunAutonomousWithoutProgress(t *testing.T) {
 	fw, err := agentflow.New(
 		builder.MinimalAutonomous("assistant"),
 		agentflow.WithLLMGateway(fakeGateway{content: "done"}),
@@ -236,13 +238,158 @@ func TestFrameworkRetryFailedRunAutonomousWithoutCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := fw.RunStateRepository()
-	failed := &runstate.RunSnapshot{RunID: "run-no-checkpoint", ScenarioName: "autonomous-assistant", Status: runstate.RunStatusFailed}
+	failed := &runstate.RunSnapshot{RunID: "run-no-progress", ScenarioName: "autonomous-assistant", Status: runstate.RunStatusFailed}
 	if err := repo.Save(context.Background(), failed, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fw.RetryFailedRun(context.Background(), "run-no-checkpoint"); err == nil ||
-		!strings.Contains(err.Error(), "requires pending checkpoint metadata") {
-		t.Fatalf("expected explicit no-checkpoint error, got %v", err)
+	if _, err := fw.RetryFailedRun(context.Background(), "run-no-progress"); err == nil ||
+		!strings.Contains(err.Error(), "requires pending checkpoint metadata or persisted iteration progress") {
+		t.Fatalf("expected explicit no-progress error, got %v", err)
+	}
+}
+
+// autonomousIterationScenario builds one autonomous agent with a single
+// no-approval echo tool, so the mock gateway can drive a multi-iteration
+// tool loop.
+func autonomousIterationScenario() core.Scenario {
+	return core.Scenario{
+		Name: "auto-iteration-resume",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalNever},
+		},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default", Tools: []string{"echo"}},
+		},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+}
+
+func queueIterationToolTurn(gateway *llmmock.Gateway, id string) {
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: id, Name: "echo", Input: json.RawMessage(`{"message":"hi"}`)}},
+	})
+}
+
+func queueIterationFinalTurn(gateway *llmmock.Gateway, content string) {
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: content}},
+	})
+}
+
+// TestFrameworkRetryFailedRunAutonomousResumesFromIteration pins the new
+// behavior: an autonomous run that crashed mid-loop (no HITL gate checkpoint)
+// but with persisted iteration progress re-enters through RetryFailedRun and
+// continues from the last persisted iteration's messages instead of failing
+// with "requires pending checkpoint metadata". The gateway's request log
+// proves the completed iterations are not re-issued to the LLM.
+func TestFrameworkRetryFailedRunAutonomousResumesFromIteration(t *testing.T) {
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	queueIterationToolTurn(gateway, "call-1")
+	queueIterationToolTurn(gateway, "call-2")
+	// Nothing queued for the third LLM call: ErrNoResponse stands in for a
+	// worker crash inside iteration 3, after iterations 1-2 persisted.
+	fw, err := agentflow.New(
+		autonomousIterationScenario(),
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-auto-crash", Agent: "assistant", Prompt: "go"}); err == nil {
+		t.Fatal("expected the run to fail when the LLM call has no queued response")
+	}
+	snapshot, err := runstate.LoadAuthorized(context.Background(), fw.RunStateRepository(), "run-auto-crash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusFailed {
+		t.Fatalf("expected failed run, got %s", snapshot.Status)
+	}
+	for _, key := range []string{"auto:iter:1", "auto:iter:2"} {
+		if _, ok := snapshot.StepOutputs[key]; !ok {
+			t.Fatalf("expected persisted iteration %q, got keys %v", key, snapshot.StepOutputs)
+		}
+	}
+
+	queueIterationToolTurn(gateway, "call-3")
+	queueIterationFinalTurn(gateway, "recovered answer")
+	before := len(gateway.ToolRequests("default"))
+	result, err := fw.RetryFailedRun(context.Background(), "run-auto-crash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || !strings.Contains(result.Output, "recovered answer") {
+		t.Fatalf("unexpected retry result: %+v", result)
+	}
+	resumed := gateway.ToolRequests("default")[before:]
+	if len(resumed) != 2 {
+		t.Fatalf("resume must issue exactly the remaining iterations (3 + final), got %d requests", len(resumed))
+	}
+	// The first resumed request already carries the persisted conversation:
+	// both completed tool turns from iterations 1-2.
+	toolTurns := 0
+	for _, message := range resumed[0].Messages {
+		if message.Role == llm.RoleTool {
+			toolTurns++
+		}
+	}
+	if toolTurns != 2 {
+		t.Fatalf("resumed conversation must include both completed tool turns, got %d", toolTurns)
+	}
+
+	// Idempotent: a second retry on the Completed run is rejected by the
+	// status gate, not by re-execution.
+	if _, err := fw.RetryFailedRun(context.Background(), "run-auto-crash"); err == nil {
+		t.Fatal("expected retry of a completed run to be rejected")
+	}
+}
+
+// TestFrameworkRetryFailedRunAutonomousResumeViaBlob: above the step-output
+// threshold the iteration conversation lives in the blob store as a
+// StepOutputRef; resume resolves the reference transparently.
+func TestFrameworkRetryFailedRunAutonomousResumeViaBlob(t *testing.T) {
+	scenario := autonomousIterationScenario()
+	scenario.Runtime.StepOutputThreshold = 1 // externalize every step output
+	blobs := blobinmem.NewStore()
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	queueIterationToolTurn(gateway, "call-1")
+	queueIterationToolTurn(gateway, "call-2")
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+		agentflow.WithBlobStore(blobs),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-auto-blob", Agent: "assistant", Prompt: "go"}); err == nil {
+		t.Fatal("expected the run to fail when the LLM call has no queued response")
+	}
+	snapshot, err := runstate.LoadAuthorized(context.Background(), fw.RunStateRepository(), "run-auto-blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"auto:iter:1", "auto:iter:2"} {
+		ref, ok := snapshot.StepOutputs[key]
+		if !ok {
+			t.Fatalf("expected persisted iteration %q, got keys %v", key, snapshot.StepOutputs)
+		}
+		if ref.Blob == nil {
+			t.Fatalf("%s must be externalized to the blob store above the threshold", key)
+		}
+	}
+	queueIterationFinalTurn(gateway, "blob recovered")
+	result, err := fw.RetryFailedRun(context.Background(), "run-auto-blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || !strings.Contains(result.Output, "blob recovered") {
+		t.Fatalf("unexpected blob retry result: %+v", result)
 	}
 }
 

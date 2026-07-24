@@ -141,6 +141,80 @@ RETURNING id, created_at`, store.table)
 	return obspkg.EventRecord{ID: id, Sequence: sequence, Event: event, CreatedAt: createdAt.UTC()}, nil
 }
 
+// AppendSequenced implements observability.SequencedEventStore for the
+// framework outbox relay: the event is inserted with a sequence minted
+// earlier (when it was parked in the outbox), continuing the run's regular
+// sequence space. A row that already exists at (run_id, sequence) means the
+// event was delivered before — by an earlier relay attempt that crashed
+// before marking, or by a concurrent relay — so it is read back and returned
+// with a nil error instead of being duplicated.
+func (store *Store) AppendSequenced(ctx context.Context, sequence int64, event core.Event) (obspkg.EventRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return obspkg.EventRecord{}, err
+	}
+	if event.RunID == "" {
+		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: run id is required")
+	}
+	if sequence <= 0 {
+		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: sequence must be positive, got %d", sequence)
+	}
+	event = obspkg.NormalizeEvent(event, store.now())
+	payload := []byte(event.Payload)
+	if len(payload) == 0 {
+		payload = []byte(`{}`)
+	}
+	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, sequence, event_type, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (run_id, sequence) DO NOTHING
+RETURNING id, created_at`, store.table)
+	var id int64
+	var createdAt time.Time
+	err := store.db.QueryRowContext(ctx, insertQuery, event.RunID, sequence, string(event.Type), event.ScenarioName, event.EpisodeID, event.SessionID, event.TriggerKind, event.TraceID, event.SpanID, event.ParentSpanID, event.Timestamp, payload).Scan(&id, &createdAt)
+	if err == nil {
+		return obspkg.EventRecord{ID: id, Sequence: sequence, Event: event, CreatedAt: createdAt.UTC()}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: sequenced append for run %q: %w", event.RunID, err)
+	}
+	// Conflict: the event was already delivered. Return the stored row so the
+	// relay can treat this as success and mark the outbox row published.
+	selectQuery := fmt.Sprintf(`SELECT id, created_at FROM %s WHERE run_id = $1 AND sequence = $2`, store.table)
+	if err := store.db.QueryRowContext(ctx, selectQuery, event.RunID, sequence).Scan(&id, &createdAt); err != nil {
+		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: read conflicting event for run %q sequence %d: %w", event.RunID, sequence, err)
+	}
+	return obspkg.EventRecord{ID: id, Sequence: sequence, Event: event, CreatedAt: createdAt.UTC()}, nil
+}
+
+// DeleteEventsForRun implements observability.EventRunPurger for the
+// retention cascade: when a run is deleted, its event history goes with it.
+func (store *Store) DeleteEventsForRun(ctx context.Context, runID string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	query := fmt.Sprintf(`DELETE FROM %s WHERE run_id = $1`, store.table)
+	result, err := store.db.ExecContext(ctx, query, runID)
+	if err != nil {
+		return 0, fmt.Errorf("postgres observability: delete events for run %q: %w", runID, err)
+	}
+	return result.RowsAffected()
+}
+
+// PurgeEventsBefore implements observability.EventStorePurger: removes events
+// that occurred before cutoff, bounding the append-only event table. Note
+// this also trims history of runs still alive past cutoff; callers pick the
+// cutoff to match their run retention.
+func (store *Store) PurgeEventsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	query := fmt.Sprintf(`DELETE FROM %s WHERE occurred_at < $1`, store.table)
+	result, err := store.db.ExecContext(ctx, query, cutoff.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("postgres observability: purge events: %w", err)
+	}
+	return result.RowsAffected()
+}
+
 func (store *Store) ListRuns(ctx context.Context, query obspkg.RunQuery) ([]obspkg.RunSummary, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

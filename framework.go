@@ -20,6 +20,7 @@ import (
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	appscenario "github.com/aijustin/agentflow-go/internal/application/scenario"
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
 	"github.com/aijustin/agentflow-go/pkg/catalog"
@@ -108,12 +109,14 @@ type Framework struct {
 	audit                  audit.Sink
 	toolGov                governance.ToolPolicy
 	redactor               governance.OutputRedactor
+	llmPayloadCapture      bool
 	recorder               observability.Recorder
 	tracer                 observability.Tracer
 	logger                 log.Logger
 	runLocker              coordination.Locker
 	runLeaseOwner          string
 	runLeaseTTL            time.Duration
+	runReaperGrace         time.Duration
 	workflowRunner         *orchestration.WorkflowRunner
 	closers                []func(context.Context) error
 
@@ -124,6 +127,19 @@ type Framework struct {
 	// configured.
 	resumeMu       sync.Mutex
 	resumeInFlight map[string]struct{}
+
+	// zombieWarnOnce rate-limits the handleRun warning about redelivered run
+	// jobs that cannot be self-healed because no run lease is configured.
+	zombieWarnOnce sync.Once
+
+	// fenceFallbackWarned rate-limits the warning emitted when the run-state
+	// repository cannot fence snapshot saves while a run executes under a
+	// lease (multi-node unsafe).
+	fenceFallbackWarned atomic.Bool
+
+	// eventStore is the durable runtime event store wired with
+	// WithEventStore; used by the retention cascade and the outbox relay.
+	eventStore observability.EventStore
 }
 
 type options struct {
@@ -153,6 +169,7 @@ type options struct {
 	audit                audit.Sink
 	toolGov              governance.ToolPolicy
 	redactor             governance.OutputRedactor
+	llmPayloadCapture    bool
 	recorder             observability.Recorder
 	tracer               observability.Tracer
 	logger               log.Logger
@@ -160,6 +177,8 @@ type options struct {
 	runLocker            coordination.Locker
 	runLeaseOwner        string
 	runLeaseTTL          time.Duration
+	runReaperInterval    time.Duration
+	runReaperGrace       time.Duration
 	closers              []func(context.Context) error
 	toolTransforms       map[string]contextwindow.ToolOutputTransform
 	interjectDrain       interjection.DrainPolicy
@@ -167,6 +186,9 @@ type options struct {
 	approvalStore        toolorch.ApprovalStore
 	turnStopHook         core.TurnStopHook
 	resumeAuthHook       ResumeAuthorizationHook
+	eventStore           observability.EventStore
+	outboxRelay          bool
+	outboxRelayInterval  time.Duration
 }
 
 type toolRegistry struct {
@@ -384,6 +406,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		audit:                  cfg.audit,
 		toolGov:                cfg.toolGov,
 		redactor:               cfg.redactor,
+		llmPayloadCapture:      cfg.llmPayloadCapture,
 		recorder:               cfg.recorder,
 		tracer:                 cfg.tracer,
 		logger:                 cfg.logger,
@@ -398,6 +421,29 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 	}
 	fw.scenario = scenario
 	fw.engine = engine
+	fw.eventStore = cfg.eventStore
+	if cfg.outboxRelay {
+		store, ok := cfg.eventStore.(observability.SequencedEventStore)
+		if !ok || store == nil {
+			return nil, fmt.Errorf("agentflow: WithOutboxRelay requires a durable event store implementing observability.SequencedEventStore; configure WithEventStore (e.g. the PostgreSQL event store)")
+		}
+		outbox, ok := unwrapRunstate(cfg.runs).(runstate.OutboxRepository)
+		if !ok || outbox == nil {
+			return nil, fmt.Errorf("agentflow: WithOutboxRelay requires a run-state repository implementing runstate.OutboxRepository (the PostgreSQL runstate repository); combining Redis runstate with a PostgreSQL outbox is not supported")
+		}
+		// Appended last so Close's LIFO order stops the relay before tearing
+		// down anything the sweep depends on.
+		fw.closers = append(fw.closers, fw.startOutboxRelay(cfg.outboxRelayInterval, store, outbox))
+	}
+	if cfg.runReaperInterval > 0 {
+		if cfg.runLocker == nil {
+			return nil, fmt.Errorf("agentflow: WithRunReaper requires run-lease coordination; configure WithRunLease")
+		}
+		fw.runReaperGrace = cfg.runReaperGrace
+		// Appended last so Close's LIFO order stops the reaper before
+		// tearing down anything the sweep depends on.
+		fw.closers = append(fw.closers, fw.startRunReaper(cfg.runReaperInterval))
+	}
 	return fw, nil
 }
 
@@ -496,6 +542,20 @@ func WithOutputRedactor(redactor governance.OutputRedactor) Option {
 			return fmt.Errorf("agentflow: output redactor is nil")
 		}
 		o.redactor = redactor
+		return nil
+	}
+}
+
+// WithLLMPayloadCapture controls whether LLMCalled events include message and
+// prompt plaintext. It is disabled by default: payloads carry only message
+// count, per-message content lengths, and a truncated content hash, so user
+// input - which may contain PII - is not persisted to the event store. Enable
+// it only for debugging (Studio debug drawers show LLM 入参 only when
+// capture is on); captured plaintext still passes through the output redactor
+// configured with WithOutputRedactor before it is emitted.
+func WithLLMPayloadCapture(capture bool) Option {
+	return func(o *options) error {
+		o.llmPayloadCapture = capture
 		return nil
 	}
 }
@@ -1005,6 +1065,14 @@ func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan 
 // channel), so releasing via defer inside Stream would drop the lease while
 // the run is still actively executing.
 //
+// The lease is released only when source closes — i.e. when the run actually
+// reaches a terminal state — never on caller-ctx cancellation alone: a
+// detached stream (WithStreamDetached / StreamDetached, see
+// runtime.streamDetachedFromContext) keeps executing in the background after
+// the client disconnects, and dropping its lease early would let
+// MarkAbandonedRuns reap the live run and hand the same run ID to another
+// worker.
+//
 // Callers must drain the returned channel or cancel ctx; otherwise this
 // forwarder and the lease renewer stay alive.
 func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan llm.ChatChunk, release func()) <-chan llm.ChatChunk {
@@ -1012,21 +1080,32 @@ func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan
 		return source
 	}
 	out := make(chan llm.ChatChunk)
-	go func() {
+	safecall.GoSafe("agentflow: stream lease forwarder", func(err error) {
+		// The deferred close(out) and release() above have already run; the
+		// run may still be executing detached, which is exactly the abandoned
+		// lease case MarkAbandonedRuns exists to reap.
+		if f.logger != nil {
+			f.logger.Error(context.WithoutCancel(ctx), "agentflow: stream lease forwarder crashed; run lease released", "error", err)
+		}
+	}, func() {
 		defer close(out)
 		defer release()
 		for chunk := range source {
 			select {
 			case out <- chunk:
 			case <-ctx.Done():
-				// Drain source so the engine goroutine can finish its own
-				// cancellation bookkeeping before the lease is dropped.
+				// The caller went away. Keep holding the lease and drain
+				// source until it closes: a non-detached run lets the engine
+				// finish its cancellation bookkeeping first, and a detached
+				// run keeps executing to a terminal state in the background —
+				// only source closing means the run actually ended, so only
+				// then may the deferred release() above drop the lease.
 				for range source {
 				}
 				return
 			}
 		}
-	}()
+	})
 	return out
 }
 
@@ -1269,6 +1348,50 @@ func (handler *frameworkJobHandler) handleRun(ctx context.Context, job async.Job
 		Prompt:  payload.Prompt,
 		Context: payload.Context,
 	})
+	if err != nil {
+		if errors.Is(err, ErrRunInProgress) {
+			return handler.reenterZombieRun(ctx, payload.RunID, err)
+		}
+		return err
+	}
+	if result.Status == runstate.RunStatusPaused {
+		return async.RunPausedError{RunID: result.RunID, Token: result.Token}
+	}
+	return nil
+}
+
+// reenterZombieRun handles a redelivered run job whose run is still Running:
+// left alone, the job fails (dead-lettering at the default MaxAttempts=1)
+// while the run stays Running forever. With run-lease coordination the
+// handler probes the run's lease; an unheld lease proves the original worker
+// is gone, so the run is marked abandoned and re-entered through
+// RetryFailedRun — the same path used above for redelivered Failed runs. A
+// live lease holder (or a run inside the reaper grace window) keeps the
+// previous fail-and-redeliver semantics.
+func (handler *frameworkJobHandler) reenterZombieRun(ctx context.Context, runID string, runErr error) error {
+	framework := handler.framework
+	if framework.runLocker == nil {
+		// Without lease coordination there is no safe way to tell a zombie
+		// from a run executing on another node, so keep the previous
+		// behavior and warn once.
+		framework.zombieWarnOnce.Do(func() {
+			if framework.logger != nil {
+				framework.logger.Warn(ctx, "agentflow: run job redelivered for a run still in Running, but run-lease coordination is not configured and a zombie cannot be told from a live run; multi-node deployments should configure WithRunLease", "run_id", runID)
+			}
+		})
+		return runErr
+	}
+	reaped, err := framework.reapZombieRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if !reaped {
+		return runErr
+	}
+	if framework.logger != nil {
+		framework.logger.Warn(ctx, "agentflow: reaped zombie run; re-entering via RetryFailedRun", "run_id", runID)
+	}
+	result, err := framework.RetryFailedRun(ctx, runID)
 	if err != nil {
 		return err
 	}

@@ -51,7 +51,9 @@ func (g *Gate) Pause(ctx context.Context, state core.CheckpointState) (string, e
 	}
 	snapshot.Status = runstate.RunStatusPaused
 	snapshot.PendingGate = &state
-	if err := g.repo.Save(ctx, &snapshot, state.Version); err != nil {
+	// SaveWithFence presents the lease fencing token when the pause happens
+	// under a held run lease; without a token it is exactly repo.Save.
+	if _, err := runstate.SaveWithFence(ctx, g.repo, &snapshot, state.Version); err != nil {
 		return "", err
 	}
 	payload := runstate.TokenPayload{RunID: state.RunID, Version: snapshot.Version}
@@ -99,5 +101,8 @@ func (g *Gate) Resume(ctx context.Context, token string, decision core.Decision,
 		}
 		snapshot.Variables["human_amendment"] = amendment
 	}
-	return g.repo.Save(ctx, &snapshot, payload.Version)
+	// SaveWithFence presents the lease fencing token when the resume happens
+	// under a held run lease; without a token it is exactly repo.Save.
+	_, err = runstate.SaveWithFence(ctx, g.repo, &snapshot, payload.Version)
+	return err
 }

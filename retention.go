@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/identity"
+	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -74,14 +75,44 @@ func (f *Framework) PurgeRuns(ctx context.Context, filter runstate.ListFilter, o
 	return removed, nil
 }
 
-// deleteRunAndHistory removes the run snapshot and, when a checkpoint history
-// store is configured, every recorded revision of the run.
+// deleteRunAndHistory removes the run snapshot and, when configured, every
+// recorded revision of the run. It also cascades to the run's durable event
+// history (when an event store is wired with WithEventStore and supports
+// purging) and to its outbox rows (when the run-state repository implements
+// runstate.OutboxRepository), so deleting a run never leaves orphaned events
+// or undeliverable parked rows behind.
 func (f *Framework) deleteRunAndHistory(ctx context.Context, runID string) error {
 	if err := f.runs.Delete(ctx, runID); err != nil {
 		return err
 	}
 	if f.checkpointHistory != nil {
 		if err := f.checkpointHistory.Delete(ctx, runID); err != nil {
+			return err
+		}
+	}
+	if _, err := observability.DeleteEventsForRun(ctx, f.eventStore, runID); err != nil {
+		return err
+	}
+	if outbox, ok := unwrapRunstate(f.runs).(runstate.OutboxRepository); ok && outbox != nil {
+		if _, err := outbox.DeleteOutboxForRun(ctx, runID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// purgeEventSideData ages out event history and published outbox rows past
+// cutoff alongside the run purge that computed it. Unpublished outbox rows
+// are never touched: they are undelivered events, not garbage. Note the
+// event purge is purely age-based, so it also trims history of runs still
+// alive past cutoff — pick maxAge to match how long event history must
+// remain queryable.
+func (f *Framework) purgeEventSideData(ctx context.Context, cutoff time.Time) error {
+	if _, err := observability.PurgeEventsBefore(ctx, f.eventStore, cutoff); err != nil {
+		return err
+	}
+	if outbox, ok := unwrapRunstate(f.runs).(runstate.OutboxRepository); ok && outbox != nil {
+		if _, err := outbox.PurgeOutboxPublishedBefore(ctx, cutoff); err != nil {
 			return err
 		}
 	}
@@ -120,6 +151,9 @@ func (f *Framework) PurgeExpired(ctx context.Context, maxAge time.Duration) (int
 			}
 			removed++
 		}
+	}
+	if err := f.purgeEventSideData(ctx, cutoff); err != nil {
+		return removed, err
 	}
 	return removed, nil
 }
@@ -191,9 +225,15 @@ func (f *Framework) purgeExpiredWithLimit(ctx context.Context, policy RetentionP
 			}
 			removed++
 			if policy.Limit > 0 && removed >= policy.Limit {
-				return removed, nil
+				break
 			}
 		}
+		if policy.Limit > 0 && removed >= policy.Limit {
+			break
+		}
+	}
+	if err := f.purgeEventSideData(ctx, cutoff); err != nil {
+		return removed, err
 	}
 	return removed, nil
 }
