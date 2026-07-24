@@ -10,15 +10,23 @@ import (
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/audit"
+	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
+	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
+
+type allowAllApprovals struct{}
+
+func (allowAllApprovals) PauseRequired(context.Context, string, core.Tool, llm.ToolCall) (bool, error) {
+	return false, nil
+}
 
 func TestBuildPlan(t *testing.T) {
 	scenario := testAutonomousScenario()
@@ -127,6 +135,13 @@ func TestFrameworkWiringOptionsSmoke(t *testing.T) {
 		agentflow.WithLogger(discardLogger{}),
 		agentflow.WithRecorder(observability.NoopRecorder{}),
 		agentflow.WithMemoryRepository("session", memRepo),
+		agentflow.WithLLMPayloadCapture(true),
+		agentflow.WithToolApprovalEvaluator(allowAllApprovals{}),
+		agentflow.WithToolOutputTransform("echo", func(_ string, raw []byte, _ int) ([]byte, contextwindow.TransformMeta) {
+			return raw, contextwindow.TransformMeta{}
+		}),
+		agentflow.WithInterjectDrainPolicy(interjection.DrainPolicy{}),
+		agentflow.WithDatabase(nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -136,6 +151,12 @@ func TestFrameworkWiringOptionsSmoke(t *testing.T) {
 	}
 	if !emitted {
 		t.Fatal("expected event sink to receive run events")
+	}
+	if err := fw.Interject("run-options", "steer"); err == nil {
+		t.Fatal("expected interject to reject terminal/missing run")
+	}
+	if err := fw.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
