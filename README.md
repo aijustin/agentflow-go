@@ -965,7 +965,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 ## 当前状态
 
-**最新发布：[v0.4.0](CHANGELOG.md)** — AI ComposeGraph、Studio SPA（画布 / 运行 / 对比）、ContinueRun / StreamDetached / RunReaper、HITL 密钥轮换与租户严格模式；v0.3 起适配器与 HTTP 构造器拆至 `pkg/adapters` / `pkg/httpx`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+**最新发布：[v0.4.1](CHANGELOG.md)** — 在 v0.4.0（ComposeGraph / Studio SPA）之上对齐文档与覆盖率门槛；v0.3 起适配器与 HTTP 构造器拆至 `pkg/adapters` / `pkg/httpx`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 核心模块已可用：
 

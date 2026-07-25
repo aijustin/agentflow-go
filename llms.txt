@@ -1,6 +1,6 @@
 # agentflow-go
 
-Go runtime library for Agents, Tools, Skills, LLM gateways, Memory, Run State, and Human-in-the-loop orchestration. **Primary audience: Go backend engineers.** Version: 0.4.0.
+Go runtime library for Agents, Tools, Skills, LLM gateways, Memory, Run State, and Human-in-the-loop orchestration. **Primary audience: Go backend engineers.** Version: 0.4.1.
 
 ## Important files
 

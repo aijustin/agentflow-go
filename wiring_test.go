@@ -42,6 +42,27 @@ func TestValidateWiringTestOptions(t *testing.T) {
 	}
 }
 
+func TestValidateWiringWithOptionsRequireLLM(t *testing.T) {
+	scenario := builder.MinimalAutonomous("assistant")
+	err := agentflow.ValidateWiringWithOptions(scenario, agentflow.WiringOptions{
+		RequireLLM:                 true,
+		AllowMockProviderWithoutGW: false,
+	})
+	if err == nil {
+		t.Fatal("expected RequireLLM wiring error")
+	}
+	opts, err := testutil.WiringOptions(scenario, testutil.WiringConfig{WorkDir: "."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agentflow.ValidateWiringWithOptions(scenario, agentflow.WiringOptions{
+		RequireLLM:                 true,
+		AllowMockProviderWithoutGW: true,
+	}, opts...); err != nil {
+		t.Fatalf("expected wired options to satisfy RequireLLM: %v", err)
+	}
+}
+
 func TestWithRequireLLM(t *testing.T) {
 	scenario := builder.MinimalAutonomous("assistant")
 	_, err := agentflow.New(scenario, agentflow.WithRequireLLM())

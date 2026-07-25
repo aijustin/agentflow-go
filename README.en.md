@@ -967,7 +967,7 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 ## Current status
 
-**Latest release: [v0.4.0](CHANGELOG.md)** — AI ComposeGraph, Studio SPA (Build / Runs / Compare), ContinueRun / StreamDetached / RunReaper, HITL key rotation and tenant-strict mode; since v0.3 adapter and HTTP constructors live in `pkg/adapters` / `pkg/httpx`. Full notes in [CHANGELOG.md](CHANGELOG.md).
+**Latest release: [v0.4.1](CHANGELOG.md)** — docs/coverage follow-ups on top of v0.4.0 (ComposeGraph / Studio SPA); since v0.3 adapter and HTTP constructors live in `pkg/adapters` / `pkg/httpx`. Full notes in [CHANGELOG.md](CHANGELOG.md).
 
 Core modules are production-ready:
 

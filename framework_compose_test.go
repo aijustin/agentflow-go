@@ -221,4 +221,86 @@ func TestComposeGraphRequestValidation(t *testing.T) {
 	if _, err := fw.ComposeGraph(context.Background(), agentflow.ComposeGraphRequest{Prompt: "x", Mode: "weird"}); err == nil {
 		t.Fatal("expected unsupported-mode error")
 	}
+	if _, err := fw.ComposeGraph(context.Background(), agentflow.ComposeGraphRequest{
+		Prompt:      "x",
+		ComposerLLM: "missing-profile",
+	}); err == nil || !strings.Contains(err.Error(), "composer llm") {
+		t.Fatalf("expected missing composer llm error, got %v", err)
+	}
 }
+
+func TestComposeGraphCatalogEditTools(t *testing.T) {
+	gateway := composeTestGateway()
+	queueComposeCall(gateway, "c1", "compose_add_node", `{"id":"a","kind":"transform","input":{"set":{"x":1}}}`)
+	queueComposeCall(gateway, "c2", "compose_add_node", `{"id":"b","kind":"transform","input":{"set":{"y":2}},"depends_on":["a"]}`)
+	queueComposeCall(gateway, "c3", "compose_connect", `{"from":"a","to":"b"}`)
+	queueComposeCall(gateway, "c4", "compose_set_input", `{"id":"a","input":{"set":{"x":9}}}`)
+	queueComposeCall(gateway, "c5", "compose_disconnect", `{"from":"a","to":"b"}`)
+	queueComposeCall(gateway, "c6", "compose_remove_node", `{"id":"b"}`)
+	queueComposeCall(gateway, "c7", "compose_add_node", `{"id":"c","kind":"transform","input":{"set":{"z":3}}}`)
+	queueComposeCall(gateway, "c8", "compose_connect", `{"from":"a","to":"c"}`)
+	queueComposeCall(gateway, "c9", "compose_finish", `{}`)
+	queueComposeAnswer(gateway)
+
+	fw, err := agentflow.New(composeTestScenario(), agentflow.WithLLMGateway(gateway))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.ComposeGraph(context.Background(), agentflow.ComposeGraphRequest{
+		Prompt: "edit nodes then finish",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Valid {
+		t.Fatalf("expected valid composition, got %+v", result)
+	}
+	nodes := result.Graph.Workflow.Nodes
+	if len(nodes) != 2 {
+		t.Fatalf("expected nodes a,c after edits, got %+v", nodes)
+	}
+	ids := map[string]bool{}
+	for _, node := range nodes {
+		ids[node.ID] = true
+		if node.ID == "a" && !strings.Contains(string(node.Input), `"x":9`) {
+			t.Fatalf("expected set_input on a, got %s", node.Input)
+		}
+	}
+	if !ids["a"] || !ids["c"] || ids["b"] {
+		t.Fatalf("unexpected node set after remove/reconnect: %+v", nodes)
+	}
+}
+
+func TestComposeGraphScenarioAddSkill(t *testing.T) {
+	gateway := composeTestGateway()
+	queueComposeCall(gateway, "c1", "compose_add_skill", `{"name":"brief","description":"short brief","prompt":"keep answers short"}`)
+	queueComposeCall(gateway, "c2", "compose_list_parts", `{"kind":"skill"}`)
+	queueComposeCall(gateway, "c3", "compose_add_agent", `{"name":"writer","instructions":"use brief skill","skills":["brief"]}`)
+	queueComposeCall(gateway, "c4", "compose_add_node", `{"id":"use_skill","kind":"skill","ref":"brief"}`)
+	queueComposeCall(gateway, "c5", "compose_add_node", `{"id":"draft","kind":"agent","ref":"writer"}`)
+	queueComposeCall(gateway, "c6", "compose_connect", `{"from":"use_skill","to":"draft"}`)
+	queueComposeCall(gateway, "c7", "compose_finish", `{}`)
+	queueComposeAnswer(gateway)
+
+	fw, err := agentflow.New(composeTestScenario(), agentflow.WithLLMGateway(gateway))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.ComposeGraph(context.Background(), agentflow.ComposeGraphRequest{
+		Prompt: "add a skill and wire it",
+		Mode:   agentflow.ComposeModeScenario,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Valid {
+		t.Fatalf("expected valid composition, got %+v", result)
+	}
+	if _, ok := result.Scenario.Skills["brief"]; !ok {
+		t.Fatalf("merged scenario missing skill: %+v", result.Scenario.Skills)
+	}
+	if writer, ok := result.Scenario.Agents["writer"]; !ok || len(writer.Skills) != 1 || writer.Skills[0] != "brief" {
+		t.Fatalf("writer should reference brief skill: %+v", result.Scenario.Agents)
+	}
+}
+

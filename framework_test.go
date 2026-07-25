@@ -246,6 +246,16 @@ func TestJWTAuthenticatorConstructor(t *testing.T) {
 	if auth == nil {
 		t.Fatal("expected authenticator")
 	}
+	mw, err := agentflow.NewJWTMiddleware(agentflow.JWTMiddlewareConfig{Authenticator: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mw == nil {
+		t.Fatal("expected jwt middleware")
+	}
+	if _, err := agentflow.NewJWTMiddleware(agentflow.JWTMiddlewareConfig{}); err == nil {
+		t.Fatal("expected missing authenticator error")
+	}
 }
 
 func TestAuthorizationMiddlewareConstructorRejectsInvalidInputs(t *testing.T) {

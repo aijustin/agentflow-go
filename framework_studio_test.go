@@ -16,6 +16,53 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
+func TestFrameworkStudioParts(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "studio-parts",
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Description: "repeat"},
+		},
+		Skills: map[string]core.Skill{
+			"brief": {Name: "brief", Kind: core.SkillKindPrompt, Description: "short"},
+		},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", Description: "helper", Tools: []string{"echo"}},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{
+					{ID: "a", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"x":1}}`)},
+				},
+			},
+			Workflows: map[string]core.Workflow{
+				"prep": {Nodes: []core.WorkflowNode{{ID: "p", Kind: core.NodeTransform}}},
+			},
+		},
+	}
+	fw, err := agentflow.New(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := fw.StudioParts()
+	if len(parts.Agents) != 1 || parts.Agents[0].Name != "assistant" {
+		t.Fatalf("unexpected agents: %+v", parts.Agents)
+	}
+	if len(parts.Tools) != 1 || parts.Tools[0].Name != "echo" {
+		t.Fatalf("unexpected tools: %+v", parts.Tools)
+	}
+	if len(parts.Skills) != 1 || parts.Skills[0].Name != "brief" {
+		t.Fatalf("unexpected skills: %+v", parts.Skills)
+	}
+	if len(parts.Subgraphs) != 1 || parts.Subgraphs[0].Name != "prep" {
+		t.Fatalf("unexpected subgraphs: %+v", parts.Subgraphs)
+	}
+	viaStudio := fw.Studio().Parts()
+	if len(viaStudio.Agents) != 1 || viaStudio.Agents[0].Name != "assistant" {
+		t.Fatalf("Studio.Parts mismatch: %+v", viaStudio)
+	}
+}
+
 func TestFrameworkValidateStudioGraph(t *testing.T) {
 	scenario := core.Scenario{
 		Name: "studio-validate",

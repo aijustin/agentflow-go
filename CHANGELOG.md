@@ -29,6 +29,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-25
+
+### Fixed
+
+- Restore the aggregate coverage gate above 80% after ComposeGraph growth by covering compose edit tools (`set_input` / `disconnect` / `remove_node` / `add_skill`), `StudioParts`, `ValidateWiringWithOptions`, JWT middleware construction, and composer LLM resolution.
+
+### Changed
+
+- Align README / HTML manual / persistence docs / Helm reference versions with v0.4 adapters/`httpx` package paths, ComposeGraph, and the AI-first Studio SPA.
+
 ## [0.4.0] - 2026-07-25
 
 ### Added
