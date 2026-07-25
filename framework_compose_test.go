@@ -303,4 +303,3 @@ func TestComposeGraphScenarioAddSkill(t *testing.T) {
 		t.Fatalf("writer should reference brief skill: %+v", result.Scenario.Agents)
 	}
 }
-

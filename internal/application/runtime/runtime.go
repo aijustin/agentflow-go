@@ -88,7 +88,7 @@ type Dependencies struct {
 	// LLMPayloadCapture controls whether LLMCalled events include message and
 	// prompt plaintext. Default false: payloads carry only message count,
 	// per-message lengths, and a truncated content hash.
-	LLMPayloadCapture     bool
+	LLMPayloadCapture bool
 	// Recorder receives metric observations. If nil, metrics are discarded.
 	Recorder observability.Recorder
 	// Tracer receives distributed tracing spans. If nil, tracing is a no-op.

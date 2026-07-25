@@ -47,6 +47,7 @@ const (
 type Event struct {
 	Type         EventType       `json:"type"`
 	RunID        string          `json:"run_id"`
+	TenantID     string          `json:"tenant_id,omitempty"`
 	ScenarioName string          `json:"scenario_name,omitempty"`
 	EpisodeID    string          `json:"episode_id,omitempty"`
 	SessionID    string          `json:"session_id,omitempty"`

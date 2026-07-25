@@ -49,6 +49,7 @@ func (store *Store) Append(ctx context.Context, event core.Event) (obspkg.EventR
 	if event.RunID == "" {
 		return obspkg.EventRecord{}, fmt.Errorf("observability inmem: run id is required")
 	}
+	obspkg.StampEventTenant(ctx, &event)
 	now := store.now().UTC()
 	event = obspkg.NormalizeEvent(event, now)
 	store.mu.Lock()
@@ -81,6 +82,7 @@ func (store *Store) AppendSequenced(ctx context.Context, sequence int64, event c
 	if sequence <= 0 {
 		return obspkg.EventRecord{}, fmt.Errorf("observability inmem: sequence must be positive, got %d", sequence)
 	}
+	obspkg.StampEventTenant(ctx, &event)
 	now := store.now().UTC()
 	event = obspkg.NormalizeEvent(event, now)
 	store.mu.Lock()
@@ -112,10 +114,11 @@ func (store *Store) DeleteEventsForRun(ctx context.Context, runID string) (int64
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	tenantID := obspkg.TenantIDFromContext(ctx)
 	kept := store.records[:0]
 	var removed int64
 	for _, record := range store.records {
-		if record.Event.RunID == runID {
+		if record.Event.RunID == runID && (tenantID == "" || record.Event.TenantID == tenantID) {
 			removed++
 			continue
 		}
@@ -137,10 +140,11 @@ func (store *Store) PurgeEventsBefore(ctx context.Context, cutoff time.Time) (in
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	tenantID := obspkg.TenantIDFromContext(ctx)
 	kept := store.records[:0]
 	var removed int64
 	for _, record := range store.records {
-		if record.Event.Timestamp.Before(cutoff) {
+		if record.Event.Timestamp.Before(cutoff) && (tenantID == "" || record.Event.TenantID == tenantID) {
 			removed++
 			continue
 		}
@@ -162,9 +166,13 @@ func (store *Store) ListRuns(ctx context.Context, query obspkg.RunQuery) ([]obsp
 	defer store.mu.RUnlock()
 	byRun := make(map[string]obspkg.RunSummary)
 	for _, record := range store.records {
+		if query.TenantID != "" && record.Event.TenantID != query.TenantID {
+			continue
+		}
 		summary := byRun[record.Event.RunID]
 		if summary.RunID == "" {
 			summary.RunID = record.Event.RunID
+			summary.TenantID = record.Event.TenantID
 			summary.FirstSeenAt = record.Event.Timestamp
 		}
 		if summary.ScenarioName == "" {
@@ -211,6 +219,9 @@ func (store *Store) ListEvents(ctx context.Context, runID string, query obspkg.E
 		if record.Event.RunID != runID || record.Sequence <= query.AfterSequence {
 			continue
 		}
+		if query.TenantID != "" && record.Event.TenantID != query.TenantID {
+			continue
+		}
 		if !obspkg.EventAllowedByPreset(record.Event.Type, query.Preset) {
 			continue
 		}
@@ -244,6 +255,9 @@ func (store *Store) ListScopedEvents(ctx context.Context, query obspkg.ScopedEve
 			continue
 		}
 		if query.SessionID != "" && record.Event.SessionID != query.SessionID {
+			continue
+		}
+		if query.TenantID != "" && record.Event.TenantID != query.TenantID {
 			continue
 		}
 		if !obspkg.EventAllowedByPreset(record.Event.Type, query.Preset) {

@@ -29,6 +29,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-25
+
+### Added
+
+- Explicit MCP protocol modes: legacy `2025-11-25` remains the default, while modern `2026-07-28` is an opt-in stateless client mode with required per-request metadata and no automatic fallback.
+- Tenant-aware observability events, queries, live subscriptions, PostgreSQL schema, and Studio thread filtering.
+- Studio scenario-compose drafts can now preserve and save additive Agent/Skill definitions; autonomous scenarios can be trial-run directly.
+
+### Fixed
+
+- Preserve assistant tool-call metadata across `compact_context`, clean deferred-catalog run state at terminal transitions, and keep search/load helpers active with `WithDeferredTools(false)`.
+- Scope lazy tool-executor caches by authenticated principal, force tenant-scoped knowledge namespaces, and protect `/v1/jobs/*` with the configured authentication middleware.
+- Enforce one in-process execution driver per run across Run/Stream/resume/retry/Studio entry points; workflow caller cancellation now persists `Cancelled`.
+- Fail Framework construction when run leases are paired with a non-fencing run-state backend.
+- Upgrade OpenTelemetry to a release containing the fix for `GO-2026-5506`.
+- Ship and verify the embedded Studio SPA in source and release CI.
+
+## [0.4.2] - 2026-07-25
+
 ### Added
 
 - **Deferred tool catalog (`pkg/toolcatalog`)**: keyword `Search`, schema `Load`, version/TTL snapshot metadata, and built-in meta-tools `search_tools` / `load_tool_schemas`. Wire with `WithToolCatalog`; deferred mode is on by default when a catalog is attached (`WithDeferredTools` to override).

@@ -11,6 +11,8 @@ interface CanvasState {
   selectedNodeID: string | null;
   /** Draft diverges from the live scenario graph. */
   dirty: boolean;
+  /** Full additive scenario returned by scenario-mode AI composition. */
+  scenarioDraft: Record<string, unknown> | null;
   past: ScenarioGraph[];
   future: ScenarioGraph[];
   /** Trial-run / run-overlay: node ID → execution state (not undoable). */
@@ -18,7 +20,7 @@ interface CanvasState {
   /** Run whose execution state is overlaid on the canvas (from run detail). */
   overlayRunID: string | null;
 
-  setDoc: (doc: ScenarioGraph, dirty?: boolean) => void;
+  setDoc: (doc: ScenarioGraph, dirty?: boolean, scenarioDraft?: Record<string, unknown> | null) => void;
   /** Apply a structural mutation with undo history. */
   mutate: (fn: (doc: ScenarioGraph) => void) => void;
   undo: () => void;
@@ -43,13 +45,14 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   subgraph: null,
   selectedNodeID: null,
   dirty: false,
+  scenarioDraft: null,
   past: [],
   future: [],
   nodeRunState: {},
   overlayRunID: null,
 
-  setDoc: (doc, dirty = false) =>
-    set({ doc, dirty, past: [], future: [], selectedNodeID: null, subgraph: null }),
+  setDoc: (doc, dirty = false, scenarioDraft = null) =>
+    set({ doc, dirty, scenarioDraft, past: [], future: [], selectedNodeID: null, subgraph: null }),
 
   mutate: (fn) =>
     set((state) => {

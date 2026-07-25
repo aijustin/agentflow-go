@@ -33,11 +33,13 @@ func main() {
 		log.Fatal(err)
 	}
 	// Demo LLM: a fallback mock whose queued tool-call turns play the AI graph
-	// composer (two identical catalog sessions, so the Studio "AI 构图" button
-	// can be tried twice). A real provider needs no such setup.
+	// composer. Keep several identical catalog sessions because autonomous
+	// trial runs share this local mock and may consume one queued session
+	// while exercising the Studio before AI composition. A real provider
+	// needs no such setup.
 	demoGateway := llmmock.NewFallbackGateway()
 	demoGateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
-	for range 2 {
+	for range 8 {
 		queueComposerTurn(demoGateway, "p1", "compose_list_parts", `{}`)
 		queueComposerTurn(demoGateway, "p2", "compose_add_node", `{"id":"echo_input","kind":"tool","ref":"echo"}`)
 		queueComposerTurn(demoGateway, "p3", "compose_add_node", `{"id":"mark_done","kind":"transform","input":{"set":{"done":true}}}`)

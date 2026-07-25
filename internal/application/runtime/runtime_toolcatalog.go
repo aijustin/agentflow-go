@@ -38,18 +38,8 @@ func (s *loadedToolSet) contains(name string) bool {
 	return ok
 }
 
-func (s *loadedToolSet) list() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]string, 0, len(s.names))
-	for name := range s.names {
-		out = append(out, name)
-	}
-	return out
-}
-
 func (e *Engine) catalogEnabled() bool {
-	return e.toolCatalog != nil && e.deferredTools
+	return e.toolCatalog != nil
 }
 
 func (e *Engine) loadedToolsForRun(runID string) *loadedToolSet {
@@ -118,24 +108,6 @@ func (e *Engine) dispatchCatalogMetaTool(ctx context.Context, runID string, agen
 	}
 }
 
-func (e *Engine) catalogPinnedTools(agent core.Agent) []string {
-	if e.toolCatalog == nil {
-		return nil
-	}
-	var pinned []string
-	seen := make(map[string]struct{})
-	for _, name := range agent.Tools {
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		if e.isCatalogPinnedTool(agent, name) {
-			pinned = append(pinned, name)
-			seen[name] = struct{}{}
-		}
-	}
-	return pinned
-}
-
 func (e *Engine) isCatalogPinnedTool(agent core.Agent, name string) bool {
 	if !agentAllowsTool(agent, name) {
 		return false
@@ -154,7 +126,7 @@ func (e *Engine) isCatalogPinnedTool(agent core.Agent, name string) bool {
 }
 
 func (e *Engine) catalogToolSpecs(ctx context.Context, runID string, agent core.Agent) []llm.ToolSpec {
-	specs := make([]llm.ToolSpec, 0, len(agent.Tools)+3)
+	specs := make([]llm.ToolSpec, 0, len(agent.Tools))
 	for _, meta := range toolcatalog.MetaToolSpecs() {
 		specs = append(specs, llm.ToolSpec{
 			Name:        meta.Name,
@@ -193,6 +165,9 @@ func (e *Engine) catalogToolSpecs(ctx context.Context, runID string, agent core.
 }
 
 func (e *Engine) shouldAdvertiseCatalogTool(agent core.Agent, name string, loaded *loadedToolSet) bool {
+	if !e.deferredTools {
+		return true
+	}
 	if e.isCatalogPinnedTool(agent, name) {
 		return true
 	}

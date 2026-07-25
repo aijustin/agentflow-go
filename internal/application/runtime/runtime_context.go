@@ -284,7 +284,7 @@ func (e *Engine) toolSpecs(ctx context.Context, runID string, agent core.Agent) 
 		specs := e.catalogToolSpecs(ctx, runID, agent)
 		return pruneToolSpecs(specs, planAllowedTools(ctx, e, runID, agent))
 	}
-	specs := make([]llm.ToolSpec, 0, len(agent.Tools)+len(agent.SubAgents)+1)
+	specs := make([]llm.ToolSpec, 0, len(agent.Tools))
 	specs = e.appendSelfCompactMetaToolSpecs(agent, specs)
 	for _, name := range agent.Tools {
 		tool, ok := e.scenario.Tools[name]

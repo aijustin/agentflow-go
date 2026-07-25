@@ -3,11 +3,13 @@ package agentflow
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 
 	configyaml "github.com/aijustin/agentflow-go/internal/adapter/config/yaml"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/graph"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/studio"
 )
@@ -175,11 +177,18 @@ func (s Studio) ImportStudioScenarioYAML(_ context.Context, yamlData []byte, lay
 // atomically replaces the live scenario and engine so subsequent runs use the
 // saved definition (not a half-updated Framework / stale Engine pair).
 func (s Studio) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGraph, path string) (SaveStudioResult, error) {
+	return s.SaveStudioGraphWithScenario(ctx, edited, nil, path)
+}
+
+// SaveStudioGraphWithScenario persists a graph together with the additive
+// agents/skills returned by scenario-mode ComposeGraph. Existing live parts
+// are immutable; a stale or tampered draft that changes them is rejected.
+func (s Studio) SaveStudioGraphWithScenario(ctx context.Context, edited graph.ScenarioGraph, draft *core.Scenario, path string) (SaveStudioResult, error) {
 	if path == "" {
 		return SaveStudioResult{}, &studio.CodedError{Code: "studio.save_path_missing", Message: "agentflow: studio save path is required"}
 	}
 	base := s.f.currentScenario()
-	scenario, err := graph.ApplyGraph(base, edited)
+	scenario, err := resolveStudioScenario(base, edited, draft)
 	if err != nil {
 		return SaveStudioResult{}, studio.WrapGraphError(err)
 	}
@@ -207,7 +216,13 @@ func (s Studio) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGraph,
 
 // RunStudioGraph validates an edited graph and executes it as a new run.
 func (s Studio) RunStudioGraph(ctx context.Context, edited graph.ScenarioGraph, req RunRequest) (RunResult, error) {
-	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
+	return s.RunStudioGraphWithScenario(ctx, edited, nil, req)
+}
+
+// RunStudioGraphWithScenario executes a graph with an optional additive
+// scenario-mode compose draft without mutating the live Framework.
+func (s Studio) RunStudioGraphWithScenario(ctx context.Context, edited graph.ScenarioGraph, draft *core.Scenario, req RunRequest) (RunResult, error) {
+	scenario, err := resolveStudioScenario(s.f.currentScenario(), edited, draft)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -222,8 +237,21 @@ func (s Studio) RunStudioGraph(ctx context.Context, edited graph.ScenarioGraph, 
 	var result RunResult
 	switch scenario.Orchestration.Mode {
 	case core.OrchestrationFixedWorkflow:
-		result, err = s.f.runWorkflowScenario(ctx, scenario, req)
+		if draft == nil {
+			result, err = s.f.runWorkflowScenario(ctx, scenario, req)
+		} else {
+			engine, buildErr := s.f.buildEphemeralEngine(scenario, nil)
+			if buildErr != nil {
+				return RunResult{}, buildErr
+			}
+			runner := s.f.newEphemeralWorkflowRunner(scenario, engine)
+			result, err = s.f.runWorkflowScenarioWith(ctx, scenario, req, engine, runner)
+			engine.ClearRunScopedState(result.RunID)
+		}
 	case core.OrchestrationHybrid:
+		if draft != nil {
+			return RunResult{}, fmt.Errorf("agentflow: Studio scenario drafts support fixed_workflow or autonomous trial runs, not hybrid")
+		}
 		if scenario.Orchestration.Workflow == nil {
 			result, err = s.f.currentEngine().Run(ctx, req)
 		} else {
@@ -234,9 +262,50 @@ func (s Studio) RunStudioGraph(ctx context.Context, edited graph.ScenarioGraph, 
 			result, err = s.f.currentEngine().RunHybrid(ctx, req)
 		}
 	default:
-		return RunResult{}, fmt.Errorf("agentflow: studio run supports fixed_workflow and hybrid scenarios")
+		engine := s.f.currentEngine()
+		if draft != nil {
+			engine, err = s.f.buildEphemeralEngine(scenario, nil)
+			if err != nil {
+				return RunResult{}, err
+			}
+			defer engine.ClearRunScopedState(req.RunID)
+		}
+		result, err = engine.Run(ctx, req)
 	}
 	return result, mapLeaseLostError(ctx, err)
+}
+
+func resolveStudioScenario(base core.Scenario, edited graph.ScenarioGraph, draft *core.Scenario) (core.Scenario, error) {
+	if draft == nil {
+		return graph.ApplyGraph(base, edited)
+	}
+	patch := graph.ScenarioPatch{
+		Agents: make(map[string]core.Agent),
+		Skills: make(map[string]core.Skill),
+	}
+	for name, agent := range draft.Agents {
+		if existing, ok := base.Agents[name]; ok {
+			if !reflect.DeepEqual(existing, agent) {
+				return core.Scenario{}, fmt.Errorf("agentflow: Studio scenario draft modifies existing agent %q", name)
+			}
+			continue
+		}
+		patch.Agents[name] = agent
+	}
+	for name, skill := range draft.Skills {
+		if existing, ok := base.Skills[name]; ok {
+			if !reflect.DeepEqual(existing, skill) {
+				return core.Scenario{}, fmt.Errorf("agentflow: Studio scenario draft modifies existing skill %q", name)
+			}
+			continue
+		}
+		patch.Skills[name] = skill
+	}
+	withParts, err := graph.ApplyScenarioPatch(base, patch)
+	if err != nil {
+		return core.Scenario{}, err
+	}
+	return graph.ApplyGraph(withParts, edited)
 }
 
 // CompareRuns diffs step outputs between two persisted runs.
@@ -268,7 +337,11 @@ func (s Studio) ListRunThread(ctx context.Context, runID string) ([]ThreadRunSum
 		return nil, err
 	}
 	threadID := resolveThreadID(root)
-	list, err := s.f.runs.List(ctx, runstate.ListFilter{ThreadID: threadID})
+	filter := runstate.ListFilter{ThreadID: threadID, TenantID: root.TenantID}
+	if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
+		filter.TenantID = principal.Scope.TenantID
+	}
+	list, err := s.f.runs.List(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +350,9 @@ func (s Studio) ListRunThread(ctx context.Context, runID string) ([]ThreadRunSum
 	}
 	out := make([]ThreadRunSummary, 0, len(list))
 	for _, snap := range list {
+		if err := runstate.AuthorizeTenant(ctx, snap); err != nil {
+			continue
+		}
 		out = append(out, ThreadRunSummary{
 			RunID:           snap.RunID,
 			ParentRunID:     snap.ParentRunID,
@@ -360,8 +436,16 @@ func (f *Framework) SaveStudioGraph(ctx context.Context, edited graph.ScenarioGr
 	return f.Studio().SaveStudioGraph(ctx, edited, path)
 }
 
+func (f *Framework) SaveStudioGraphWithScenario(ctx context.Context, edited graph.ScenarioGraph, draft *core.Scenario, path string) (SaveStudioResult, error) {
+	return f.Studio().SaveStudioGraphWithScenario(ctx, edited, draft, path)
+}
+
 func (f *Framework) RunStudioGraph(ctx context.Context, edited graph.ScenarioGraph, req RunRequest) (RunResult, error) {
 	return f.Studio().RunStudioGraph(ctx, edited, req)
+}
+
+func (f *Framework) RunStudioGraphWithScenario(ctx context.Context, edited graph.ScenarioGraph, draft *core.Scenario, req RunRequest) (RunResult, error) {
+	return f.Studio().RunStudioGraphWithScenario(ctx, edited, draft, req)
 }
 
 func (f *Framework) CompareRuns(ctx context.Context, runA, runB string) (studio.RunCompareResult, error) {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiPost } from '../api/client';
-import type { CodegenResult, GraphNode, ImportStudioResult, ValidateStudioResult } from '../api/types';
+import type { CodegenResult, GraphNode, ImportStudioResult, SaveStudioResult, ValidateStudioResult } from '../api/types';
 import { currentView, useCanvasStore } from '../store/canvas';
 import { prettyJSON } from '../lib/format';
 
@@ -135,6 +135,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function ScenarioActions() {
   const doc = useCanvasStore((s) => s.doc);
+  const scenarioDraft = useCanvasStore((s) => s.scenarioDraft);
   const dirty = useCanvasStore((s) => s.dirty);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
@@ -155,9 +156,11 @@ function ScenarioActions() {
   const save = () =>
     run(async () => {
       try {
-        await apiPost('studio/save', doc);
-        setDoc(doc, false);
+        const payload = scenarioDraft ? { graph: doc, scenario: scenarioDraft } : doc;
+        const result = await apiPost<SaveStudioResult>('studio/save', payload);
+        setDoc(result.graph ?? doc, false);
         void queryClient.invalidateQueries({ queryKey: ['graph'] });
+        void queryClient.invalidateQueries({ queryKey: ['parts'] });
         return { kind: 'ok', text: '已保存（live 场景已更新）' };
       } catch (err) {
         return { kind: 'err', text: err instanceof Error ? err.message : '保存失败' };

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 )
 
 type memoryEventStore struct {
@@ -149,5 +150,34 @@ func TestEventHubCountsDroppedDeliveries(t *testing.T) {
 	}
 	if got := hub.DroppedEvents(); got != 2 {
 		t.Fatalf("expected 2 dropped deliveries with a 1-deep buffer and no reader, got %d", got)
+	}
+}
+
+func TestEventStoreSinkStampsAndHubFiltersTenant(t *testing.T) {
+	store := &memoryEventStore{}
+	hub := NewEventHub()
+	sink := NewEventStoreSink(store, hub)
+	subA := hub.Subscribe(context.Background(), EventSubscriptionFilter{TenantID: "tenant-a", Buffer: 1})
+	defer subA.Cancel()
+	subB := hub.Subscribe(context.Background(), EventSubscriptionFilter{TenantID: "tenant-b", Buffer: 1})
+	defer subB.Cancel()
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "service-a", Type: identity.PrincipalService, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	if err := sink.Emit(ctx, core.Event{Type: core.EventRunStarted, RunID: "run-a"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case record := <-subA.Events:
+		if record.Event.TenantID != "tenant-a" {
+			t.Fatalf("event tenant was not stamped: %+v", record.Event)
+		}
+	default:
+		t.Fatal("tenant A did not receive its event")
+	}
+	select {
+	case record := <-subB.Events:
+		t.Fatalf("tenant B received tenant A event: %+v", record.Event)
+	default:
 	}
 }

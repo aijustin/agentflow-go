@@ -122,6 +122,38 @@ func TestClientListToolsPagination(t *testing.T) {
 	}
 }
 
+func TestClientModernStdioSkipsHandshakeAndAddsMetadata(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := NewClient(ctx, Config{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestStdioHelperProcess"},
+		Env: []string{
+			"AGENTFLOW_TEST_MCP_STDIO=1",
+			"AGENTFLOW_TEST_MCP_STDIO_MODERN=1",
+		},
+		Options: mcp.ClientOptions{Mode: mcp.ProtocolModeModern},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	tools, err := client.ListTools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 1 || tools[0].Name != "search" {
+		t.Fatalf("unexpected modern tools: %+v", tools)
+	}
+	result, err := client.CallTool(ctx, mcp.CallToolRequest{Name: "search"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Content) != 1 || result.Content[0].Text != "ok" {
+		t.Fatalf("unexpected modern result: %+v", result)
+	}
+}
+
 func TestStdioHelperProcess(t *testing.T) {
 	if os.Getenv("AGENTFLOW_TEST_MCP_STDIO") != "1" {
 		return
@@ -148,12 +180,17 @@ func TestStdioHelperProcess(t *testing.T) {
 		var result any
 		switch req.Method {
 		case "initialize":
+			if os.Getenv("AGENTFLOW_TEST_MCP_STDIO_MODERN") == "1" {
+				fmt.Fprintln(os.Stderr, "modern client sent initialize")
+				os.Exit(2)
+			}
 			result = map[string]any{
-				"protocolVersion": mcp.ProtocolVersion,
+				"protocolVersion": mcp.ProtocolVersionLegacy,
 				"capabilities":    map[string]any{},
 				"serverInfo":      map[string]any{"name": "stub", "version": "0"},
 			}
 		case "tools/list":
+			requireModernStdioMeta(req.Params)
 			switch {
 			case os.Getenv("AGENTFLOW_TEST_MCP_STDIO_BIG") == "1":
 				// A single JSON-RPC line larger than bufio's 64KiB default;
@@ -171,6 +208,7 @@ func TestStdioHelperProcess(t *testing.T) {
 				result = map[string]any{"tools": []map[string]any{{"name": "search", "description": "Search docs"}}}
 			}
 		case "tools/call":
+			requireModernStdioMeta(req.Params)
 			result = map[string]any{"content": []map[string]any{{"type": "text", "text": "ok"}}}
 		case "hang":
 			// Deliberately never reply, to simulate a server that stalls
@@ -186,4 +224,24 @@ func TestStdioHelperProcess(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+func requireModernStdioMeta(params json.RawMessage) {
+	if os.Getenv("AGENTFLOW_TEST_MCP_STDIO_MODERN") != "1" {
+		return
+	}
+	var body map[string]any
+	if err := json.Unmarshal(params, &body); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	meta, ok := body["_meta"].(map[string]any)
+	if !ok || meta["io.modelcontextprotocol/protocolVersion"] != mcp.ProtocolVersionModern {
+		fmt.Fprintln(os.Stderr, "missing modern request metadata")
+		os.Exit(2)
+	}
+	if _, ok := meta["io.modelcontextprotocol/clientCapabilities"].(map[string]any); !ok {
+		fmt.Fprintln(os.Stderr, "missing modern client capabilities")
+		os.Exit(2)
+	}
 }

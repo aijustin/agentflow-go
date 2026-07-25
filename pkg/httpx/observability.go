@@ -151,7 +151,11 @@ func (adapter *studioFramework) RunStudioGraph(ctx context.Context, edited any, 
 	if err != nil {
 		return nil, err
 	}
-	return adapter.framework.RunStudioGraph(ctx, graph, runReq)
+	draft, err := decodeStudioScenario(req)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.framework.RunStudioGraphWithScenario(ctx, graph, draft, runReq)
 }
 
 func decodeStudioRunRequest(value any) (agentflow.RunRequest, error) {
@@ -198,11 +202,63 @@ func (adapter *studioFramework) SaveStudioGraph(ctx context.Context, edited any)
 	if adapter.savePath == "" {
 		return nil, fmt.Errorf("studio save path is not configured")
 	}
-	graph, err := decodeStudioGraph(edited)
+	graph, draft, err := decodeStudioSaveRequest(edited)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.framework.SaveStudioGraph(ctx, graph, adapter.savePath)
+	return adapter.framework.SaveStudioGraphWithScenario(ctx, graph, draft, adapter.savePath)
+}
+
+func decodeStudioSaveRequest(value any) (graph.ScenarioGraph, *core.Scenario, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return graph.ScenarioGraph{}, nil, fmt.Errorf("studio save request: encode: %w", err)
+	}
+	var envelope struct {
+		Graph    json.RawMessage `json:"graph"`
+		Scenario json.RawMessage `json:"scenario"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return graph.ScenarioGraph{}, nil, fmt.Errorf("studio save request: decode: %w", err)
+	}
+	graphRaw := raw
+	if len(envelope.Graph) > 0 && string(envelope.Graph) != "null" {
+		graphRaw = envelope.Graph
+	}
+	var edited graph.ScenarioGraph
+	if err := json.Unmarshal(graphRaw, &edited); err != nil {
+		return graph.ScenarioGraph{}, nil, fmt.Errorf("studio graph: decode: %w", err)
+	}
+	draft, err := decodeStudioScenarioRaw(envelope.Scenario)
+	if err != nil {
+		return graph.ScenarioGraph{}, nil, err
+	}
+	return edited, draft, nil
+}
+
+func decodeStudioScenario(value any) (*core.Scenario, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("studio scenario: encode: %w", err)
+	}
+	var envelope struct {
+		Scenario json.RawMessage `json:"scenario"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, fmt.Errorf("studio scenario: decode envelope: %w", err)
+	}
+	return decodeStudioScenarioRaw(envelope.Scenario)
+}
+
+func decodeStudioScenarioRaw(raw json.RawMessage) (*core.Scenario, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var draft core.Scenario
+	if err := json.Unmarshal(raw, &draft); err != nil {
+		return nil, fmt.Errorf("studio scenario: decode: %w", err)
+	}
+	return &draft, nil
 }
 
 func decodeStudioGraph(value any) (graph.ScenarioGraph, error) {

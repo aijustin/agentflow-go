@@ -29,10 +29,10 @@ var migrationFS embed.FS
 // Version 4 adds agentflow_run_snapshots.fence_token, which fenced snapshot
 // saves (runstate.FencedRepository) depend on; version 5 adds the
 // agentflow_outbox table used by transactional event outbox writes and the
-// framework outbox relay. ValidateWiring refuses to start against an older
-// schema so the missing column/table surfaces at boot instead of as a
-// runtime "column does not exist" error.
-const RequiredVersion = 5
+// framework outbox relay; version 6 adds tenant isolation to runtime events.
+// ValidateWiring refuses to start against an older schema so missing
+// columns/tables surface at boot instead of at runtime.
+const RequiredVersion = 6
 
 // schemaMigrationsTable is quoted into DDL/DML below; it is a fixed
 // identifier, never user input.

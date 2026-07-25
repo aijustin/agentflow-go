@@ -23,6 +23,7 @@ type Config struct {
 	Env     []string
 	Dir     string
 	Stderr  io.Writer
+	Options mcp.ClientOptions
 }
 
 type Client struct {
@@ -31,6 +32,7 @@ type Client struct {
 	scanner *bufio.Scanner
 	mu      sync.Mutex
 	nextID  atomic.Int64
+	options mcp.ClientOptions
 	// broken records why the client was poisoned after a call was
 	// abandoned while its response was still in flight (see call below).
 	// Requests are strictly sequential over one pipe with no multiplexing,
@@ -81,6 +83,10 @@ func NewClient(ctx context.Context, config Config) (*Client, error) {
 	if command == "" {
 		return nil, fmt.Errorf("mcp stdio: command is required")
 	}
+	options, err := mcp.NormalizeClientOptions(config.Options, core.FrameworkVersion())
+	if err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(ctx, command, config.Args...)
 	cmd.Env = append(os.Environ(), config.Env...)
 	cmd.Dir = config.Dir
@@ -102,7 +108,7 @@ func NewClient(ctx context.Context, config Config) (*Client, error) {
 	}
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), DefaultMaxLineBytes)
-	return &Client{cmd: cmd, stdin: stdin, scanner: scanner}, nil
+	return &Client{cmd: cmd, stdin: stdin, scanner: scanner, options: options}, nil
 }
 
 // maxListToolsPages bounds nextCursor pagination so a misbehaving server
@@ -167,7 +173,7 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) call(ctx context.Context, method string, params json.RawMessage, out any) error {
-	if method != "initialize" {
+	if c.options.Mode == mcp.ProtocolModeLegacy && method != "initialize" {
 		if err := c.ensureInitialized(ctx); err != nil {
 			return err
 		}
@@ -184,17 +190,10 @@ func (c *Client) ensureInitialized(ctx context.Context) error {
 	if c.ready {
 		return nil
 	}
-	version := core.FrameworkVersion()
-	if version == "" {
-		version = "dev"
-	}
 	params, err := json.Marshal(map[string]any{
-		"protocolVersion": mcp.ProtocolVersion,
+		"protocolVersion": mcp.ProtocolVersionLegacy,
 		"capabilities":    map[string]any{},
-		"clientInfo": map[string]any{
-			"name":    "agentflow-go",
-			"version": version,
-		},
+		"clientInfo":      c.options.ClientInfo,
 	})
 	if err != nil {
 		return err
@@ -231,6 +230,10 @@ func (c *Client) notify(ctx context.Context, method string, params json.RawMessa
 
 func (c *Client) roundTrip(ctx context.Context, method string, params json.RawMessage, out any) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	params, err := mcp.AddModernRequestMetadata(params, c.options)
+	if err != nil {
 		return err
 	}
 	c.mu.Lock()

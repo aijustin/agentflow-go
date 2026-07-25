@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aijustin/agentflow-go/internal/application/runtime"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
+	"github.com/aijustin/agentflow-go/internal/application/runtime"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/toolcatalog"
@@ -111,6 +111,61 @@ func TestEngineDeferredToolCatalogLoadsSchemas(t *testing.T) {
 	}
 	if !foundLoaded {
 		t.Fatalf("loaded tool not advertised on second turn: %v", second)
+	}
+}
+
+func TestEngineNonDeferredCatalogKeepsHelpersAndAllSchemas(t *testing.T) {
+	catalog := toolcatalog.NewSnapshot("v1", time.Hour, []toolcatalog.Entry{
+		{Name: "docs.search", Description: "Search docs"},
+	})
+	scenario := core.Scenario{
+		Name: "catalog-non-deferred",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default", Tools: []string{"docs.search", "echo"}},
+		},
+		Tools: map[string]core.Tool{
+			"docs.search": {Name: "docs.search", Type: "mcp.tool", Description: "Search docs"},
+			"echo":        {Name: "echo", Type: "builtin.echo", Description: "Echo"},
+		},
+	}
+	gw := &catalogGateway{}
+	engine, err := runtime.NewEngine(scenario, runtime.Dependencies{
+		LLM:           gw,
+		Runs:          runstateinmem.NewRepository(),
+		Tools:         stubToolRegistry{"docs.search": execTool{}, "echo": execTool{}},
+		ToolCatalog:   catalog,
+		DeferredTools: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(context.Background(), runtime.RunRequest{RunID: "run-catalog-all", Agent: "assistant", Prompt: "find docs"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(gw.steps) == 0 {
+		t.Fatal("expected a model request")
+	}
+	var first []string
+	if err := json.Unmarshal([]byte(gw.steps[0]), &first); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		toolcatalog.ToolSearchTools:    false,
+		toolcatalog.ToolLoadSchemas:    false,
+		toolcatalog.ToolCompactContext: false,
+		"docs.search":                  false,
+		"echo":                         false,
+	}
+	for _, name := range first {
+		if _, ok := want[name]; ok {
+			want[name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Fatalf("non-deferred catalog omitted %q: %v", name, first)
+		}
 	}
 }
 

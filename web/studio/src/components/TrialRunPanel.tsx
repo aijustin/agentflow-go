@@ -9,6 +9,7 @@ type TrialPhase = 'idle' | 'starting' | 'streaming' | 'done';
 
 export function TrialRunPanel() {
   const doc = useCanvasStore((s) => s.doc);
+  const scenarioDraft = useCanvasStore((s) => s.scenarioDraft);
   const setNodeRunState = useCanvasStore((s) => s.setNodeRunState);
   const clearNodeRunState = useCanvasStore((s) => s.clearNodeRunState);
   const [, setParams] = useSearchParams();
@@ -38,7 +39,11 @@ export function TrialRunPanel() {
     setOpen(true);
     setPhase('starting');
     try {
-      const result = await apiPost<RunResult>('studio/run', { graph: doc, prompt: prompt.trim() });
+      const result = await apiPost<RunResult>('studio/run', {
+        graph: doc,
+        scenario: scenarioDraft ?? undefined,
+        prompt: prompt.trim(),
+      });
       setRun(result);
       if (result.status !== 'running' && result.status !== 'paused') {
         setPhase('done');

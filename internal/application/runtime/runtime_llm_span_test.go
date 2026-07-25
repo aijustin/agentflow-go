@@ -236,6 +236,67 @@ func TestEngineStreamLLMSpanClosesWithStream(t *testing.T) {
 	}
 }
 
+type heldOpenTerminalGateway struct {
+	source <-chan llm.ChatChunk
+}
+
+func (g heldOpenTerminalGateway) Supports(_ string, capability llm.Capability) bool {
+	return capability == llm.CapChat || capability == llm.CapStream
+}
+
+func (heldOpenTerminalGateway) Chat(context.Context, string, llm.ChatRequest) (llm.ChatResponse, error) {
+	return llm.ChatResponse{}, errors.New("chat should not be called")
+}
+
+func (g heldOpenTerminalGateway) StreamChat(context.Context, string, llm.ChatRequest) (<-chan llm.ChatChunk, error) {
+	return g.source, nil
+}
+
+func TestEngineStreamLLMSpanEndsBeforeTerminalIsVisible(t *testing.T) {
+	providerStream := make(chan llm.ChatChunk, 1)
+	providerStream <- llm.ChatChunk{
+		Content: "streamed answer",
+		Done:    true,
+		Usage:   llm.TokenUsage{InputTokens: 4, OutputTokens: 6},
+	}
+	defer close(providerStream)
+
+	tracer := &recordingTracer{}
+	engine, err := NewEngine(baseScenario(false), Dependencies{
+		Runs:   runstateinmem.NewRepository(),
+		LLM:    heldOpenTerminalGateway{source: providerStream},
+		Tracer: tracer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := engine.Stream(context.Background(), RunRequest{
+		RunID:  "run-stream-span-ordering",
+		Agent:  "assistant",
+		Prompt: "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, ok := <-ch
+	if !ok || !terminal.Done {
+		t.Fatalf("expected terminal chunk, got %+v, open=%t", terminal, ok)
+	}
+	spans := tracer.spansNamed(observability.SpanLLMCall)
+	if len(spans) != 1 {
+		t.Fatalf("expected exactly one llm call span, got %d", len(spans))
+	}
+	span := spans[0]
+	span.mu.Lock()
+	ended := span.ended
+	span.mu.Unlock()
+	if !ended {
+		t.Fatal("llm span must end before the terminal chunk becomes visible")
+	}
+	for range ch {
+	}
+}
+
 func TestEngineRunHybridFailureRecordsSpanError(t *testing.T) {
 	saveRunning := func(t *testing.T, repo *runstateinmem.Repository, runID string) {
 		t.Helper()

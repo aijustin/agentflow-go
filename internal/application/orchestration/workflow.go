@@ -1170,6 +1170,7 @@ func (r *WorkflowRunner) emit(ctx context.Context, typ core.EventType, scenarioN
 		DisplayLabel: core.DisplayLabel(typ),
 		Payload:      payload,
 	}
+	observability.StampEventTenant(ctx, &event)
 	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
 		event.TraceID = traceID
 		event.SpanID = spanID

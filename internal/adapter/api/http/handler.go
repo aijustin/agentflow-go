@@ -54,41 +54,43 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	}
 	jobHandler := nethttp.Handler(runHandler)
 	runs := nethttp.Handler(&RunsMux{Checkpoint: config.CheckpointHandler, Async: jobHandler})
+	jobs := jobHandler
 	if config.AuthMiddleware != nil {
-		runs = config.AuthMiddleware(runs)
+		runs = config.AuthMiddleware(withTenantStrictMode(runs))
+		jobs = config.AuthMiddleware(withTenantStrictMode(jobs))
 	}
 	handler := &Handler{mux: nethttp.NewServeMux(), version: config.Version}
 	handler.mux.HandleFunc("/healthz", handler.handleHealth)
 	handler.mux.HandleFunc("/readyz", handler.handleHealth)
 	handler.mux.Handle("/v1/runs", runs)
 	handler.mux.Handle("/v1/runs/", runs)
-	handler.mux.Handle("/v1/jobs", jobHandler)
-	handler.mux.Handle("/v1/jobs/", jobHandler)
+	handler.mux.Handle("/v1/jobs", jobs)
+	handler.mux.Handle("/v1/jobs/", jobs)
 	if config.EventsHandler != nil {
 		events := config.EventsHandler
 		if config.AuthMiddleware != nil {
-			events = config.AuthMiddleware(events)
+			events = config.AuthMiddleware(withTenantStrictMode(events))
 		}
 		handler.mux.Handle("/v1/events", events)
 	}
 	if config.HITLHandler != nil {
 		hitl := config.HITLHandler
 		if config.AuthMiddleware != nil {
-			hitl = config.AuthMiddleware(hitl)
+			hitl = config.AuthMiddleware(withTenantStrictMode(hitl))
 		}
 		handler.mux.Handle("/v1/hitl/resume", hitl)
 	}
 	if config.StudioHandler != nil {
 		studio := config.StudioHandler
 		if config.AuthMiddleware != nil {
-			studio = config.AuthMiddleware(studio)
+			studio = config.AuthMiddleware(withTenantStrictMode(studio))
 		}
 		handler.mux.Handle("/v1/studio/", studio)
 	}
 	if config.RetentionHandler != nil {
 		retention := config.RetentionHandler
 		if config.AuthMiddleware != nil {
-			retention = config.AuthMiddleware(retention)
+			retention = config.AuthMiddleware(withTenantStrictMode(retention))
 		}
 		handler.mux.Handle("/v1/admin/retention/", retention)
 	}
@@ -96,6 +98,12 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		handler.mux.Handle("/metrics", config.MetricsHandler)
 	}
 	return handler, nil
+}
+
+func withTenantStrictMode(next nethttp.Handler) nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		next.ServeHTTP(w, r.WithContext(runstate.ContextWithTenantStrictMode(r.Context())))
+	})
 }
 
 func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {

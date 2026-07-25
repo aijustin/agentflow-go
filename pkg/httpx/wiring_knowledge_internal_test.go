@@ -38,9 +38,10 @@ func TestFirstEmbedProfile(t *testing.T) {
 }
 
 func TestTenantScopedRetrieverInjectsNamespace(t *testing.T) {
+	store := &capturingVectorStore{}
 	inner, err := adapters.NewRetrieverTool(adapters.RetrieverToolConfig{
 		Embedder: rootEmbedder{},
-		Store:    &capturingVectorStore{},
+		Store:    store,
 		Profile:  "embed",
 	})
 	if err != nil {
@@ -56,10 +57,18 @@ func TestTenantScopedRetrieverInjectsNamespace(t *testing.T) {
 	})
 	_, err = wrapped.Execute(ctx, core.ToolCall{
 		Tool:  "retrieve",
-		Input: json.RawMessage(`{"query":"billing"}`),
+		Input: json.RawMessage(`{"query":"billing","namespace":"tenant-b/private"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if store.lastQuery.Namespace != "tenant-a/docs" {
+		t.Fatalf("caller-controlled namespace escaped tenant scope: %q", store.lastQuery.Namespace)
+	}
+	if _, err := wrapped.Execute(context.Background(), core.ToolCall{
+		Tool: "retrieve", Input: json.RawMessage(`{"query":"billing"}`),
+	}); err == nil {
+		t.Fatal("tenant-scoped retrieval without tenant identity must fail")
 	}
 }
 

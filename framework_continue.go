@@ -119,19 +119,29 @@ func (f *Framework) resumeAndContinueLocked(ctx context.Context, token, runID st
 // with ErrResumeInProgress, which keeps a token race from surfacing as the
 // ambiguous ErrTokenSuperseded. The returned function releases the slot.
 func (f *Framework) tryEnterResume(runID string) (func(), error) {
-	f.resumeMu.Lock()
-	defer f.resumeMu.Unlock()
-	if f.resumeInFlight == nil {
-		f.resumeInFlight = make(map[string]struct{})
+	return f.tryEnterExecution(runID, true)
+}
+
+// tryEnterExecution claims the single in-process driver slot for runID.
+// Resume-family callers retain their classified ErrResumeInProgress result;
+// every other execution entry point reports ErrRunInProgress.
+func (f *Framework) tryEnterExecution(runID string, resume bool) (func(), error) {
+	f.executionMu.Lock()
+	defer f.executionMu.Unlock()
+	if f.executionInFlight == nil {
+		f.executionInFlight = make(map[string]struct{})
 	}
-	if _, ok := f.resumeInFlight[runID]; ok {
-		return nil, fmt.Errorf("agentflow: run %q: %w", runID, runstate.ErrResumeInProgress)
+	if _, ok := f.executionInFlight[runID]; ok {
+		if resume {
+			return nil, fmt.Errorf("agentflow: run %q: %w", runID, runstate.ErrResumeInProgress)
+		}
+		return nil, fmt.Errorf("agentflow: run %q: %w", runID, ErrRunInProgress)
 	}
-	f.resumeInFlight[runID] = struct{}{}
+	f.executionInFlight[runID] = struct{}{}
 	return func() {
-		f.resumeMu.Lock()
-		defer f.resumeMu.Unlock()
-		delete(f.resumeInFlight, runID)
+		f.executionMu.Lock()
+		defer f.executionMu.Unlock()
+		delete(f.executionInFlight, runID)
 	}, nil
 }
 
@@ -367,7 +377,7 @@ func (f *Framework) continueWorkflowAgentCheckpoint(ctx context.Context, runID, 
 	}
 	runner := f.newWorkflowRunner()
 	if err := runner.SaveStepOutput(ctx, f.currentScenario(), runID, nodeID, core.AgentOutput{RunID: runID, Text: result.Output}); err != nil {
-		f.markWorkflowFailed(ctx, runID, err)
+		f.settleWorkflowError(ctx, runID, err)
 		return RunResult{}, err
 	}
 	return f.finishWorkflowRun(ctx, runID, true)
@@ -419,7 +429,7 @@ func (f *Framework) finishWorkflowRun(ctx context.Context, runID string, markCom
 		if errors.As(err, &paused) {
 			return RunResult{RunID: runID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		f.markWorkflowFailed(ctx, runID, err)
+		f.settleWorkflowError(ctx, runID, err)
 		return RunResult{}, err
 	}
 	if !markCompleted {
@@ -471,6 +481,11 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 	if autonomous && !hasPendingCheckpointMetadata(snapshot) && !appexec.HasAutonomousIterationProgress(snapshot) {
 		return RunResult{}, fmt.Errorf("agentflow: RetryFailedRun for autonomous run %q requires pending checkpoint metadata or persisted iteration progress; the failure left no resumable progress (no checkpoint_kind variable, no auto:iter step outputs)", runID)
 	}
+	releaseSlot, err := f.tryEnterExecution(runID, false)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer releaseSlot()
 	if f.runLocker != nil {
 		var release func()
 		ctx, release, err = f.holdRunLease(ctx, runID)

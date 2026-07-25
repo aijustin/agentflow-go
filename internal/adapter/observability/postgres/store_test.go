@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
 )
 
@@ -46,9 +47,11 @@ func TestNewStoreAutoMigratesSchema(t *testing.T) {
 		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_run_sequence_idx",
 		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_run_updated_idx",
 		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_type_time_idx",
+		"ADD COLUMN IF NOT EXISTS tenant_id",
 		"ADD COLUMN IF NOT EXISTS episode_id",
 		"ADD COLUMN IF NOT EXISTS session_id",
 		"ADD COLUMN IF NOT EXISTS trigger_kind",
+		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_tenant_run_idx",
 		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_episode_id_idx",
 		"CREATE INDEX IF NOT EXISTS agentflow_runtime_events_session_id_idx",
 	} {
@@ -127,6 +130,40 @@ func TestStoreAppendsListsRunsAndEvents(t *testing.T) {
 	}
 }
 
+func TestStoreFiltersRunsAndEventsByTenant(t *testing.T) {
+	db, _ := openTestDB(t)
+	store, err := NewStore(context.Background(), Config{DB: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctxA := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "service-a", Type: identity.PrincipalService, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	ctxB := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "service-b", Type: identity.PrincipalService, Scope: identity.Scope{TenantID: "tenant-b"},
+	})
+	if _, err := store.Append(ctxA, core.Event{Type: core.EventRunStarted, RunID: "run-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(ctxB, core.Event{Type: core.EventRunStarted, RunID: "run-b"}); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := store.ListRuns(context.Background(), obspkg.RunQuery{TenantID: "tenant-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].RunID != "run-a" || runs[0].TenantID != "tenant-a" {
+		t.Fatalf("cross-tenant runs leaked: %+v", runs)
+	}
+	events, err := store.ListEvents(context.Background(), "run-a", obspkg.EventQuery{TenantID: "tenant-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("cross-tenant events leaked: %+v", events)
+	}
+}
+
 func TestNewStoreValidatesConfig(t *testing.T) {
 	if _, err := NewStore(context.Background(), Config{}); err == nil {
 		t.Fatal("expected nil db error")
@@ -199,6 +236,7 @@ type testRow struct {
 	sequence     int64
 	eventType    string
 	runID        string
+	tenantID     string
 	scenarioName string
 	episodeID    string
 	sessionID    string
@@ -265,12 +303,13 @@ func (c *testConn) insertOutbox(args []driver.NamedValue) (driver.Result, error)
 
 func (c *testConn) deleteEventsForRun(args []driver.NamedValue) (driver.Result, error) {
 	runID := namedString(args[0])
+	tenantID := namedString(args[1])
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	kept := c.state.rows[:0]
 	var removed int64
 	for _, row := range c.state.rows {
-		if row.runID == runID {
+		if row.runID == runID && (tenantID == "" || row.tenantID == tenantID) {
 			removed++
 			continue
 		}
@@ -282,12 +321,13 @@ func (c *testConn) deleteEventsForRun(args []driver.NamedValue) (driver.Result, 
 
 func (c *testConn) purgeEvents(args []driver.NamedValue) (driver.Result, error) {
 	cutoff, _ := args[0].Value.(time.Time)
+	tenantID := namedString(args[1])
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	kept := c.state.rows[:0]
 	var removed int64
 	for _, row := range c.state.rows {
-		if row.occurredAt.Before(cutoff) {
+		if row.occurredAt.Before(cutoff) && (tenantID == "" || row.tenantID == tenantID) {
 			removed++
 			continue
 		}
@@ -378,7 +418,8 @@ func (c *testConn) insertEvent(args []driver.NamedValue) (driver.Rows, error) {
 		return nil, fmt.Errorf("injected append failure")
 	}
 	runID := namedString(args[0])
-	sequence := namedInt64(args[1].Value)
+	tenantID := namedString(args[1])
+	sequence := namedInt64(args[2].Value)
 	for _, row := range c.state.rows {
 		// ON CONFLICT (run_id, sequence) DO NOTHING: the insert returns no
 		// row when the sequence is already taken.
@@ -391,17 +432,18 @@ func (c *testConn) insertEvent(args []driver.NamedValue) (driver.Rows, error) {
 	row := testRow{
 		id:           c.state.nextID,
 		runID:        runID,
+		tenantID:     tenantID,
 		sequence:     sequence,
-		eventType:    namedString(args[2]),
-		scenarioName: namedString(args[3]),
-		episodeID:    namedString(args[4]),
-		sessionID:    namedString(args[5]),
-		triggerKind:  namedString(args[6]),
-		traceID:      namedString(args[7]),
-		spanID:       namedString(args[8]),
-		parentSpanID: namedString(args[9]),
-		occurredAt:   args[10].Value.(time.Time),
-		payload:      valueBytes(args[11].Value),
+		eventType:    namedString(args[3]),
+		scenarioName: namedString(args[4]),
+		episodeID:    namedString(args[5]),
+		sessionID:    namedString(args[6]),
+		triggerKind:  namedString(args[7]),
+		traceID:      namedString(args[8]),
+		spanID:       namedString(args[9]),
+		parentSpanID: namedString(args[10]),
+		occurredAt:   args[11].Value.(time.Time),
+		payload:      valueBytes(args[12].Value),
 		createdAt:    createdAt,
 	}
 	c.state.rows = append(c.state.rows, row)
@@ -411,13 +453,14 @@ func (c *testConn) insertEvent(args []driver.NamedValue) (driver.Rows, error) {
 func (c *testConn) listEvents(args []driver.NamedValue) (driver.Rows, error) {
 	runID := namedString(args[0])
 	afterSequence := namedInt64(args[1].Value)
-	limit := int(namedInt64(args[2].Value))
+	tenantID := namedString(args[2])
+	limit := int(namedInt64(args[3].Value))
 	c.state.mu.Lock()
 	rows := append([]testRow(nil), c.state.rows...)
 	c.state.mu.Unlock()
 	values := make([][]driver.Value, 0)
 	for _, row := range rows {
-		if row.runID != runID || row.sequence <= afterSequence {
+		if row.runID != runID || row.sequence <= afterSequence || (tenantID != "" && row.tenantID != tenantID) {
 			continue
 		}
 		values = append(values, row.values())
@@ -431,13 +474,14 @@ func (c *testConn) listEvents(args []driver.NamedValue) (driver.Rows, error) {
 func (c *testConn) listScopedEvents(args []driver.NamedValue, kind string) (driver.Rows, error) {
 	scopeValue := namedString(args[0])
 	afterID := namedInt64(args[1].Value)
-	limit := int(namedInt64(args[2].Value))
+	tenantID := namedString(args[2])
+	limit := int(namedInt64(args[3].Value))
 	c.state.mu.Lock()
 	rows := append([]testRow(nil), c.state.rows...)
 	c.state.mu.Unlock()
 	values := make([][]driver.Value, 0)
 	for _, row := range rows {
-		if row.id <= afterID {
+		if row.id <= afterID || (tenantID != "" && row.tenantID != tenantID) {
 			continue
 		}
 		switch kind {
@@ -459,17 +503,23 @@ func (c *testConn) listScopedEvents(args []driver.NamedValue, kind string) (driv
 }
 
 func (c *testConn) listRuns(args []driver.NamedValue) (driver.Rows, error) {
-	statusFilter := namedString(args[0])
-	limit := int(namedInt64(args[1].Value))
-	offset := int(namedInt64(args[2].Value))
+	tenantID := namedString(args[0])
+	statusFilter := namedString(args[1])
+	limit := int(namedInt64(args[2].Value))
+	offset := int(namedInt64(args[3].Value))
 	c.state.mu.Lock()
 	rows := append([]testRow(nil), c.state.rows...)
 	c.state.mu.Unlock()
 	byRun := make(map[string]obspkg.RunSummary)
 	for _, row := range rows {
-		summary := byRun[row.runID]
+		if tenantID != "" && row.tenantID != tenantID {
+			continue
+		}
+		key := row.tenantID + "\x00" + row.runID
+		summary := byRun[key]
 		if summary.RunID == "" {
 			summary.RunID = row.runID
+			summary.TenantID = row.tenantID
 			summary.FirstSeenAt = row.occurredAt
 		}
 		if summary.ScenarioName == "" {
@@ -479,7 +529,7 @@ func (c *testConn) listRuns(args []driver.NamedValue) (driver.Rows, error) {
 		summary.LastSeenAt = row.occurredAt
 		summary.LastEventType = core.EventType(row.eventType)
 		summary.Status = obspkg.StatusAfterEvent(summary.Status, core.EventType(row.eventType))
-		byRun[row.runID] = summary
+		byRun[key] = summary
 	}
 	summaries := make([]obspkg.RunSummary, 0, len(byRun))
 	for _, summary := range byRun {
@@ -503,14 +553,14 @@ func (c *testConn) listRuns(args []driver.NamedValue) (driver.Rows, error) {
 	}
 	values := make([][]driver.Value, 0, len(summaries))
 	for _, summary := range summaries {
-		values = append(values, []driver.Value{summary.RunID, summary.ScenarioName, string(summary.Status), summary.EventCount, summary.FirstSeenAt, summary.LastSeenAt, string(summary.LastEventType)})
+		values = append(values, []driver.Value{summary.RunID, summary.TenantID, summary.ScenarioName, string(summary.Status), summary.EventCount, summary.FirstSeenAt, summary.LastSeenAt, string(summary.LastEventType)})
 	}
 	return newTestRows(runColumns(), values), nil
 }
 
 func (row testRow) values() []driver.Value {
 	return []driver.Value{
-		row.id, row.sequence, row.eventType, row.runID, row.scenarioName,
+		row.id, row.sequence, row.eventType, row.runID, row.tenantID, row.scenarioName,
 		row.episodeID, row.sessionID, row.triggerKind,
 		row.traceID, row.spanID, row.parentSpanID, row.occurredAt, cloneBytes(row.payload), row.createdAt,
 	}
@@ -539,14 +589,14 @@ func (rows *testRows) Next(dest []driver.Value) error {
 
 func eventColumns() []string {
 	return []string{
-		"id", "sequence", "event_type", "run_id", "scenario_name",
+		"id", "sequence", "event_type", "run_id", "tenant_id", "scenario_name",
 		"episode_id", "session_id", "trigger_kind",
 		"trace_id", "span_id", "parent_span_id", "occurred_at", "payload_json", "created_at",
 	}
 }
 
 func runColumns() []string {
-	return []string{"run_id", "scenario_name", "status", "event_count", "first_seen_at", "last_seen_at", "last_event_type"}
+	return []string{"run_id", "tenant_id", "scenario_name", "status", "event_count", "first_seen_at", "last_seen_at", "last_event_type"}
 }
 
 func namedString(value driver.NamedValue) string {

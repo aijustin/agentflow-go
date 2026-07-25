@@ -190,7 +190,9 @@ When `ObservabilityHTTPHandlerConfig.Framework` is set, Studio endpoints are als
 - `POST /observability/api/studio/codegen` — export builder Go code for an edited graph.
 - `POST /observability/api/studio/yaml` — export legacy scenario YAML for an edited graph.
 - `POST /observability/api/studio/run` — validate and execute an edited graph (`{"graph":{...},"prompt":"..."}`).
-- `POST /observability/api/studio/save` — write edited graph to the host-configured scenario file (`StudioSavePath`).
+- `POST /observability/api/studio/save` — write edited graph to the host-configured scenario file (`StudioSavePath`); scenario-compose drafts send `{"graph":{...},"scenario":{...}}` so additive Agent/Skill definitions are retained.
+- `POST /observability/api/studio/compose` — compose a catalog/scenario draft from natural language.
+- `GET /observability/api/studio/parts` — list live composable parts.
 
 Production routes (when `Framework` is wired via `NewProductionHTTPHandler`):
 
@@ -199,7 +201,7 @@ Production routes (when `Framework` is wired via `NewProductionHTTPHandler`):
 - `GET /observability/api/runs/{run_id}/thread` — list fork/thread group runs.
 - `POST /observability/api/runs/{run_id}/fork` — copy run state to a new run ID.
 
-Open the dashboard and switch to the **Graph** tab for read-only graph debug, **Editor** for drag-and-drop topology edits (per-node input JSON, `condition`, `depends_on`, conditional edges, canvas layout persisted in `GraphView.layout`, subgraph canvas switching, Preview save diff, and Revert to loaded), **Compare** for multi-run diffs, and **Thread** for fork lineage. The UI defaults to **中文**; use the header language selector for **English**. Preference is stored in `localStorage` (`obs-lang`). See [studio-roadmap.md](./studio-roadmap.md).
+The Studio SPA exposes **Build** (AI compose, graph editing, trial runs), **Runs** (trace, outputs, checkpoints, thread lineage), and **Compare** routes. It defaults to Chinese. See [studio-roadmap.md](./studio-roadmap.md).
 
 Protect the handler with the same middleware used for production APIs:
 
