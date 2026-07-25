@@ -218,6 +218,10 @@ dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandl
 })
 ```
 
+Without `AuthMiddleware`, the standalone dashboard and all of its API routes
+default-deny. `InsecureAllowNoAuth` is an explicit local-demo/reverse-proxy
+opt-out and must not be used as an implicit production default.
+
 Production API (when `ProductionHTTPHandlerConfig.Framework` is set):
 
 - `GET /v1/runs/{run_id}/steps`

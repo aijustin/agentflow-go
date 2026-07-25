@@ -965,7 +965,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 ## 当前状态
 
-**最新发布：[v0.4.3](CHANGELOG.md)** — 显式 MCP 协议模式、租户隔离观测、Studio scenario 保存与 autonomous 试跑、执行器互斥与取消语义修复；v0.3 起适配器与 HTTP 构造器拆至 `pkg/adapters` / `pkg/httpx`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+**最新发布：[v0.4.5](CHANGELOG.md)** — 补齐 Job/Blob 租户隔离、detached run 显式取消、Studio 试跑输出闭环、MCP/ToolResolver 生命周期和安全发布流程；v0.3 起适配器与 HTTP 构造器拆至 `pkg/adapters` / `pkg/httpx`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 核心模块已可用：
 

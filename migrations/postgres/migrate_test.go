@@ -105,6 +105,27 @@ func TestOutboxMigrationContents(t *testing.T) {
 	}
 }
 
+func TestJobTenantMigrationContents(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jobs *migration
+	for i := range migrations {
+		if migrations[i].version == 7 {
+			jobs = &migrations[i]
+		}
+	}
+	if jobs == nil {
+		t.Fatal("migration 0007 not embedded")
+	}
+	for _, want := range []string{"agentflow_jobs", "tenant_id", "agentflow_jobs_tenant_state_idx"} {
+		if !strings.Contains(jobs.body, want) {
+			t.Fatalf("migration 0007 must mention %q", want)
+		}
+	}
+}
+
 func TestIsUndefinedTable(t *testing.T) {
 	if !isUndefinedTable(&pgconn.PgError{Code: "42P01"}) {
 		t.Fatal("pgx 42P01 must be recognized")

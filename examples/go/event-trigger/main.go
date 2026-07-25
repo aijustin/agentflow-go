@@ -17,7 +17,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	opts = append(opts, agentflow.WithHITLTokenSecret([]byte("dev-secret"), nil))
+	opts = append(opts, agentflow.WithHITLTokenSecret([]byte("dev-secret-16bytes"), nil))
 	fw, err := agentflow.New(scenario, opts...)
 	if err != nil {
 		log.Fatal(err)

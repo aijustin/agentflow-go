@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: your-registry/agentflow-tier-worker
-  tag: "0.4.3"
+  tag: "0.4.5"
   pullPolicy: IfNotPresent
 
 service:
@@ -11,6 +11,10 @@ service:
 postgres:
   secretName: agentflow-postgres
   secretKey: dsn
+
+hitl:
+  secretName: agentflow-hitl
+  secretKey: secret
 
 tier:
   coldDir: /data/tier-cold

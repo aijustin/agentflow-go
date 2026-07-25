@@ -53,13 +53,13 @@ runtime:
 
 ## 对象布局
 
-对象按 SHA-256 内容寻址：
+对象按租户哈希与 SHA-256 内容摘要组合寻址，同一租户内保持内容去重：
 
 ```text
-/{bucket}/{prefix}/{sha256}.blob
+/{bucket}/{prefix}/{sha256(tenant-id)}{sha256(content)}.blob
 ```
 
-返回的 `runstate.BlobRef` 包含对象 ID、字节大小和 SHA-256 校验和。读取时，如果这些字段存在，会校验校验和和大小。
+租户作用域对象 ID 为 128 个十六进制字符；历史全局对象仍使用 64 字符内容摘要。返回的 `runstate.BlobRef` 包含对象 ID、字节大小和内容 SHA-256 校验和。读取时会校验租户归属、校验和和大小；tenant-strict 请求拒绝历史未分区对象。
 
 ## 安全注意事项
 
@@ -87,5 +87,6 @@ runtime:
 - AWS Signature Version 4。
 - 可选 session token 支持。
 - 读取时校验校验和和大小。
+- `List` / `Delete` 与租户作用域孤儿清理。
 
 Provider 特定操作，例如创建 bucket、生命周期策略、对象版本控制、KMS 配置和分片上传，有意留给部署基础设施或未来适配器。

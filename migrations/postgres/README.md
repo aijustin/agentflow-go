@@ -3,7 +3,7 @@
 Versioned SQL for adapters that store data in PostgreSQL:
 
 - run snapshots (`agentflow_run_snapshots`; `fence_token` added in migration `0004`)
-- async job queue (`agentflow_jobs`)
+- tenant-scoped async job queue (`agentflow_jobs`, tenant isolation added in migration `0007`)
 - tenant-scoped runtime events (`agentflow_runtime_events`, tenant isolation added in migration `0006`)
 - transactional event outbox (`agentflow_outbox`, migration `0005`; drained by the framework's `WithOutboxRelay` loop)
 - knowledge embeddings (`agentflow_knowledge_embeddings`)

@@ -20,6 +20,9 @@ All other deferred tools stay hidden until the model calls
 `load_tool_schemas`, at which point their schemas are injected for subsequent
 turns in the same run. Executors are still resolved through the normal
 `WithToolExecutor` / `WithToolResolver` path once a tool is invoked.
+Lazy executors use a principal-scoped LRU cache capped at 1024 entries by
+default; set `WithToolResolverCacheLimit` to tune the bound or `0` to disable
+caching.
 
 Append `toolcatalog.SelfCompactRubric()` to agent instructions when
 `compact_context` is enabled so the model knows when to compact.
@@ -36,6 +39,7 @@ fw, err := agentflow.New(scenario,
     agentflow.WithToolCatalog(catalog),
     agentflow.WithToolExecutor("docs.search", docsTool),
     agentflow.WithToolResolver(sqlResolver),
+    agentflow.WithToolResolverCacheLimit(256),
 )
 ```
 

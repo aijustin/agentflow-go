@@ -5,6 +5,7 @@
 //
 //	cd examples/deploy && docker compose up -d
 //	export AGENT_POSTGRES_DSN='postgres://agentflow:agentflow@127.0.0.1:5432/agentflow?sslmode=disable'
+//	export AGENTFLOW_HITL_SECRET='replace-with-at-least-16-bytes'
 //	./init/apply-migrations.sh
 //	go run ./examples/go/tier-worker/main.go
 package main
@@ -49,6 +50,10 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	hitlSecret := []byte(os.Getenv("AGENTFLOW_HITL_SECRET"))
+	if len(hitlSecret) < runstate.MinTokenSecretLength {
+		log.Fatalf("AGENTFLOW_HITL_SECRET must contain at least %d bytes", runstate.MinTokenSecretLength)
+	}
 
 	var queue async.Queue
 	var tierStoreMetrics tier.Store
@@ -88,7 +93,7 @@ func main() {
 
 	opts = append(opts,
 		agentflow.WithJobQueue(queue),
-		agentflow.WithHITLTokenSecret([]byte("dev-secret"), os.Stderr),
+		agentflow.WithHITLTokenSecret(hitlSecret, os.Stderr),
 		agentflow.WithRecorder(recorder),
 		agentflow.WithEventSink(adapters.NewObservabilityEventSink(recorder, nil, adapters.NewSlogEventSink(logger))),
 	)

@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -144,6 +145,7 @@ func WireMCPTools(ctx context.Context, scenario core.Scenario, registry MCPRegis
 // MCPWiringOptions returns Framework options that wire mcp.tool declarations to MCP servers.
 func MCPWiringOptions(ctx context.Context, scenario core.Scenario, registry MCPRegistry) ([]agentflow.Option, error) {
 	clients := make(map[string]mcp.Client, len(registry.Clients))
+	ownedClients := make([]mcp.Client, 0, len(scenario.MCP.Servers))
 	for name, client := range registry.Clients {
 		clients[name] = client
 	}
@@ -156,6 +158,7 @@ func MCPWiringOptions(ctx context.Context, scenario core.Scenario, registry MCPR
 			return nil, fmt.Errorf("agentflow: mcp server %q: %w", server.Name, err)
 		}
 		clients[server.Name] = client
+		ownedClients = append(ownedClients, client)
 	}
 	var opts []agentflow.Option
 	for name, tool := range scenario.Tools {
@@ -189,7 +192,30 @@ func MCPWiringOptions(ctx context.Context, scenario core.Scenario, registry MCPR
 		}
 		opts = append(opts, agentflow.WithToolExecutor(name, exec))
 	}
+	if len(ownedClients) > 0 {
+		opts = append(opts, agentflow.WithCloser(func(closeCtx context.Context) error {
+			return closeOwnedMCPClients(closeCtx, ownedClients)
+		}))
+	}
 	return opts, nil
+}
+
+func closeOwnedMCPClients(ctx context.Context, clients []mcp.Client) error {
+	errs := make([]error, 0, len(clients))
+	for i := len(clients) - 1; i >= 0; i-- {
+		client := clients[i]
+		if session, ok := client.(mcp.SessionClient); ok {
+			if err := session.Terminate(ctx); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if closer, ok := client.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func mcpClientForServer(ctx context.Context, server core.MCPServer, httpClient *http.Client) (mcp.Client, error) {

@@ -30,7 +30,8 @@ removed, err := fw.PurgeOrphanBlobs(ctx)
 
 - 列出当前场景（及 tenant，若有 principal）的全部 run 快照，收集仍被引用的 Blob ID。
 - 对实现了 `runstate.BlobAdmin`（`List` + `Delete`）的 BlobStore，删除未被引用的对象。
-- 内置 inmem 与 file BlobStore 已实现 `BlobAdmin`；S3 适配器需在上层封装或后续扩展。
+- 内置 inmem、file 与 S3 BlobStore 均实现 `BlobAdmin`。
+- tenant 级清理只处理当前租户哈希前缀下的对象；无法证明归属的历史 64 位摘要对象只允许全局管理员清理。
 
 建议运维顺序：先 `PurgeExpired` 清理过期 run，再 `PurgeOrphanBlobs` 回收对象存储。
 
