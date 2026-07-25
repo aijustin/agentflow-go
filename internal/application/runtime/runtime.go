@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/async"
@@ -440,6 +441,8 @@ func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw js
 // on the framework facade): client disconnect must not cancel the run.
 type streamDetachedKey struct{}
 
+const detachedCancellationPollInterval = 100 * time.Millisecond
+
 // ContextWithStreamDetached marks the stream to keep executing to a terminal
 // state in the background when the caller's context is cancelled (e.g. client
 // disconnect), instead of marking the run Cancelled.
@@ -487,10 +490,12 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 	} else {
 		cancel = func() {}
 	}
+	var cancelDetached context.CancelCauseFunc
 	if detached {
 		// A detached run ignores caller cancellation, but a lost run lease
 		// must still abort it before another worker takes over the run.
 		watchCtx, watchCancel := context.WithCancelCause(execCtx)
+		cancelDetached = watchCancel
 		execCtx = watchCtx
 		defer func() {
 			// Balances WithCancelCause for the synchronous part of Stream;
@@ -514,6 +519,32 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 		return nil, err
 	}
 	execCtx = e.withEpisodeCorrelation(execCtx, req)
+	if detached {
+		observerCtx := execCtx
+		safecall.GoSafe("runtime: detached cancellation watcher", nil, func() {
+			ticker := time.NewTicker(detachedCancellationPollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-execCtx.Done():
+					return
+				case <-ticker.C:
+					snapshot, loadErr := runstate.LoadAuthorized(observerCtx, e.runs, req.RunID)
+					if loadErr != nil {
+						e.logWarn(observerCtx, "runtime: detached cancellation watcher stopped after run-state load failed", "run_id", req.RunID, "error", loadErr)
+						return
+					}
+					if snapshot.Status == runstate.RunStatusRunning {
+						continue
+					}
+					if snapshot.Status == runstate.RunStatusCancelled {
+						cancelDetached(ErrRunCancelled)
+					}
+					return
+				}
+			}
+		})
+	}
 	source, agent, streamCancel, err := e.streamAnswer(execCtx, req)
 	if err != nil {
 		e.markRunFailed(execCtx, req.RunID, err)
@@ -652,10 +683,12 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 			}
 		}
 		if err := execCtx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || detached {
-				// Detached execution is only cancelled by its own scenario
-				// timeout (or a lost lease), never by the caller, so any
-				// execution-context error is a genuine failure.
+			if errors.Is(context.Cause(execCtx), ErrRunCancelled) {
+				e.markRunCancelled(execCtx, req.RunID)
+			} else if errors.Is(err, context.DeadlineExceeded) || detached {
+				// Apart from explicit run cancellation, detached execution is
+				// cancelled only by its own scenario timeout or a lost lease,
+				// so those execution-context errors are genuine failures.
 				e.markRunFailed(execCtx, req.RunID, err)
 			} else {
 				e.markRunCancelled(execCtx, req.RunID)
