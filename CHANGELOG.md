@@ -29,6 +29,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Deferred tool catalog (`pkg/toolcatalog`)**: keyword `Search`, schema `Load`, version/TTL snapshot metadata, and built-in meta-tools `search_tools` / `load_tool_schemas`. Wire with `WithToolCatalog`; deferred mode is on by default when a catalog is attached (`WithDeferredTools` to override).
+- **`runstate.ErrFenceRequired`**: leased run saves now hard-fail when the repository does not implement `FencedRepository` instead of warn-and-continue plain `Save`.
+- **Observation masking**: `contextwindow.Policy.ObservationMaskAfterTurns` masks stale tool results before summarization; `contextwindow.CompactContext` drops masked tool messages.
+- **Tracing spans**: `agentflow.context.prepare`, `agentflow.mcp.rpc` (constant for platform-owned MCP RPC).
+- **MCP forward-compat**: optional `ttlMs` / `cacheScope` on `mcp.ListToolsResult`.
+
+### Changed
+
+- **BREAKING — leased runs without fencing support**: repositories that do not implement `FencedRepository` reject fenced saves with `ErrFenceRequired` when a run lease stamps a non-zero fence token. Multi-node deployments must use a fencing-capable run-state backend (Postgres/inmem fenced repos).
+
 ## [0.4.1] - 2026-07-25
 
 ### Fixed

@@ -121,10 +121,7 @@ func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 			}
 			params = raw
 		}
-		var decoded struct {
-			Tools      []mcp.Tool `json:"tools"`
-			NextCursor string     `json:"nextCursor"`
-		}
+		var decoded mcp.ListToolsResult
 		if err := c.call(ctx, "tools/list", params, &decoded); err != nil {
 			return nil, err
 		}

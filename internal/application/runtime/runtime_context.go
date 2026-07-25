@@ -10,6 +10,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -147,6 +148,12 @@ func restorePreparedToolCalls(prepared []llm.Message, source []llm.Message) []ll
 }
 
 func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent core.Agent, raw []contextwindow.Message, profile core.LLMProfileRef) ([]llm.Message, contextwindow.Stats) {
+	ctx, span := e.startSpan(ctx, observability.SpanContextPrepare,
+		observability.Attribute{Key: "run_id", Value: runID},
+		observability.Attribute{Key: "agent", Value: agent.Name},
+	)
+	defer span.End()
+
 	policy := profile.Context
 	if policy.ContextWindowTokens == 0 {
 		policy.ContextWindowTokens = profile.ContextWindowTokens
@@ -273,7 +280,12 @@ func (e *Engine) emitContextPrepared(ctx context.Context, runID string, stats co
 }
 
 func (e *Engine) toolSpecs(ctx context.Context, runID string, agent core.Agent) []llm.ToolSpec {
-	specs := make([]llm.ToolSpec, 0, len(agent.Tools)+len(agent.SubAgents))
+	if e.catalogEnabled() {
+		specs := e.catalogToolSpecs(ctx, runID, agent)
+		return pruneToolSpecs(specs, planAllowedTools(ctx, e, runID, agent))
+	}
+	specs := make([]llm.ToolSpec, 0, len(agent.Tools)+len(agent.SubAgents)+1)
+	specs = e.appendSelfCompactMetaToolSpecs(agent, specs)
 	for _, name := range agent.Tools {
 		tool, ok := e.scenario.Tools[name]
 		if !ok {

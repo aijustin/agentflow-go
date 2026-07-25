@@ -573,14 +573,10 @@ func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate
 // context carries a fence token (the run executes under WithRunLease) and
 // the repository implements runstate.FencedRepository, the save presents
 // the token and a superseded writer fails with runstate.ErrStaleFence.
-// Without a token it is exactly runs.Save. When the repository cannot
-// fence, the save falls back to a plain Save and warns once — a superseded
-// lease holder can still write, so multi-node deployments are unsafe.
+// Without a token it is exactly runs.Save. When the repository cannot fence
+// while a token is present, the save fails with runstate.ErrFenceRequired.
 func (e *Engine) saveRunSnapshot(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
-	fellBack, err := runstate.SaveWithFence(ctx, e.runs, snapshot, expectedVersion)
-	if fellBack && e.fenceFallbackWarned.CompareAndSwap(false, true) {
-		e.logWarn(ctx, "runtime: runstate repository does not implement FencedRepository; leased run saves are not fence-protected (multi-node unsafe)")
-	}
+	_, err := runstate.SaveWithFence(ctx, e.runs, snapshot, expectedVersion)
 	return err
 }
 

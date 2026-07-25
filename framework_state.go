@@ -102,6 +102,8 @@ func (f *Framework) engineDependencies(transforms map[string]contextwindow.ToolO
 		ToolOrchestrator:       f.toolOrchestrator,
 		ApprovalStore:          f.approvalStore,
 		TurnStopHook:           f.turnStopHook,
+		ToolCatalog:            f.toolCatalog,
+		DeferredTools:          f.deferredTools,
 	}
 }
 

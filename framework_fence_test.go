@@ -3,6 +3,7 @@ package agentflow_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -179,11 +180,10 @@ func TestFrameworkRetryFailedRunFencesSnapshotSaves(t *testing.T) {
 	repo.assertAllFenced(t)
 }
 
-// TestFrameworkRunLeaseWithoutFencedRepositoryWarnsOnce covers repositories
-// that cannot fence (file, redis runstate): the leased run falls back to
-// plain Save, logs the multi-node-unsafe warning exactly once, and still
-// completes normally.
-func TestFrameworkRunLeaseWithoutFencedRepositoryWarnsOnce(t *testing.T) {
+// TestFrameworkRunLeaseWithoutFencedRepositoryFails covers repositories that
+// cannot fence (file, redis runstate): a leased run must fail with
+// ErrFenceRequired instead of falling back to plain Save.
+func TestFrameworkRunLeaseWithoutFencedRepositoryFails(t *testing.T) {
 	logger := &warnCountingLogger{}
 	repo := unfencedRunstateRepo{Repository: runstateinmem.NewRepository()}
 	fw, err := agentflow.New(
@@ -198,20 +198,11 @@ func TestFrameworkRunLeaseWithoutFencedRepositoryWarnsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-unfenced", Prompt: "go"})
-	if err != nil {
-		t.Fatal(err)
+	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-unfenced", Prompt: "go"})
+	if !errors.Is(err, runstate.ErrFenceRequired) {
+		t.Fatalf("expected ErrFenceRequired, got %v", err)
 	}
-	if result.Status != runstate.RunStatusCompleted {
-		t.Fatalf("expected completed run without fencing support, got %+v", result)
-	}
-	if logger.errors.Load() != 0 {
-		t.Fatalf("expected no error logs, got %d", logger.errors.Load())
-	}
-	// The framework facade and the runtime engine each warn at most once;
-	// the workflow path here saves through the facade, so exactly one
-	// warning must have been logged across the whole run.
-	if got := logger.warns.Load(); got != 1 {
-		t.Fatalf("expected exactly one fencing-unavailable warning, got %d", got)
+	if logger.warns.Load() != 0 {
+		t.Fatalf("expected no fencing fallback warnings, got %d", logger.warns.Load())
 	}
 }

@@ -28,6 +28,8 @@ const (
 	SpanRun               SpanName = "agentflow.run"
 	SpanToolCall          SpanName = "agentflow.tool.call"
 	SpanLLMCall           SpanName = "agentflow.llm.call"
+	SpanMCPRPC            SpanName = "agentflow.mcp.rpc"
+	SpanContextPrepare    SpanName = "agentflow.context.prepare"
 	SpanQueueJob          SpanName = "agentflow.queue.job"
 	SpanMemoryTierRecall  SpanName = "agentflow.memory.tier.recall"
 	SpanMemoryTierMigrate SpanName = "agentflow.memory.tier.migrate"

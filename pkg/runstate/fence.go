@@ -28,10 +28,9 @@ func FenceTokenFromContext(ctx context.Context) uint64 {
 // stale token fails with ErrStaleFence, which callers must not retry. When
 // the context carries no token it behaves exactly like Repository.Save.
 //
-// When the repository does not implement FencedRepository (file, redis
-// runstate) it falls back to a plain Save and reports fellBack=true so the
-// caller can warn once: without fencing a superseded lease holder can still
-// write, so multi-node deployments are unsafe.
+// When the repository does not implement FencedRepository and the context
+// carries a non-zero fence token, SaveWithFence fails with ErrFenceRequired
+// instead of falling back to plain Save.
 func SaveWithFence(ctx context.Context, repo Repository, snapshot *RunSnapshot, expectedVersion int64) (fellBack bool, err error) {
 	token := FenceTokenFromContext(ctx)
 	if token == 0 {
@@ -39,7 +38,7 @@ func SaveWithFence(ctx context.Context, repo Repository, snapshot *RunSnapshot, 
 	}
 	fenced, ok := repo.(FencedRepository)
 	if !ok {
-		return true, repo.Save(ctx, snapshot, expectedVersion)
+		return false, ErrFenceRequired
 	}
 	return false, fenced.SaveFenced(ctx, snapshot, expectedVersion, token)
 }

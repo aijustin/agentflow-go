@@ -59,6 +59,12 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	// ToolCalled/ToolReturned event payloads) observes the same key. Nested
 	// dispatches (delegated sub-agent tool calls) overwrite it with their own.
 	ctx = core.WithIdempotencyKey(ctx, toolIdempotencyKey(runID, agent, call))
+	if result, handled, err := e.dispatchCatalogMetaTool(ctx, runID, agent, call); handled {
+		if err != nil {
+			return core.ToolResult{}, err
+		}
+		return result, nil
+	}
 	if step, ok := samplingStepFromContext(ctx); ok && step.Frozen() && !step.Allows(call.Name) {
 		result := core.ToolResult{Tool: call.Name, Error: "tool was not advertised in this sampling step"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{
@@ -104,7 +110,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		tracker.recordAttempt(call.Name, call.Input)
 		return e.dispatchSubAgent(ctx, runID, agent, subAgentName, call, options.skipPersist)
 	}
-	if !agentAllowsTool(agent, call.Name) {
+	if !agentAllowsTool(agent, call.Name) && !e.isFrameworkMetaTool(call.Name) {
 		result := core.ToolResult{Tool: call.Name, Error: "tool is not in agent whitelist"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil

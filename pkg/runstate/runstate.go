@@ -20,6 +20,11 @@ var (
 	// lease was superseded by a newer holder and its writes must be rejected.
 	// The engine treats it like a lost lease (stop executing immediately).
 	ErrStaleFence        = errors.New("runstate: fence token is stale")
+	// ErrFenceRequired reports that the context carries a non-zero lease fence
+	// token but the repository does not implement FencedRepository. Multi-node
+	// deployments must use a fencing-capable repository when run leases are
+	// enabled; plain Save is rejected instead of falling back.
+	ErrFenceRequired = errors.New("runstate: fenced repository required for leased run saves")
 	ErrInvalidStatus     = errors.New("runstate: invalid status")
 	ErrInvalidTransition = errors.New("runstate: invalid status transition")
 	ErrTokenSuperseded   = errors.New("humangate: token superseded by newer version")

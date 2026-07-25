@@ -11,6 +11,15 @@ type Tool struct {
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
 }
 
+// ListToolsResult is the MCP tools/list response shape. TTLMs and CacheScope
+// are optional forward-compatible cache hints for newer protocol revisions.
+type ListToolsResult struct {
+	Tools      []Tool `json:"tools"`
+	NextCursor string `json:"nextCursor,omitempty"`
+	TTLMs      *int64 `json:"ttlMs,omitempty"`
+	CacheScope string `json:"cacheScope,omitempty"`
+}
+
 type Content struct {
 	Type string          `json:"type"`
 	Text string          `json:"text,omitempty"`
@@ -31,7 +40,7 @@ type CallToolResult struct {
 
 // ProtocolVersion is the MCP protocol revision the framework clients
 // negotiate during the initialize handshake.
-const ProtocolVersion = "2024-11-05"
+const ProtocolVersion = "2026-07-28"
 
 type Client interface {
 	ListTools(ctx context.Context) ([]Tool, error)

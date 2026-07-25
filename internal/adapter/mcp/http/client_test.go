@@ -146,6 +146,50 @@ func TestClientCallTool(t *testing.T) {
 	}
 }
 
+func TestClientRoundTripHeaders(t *testing.T) {
+	var gotMethod, gotName, gotProtocol string
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		gotMethod = r.Header.Get("Mcp-Method")
+		gotName = r.Header.Get("Mcp-Name")
+		gotProtocol = r.Header.Get("MCP-Protocol-Version")
+		var req struct {
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+			return
+		}
+		switch req.Method {
+		case "initialize":
+			w.Header().Set("Mcp-Session-Id", "session-1")
+			_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"protocolVersion":"` + mcp.ProtocolVersion + `"}`)})
+		case "notifications/initialized":
+			w.WriteHeader(nethttp.StatusAccepted)
+		case "tools/call":
+			_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)})
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CallTool(context.Background(), mcp.CallToolRequest{Name: "search"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotProtocol != mcp.ProtocolVersion {
+		t.Fatalf("protocol header = %q, want %q", gotProtocol, mcp.ProtocolVersion)
+	}
+	if gotMethod != "tools/call" {
+		t.Fatalf("method header = %q, want tools/call", gotMethod)
+	}
+	if gotName != "search" {
+		t.Fatalf("name header = %q, want search", gotName)
+	}
+}
+
 func TestClientTerminateEndsSessionAndReinitializes(t *testing.T) {
 	stub := &handshakeServer{t: t, tools: []mcp.Tool{{Name: "search"}}}
 	server := httptest.NewServer(stub.handler())
@@ -188,7 +232,7 @@ func TestClientListToolsPagination(t *testing.T) {
 		}
 		switch req.Method {
 		case "initialize":
-			_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"protocolVersion":"2024-11-05"}`)})
+			_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"protocolVersion":"` + mcp.ProtocolVersion + `"}`)})
 		case "notifications/initialized":
 			w.WriteHeader(nethttp.StatusAccepted)
 		case "tools/list":
@@ -236,7 +280,7 @@ func TestClientRehandshakesWhenServerForgetsSession(t *testing.T) {
 			session := fmt.Sprintf("session-%d", n)
 			acceptedSession.Store(session)
 			w.Header().Set("Mcp-Session-Id", session)
-			_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"protocolVersion":"2024-11-05"}`)})
+			_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"protocolVersion":"` + mcp.ProtocolVersion + `"}`)})
 		case "notifications/initialized":
 			w.WriteHeader(nethttp.StatusAccepted)
 		case "tools/list":

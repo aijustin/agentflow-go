@@ -507,6 +507,7 @@ func (e *Engine) answerWithToolsFrom(
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		messages = e.applySelfCompactIfPending(ctx, runID, profile, messages)
 		var drainErr error
 		policy := e.drainPolicy()
 		if policy.Allow(interjection.DrainBeforeSample, false) && !policy.DeferUntilPostCompact {

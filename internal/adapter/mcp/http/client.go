@@ -90,10 +90,7 @@ func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 			}
 			params = raw
 		}
-		var decoded struct {
-			Tools      []mcp.Tool `json:"tools"`
-			NextCursor string     `json:"nextCursor"`
-		}
+		var decoded mcp.ListToolsResult
 		if err := c.call(ctx, "tools/list", params, &decoded); err != nil {
 			return nil, err
 		}
@@ -235,6 +232,19 @@ func (c *Client) rpcLocked(ctx context.Context, method string, params json.RawMe
 	return c.roundTrip(ctx, method, params, "", out)
 }
 
+func mcpToolNameFromParams(method string, params json.RawMessage) string {
+	if method != "tools/call" || len(params) == 0 {
+		return ""
+	}
+	var call struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &call); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(call.Name)
+}
+
 func (c *Client) roundTrip(ctx context.Context, method string, params json.RawMessage, sessionID string, out any) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -250,6 +260,11 @@ func (c *Client) roundTrip(ctx context.Context, method string, params json.RawMe
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
+	httpReq.Header.Set("MCP-Protocol-Version", mcp.ProtocolVersion)
+	httpReq.Header.Set("Mcp-Method", method)
+	if toolName := mcpToolNameFromParams(method, params); toolName != "" {
+		httpReq.Header.Set("Mcp-Name", toolName)
+	}
 	if sessionID != "" {
 		httpReq.Header.Set("Mcp-Session-Id", sessionID)
 	}

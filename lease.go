@@ -39,6 +39,10 @@ var ErrRunLeaseLost = coordination.ErrRunLeaseLost
 // and engine classify the same error.
 var ErrStaleFence = runstate.ErrStaleFence
 
+// ErrFenceRequired reports that a leased run save requires a run-state
+// repository implementing runstate.FencedRepository.
+var ErrFenceRequired = runstate.ErrFenceRequired
+
 // WithRunLease enables distributed run-lease coordination: every Run,
 // RunStructured, ResumeAndContinue, and RetryFailedRun holds (and renews) a
 // lease on the run for as long as it executes. A run left in Running whose

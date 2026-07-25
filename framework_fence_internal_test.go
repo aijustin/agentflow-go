@@ -171,9 +171,9 @@ func TestFencedSaveRejectsZombieWriter(t *testing.T) {
 	}
 }
 
-// TestSaveWithFenceWithoutTokenOrSupport pins the fallback contract: no
+// TestSaveWithFenceWithoutTokenOrSupport pins the hard-fail contract: no
 // token in context behaves exactly like Save, and a repository without
-// FencedRepository support falls back to Save reporting fellBack=true.
+// FencedRepository support rejects leased saves with ErrFenceRequired.
 func TestSaveWithFenceWithoutTokenOrSupport(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	snapshot := runstate.RunSnapshot{RunID: "run-plain", Status: runstate.RunStatusRunning}
@@ -184,17 +184,17 @@ func TestSaveWithFenceWithoutTokenOrSupport(t *testing.T) {
 		t.Fatalf("tokenless save must be a plain save: fellBack=%v err=%v", fellBack, err)
 	}
 
-	// Token present but repository hides SaveFenced: fallback save.
+	// Token present but repository hides SaveFenced: hard fail.
 	type unfencedRepo struct{ runstate.Repository }
 	fellBack, err = runstate.SaveWithFence(runstate.ContextWithFenceToken(context.Background(), 7),
 		unfencedRepo{repo}, &snapshot, 1)
-	if err != nil || !fellBack {
-		t.Fatalf("unsupported repo must fall back to Save: fellBack=%v err=%v", fellBack, err)
+	if !errors.Is(err, runstate.ErrFenceRequired) || fellBack {
+		t.Fatalf("unsupported repo must fail with ErrFenceRequired: fellBack=%v err=%v", fellBack, err)
 	}
 
 	// Token present and repository fenced: fenced save, no fallback.
 	fellBack, err = runstate.SaveWithFence(runstate.ContextWithFenceToken(context.Background(), 7),
-		repo, &snapshot, 2)
+		repo, &snapshot, snapshot.Version)
 	if err != nil || fellBack {
 		t.Fatalf("fenced repo must save fenced: fellBack=%v err=%v", fellBack, err)
 	}

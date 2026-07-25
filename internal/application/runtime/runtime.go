@@ -24,6 +24,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
+	"github.com/aijustin/agentflow-go/pkg/toolcatalog"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
@@ -56,10 +57,10 @@ type Engine struct {
 	approvalStore          toolorch.ApprovalStore
 	denyBreaker            *toolorch.DenyBreaker
 	turnStopHook           core.TurnStopHook
-	// fenceFallbackWarned rate-limits the warning emitted when the run-state
-	// repository cannot fence snapshot saves while a run executes under a
-	// lease (multi-node unsafe).
-	fenceFallbackWarned atomic.Bool
+	toolCatalog            toolcatalog.Catalog
+	deferredTools          bool
+	loadedTools            sync.Map // runID -> *loadedToolSet
+	pendingSelfCompact     sync.Map // runID -> struct{}
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -109,6 +110,10 @@ type Dependencies struct {
 	ApprovalStore toolorch.ApprovalStore
 	// TurnStopHook optional host veto after a candidate final answer.
 	TurnStopHook core.TurnStopHook
+	// ToolCatalog optional deferred tool catalog for meta-tool discovery.
+	ToolCatalog toolcatalog.Catalog
+	// DeferredTools enables catalog deferral (default true when ToolCatalog set).
+	DeferredTools bool
 }
 
 func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
@@ -173,6 +178,8 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		approvalStore:          store,
 		denyBreaker:            breaker,
 		turnStopHook:           deps.TurnStopHook,
+		toolCatalog:            deps.ToolCatalog,
+		deferredTools:          deps.DeferredTools,
 	}
 	engine.interjectDrain.Store(deps.InterjectDrain.Normalize())
 	return engine, nil

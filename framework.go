@@ -37,6 +37,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
+	"github.com/aijustin/agentflow-go/pkg/toolcatalog"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
@@ -113,6 +114,8 @@ type Framework struct {
 	recorder               observability.Recorder
 	tracer                 observability.Tracer
 	logger                 log.Logger
+	toolCatalog            toolcatalog.Catalog
+	deferredTools          bool
 	runLocker              coordination.Locker
 	runLeaseOwner          string
 	runLeaseTTL            time.Duration
@@ -131,11 +134,6 @@ type Framework struct {
 	// zombieWarnOnce rate-limits the handleRun warning about redelivered run
 	// jobs that cannot be self-healed because no run lease is configured.
 	zombieWarnOnce sync.Once
-
-	// fenceFallbackWarned rate-limits the warning emitted when the run-state
-	// repository cannot fence snapshot saves while a run executes under a
-	// lease (multi-node unsafe).
-	fenceFallbackWarned atomic.Bool
 
 	// eventStore is the durable runtime event store wired with
 	// WithEventStore; used by the retention cascade and the outbox relay.
@@ -181,6 +179,9 @@ type options struct {
 	runReaperGrace       time.Duration
 	closers              []func(context.Context) error
 	toolTransforms       map[string]contextwindow.ToolOutputTransform
+	toolCatalog          toolcatalog.Catalog
+	deferredTools        bool
+	deferredToolsSet     bool
 	interjectDrain       interjection.DrainPolicy
 	toolOrchestrator     toolorch.ToolOrchestrator
 	approvalStore        toolorch.ApprovalStore
@@ -410,6 +411,8 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		recorder:               cfg.recorder,
 		tracer:                 cfg.tracer,
 		logger:                 cfg.logger,
+		toolCatalog:            cfg.toolCatalog,
+		deferredTools:          deferredToolsEnabled(cfg),
 		runLocker:              cfg.runLocker,
 		runLeaseOwner:          cfg.runLeaseOwner,
 		runLeaseTTL:            cfg.runLeaseTTL,
@@ -584,7 +587,7 @@ func WithRecorder(recorder observability.Recorder) Option {
 	}
 }
 
-// WithTracer wires a distributed-tracing provider.  If not provided, tracing
+// WithTracer wires a distributed-tracing provider. If not provided, tracing
 // is a no-op via observability.NoopTracer.
 func WithTracer(tracer observability.Tracer) Option {
 	return func(o *options) error {
@@ -594,6 +597,40 @@ func WithTracer(tracer observability.Tracer) Option {
 		o.tracer = tracer
 		return nil
 	}
+}
+
+// WithToolCatalog attaches a deferred tool catalog to the engine. When set,
+// the LLM initially sees only catalog meta-tools (search_tools,
+// load_tool_schemas) plus pinned or non-MCP builtin tools on the agent.
+func WithToolCatalog(catalog toolcatalog.Catalog) Option {
+	return func(o *options) error {
+		if catalog == nil {
+			return fmt.Errorf("agentflow: tool catalog is nil")
+		}
+		o.toolCatalog = catalog
+		return nil
+	}
+}
+
+// WithDeferredTools controls whether a wired tool catalog defers non-pinned
+// tool schemas until load_tool_schemas is called. Default true when a catalog
+// is attached.
+func WithDeferredTools(enabled bool) Option {
+	return func(o *options) error {
+		o.deferredTools = enabled
+		o.deferredToolsSet = true
+		return nil
+	}
+}
+
+func deferredToolsEnabled(cfg options) bool {
+	if cfg.toolCatalog == nil {
+		return false
+	}
+	if cfg.deferredToolsSet {
+		return cfg.deferredTools
+	}
+	return true
 }
 
 // WithHumanGate wires a custom human-in-the-loop gate.

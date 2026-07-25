@@ -66,6 +66,9 @@ type Policy struct {
 	// active plan/TODO state after compaction drops or summarizes history.
 	// Placement is before the last user message (see InsertBeforeLastUserMessage).
 	InjectCompactReminder bool `json:"inject_compact_reminder,omitempty" yaml:"inject_compact_reminder,omitempty"`
+	// ObservationMaskAfterTurns replaces tool-role messages older than this many
+	// assistant turns with a short placeholder before summarization/truncation.
+	ObservationMaskAfterTurns int `json:"observation_mask_after_turns,omitempty" yaml:"observation_mask_after_turns,omitempty"`
 }
 
 // ExcludeFromStaleWindowOrDefault returns configured exclusions, or denied+empty.

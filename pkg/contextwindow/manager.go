@@ -77,6 +77,9 @@ func NewWithSummarizer(policy Policy, summarizer Summarizer) *Manager {
 
 func (m *Manager) Prepare(messages []Message) Result {
 	messages = cloneMessages(messages)
+	if m.policy.ObservationMaskAfterTurns > 0 {
+		messages = MaskObservations(messages, m.policy.ObservationMaskAfterTurns)
+	}
 	messages = applyRoleBudgets(messages, m.policy.RoleBudgets)
 	before := CountMessages(messages)
 	stats := Stats{
