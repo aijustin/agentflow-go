@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +17,6 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
-	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
@@ -34,31 +34,44 @@ func (e *Engine) dispatchApprovedTool(ctx context.Context, runID string, agent c
 	return e.dispatchToolWithOptions(ctx, runID, agent, call, tracker, toolDispatchOptions{approved: true})
 }
 
-// toolIdempotencyKey derives the idempotency key for one logical tool
-// execution on the autonomous (LLM tool-loop) path. The LLM-issued tool call
-// ID is the stable identity of the call: it is persisted with the assistant
-// turn (run memory and the tool_approval checkpoint's pending calls) and
-// re-dispatched unchanged after a resume, and the in-memory retry loop
-// (executeToolWithRetry) reuses the same call — so "runID:call.ID" satisfies
-// the replay-stability contract without a separate attempt component. When a
-// provider returns no call ID there is no persisted identity to replay
-// against; fall back to a unique one-shot key so executors still see a
-// well-formed key, and document that replay-stable idempotency requires
-// provider-issued tool call IDs.
-func toolIdempotencyKey(runID string, agent core.Agent, call llm.ToolCall) string {
-	if call.ID != "" {
-		return runID + ":" + call.ID
+// ensureToolCallIDs gives provider calls without IDs a deterministic identity
+// before the assistant turn, checkpoints, or iteration boundary are persisted.
+// The logical step and call position distinguish repeated calls with identical
+// arguments while remaining stable when that same iteration is replayed.
+func ensureToolCallIDs(runID string, logicalStep int, calls []llm.ToolCall) []llm.ToolCall {
+	if len(calls) == 0 {
+		return calls
 	}
-	return fmt.Sprintf("%s:%s.%s:%s", runID, agent.Name, call.Name, strings.TrimPrefix(runstate.GenerateRunID(), "run-"))
+	out := append([]llm.ToolCall(nil), calls...)
+	for index := range out {
+		if strings.TrimSpace(out[index].ID) != "" {
+			continue
+		}
+		out[index].ID = stableToolCallID(runID, logicalStep, index, out[index])
+	}
+	return out
+}
+
+func stableToolCallID(runID string, logicalStep, index int, call llm.ToolCall) string {
+	material := fmt.Sprintf("%s\x1e%d\x1e%d\x1e%s\x1e%s", runID, logicalStep, index, call.Name, canonicalJSON(call.Input))
+	sum := sha256.Sum256([]byte(material))
+	return fmt.Sprintf("call_af_%x", sum[:12])
+}
+
+func toolIdempotencyKey(runID string, call llm.ToolCall) string {
+	return runID + ":" + call.ID
 }
 
 func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agent core.Agent, call llm.ToolCall, tracker *toolCallTracker, options toolDispatchOptions) (core.ToolResult, error) {
 	tracker = tracker.ensure()
+	if strings.TrimSpace(call.ID) == "" {
+		return core.ToolResult{}, fmt.Errorf("runtime: tool call %q is missing a stable id", call.Name)
+	}
 	// Attach the idempotency key for this logical tool execution before any
 	// dispatch branch runs, so every downstream consumer (executor ctx,
 	// ToolCalled/ToolReturned event payloads) observes the same key. Nested
 	// dispatches (delegated sub-agent tool calls) overwrite it with their own.
-	ctx = core.WithIdempotencyKey(ctx, toolIdempotencyKey(runID, agent, call))
+	ctx = core.WithIdempotencyKey(ctx, toolIdempotencyKey(runID, call))
 	if result, handled, err := e.dispatchCatalogMetaTool(ctx, runID, agent, call); handled {
 		if err != nil {
 			return core.ToolResult{}, err
@@ -124,7 +137,8 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	if tool.Name == "" {
 		tool.Name = call.Name
 	}
-	if err := toolinvoke.ValidateInput(e.scenario.Runtime.ValidateToolInput, tool, call.Input); err != nil {
+	validateToolInput := e.scenario.Runtime.ValidateToolInput || !e.scenario.Runtime.DisableToolInputValidation
+	if err := toolinvoke.ValidateInput(validateToolInput, tool, call.Input); err != nil {
 		result := core.ToolResult{Tool: call.Name, Error: err.Error()}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil

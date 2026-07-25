@@ -38,10 +38,14 @@ func NewRecorder() *Recorder {
 	}
 }
 
-func (r *Recorder) IncCounter(_ context.Context, name observability.MetricName, attrs ...observability.Attribute) {
+func (r *Recorder) IncCounter(ctx context.Context, name observability.MetricName, attrs ...observability.Attribute) {
+	r.AddCounter(ctx, name, 1, attrs...)
+}
+
+func (r *Recorder) AddCounter(_ context.Context, name observability.MetricName, value float64, attrs ...observability.Attribute) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.counters[metricKey(name, attrs)]++
+	r.counters[metricKey(name, attrs)] += value
 }
 
 func (r *Recorder) ObserveHistogram(_ context.Context, name observability.MetricName, value float64, attrs ...observability.Attribute) {

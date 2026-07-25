@@ -428,6 +428,25 @@ func RuntimeMaxRetries(n int) RuntimeOption {
 	}
 }
 
+// RuntimeValidateToolInput keeps strict tool-schema validation enabled.
+// Validation is the runtime default; this option is useful when making the
+// policy explicit in generated scenarios.
+func RuntimeValidateToolInput() RuntimeOption {
+	return func(r *core.RuntimePolicy) {
+		r.ValidateToolInput = true
+		r.DisableToolInputValidation = false
+	}
+}
+
+// RuntimeDisableToolInputValidation makes tool schemas advisory only.
+// It is intended for controlled compatibility migrations.
+func RuntimeDisableToolInputValidation() RuntimeOption {
+	return func(r *core.RuntimePolicy) {
+		r.ValidateToolInput = false
+		r.DisableToolInputValidation = true
+	}
+}
+
 // RuntimeSecret sets a runtime secret value.
 func RuntimeSecret(key, value string) RuntimeOption {
 	return func(r *core.RuntimePolicy) {

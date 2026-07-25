@@ -14,6 +14,7 @@ import (
 func TestRecorderHandler(t *testing.T) {
 	recorder := NewRecorder()
 	recorder.IncCounter(context.Background(), observability.MetricRuntimeEventsTotal, observability.Attribute{Key: "event_type", Value: "run"})
+	recorder.AddCounter(context.Background(), observability.MetricLLMTokensTotal, 128, observability.Attribute{Key: "kind", Value: "prompt"})
 	recorder.ObserveHistogram(context.Background(), observability.MetricRunDurationSeconds, 0.42)
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -21,6 +22,9 @@ func TestRecorderHandler(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, `agentflow_runtime_events_total{event_type="run"} 1`) {
 		t.Fatalf("expected labeled counter metric, got %q", body)
+	}
+	if !strings.Contains(body, `agentflow_llm_tokens_total{kind="prompt"} 128`) {
+		t.Fatalf("expected weighted counter metric, got %q", body)
 	}
 	if !strings.Contains(body, `agentflow_run_duration_seconds_bucket{le="+Inf"}`) {
 		t.Fatalf("expected histogram buckets, got %q", body)

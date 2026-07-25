@@ -64,9 +64,7 @@ func TestEngineValidatesToolInputWhenEnabled(t *testing.T) {
 	}
 }
 
-// T3 default: with validation disabled (default), the same invalid input is not
-// blocked and the tool executes.
-func TestEngineToolInputValidationDisabledByDefault(t *testing.T) {
+func TestEngineToolInputValidationEnabledByDefault(t *testing.T) {
 	gateway := llmmock.NewGateway()
 	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
 	gateway.QueueToolCall("default", llm.ToolCallResponse{
@@ -92,8 +90,40 @@ func TestEngineToolInputValidationDisabledByDefault(t *testing.T) {
 	if _, err := engine.Run(context.Background(), RunRequest{RunID: "run-novalidate", Agent: "assistant", Prompt: "use echo"}); err != nil {
 		t.Fatal(err)
 	}
+	if !events.has(core.EventToolDenied) || events.has(core.EventToolCalled) {
+		t.Fatalf("invalid input must be denied by default, got %+v", events.types())
+	}
+}
+
+func TestEngineToolInputValidationExplicitlyDisabled(t *testing.T) {
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "echo", Input: json.RawMessage(`{}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}}})
+
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Runtime.DisableToolInputValidation = true
+	tool := scenario.Tools["echo"]
+	tool.InputSchema = json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string"}}}`)
+	scenario.Tools["echo"] = tool
+
+	events := &captureEvents{}
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:   runstateinmem.NewRepository(),
+		LLM:    gateway,
+		Tools:  mapToolRegistry{"echo": okEchoTool{}},
+		Events: events,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(context.Background(), RunRequest{RunID: "run-novalidate", Agent: "assistant", Prompt: "use echo"}); err != nil {
+		t.Fatal(err)
+	}
 	if !events.has(core.EventToolCalled) {
-		t.Fatalf("expected tool to execute by default, got %+v", events.types())
+		t.Fatalf("expected explicit compatibility opt-out to execute tool, got %+v", events.types())
 	}
 }
 

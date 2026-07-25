@@ -61,6 +61,10 @@ func (r *fakeRecorder) IncCounter(_ context.Context, name obspkg.MetricName, att
 	r.counters = append(r.counters, fakeCounter{name: name, attrs: attrsMap(attrs)})
 }
 
+func (r *fakeRecorder) AddCounter(_ context.Context, name obspkg.MetricName, _ float64, attrs ...obspkg.Attribute) {
+	r.counters = append(r.counters, fakeCounter{name: name, attrs: attrsMap(attrs)})
+}
+
 func (r *fakeRecorder) ObserveHistogram(context.Context, obspkg.MetricName, float64, ...obspkg.Attribute) {
 }
 
