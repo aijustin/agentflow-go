@@ -25,7 +25,7 @@ export function ComposeBar() {
         setMessage({ kind: 'err', text: result.error || '构图失败' });
         return;
       }
-      setDoc(result.graph, true);
+      setDoc(result.graph, true, mode === 'scenario' ? result.scenario ?? null : null);
       const nodes = result.graph.workflow?.nodes.length ?? 0;
       setMessage({ kind: 'ok', text: `已生成 ${nodes} 个节点（未保存草稿）` });
     } catch (err) {

@@ -62,9 +62,16 @@ export interface RunResult {
 export interface ComposeGraphResult {
   mode: string;
   graph: ScenarioGraph;
+  scenario?: Record<string, unknown>;
   valid: boolean;
   error?: string;
   run?: RunResult;
+}
+
+export interface SaveStudioResult {
+  path: string;
+  scenario_name: string;
+  graph?: ScenarioGraph;
 }
 
 export interface ValidateStudioResult {
@@ -86,6 +93,7 @@ export interface ImportStudioResult {
 
 export interface RunSummary {
   run_id: string;
+  tenant_id?: string;
   scenario_name?: string;
   status: RunStatus;
   event_count: number;

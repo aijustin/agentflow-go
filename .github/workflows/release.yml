@@ -21,5 +21,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/studio/pnpm-lock.yaml
+
+      - name: Build embedded Studio
+        run: make studio-ui
+
+      - name: Verify committed Studio bundle
+        run: git diff --exit-code internal/adapter/observability/http/uistatic
+
       - name: Release checks
         run: make release-check

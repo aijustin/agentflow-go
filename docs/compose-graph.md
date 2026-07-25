@@ -86,7 +86,7 @@ fmt.Println(result.Graph.Workflow.Nodes) // 校验后的拓扑
 - **ephemeral 是默认**：合并发生在 live 场景的深拷贝上，live scenario / engine 全程不变。composer 自己的 run 记录以 `<RunID>-compose` 命名。
 - **持久化必须显式**：
   - 推荐 `fw.SaveStudioGraph(ctx, result.Graph, "scenario.yaml")`（catalog 模式；YAML 含完整场景）。
-  - scenario 模式含新增 Agent/Skill，请基于 `result.Scenario` 走 YAML 序列化（`GenerateStudioScenarioYAML`）落盘。**注意**：`GenerateStudioBuilderCode` 目前只渲染 workflow 结构，不输出 agents/tools/LLM，scenario 模式的新增零件会丢失（codegen 扩展是后续项）。
+  - scenario 模式含新增 Agent/Skill：Studio 会把 `result.Scenario` 作为草稿随图一起保存；Go 调用方可使用 `SaveStudioGraphWithScenario`，或基于 `result.Scenario` 走 YAML 序列化。`GenerateStudioBuilderCode` 目前仍只渲染 workflow 结构。
 - 场景真源仍是 Go：落盘后建议检入并由 builder 重建，不要把 AI 产物当运行期主配置。
 
 ## 调参建议
@@ -97,7 +97,7 @@ fmt.Println(result.Graph.Workflow.Nodes) // 校验后的拓扑
 
 ## 当前限制（v1）
 
-- 仅 Go API；Studio UI「AI 生成」按钮、`POST /studio/compose`、CLI 子命令是后续薄适配。
+- Go API 与 Studio UI 的 AI 生成、编辑、试跑、保存均已接通；CLI 子命令尚未提供。
 - scenario 模式 Run 仅 `fixed_workflow`；catalog 模式两种模式都可跑。
 - 无自动多候选搜索/打分（AFlow 式选优是 v2 方向）。
 

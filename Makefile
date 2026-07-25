@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check studio-ui
+.PHONY: build test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check studio-ui verify-studio-ui
 
 GO_TEST_LDFLAGS ?= -w
 
@@ -6,9 +6,13 @@ GO_TEST_LDFLAGS ?= -w
 # observability handler's embedded uistatic directory. The Go build works
 # without it (legacy inline UI fallback), so this target is opt-in.
 studio-ui:
-	cd web/studio && pnpm install && pnpm build
+	cd web/studio && pnpm install --frozen-lockfile && pnpm build
 	find internal/adapter/observability/http/uistatic -type f ! -name 'placeholder.txt' -delete
 	cp -R web/studio/dist/ internal/adapter/observability/http/uistatic/
+
+verify-studio-ui:
+	test -f internal/adapter/observability/http/uistatic/index.html
+	test -n "$$(ls internal/adapter/observability/http/uistatic/assets/*.js)"
 
 build:
 	CGO_ENABLED=0 go build ./...
@@ -58,4 +62,4 @@ validate-catalog:
 		go run ./examples/go/validate -kind skill "$$file" >/dev/null; \
 	done
 
-release-check: fmt test vet security validate-builder validate-catalog
+release-check: fmt test vet security validate-builder validate-catalog verify-studio-ui
