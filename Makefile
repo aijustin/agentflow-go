@@ -7,8 +7,8 @@ GO_TEST_LDFLAGS ?= -w
 # without it (legacy inline UI fallback), so this target is opt-in.
 studio-ui:
 	cd web/studio && pnpm install --frozen-lockfile && pnpm build
-	find internal/adapter/observability/http/uistatic -type f ! -name 'placeholder.txt' -delete
-	cp -R web/studio/dist/ internal/adapter/observability/http/uistatic/
+	rm -rf internal/adapter/observability/http/uistatic/assets internal/adapter/observability/http/uistatic/dist internal/adapter/observability/http/uistatic/index.html
+	cp -R web/studio/dist/. internal/adapter/observability/http/uistatic/
 
 verify-studio-ui:
 	test -f internal/adapter/observability/http/uistatic/index.html

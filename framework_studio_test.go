@@ -212,7 +212,10 @@ func TestFrameworkForkAndCompareRuns(t *testing.T) {
 }
 
 func TestFrameworkListRunThreadFiltersTenant(t *testing.T) {
-	fw, err := agentflow.New(core.Scenario{Name: "thread-tenant"})
+	fw, err := agentflow.New(core.Scenario{
+		Name:   "thread-tenant",
+		Agents: map[string]core.Agent{"noop": {Name: "noop"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

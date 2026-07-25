@@ -21,8 +21,9 @@ func (tool cancellationProbeTool) Execute(ctx context.Context, _ core.ToolCall) 
 func TestWorkflowCallerCancellationMarksRunCancelled(t *testing.T) {
 	started := make(chan struct{})
 	scenario := core.Scenario{
-		Name:  "workflow-cancel",
-		Tools: map[string]core.Tool{"wait": {Name: "wait", Type: "builtin.wait"}},
+		Name:   "workflow-cancel",
+		Agents: map[string]core.Agent{"noop": {Name: "noop"}},
+		Tools:  map[string]core.Tool{"wait": {Name: "wait", Type: "builtin.wait"}},
 		Orchestration: core.Orchestration{
 			Mode: core.OrchestrationFixedWorkflow,
 			Workflow: &core.Workflow{
@@ -60,8 +61,9 @@ func TestWorkflowCallerCancellationMarksRunCancelled(t *testing.T) {
 func TestFrameworkRejectsSecondInProcessDriverForSameRun(t *testing.T) {
 	started := make(chan struct{})
 	scenario := core.Scenario{
-		Name:  "single-driver",
-		Tools: map[string]core.Tool{"wait": {Name: "wait", Type: "builtin.wait"}},
+		Name:   "single-driver",
+		Agents: map[string]core.Agent{"noop": {Name: "noop"}},
+		Tools:  map[string]core.Tool{"wait": {Name: "wait", Type: "builtin.wait"}},
 		Orchestration: core.Orchestration{
 			Mode:     core.OrchestrationFixedWorkflow,
 			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{{ID: "wait", Kind: core.NodeTool, Ref: "wait"}}},

@@ -65,7 +65,7 @@ func (l *warnCountingLogger) Error(context.Context, string, ...any) { l.errors.A
 
 func TestFrameworkRunFencesSnapshotSaves(t *testing.T) {
 	repo := newFenceCountingRepo()
-	_, err := agentflow.New(
+	fw, err := agentflow.New(
 		retryWorkflowScenario(),
 		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
 		agentflow.WithToolExecutor("stepA", noopTool{}),
@@ -186,7 +186,7 @@ func TestFrameworkRetryFailedRunFencesSnapshotSaves(t *testing.T) {
 func TestFrameworkRunLeaseWithoutFencedRepositoryFails(t *testing.T) {
 	logger := &warnCountingLogger{}
 	repo := unfencedRunstateRepo{Repository: runstateinmem.NewRepository()}
-	fw, err := agentflow.New(
+	_, err := agentflow.New(
 		retryWorkflowScenario(),
 		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
 		agentflow.WithToolExecutor("stepA", noopTool{}),

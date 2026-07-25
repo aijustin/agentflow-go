@@ -1,6 +1,8 @@
 package toolcatalog_test
 
 import (
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,4 +45,76 @@ func TestMetaToolSpecs(t *testing.T) {
 	if toolcatalog.SelfCompactRubric() == "" {
 		t.Fatal("expected self compact rubric")
 	}
+}
+
+func TestSnapshotMetadataEntryAndDefaults(t *testing.T) {
+	catalog := toolcatalog.NewSnapshot("v2", 2*time.Minute, []toolcatalog.Entry{
+		{Name: "z.tool", Description: "database helper", Tags: []string{"data"}},
+		{Name: "a.tool", Description: "database helper", Tags: []string{"data"}},
+		{Name: "a.tool", Description: "replacement", Tags: []string{"exact"}},
+		{Name: ""},
+	})
+	if catalog.Version() != "v2" || catalog.TTL() != 2*time.Minute {
+		t.Fatalf("unexpected metadata: version=%q ttl=%s", catalog.Version(), catalog.TTL())
+	}
+	entry, ok := catalog.Entry("a.tool")
+	if !ok || entry.Description != "replacement" {
+		t.Fatalf("duplicate replacement or entry lookup failed: %+v ok=%v", entry, ok)
+	}
+	hits := catalog.Search("", 0)
+	if len(hits) != 2 || hits[0].Name != "a.tool" || hits[1].Name != "z.tool" {
+		t.Fatalf("default search ordering = %+v", hits)
+	}
+	if loaded, err := catalog.Load([]string{"", " a.tool "}); err != nil || len(loaded) != 1 {
+		t.Fatalf("trimmed load = %+v err=%v", loaded, err)
+	}
+	if _, err := catalog.Load([]string{"missing"}); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("missing error = %v", err)
+	}
+
+	var nilSnapshot *toolcatalog.Snapshot
+	if nilSnapshot.Search("x", 1) != nil {
+		t.Fatal("nil snapshot search must be empty")
+	}
+	if loaded, err := nilSnapshot.Load([]string{"x"}); err != nil || loaded != nil {
+		t.Fatalf("nil snapshot load = %+v err=%v", loaded, err)
+	}
+	if nilSnapshot.Version() != "" || nilSnapshot.TTL() != 0 {
+		t.Fatal("nil snapshot metadata must use zero values")
+	}
+	if _, ok := nilSnapshot.Entry("x"); ok {
+		t.Fatal("nil snapshot entry must be absent")
+	}
+}
+
+func TestMutableSnapshotReplaceAndConcurrentReads(t *testing.T) {
+	catalog := toolcatalog.NewMutableSnapshot("v1", time.Second, []toolcatalog.Entry{{Name: "one"}})
+	if catalog.Version() != "v1" || catalog.TTL() != time.Second {
+		t.Fatalf("unexpected initial metadata: %q %s", catalog.Version(), catalog.TTL())
+	}
+	if hits := catalog.Search("one", 1); len(hits) != 1 {
+		t.Fatalf("initial search = %+v", hits)
+	}
+	catalog.Replace("v2", 2*time.Second, []toolcatalog.Entry{{Name: "two", Tags: []string{"next"}}})
+	if catalog.Version() != "v2" || catalog.TTL() != 2*time.Second {
+		t.Fatalf("replacement metadata: %q %s", catalog.Version(), catalog.TTL())
+	}
+	if loaded, err := catalog.Load([]string{"two"}); err != nil || len(loaded) != 1 {
+		t.Fatalf("replacement load = %+v err=%v", loaded, err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			if index%2 == 0 {
+				catalog.Replace("concurrent", time.Second, []toolcatalog.Entry{{Name: "tool"}})
+				return
+			}
+			_ = catalog.Search("tool", 1)
+			_, _ = catalog.Load([]string{"tool"})
+		}(i)
+	}
+	wg.Wait()
 }

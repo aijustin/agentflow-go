@@ -76,7 +76,7 @@ func TestHandlerMountsAsyncRunsBehindAuthMiddleware(t *testing.T) {
 		t.Fatalf("expected auth middleware to reject job submit, got %d", unauthorizedJob.Code)
 	}
 	authorizedJob := httptest.NewRecorder()
-	jobReq := httptest.NewRequest(http.MethodPost, "/v1/jobs/events", strings.NewReader(`{"type":"ping"}`))
+	jobReq := httptest.NewRequest(http.MethodPost, "/v1/jobs/events", strings.NewReader(`{"type":"ping","job_id":"job-event-auth"}`))
 	jobReq.Header.Set("X-Test-Auth", "ok")
 	handler.ServeHTTP(authorizedJob, jobReq)
 	if authorizedJob.Code != http.StatusAccepted {
