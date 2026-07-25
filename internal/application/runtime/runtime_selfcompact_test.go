@@ -15,7 +15,8 @@ import (
 )
 
 type selfCompactGateway struct {
-	steps int
+	steps    int
+	requests []llm.ToolCallRequest
 }
 
 func (selfCompactGateway) Supports(string, llm.Capability) bool { return true }
@@ -26,6 +27,7 @@ func (selfCompactGateway) Chat(context.Context, string, llm.ChatRequest) (llm.Ch
 
 func (g *selfCompactGateway) ChatWithTools(_ context.Context, _ string, req llm.ToolCallRequest) (llm.ToolCallResponse, error) {
 	g.steps++
+	g.requests = append(g.requests, req)
 	switch g.steps {
 	case 1:
 		return llm.ToolCallResponse{
@@ -75,6 +77,23 @@ func TestEngineSelfCompactMetaTool(t *testing.T) {
 	}
 	if gw.steps < 2 {
 		t.Fatalf("expected compact_context then final answer, steps=%d", gw.steps)
+	}
+	if len(gw.requests) < 2 {
+		t.Fatalf("expected a post-compact request, got %d", len(gw.requests))
+	}
+	var issued, answered bool
+	for _, message := range gw.requests[1].Messages {
+		for _, call := range message.ToolCalls {
+			if call.ID == "1" && call.Name == toolcatalog.ToolCompactContext {
+				issued = true
+			}
+		}
+		if message.Role == llm.RoleTool && message.ToolCallID == "1" {
+			answered = true
+		}
+	}
+	if !issued || !answered {
+		t.Fatalf("self-compact broke tool call/result pairing: %+v", gw.requests[1].Messages)
 	}
 }
 

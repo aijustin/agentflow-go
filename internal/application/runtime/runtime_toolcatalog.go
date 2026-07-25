@@ -49,7 +49,7 @@ func (s *loadedToolSet) list() []string {
 }
 
 func (e *Engine) catalogEnabled() bool {
-	return e.toolCatalog != nil && e.deferredTools
+	return e.toolCatalog != nil
 }
 
 func (e *Engine) loadedToolsForRun(runID string) *loadedToolSet {
@@ -193,6 +193,9 @@ func (e *Engine) catalogToolSpecs(ctx context.Context, runID string, agent core.
 }
 
 func (e *Engine) shouldAdvertiseCatalogTool(agent core.Agent, name string, loaded *loadedToolSet) bool {
+	if !e.deferredTools {
+		return true
+	}
 	if e.isCatalogPinnedTool(agent, name) {
 		return true
 	}

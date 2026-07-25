@@ -29,6 +29,7 @@ type Client struct {
 	client           *nethttp.Client
 	nextID           atomic.Int64
 	maxResponseBytes int64
+	options          mcp.ClientOptions
 
 	// initMu serializes the initialize handshake; sessionID/ready are only
 	// written under it and read under the same lock, so concurrent first
@@ -64,6 +65,12 @@ type rpcError struct {
 }
 
 func NewClient(endpoint string, client *nethttp.Client) (*Client, error) {
+	return NewClientWithOptions(endpoint, client, mcp.ClientOptions{})
+}
+
+// NewClientWithOptions creates an HTTP MCP client in an explicit protocol
+// mode. The zero-value options retain the legacy initialize/session behavior.
+func NewClientWithOptions(endpoint string, client *nethttp.Client, options mcp.ClientOptions) (*Client, error) {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
 		return nil, fmt.Errorf("mcp http: endpoint is required")
@@ -71,7 +78,12 @@ func NewClient(endpoint string, client *nethttp.Client) (*Client, error) {
 	if client == nil {
 		client = nethttp.DefaultClient
 	}
-	return &Client{endpoint: endpoint, client: client, maxResponseBytes: DefaultMaxResponseBytes}, nil
+	version := core.FrameworkVersion()
+	normalized, err := mcp.NormalizeClientOptions(options, version)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{endpoint: endpoint, client: client, maxResponseBytes: DefaultMaxResponseBytes, options: normalized}, nil
 }
 
 // maxListToolsPages bounds nextCursor pagination so a misbehaving server
@@ -132,6 +144,9 @@ func (c *Client) SessionID() string {
 // HTTP transport) and resets local handshake state so the next call
 // re-initializes. It is a no-op when no session was established.
 func (c *Client) Terminate(ctx context.Context) error {
+	if c.options.Mode == mcp.ProtocolModeModern {
+		return nil
+	}
 	c.initMu.Lock()
 	defer c.initMu.Unlock()
 	if c.sessionID == "" {
@@ -162,6 +177,9 @@ func (c *Client) Terminate(ctx context.Context) error {
 var errSessionGone = errors.New("mcp http: session expired")
 
 func (c *Client) call(ctx context.Context, method string, params json.RawMessage, out any) error {
+	if c.options.Mode == mcp.ProtocolModeModern {
+		return c.rpc(ctx, method, params, out)
+	}
 	if err := c.ensureInitialized(ctx); err != nil {
 		return err
 	}
@@ -191,17 +209,10 @@ func (c *Client) ensureInitialized(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	version := core.FrameworkVersion()
-	if version == "" {
-		version = "dev"
-	}
 	params, err := json.Marshal(map[string]any{
-		"protocolVersion": mcp.ProtocolVersion,
+		"protocolVersion": mcp.ProtocolVersionLegacy,
 		"capabilities":    map[string]any{},
-		"clientInfo": map[string]any{
-			"name":    "agentflow-go",
-			"version": version,
-		},
+		"clientInfo":      c.options.ClientInfo,
 	})
 	if err != nil {
 		return err
@@ -249,6 +260,10 @@ func (c *Client) roundTrip(ctx context.Context, method string, params json.RawMe
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	params, err := mcp.AddModernRequestMetadata(params, c.options)
+	if err != nil {
+		return "", err
+	}
 	id := c.nextID.Add(1)
 	reqBody, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
 	if err != nil {
@@ -260,7 +275,11 @@ func (c *Client) roundTrip(ctx context.Context, method string, params json.RawMe
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
-	httpReq.Header.Set("MCP-Protocol-Version", mcp.ProtocolVersion)
+	protocolVersion, err := mcp.ProtocolVersionForMode(c.options.Mode)
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("MCP-Protocol-Version", protocolVersion)
 	httpReq.Header.Set("Mcp-Method", method)
 	if toolName := mcpToolNameFromParams(method, params); toolName != "" {
 		httpReq.Header.Set("Mcp-Name", toolName)
@@ -320,6 +339,8 @@ func (c *Client) notifyLocked(ctx context.Context, method string, params json.Ra
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", mcp.ProtocolVersionLegacy)
+	req.Header.Set("Mcp-Method", method)
 	if c.sessionID != "" {
 		req.Header.Set("Mcp-Session-Id", c.sessionID)
 	}

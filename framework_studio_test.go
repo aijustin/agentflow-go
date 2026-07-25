@@ -13,6 +13,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/graph"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -94,6 +95,77 @@ func TestFrameworkValidateStudioGraph(t *testing.T) {
 	}
 }
 
+func TestFrameworkRunStudioGraphSupportsAutonomousScenario(t *testing.T) {
+	fw, err := agentflow.New(testAutonomousScenario(), agentflow.WithLLMGateway(fakeGateway{content: "studio autonomous"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fw.RunStudioGraph(context.Background(), fw.ExportScenarioGraph(), agentflow.RunRequest{
+		RunID:  "run-studio-autonomous",
+		Agent:  "assistant",
+		Prompt: "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != runstate.RunStatusCompleted || result.Output != "studio autonomous" {
+		t.Fatalf("unexpected autonomous Studio result: %+v", result)
+	}
+}
+
+func TestFrameworkSaveStudioGraphWithScenarioPersistsNewAgent(t *testing.T) {
+	base := core.Scenario{
+		Name: "studio-scenario-save",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"existing": {Name: "existing", LLM: "default", Instructions: "existing"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{{ID: "seed", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"ready":true}}`)}},
+			},
+		},
+	}
+	fw, err := agentflow.New(base, agentflow.WithLLMGateway(fakeGateway{content: "ok"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := graph.DeepCopyScenario(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft.Agents["writer"] = core.Agent{Name: "writer", LLM: "default", Instructions: "write"}
+	edited := fw.ExportScenarioGraph()
+	edited.Workflow.Nodes = append(edited.Workflow.Nodes, graph.GraphNode{ID: "writer", Kind: string(core.NodeAgent), Ref: "writer"})
+	edited.Workflow.Edges = append(edited.Workflow.Edges, graph.GraphEdge{From: "seed", To: "writer"})
+	path := filepath.Join(t.TempDir(), "scenario.yaml")
+	result, err := fw.SaveStudioGraphWithScenario(context.Background(), edited, &draft, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ScenarioName != base.Name {
+		t.Fatalf("unexpected save result: %+v", result)
+	}
+	parts := fw.StudioParts()
+	found := false
+	for _, part := range parts.Agents {
+		if part.Name == "writer" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("saved live scenario omitted composed agent: %+v", parts.Agents)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "writer") {
+		t.Fatalf("saved YAML omitted composed agent:\n%s", raw)
+	}
+}
+
 func TestFrameworkForkAndCompareRuns(t *testing.T) {
 	scenario := core.Scenario{
 		Name: "fork-compare",
@@ -136,6 +208,33 @@ func TestFrameworkForkAndCompareRuns(t *testing.T) {
 	}
 	if len(compare.SharedSteps) == 0 {
 		t.Fatalf("expected shared steps, got %+v", compare)
+	}
+}
+
+func TestFrameworkListRunThreadFiltersTenant(t *testing.T) {
+	fw, err := agentflow.New(core.Scenario{Name: "thread-tenant"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := fw.RunStateRepository()
+	for _, snapshot := range []runstate.RunSnapshot{
+		{RunID: "run-a", ThreadID: "shared-thread", TenantID: "tenant-a", ScenarioName: "thread-tenant", Status: runstate.RunStatusCompleted},
+		{RunID: "run-b", ThreadID: "shared-thread", TenantID: "tenant-b", ScenarioName: "thread-tenant", Status: runstate.RunStatusCompleted},
+	} {
+		copy := snapshot
+		if err := repo.Save(context.Background(), &copy, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "viewer-a", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	thread, err := fw.ListRunThread(ctx, "run-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(thread) != 1 || thread[0].RunID != "run-a" {
+		t.Fatalf("cross-tenant thread data leaked: %+v", thread)
 	}
 }
 

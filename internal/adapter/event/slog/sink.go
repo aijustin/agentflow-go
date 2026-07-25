@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/observability"
 )
 
 type Option func(*Sink)
@@ -37,12 +38,14 @@ func (sink *Sink) Emit(ctx context.Context, event core.Event) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	observability.StampEventTenant(ctx, &event)
 	if event.Timestamp.IsZero() {
 		event.Timestamp = sink.now().UTC()
 	}
 	attrs := []any{
 		"event_type", string(event.Type),
 		"run_id", event.RunID,
+		"tenant_id", event.TenantID,
 		"scenario_name", event.ScenarioName,
 		"event_timestamp", event.Timestamp.Format(time.RFC3339Nano),
 		"trace_id", event.TraceID,

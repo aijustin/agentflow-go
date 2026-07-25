@@ -65,7 +65,7 @@ func (l *warnCountingLogger) Error(context.Context, string, ...any) { l.errors.A
 
 func TestFrameworkRunFencesSnapshotSaves(t *testing.T) {
 	repo := newFenceCountingRepo()
-	fw, err := agentflow.New(
+	_, err := agentflow.New(
 		retryWorkflowScenario(),
 		agentflow.WithLLMGateway(fakeGateway{content: "x"}),
 		agentflow.WithToolExecutor("stepA", noopTool{}),
@@ -195,10 +195,6 @@ func TestFrameworkRunLeaseWithoutFencedRepositoryFails(t *testing.T) {
 		agentflow.WithLogger(logger),
 		agentflow.WithRunLease(agentflow.NewInMemoryLocker(), "worker-a", time.Minute),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-unfenced", Prompt: "go"})
 	if !errors.Is(err, runstate.ErrFenceRequired) {
 		t.Fatalf("expected ErrFenceRequired, got %v", err)
 	}

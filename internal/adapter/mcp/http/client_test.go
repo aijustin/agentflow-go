@@ -351,3 +351,92 @@ func TestClientReturnsRPCError(t *testing.T) {
 		t.Fatal("expected rpc error")
 	}
 }
+
+func TestClientModernUsesStatelessRequestMetadata(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		requests.Add(1)
+		if r.Method == nethttp.MethodDelete {
+			t.Fatal("modern client must not terminate a protocol session")
+		}
+		var req struct {
+			ID     int64          `json:"id"`
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Method == "initialize" || req.Method == "notifications/initialized" {
+			t.Fatalf("modern client sent legacy handshake method %q", req.Method)
+		}
+		if got := r.Header.Get("MCP-Protocol-Version"); got != mcp.ProtocolVersionModern {
+			t.Fatalf("protocol header = %q", got)
+		}
+		if got := r.Header.Get("Mcp-Method"); got != req.Method {
+			t.Fatalf("method header = %q, body method = %q", got, req.Method)
+		}
+		meta, ok := req.Params["_meta"].(map[string]any)
+		if !ok {
+			t.Fatalf("missing modern request metadata: %+v", req.Params)
+		}
+		if meta["io.modelcontextprotocol/protocolVersion"] != mcp.ProtocolVersionModern {
+			t.Fatalf("protocol metadata = %+v", meta)
+		}
+		if _, ok := meta["io.modelcontextprotocol/clientCapabilities"].(map[string]any); !ok {
+			t.Fatalf("client capabilities metadata = %+v", meta)
+		}
+		switch req.Method {
+		case "tools/list":
+			_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"tools":[{"name":"search"}]}`)})
+		case "tools/call":
+			if got := r.Header.Get("Mcp-Name"); got != "search" {
+				t.Fatalf("tool name header = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)})
+		default:
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithOptions(server.URL, server.Client(), mcp.ClientOptions{Mode: mcp.ProtocolModeModern})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListTools(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CallTool(context.Background(), mcp.CallToolRequest{Name: "search"}); err != nil {
+		t.Fatal(err)
+	}
+	beforeTerminate := requests.Load()
+	if err := client.Terminate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if requests.Load() != beforeTerminate {
+		t.Fatal("modern terminate must be a transport no-op")
+	}
+	if client.SessionID() != "" {
+		t.Fatalf("modern client must not expose a session id: %q", client.SessionID())
+	}
+}
+
+func TestClientModernDoesNotRetryHTTPFailure(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, _ *nethttp.Request) {
+		requests.Add(1)
+		w.WriteHeader(nethttp.StatusNotFound)
+	}))
+	defer server.Close()
+	client, err := NewClientWithOptions(server.URL, server.Client(), mcp.ClientOptions{Mode: mcp.ProtocolModeModern})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListTools(context.Background()); err == nil {
+		t.Fatal("expected modern HTTP failure")
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("modern client retried a failed request: %d requests", requests.Load())
+	}
+}

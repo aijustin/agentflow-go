@@ -123,13 +123,12 @@ type Framework struct {
 	workflowRunner         *orchestration.WorkflowRunner
 	closers                []func(context.Context) error
 
-	// resumeMu guards resumeInFlight, the in-process set of runs currently
-	// being resumed/continued. It gives concurrent ResumeAndContinue /
-	// ResumeRunByID / ContinueRun calls on the same run a deterministic
-	// ErrResumeInProgress loser even when no distributed run lease is
-	// configured.
-	resumeMu       sync.Mutex
-	resumeInFlight map[string]struct{}
+	// executionMu guards executionInFlight, the in-process set of run IDs
+	// currently driven by any Run/Stream/resume/retry/Studio entry point.
+	// Distributed leases provide the cross-process layer; this map preserves
+	// the same single-driver invariant even without a locker.
+	executionMu       sync.Mutex
+	executionInFlight map[string]struct{}
 
 	// zombieWarnOnce rate-limits the handleRun warning about redelivered run
 	// jobs that cannot be self-healed because no run lease is configured.
@@ -251,12 +250,13 @@ func (r *toolRegistry) ResolveTool(ctx context.Context, tool core.Tool) (core.To
 	if name == "" {
 		return nil, false, fmt.Errorf("agentflow: tool name is required")
 	}
+	cacheKey := toolResolverCacheKey(ctx, name)
 	r.mu.Lock()
 	if executor, ok := r.eager[name]; ok {
 		r.mu.Unlock()
 		return executor, true, nil
 	}
-	if executor, ok := r.cache[name]; ok {
+	if executor, ok := r.cache[cacheKey]; ok {
 		r.mu.Unlock()
 		return executor, true, nil
 	}
@@ -277,11 +277,26 @@ func (r *toolRegistry) ResolveTool(ctx context.Context, tool core.Tool) (core.To
 	if existing, ok := r.eager[name]; ok {
 		return existing, true, nil
 	}
-	if existing, ok := r.cache[name]; ok {
+	if existing, ok := r.cache[cacheKey]; ok {
 		return existing, true, nil
 	}
-	r.cache[name] = executor
+	r.cache[cacheKey] = executor
 	return executor, true, nil
+}
+
+func toolResolverCacheKey(ctx context.Context, name string) string {
+	principal, ok := identity.PrincipalFromContext(ctx)
+	if !ok {
+		return "global\x00" + name
+	}
+	return strings.Join([]string{
+		string(principal.Type),
+		principal.ID,
+		principal.Scope.TenantID,
+		principal.Scope.WorkspaceID,
+		principal.Scope.ProjectID,
+		name,
+	}, "\x00")
 }
 
 // Option customizes Framework construction.
@@ -335,6 +350,11 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 	}
 	if cfg.checkpointHistory != nil {
 		cfg.runs = &runstaterecording.Repository{Inner: cfg.runs, History: cfg.checkpointHistory, Logger: cfg.logger}
+	}
+	if cfg.runLocker != nil {
+		if _, ok := unwrapRunstate(cfg.runs).(runstate.FencedRepository); !ok {
+			return nil, fmt.Errorf("agentflow: WithRunLease requires a fencing-capable run-state repository: %w", runstate.ErrFenceRequired)
+		}
 	}
 	autoMemory := autoMemoryNames(scenario)
 	wiringRules := defaultWiringOptions()
@@ -1113,9 +1133,6 @@ func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan 
 // Callers must drain the returned channel or cancel ctx; otherwise this
 // forwarder and the lease renewer stay alive.
 func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan llm.ChatChunk, release func()) <-chan llm.ChatChunk {
-	if f.runLocker == nil {
-		return source
-	}
 	out := make(chan llm.ChatChunk)
 	safecall.GoSafe("agentflow: stream lease forwarder", func(err error) {
 		// The deferred close(out) and release() above have already run; the
@@ -1222,6 +1239,7 @@ func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, 
 		DisplayLabel: core.DisplayLabel(typ),
 		Payload:      payload,
 	}
+	observability.StampEventTenant(ctx, &event)
 	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
 		event.TraceID = traceID
 		event.SpanID = spanID

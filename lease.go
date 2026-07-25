@@ -54,9 +54,9 @@ var ErrFenceRequired = runstate.ErrFenceRequired
 // repository implements runstate.FencedRepository, every snapshot save is
 // validated against the run's fence high-water mark, so a zombie writer
 // whose lease was superseded fails with ErrStaleFence instead of clobbering
-// the new owner's state. Repositories without fencing support fall back to
-// plain saves (a warning is logged once) and are unsafe for multi-node
-// deployments.
+// the new owner's state. Framework construction fails with ErrFenceRequired
+// when the configured run-state repository cannot fence; leased execution
+// never falls back to an unprotected plain save.
 //
 // owner identifies this worker in lease ownership; when empty, a random
 // worker ID is generated. ttl defaults to 30s when non-positive.
@@ -254,13 +254,25 @@ func mapLeaseLostError(ctx context.Context, err error) error {
 // the request left it empty, so the lease and the run snapshot always use the
 // same ID.
 func (f *Framework) acquireRunLease(ctx context.Context, req *RunRequest) (context.Context, func(), error) {
-	if f.runLocker == nil {
-		return ctx, func() {}, nil
-	}
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
-	return f.holdRunLease(ctx, req.RunID)
+	releaseSlot, err := f.tryEnterExecution(req.RunID, false)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if f.runLocker == nil {
+		return ctx, releaseSlot, nil
+	}
+	runCtx, releaseLease, err := f.holdRunLease(ctx, req.RunID)
+	if err != nil {
+		releaseSlot()
+		return ctx, nil, err
+	}
+	return runCtx, func() {
+		releaseLease()
+		releaseSlot()
+	}, nil
 }
 
 func (f *Framework) holdRunLease(ctx context.Context, runID string) (context.Context, func(), error) {

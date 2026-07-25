@@ -59,6 +59,7 @@ func (store *Store) EnsureSchema(ctx context.Context) error {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 	id bigserial PRIMARY KEY,
 	run_id text NOT NULL,
+	tenant_id text NOT NULL DEFAULT '',
 	sequence bigint NOT NULL,
 	event_type text NOT NULL,
 	scenario_name text NOT NULL DEFAULT '',
@@ -82,6 +83,7 @@ ON %s (event_type, occurred_at DESC)`, indexPrefix, store.table),
 		}
 	}
 	for _, column := range []string{
+		`tenant_id text NOT NULL DEFAULT ''`,
 		`parent_span_id text NOT NULL DEFAULT ''`,
 		`episode_id text NOT NULL DEFAULT ''`,
 		`session_id text NOT NULL DEFAULT ''`,
@@ -92,6 +94,7 @@ ON %s (event_type, occurred_at DESC)`, indexPrefix, store.table),
 		}
 	}
 	for _, index := range []string{
+		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_tenant_run_idx ON %s (tenant_id, run_id)`, indexPrefix, store.table),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_episode_id_idx ON %s (episode_id, id)`, indexPrefix, store.table),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_session_id_idx ON %s (session_id, id)`, indexPrefix, store.table),
 	} {
@@ -109,6 +112,7 @@ func (store *Store) Append(ctx context.Context, event core.Event) (obspkg.EventR
 	if event.RunID == "" {
 		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: run id is required")
 	}
+	obspkg.StampEventTenant(ctx, &event)
 	event = obspkg.NormalizeEvent(event, store.now())
 	payload := []byte(event.Payload)
 	if len(payload) == 0 {
@@ -127,12 +131,12 @@ func (store *Store) Append(ctx context.Context, event core.Event) (obspkg.EventR
 	if err := tx.QueryRowContext(ctx, sequenceQuery, event.RunID).Scan(&sequence); err != nil {
 		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: next sequence for run %q: %w", event.RunID, err)
 	}
-	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, sequence, event_type, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, tenant_id, sequence, event_type, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING id, created_at`, store.table)
 	var id int64
 	var createdAt time.Time
-	if err := tx.QueryRowContext(ctx, insertQuery, event.RunID, sequence, string(event.Type), event.ScenarioName, event.EpisodeID, event.SessionID, event.TriggerKind, event.TraceID, event.SpanID, event.ParentSpanID, event.Timestamp, payload).Scan(&id, &createdAt); err != nil {
+	if err := tx.QueryRowContext(ctx, insertQuery, event.RunID, event.TenantID, sequence, string(event.Type), event.ScenarioName, event.EpisodeID, event.SessionID, event.TriggerKind, event.TraceID, event.SpanID, event.ParentSpanID, event.Timestamp, payload).Scan(&id, &createdAt); err != nil {
 		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: append event for run %q: %w", event.RunID, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -158,18 +162,19 @@ func (store *Store) AppendSequenced(ctx context.Context, sequence int64, event c
 	if sequence <= 0 {
 		return obspkg.EventRecord{}, fmt.Errorf("postgres observability: sequence must be positive, got %d", sequence)
 	}
+	obspkg.StampEventTenant(ctx, &event)
 	event = obspkg.NormalizeEvent(event, store.now())
 	payload := []byte(event.Payload)
 	if len(payload) == 0 {
 		payload = []byte(`{}`)
 	}
-	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, sequence, event_type, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	insertQuery := fmt.Sprintf(`INSERT INTO %s (run_id, tenant_id, sequence, event_type, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (run_id, sequence) DO NOTHING
 RETURNING id, created_at`, store.table)
 	var id int64
 	var createdAt time.Time
-	err := store.db.QueryRowContext(ctx, insertQuery, event.RunID, sequence, string(event.Type), event.ScenarioName, event.EpisodeID, event.SessionID, event.TriggerKind, event.TraceID, event.SpanID, event.ParentSpanID, event.Timestamp, payload).Scan(&id, &createdAt)
+	err := store.db.QueryRowContext(ctx, insertQuery, event.RunID, event.TenantID, sequence, string(event.Type), event.ScenarioName, event.EpisodeID, event.SessionID, event.TriggerKind, event.TraceID, event.SpanID, event.ParentSpanID, event.Timestamp, payload).Scan(&id, &createdAt)
 	if err == nil {
 		return obspkg.EventRecord{ID: id, Sequence: sequence, Event: event, CreatedAt: createdAt.UTC()}, nil
 	}
@@ -191,8 +196,9 @@ func (store *Store) DeleteEventsForRun(ctx context.Context, runID string) (int64
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	query := fmt.Sprintf(`DELETE FROM %s WHERE run_id = $1`, store.table)
-	result, err := store.db.ExecContext(ctx, query, runID)
+	tenantID := obspkg.TenantIDFromContext(ctx)
+	query := fmt.Sprintf(`DELETE FROM %s WHERE run_id = $1 AND ($2 = '' OR tenant_id = $2)`, store.table)
+	result, err := store.db.ExecContext(ctx, query, runID, tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("postgres observability: delete events for run %q: %w", runID, err)
 	}
@@ -207,8 +213,9 @@ func (store *Store) PurgeEventsBefore(ctx context.Context, cutoff time.Time) (in
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	query := fmt.Sprintf(`DELETE FROM %s WHERE occurred_at < $1`, store.table)
-	result, err := store.db.ExecContext(ctx, query, cutoff.UTC())
+	tenantID := obspkg.TenantIDFromContext(ctx)
+	query := fmt.Sprintf(`DELETE FROM %s WHERE occurred_at < $1 AND ($2 = '' OR tenant_id = $2)`, store.table)
+	result, err := store.db.ExecContext(ctx, query, cutoff.UTC(), tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("postgres observability: purge events: %w", err)
 	}
@@ -223,6 +230,7 @@ func (store *Store) ListRuns(ctx context.Context, query obspkg.RunQuery) ([]obsp
 	listQuery := fmt.Sprintf(`WITH summarized AS (
 	SELECT
 		run_id,
+		tenant_id,
 		COALESCE((array_agg(NULLIF(scenario_name, '') ORDER BY sequence DESC) FILTER (WHERE scenario_name <> ''))[1], '') AS scenario_name,
 		CASE (array_agg(event_type ORDER BY sequence DESC))[1]
 			WHEN 'RunCompleted' THEN 'completed'
@@ -236,14 +244,15 @@ func (store *Store) ListRuns(ctx context.Context, query obspkg.RunQuery) ([]obsp
 		MAX(occurred_at) AS last_seen_at,
 		(array_agg(event_type ORDER BY sequence DESC))[1] AS last_event_type
 	FROM %s
-	GROUP BY run_id
+	WHERE ($1 = '' OR tenant_id = $1)
+	GROUP BY run_id, tenant_id
 )
-SELECT run_id, scenario_name, status, event_count, first_seen_at, last_seen_at, last_event_type
+SELECT run_id, tenant_id, scenario_name, status, event_count, first_seen_at, last_seen_at, last_event_type
 FROM summarized
-WHERE ($1 = '' OR status = $1)
+WHERE ($2 = '' OR status = $2)
 ORDER BY last_seen_at DESC, run_id ASC
-LIMIT $2 OFFSET $3`, store.table)
-	rows, err := store.db.QueryContext(ctx, listQuery, string(query.Status), query.Limit, query.Offset)
+LIMIT $3 OFFSET $4`, store.table)
+	rows, err := store.db.QueryContext(ctx, listQuery, query.TenantID, string(query.Status), query.Limit, query.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("postgres observability: list runs: %w", err)
 	}
@@ -253,7 +262,7 @@ LIMIT $2 OFFSET $3`, store.table)
 		var summary obspkg.RunSummary
 		var status string
 		var eventType string
-		if err := rows.Scan(&summary.RunID, &summary.ScenarioName, &status, &summary.EventCount, &summary.FirstSeenAt, &summary.LastSeenAt, &eventType); err != nil {
+		if err := rows.Scan(&summary.RunID, &summary.TenantID, &summary.ScenarioName, &status, &summary.EventCount, &summary.FirstSeenAt, &summary.LastSeenAt, &eventType); err != nil {
 			return nil, fmt.Errorf("postgres observability: scan run: %w", err)
 		}
 		summary.Status = obspkg.RunStatus(status)
@@ -272,13 +281,13 @@ func (store *Store) ListEvents(ctx context.Context, runID string, query obspkg.E
 	}
 	query = obspkg.NormalizeEventQuery(query)
 	if query.Preset == core.EventFilterDiagnostic {
-		return store.listEventsRaw(ctx, runID, query.AfterSequence, query.Limit)
+		return store.listEventsRaw(ctx, query.TenantID, runID, query.AfterSequence, query.Limit)
 	}
 	// Preset projection: page raw rows until Limit matching events are collected.
 	out := make([]obspkg.EventRecord, 0, query.Limit)
 	after := query.AfterSequence
 	for len(out) < query.Limit {
-		batch, err := store.listEventsRaw(ctx, runID, after, obspkg.MaxEventQueryLimit)
+		batch, err := store.listEventsRaw(ctx, query.TenantID, runID, after, obspkg.MaxEventQueryLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -302,13 +311,13 @@ func (store *Store) ListEvents(ctx context.Context, runID string, query obspkg.E
 	return out, nil
 }
 
-func (store *Store) listEventsRaw(ctx context.Context, runID string, afterSequence int64, limit int) ([]obspkg.EventRecord, error) {
-	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
+func (store *Store) listEventsRaw(ctx context.Context, tenantID, runID string, afterSequence int64, limit int) ([]obspkg.EventRecord, error) {
+	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, tenant_id, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
 FROM %s
-WHERE run_id = $1 AND sequence > $2
+WHERE run_id = $1 AND sequence > $2 AND ($3 = '' OR tenant_id = $3)
 ORDER BY sequence ASC
-LIMIT $3`, store.table)
-	rows, err := store.db.QueryContext(ctx, listQuery, runID, afterSequence, limit)
+LIMIT $4`, store.table)
+	rows, err := store.db.QueryContext(ctx, listQuery, runID, afterSequence, tenantID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("postgres observability: list events for run %q: %w", runID, err)
 	}
@@ -345,12 +354,12 @@ func (store *Store) ListScopedEvents(ctx context.Context, query obspkg.ScopedEve
 		scopeValue = query.SessionID
 	}
 	if query.Preset == core.EventFilterDiagnostic {
-		return store.listScopedEventsRaw(ctx, scopeColumn, scopeValue, query.AfterID, query.Limit)
+		return store.listScopedEventsRaw(ctx, query.TenantID, scopeColumn, scopeValue, query.AfterID, query.Limit)
 	}
 	out := make([]obspkg.EventRecord, 0, query.Limit)
 	after := query.AfterID
 	for len(out) < query.Limit {
-		batch, err := store.listScopedEventsRaw(ctx, scopeColumn, scopeValue, after, obspkg.MaxEventQueryLimit)
+		batch, err := store.listScopedEventsRaw(ctx, query.TenantID, scopeColumn, scopeValue, after, obspkg.MaxEventQueryLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -374,13 +383,13 @@ func (store *Store) ListScopedEvents(ctx context.Context, query obspkg.ScopedEve
 	return out, nil
 }
 
-func (store *Store) listScopedEventsRaw(ctx context.Context, scopeColumn, scopeValue string, afterID int64, limit int) ([]obspkg.EventRecord, error) {
-	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
+func (store *Store) listScopedEventsRaw(ctx context.Context, tenantID, scopeColumn, scopeValue string, afterID int64, limit int) ([]obspkg.EventRecord, error) {
+	listQuery := fmt.Sprintf(`SELECT id, sequence, event_type, run_id, tenant_id, scenario_name, episode_id, session_id, trigger_kind, trace_id, span_id, parent_span_id, occurred_at, payload_json, created_at
 FROM %s
-WHERE %s = $1 AND id > $2
+WHERE %s = $1 AND id > $2 AND ($3 = '' OR tenant_id = $3)
 ORDER BY id ASC
-LIMIT $3`, store.table, scopeColumn)
-	rows, err := store.db.QueryContext(ctx, listQuery, scopeValue, afterID, limit)
+LIMIT $4`, store.table, scopeColumn)
+	rows, err := store.db.QueryContext(ctx, listQuery, scopeValue, afterID, tenantID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("postgres observability: list scoped events: %w", err)
 	}
@@ -408,6 +417,7 @@ func scanRecord(row interface{ Scan(dest ...any) error }) (obspkg.EventRecord, e
 		&record.Sequence,
 		&eventType,
 		&record.Event.RunID,
+		&record.Event.TenantID,
 		&record.Event.ScenarioName,
 		&record.Event.EpisodeID,
 		&record.Event.SessionID,

@@ -14,6 +14,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/log"
 	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/studio"
 )
 
@@ -195,7 +196,10 @@ func NewHandler(config Config) (*Handler, error) {
 	handler.routes()
 	handler.handler = handler.mux
 	if config.AuthMiddleware != nil {
-		handler.handler = config.AuthMiddleware(handler.mux)
+		strict := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+			handler.mux.ServeHTTP(w, r.WithContext(runstate.ContextWithTenantStrictMode(r.Context())))
+		})
+		handler.handler = config.AuthMiddleware(strict)
 	}
 	return handler, nil
 }
@@ -272,9 +276,10 @@ func (handler *Handler) handleRuns(w nethttp.ResponseWriter, r *nethttp.Request)
 		return
 	}
 	query := obspkg.RunQuery{
-		Status: obspkg.RunStatus(r.URL.Query().Get("status")),
-		Limit:  parseInt(r.URL.Query().Get("limit"), obspkg.DefaultRunQueryLimit),
-		Offset: parseInt(r.URL.Query().Get("offset"), 0),
+		TenantID: obspkg.TenantIDFromContext(r.Context()),
+		Status:   obspkg.RunStatus(r.URL.Query().Get("status")),
+		Limit:    parseInt(r.URL.Query().Get("limit"), obspkg.DefaultRunQueryLimit),
+		Offset:   parseInt(r.URL.Query().Get("offset"), 0),
 	}
 	runs, err := handler.store.ListRuns(r.Context(), query)
 	if err != nil {
@@ -599,10 +604,11 @@ func (handler *Handler) handleStudioRun(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	var body struct {
-		Graph  any    `json:"graph"`
-		Prompt string `json:"prompt"`
-		Agent  string `json:"agent"`
-		RunID  string `json:"run_id"`
+		Graph    any    `json:"graph"`
+		Scenario any    `json:"scenario"`
+		Prompt   string `json:"prompt"`
+		Agent    string `json:"agent"`
+		RunID    string `json:"run_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("decode body: %w", err))
@@ -613,9 +619,10 @@ func (handler *Handler) handleStudioRun(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	req := map[string]any{
-		"prompt": strings.TrimSpace(body.Prompt),
-		"agent":  strings.TrimSpace(body.Agent),
-		"run_id": strings.TrimSpace(body.RunID),
+		"prompt":   strings.TrimSpace(body.Prompt),
+		"agent":    strings.TrimSpace(body.Agent),
+		"run_id":   strings.TrimSpace(body.RunID),
+		"scenario": body.Scenario,
 	}
 	result, err := handler.runStudio.RunStudioGraph(r.Context(), body.Graph, req)
 	if err != nil {
@@ -788,6 +795,7 @@ func (handler *Handler) handleScopedEvents(w nethttp.ResponseWriter, r *nethttp.
 		writeError(w, nethttp.StatusBadRequest, err)
 		return
 	}
+	query.TenantID = obspkg.TenantIDFromContext(r.Context())
 	events, err := handler.store.ListScopedEvents(r.Context(), query)
 	if err != nil {
 		writeError(w, nethttp.StatusInternalServerError, err)
@@ -817,6 +825,7 @@ func (handler *Handler) handleEvents(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeError(w, nethttp.StatusBadRequest, err)
 		return
 	}
+	query.TenantID = obspkg.TenantIDFromContext(r.Context())
 	events, err := handler.store.ListEvents(r.Context(), runID, query)
 	if err != nil {
 		writeError(w, nethttp.StatusInternalServerError, err)
@@ -843,6 +852,7 @@ func (handler *Handler) handleStream(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeError(w, nethttp.StatusBadRequest, err)
 		return
 	}
+	query.TenantID = obspkg.TenantIDFromContext(r.Context())
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -851,7 +861,7 @@ func (handler *Handler) handleStream(w nethttp.ResponseWriter, r *nethttp.Reques
 	flusher.Flush()
 	lastSequence := query.AfterSequence
 	if handler.hub != nil {
-		subscription := handler.hub.Subscribe(r.Context(), obspkg.EventSubscriptionFilter{RunID: runID, Buffer: 128})
+		subscription := handler.hub.Subscribe(r.Context(), obspkg.EventSubscriptionFilter{TenantID: query.TenantID, RunID: runID, Buffer: 128})
 		defer subscription.Cancel()
 		if !handler.writeBacklog(w, flusher, r, runID, &lastSequence, query.Preset) {
 			return
@@ -895,6 +905,7 @@ func (handler *Handler) handleStream(w nethttp.ResponseWriter, r *nethttp.Reques
 
 func (handler *Handler) writeBacklog(w nethttp.ResponseWriter, flusher nethttp.Flusher, r *nethttp.Request, runID string, lastSequence *int64, preset core.EventFilterPreset) bool {
 	events, err := handler.store.ListEvents(r.Context(), runID, obspkg.EventQuery{
+		TenantID:      obspkg.TenantIDFromContext(r.Context()),
 		AfterSequence: *lastSequence,
 		Limit:         obspkg.MaxEventQueryLimit,
 		Preset:        preset,

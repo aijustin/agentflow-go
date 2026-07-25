@@ -78,7 +78,7 @@ func (f *Framework) runWorkflowScenarioWith(ctx context.Context, scenario core.S
 		if errors.As(err, &paused) {
 			return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		f.markWorkflowFailed(ctx, req.RunID, err)
+		f.settleWorkflowError(ctx, req.RunID, err)
 		return RunResult{}, err
 	}
 	loaded, err := f.completeWorkflowRun(ctx, req.RunID, nil)
@@ -144,7 +144,7 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 		if errors.As(err, &paused) {
 			return req, RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		f.markWorkflowFailed(ctx, req.RunID, err)
+		f.settleWorkflowError(ctx, req.RunID, err)
 		return req, RunResult{}, err
 	}
 	loaded, err := f.saveRunSnapshotWithRetry(ctx, req.RunID, func(snapshot *runstate.RunSnapshot) error {
@@ -157,7 +157,7 @@ func (f *Framework) prepareHybridAutonomousRunScenario(ctx context.Context, scen
 	if err != nil {
 		// The workflow phase finished but the phase transition could not be
 		// persisted; without it a resume would re-run the whole workflow.
-		f.markWorkflowFailed(ctx, req.RunID, err)
+		f.settleWorkflowError(ctx, req.RunID, err)
 		return req, RunResult{}, err
 	}
 	req, err = f.hydrateRunRequest(ctx, req, loaded)
@@ -256,13 +256,26 @@ func (f *Framework) completeWorkflowRun(ctx context.Context, runID string, mutat
 	if err != nil {
 		var conflict runNotRunningError
 		if !errors.As(err, &conflict) {
-			f.markWorkflowFailed(ctx, runID, err)
+			f.settleWorkflowError(ctx, runID, err)
 		}
 		return runstate.RunSnapshot{}, err
 	}
 	f.currentEngine().ClearRunScopedState(runID)
 	f.emit(ctx, core.EventRunCompleted, runID, nil)
 	return loaded, nil
+}
+
+func (f *Framework) settleWorkflowError(ctx context.Context, runID string, cause error) {
+	ctxCause := context.Cause(ctx)
+	if errors.Is(ctxCause, ErrRunLeaseLost) || errors.Is(cause, ErrRunLeaseLost) || errors.Is(cause, ErrStaleFence) {
+		f.markWorkflowFailed(ctx, runID, cause)
+		return
+	}
+	if errors.Is(cause, context.Canceled) || errors.Is(ctxCause, context.Canceled) {
+		f.currentEngine().MarkRunCancelled(ctx, runID)
+		return
+	}
+	f.markWorkflowFailed(ctx, runID, cause)
 }
 
 func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause error) {

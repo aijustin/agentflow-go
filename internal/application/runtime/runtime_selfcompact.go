@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -51,13 +52,16 @@ func (e *Engine) applySelfCompactIfPending(ctx context.Context, runID string, pr
 		maskAfterTurns = 1
 	}
 	raw := make([]contextwindow.Message, 0, len(messages))
-	for _, msg := range messages {
+	for i, msg := range messages {
+		metadata := cloneMetadata(msg.Metadata)
+		metadata["source_index"] = strconv.Itoa(i)
 		raw = append(raw, contextwindow.Message{
-			Role:       contextwindow.Role(msg.Role),
-			Content:    msg.Content,
-			Name:       msg.Name,
-			ToolCallID: msg.ToolCallID,
-			Metadata:   cloneMetadata(msg.Metadata),
+			Role:        contextwindow.Role(msg.Role),
+			Content:     msg.Content,
+			Name:        msg.Name,
+			ToolCallID:  msg.ToolCallID,
+			ToolCallIDs: toolCallIDs(msg),
+			Metadata:    metadata,
 		})
 	}
 	before := len(raw)
@@ -73,6 +77,7 @@ func (e *Engine) applySelfCompactIfPending(ctx context.Context, runID string, pr
 			Metadata:   msg.Metadata,
 		})
 	}
+	out = restorePreparedToolCalls(out, messages)
 	e.emitJSON(ctx, core.EventContextPrepared, runID, map[string]any{
 		"self_compact":           true,
 		"messages_before":        before,

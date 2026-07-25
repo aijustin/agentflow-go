@@ -99,9 +99,13 @@ func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (R
 	if f.currentScenario().Orchestration.Workflow == nil {
 		return RunResult{}, fmt.Errorf("agentflow: ResumeFromStep requires a configured workflow")
 	}
+	releaseSlot, err := f.tryEnterExecution(runID, false)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer releaseSlot()
 	if f.runLocker != nil {
 		var release func()
-		var err error
 		ctx, release, err = f.holdRunLease(ctx, runID)
 		if err != nil {
 			return RunResult{}, err
@@ -115,7 +119,7 @@ func (f *Framework) ResumeFromStep(ctx context.Context, runID, nodeID string) (R
 		if errors.As(err, &paused) {
 			return RunResult{RunID: runID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		f.markWorkflowFailed(ctx, runID, err)
+		f.settleWorkflowError(ctx, runID, err)
 		return RunResult{}, err
 	}
 
@@ -188,9 +192,13 @@ func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, vers
 	if f.checkpointHistory == nil {
 		return RunResult{}, fmt.Errorf("agentflow: checkpoint history is not configured")
 	}
+	releaseSlot, err := f.tryEnterExecution(runID, false)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer releaseSlot()
 	if f.runLocker != nil {
 		var release func()
-		var err error
 		ctx, release, err = f.holdRunLease(ctx, runID)
 		if err != nil {
 			return RunResult{}, err
@@ -209,7 +217,7 @@ func (f *Framework) ResumeFromCheckpoint(ctx context.Context, runID string, vers
 		if errors.As(err, &paused) {
 			return RunResult{RunID: runID, Status: runstate.RunStatusPaused, Token: paused.Token}, nil
 		}
-		f.markWorkflowFailed(ctx, runID, err)
+		f.settleWorkflowError(ctx, runID, err)
 		return RunResult{}, err
 	}
 

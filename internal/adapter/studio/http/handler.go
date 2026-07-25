@@ -257,10 +257,11 @@ func (h *Handler) handleRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	var payload struct {
-		Graph  any    `json:"graph"`
-		Prompt string `json:"prompt"`
-		Agent  string `json:"agent"`
-		RunID  string `json:"run_id"`
+		Graph    any    `json:"graph"`
+		Scenario any    `json:"scenario"`
+		Prompt   string `json:"prompt"`
+		Agent    string `json:"agent"`
+		RunID    string `json:"run_id"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		writeStudioError(w, nethttp.StatusBadRequest, err)
@@ -271,9 +272,10 @@ func (h *Handler) handleRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	req := map[string]any{
-		"prompt": strings.TrimSpace(payload.Prompt),
-		"agent":  strings.TrimSpace(payload.Agent),
-		"run_id": strings.TrimSpace(payload.RunID),
+		"prompt":   strings.TrimSpace(payload.Prompt),
+		"agent":    strings.TrimSpace(payload.Agent),
+		"run_id":   strings.TrimSpace(payload.RunID),
+		"scenario": payload.Scenario,
 	}
 	result, err := h.run.RunStudioGraph(r.Context(), payload.Graph, req)
 	if err != nil {

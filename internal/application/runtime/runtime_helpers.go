@@ -808,6 +808,8 @@ func (e *Engine) clearRunScopedState(runID string) {
 		e.denyBreaker.Clear(runID)
 	}
 	e.clearInterjections(runID)
+	e.loadedTools.Delete(runID)
+	e.pendingSelfCompact.Delete(runID)
 }
 
 // ClearRunScopedState exposes clearRunScopedState for the framework facade,
@@ -816,6 +818,12 @@ func (e *Engine) clearRunScopedState(runID string) {
 // share the same run-scoped bookkeeping.
 func (e *Engine) ClearRunScopedState(runID string) {
 	e.clearRunScopedState(runID)
+}
+
+// MarkRunCancelled exposes the engine's terminal cancellation transition to
+// facade-owned workflow execution paths.
+func (e *Engine) MarkRunCancelled(ctx context.Context, runID string) {
+	e.markRunCancelled(ctx, runID)
 }
 
 func (e *Engine) stepOutputRef(ctx context.Context, runID, key string, raw json.RawMessage) (runstate.StepOutputRef, error) {
@@ -896,6 +904,7 @@ func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, pay
 		DisplayLabel: core.DisplayLabel(typ),
 		Payload:      payload,
 	}
+	observability.StampEventTenant(ctx, &event)
 	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
 		event.TraceID = traceID
 		event.SpanID = spanID

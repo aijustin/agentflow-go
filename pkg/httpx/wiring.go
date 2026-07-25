@@ -79,23 +79,25 @@ type tenantScopedRetriever struct {
 
 func (t *tenantScopedRetriever) Execute(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
 	if t.tenantScoped {
-		if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
-			var payload map[string]any
-			if len(call.Input) > 0 {
-				_ = json.Unmarshal(call.Input, &payload)
-			}
-			if payload == nil {
-				payload = map[string]any{}
-			}
-			if _, ok := payload["namespace"]; !ok {
-				payload["namespace"] = tenantKnowledgeNamespace(t.namespace, principal.Scope.TenantID)
-				raw, err := json.Marshal(payload)
-				if err != nil {
-					return core.ToolResult{}, err
-				}
-				call.Input = raw
+		principal, ok := identity.PrincipalFromContext(ctx)
+		if !ok || strings.TrimSpace(principal.Scope.TenantID) == "" {
+			return core.ToolResult{}, fmt.Errorf("agentflow: tenant-scoped retriever requires tenant identity")
+		}
+		var payload map[string]any
+		if len(call.Input) > 0 {
+			if err := json.Unmarshal(call.Input, &payload); err != nil {
+				return core.ToolResult{}, fmt.Errorf("agentflow: decode tenant-scoped retriever input: %w", err)
 			}
 		}
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		payload["namespace"] = tenantKnowledgeNamespace(t.namespace, principal.Scope.TenantID)
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return core.ToolResult{}, err
+		}
+		call.Input = raw
 	}
 	return t.inner.Execute(ctx, call)
 }
@@ -191,23 +193,38 @@ func MCPWiringOptions(ctx context.Context, scenario core.Scenario, registry MCPR
 }
 
 func mcpClientForServer(ctx context.Context, server core.MCPServer, httpClient *http.Client) (mcp.Client, error) {
+	options, err := mcpClientOptions(server)
+	if err != nil {
+		return nil, err
+	}
 	switch strings.ToLower(strings.TrimSpace(server.Transport)) {
 	case "", "http":
 		if strings.TrimSpace(server.URL) == "" {
 			return nil, fmt.Errorf("url is required for http transport")
 		}
-		return adapters.NewMCPHTTPClient(server.URL, httpClient)
+		return adapters.NewMCPHTTPClientWithOptions(server.URL, httpClient, options)
 	case "stdio":
 		if len(server.Command) == 0 {
 			return nil, fmt.Errorf("command is required for stdio transport")
 		}
-		cfg := adapters.MCPStdioClientConfig{Command: server.Command[0]}
+		cfg := adapters.MCPStdioClientConfig{Command: server.Command[0], Options: options}
 		if len(server.Command) > 1 {
 			cfg.Args = append([]string(nil), server.Command[1:]...)
 		}
 		return adapters.NewMCPStdioClient(ctx, cfg)
 	default:
 		return nil, fmt.Errorf("unsupported transport %q", server.Transport)
+	}
+}
+
+func mcpClientOptions(server core.MCPServer) (mcp.ClientOptions, error) {
+	switch strings.ToLower(strings.TrimSpace(server.Metadata["mcp_protocol_mode"])) {
+	case "", string(mcp.ProtocolModeLegacy):
+		return mcp.ClientOptions{Mode: mcp.ProtocolModeLegacy}, nil
+	case string(mcp.ProtocolModeModern):
+		return mcp.ClientOptions{Mode: mcp.ProtocolModeModern}, nil
+	default:
+		return mcp.ClientOptions{}, fmt.Errorf("unsupported metadata.mcp_protocol_mode %q", server.Metadata["mcp_protocol_mode"])
 	}
 }
 

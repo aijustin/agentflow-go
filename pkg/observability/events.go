@@ -38,6 +38,7 @@ type EventRecord struct {
 
 type RunSummary struct {
 	RunID         string         `json:"run_id"`
+	TenantID      string         `json:"tenant_id,omitempty"`
 	ScenarioName  string         `json:"scenario_name,omitempty"`
 	Status        RunStatus      `json:"status"`
 	EventCount    int64          `json:"event_count"`
@@ -47,12 +48,14 @@ type RunSummary struct {
 }
 
 type RunQuery struct {
-	Status RunStatus
-	Limit  int
-	Offset int
+	TenantID string
+	Status   RunStatus
+	Limit    int
+	Offset   int
 }
 
 type EventQuery struct {
+	TenantID      string
 	AfterSequence int64
 	Limit         int
 	// Preset selects a read-side event view (product_ui or diagnostic).
@@ -65,6 +68,7 @@ type EventQuery struct {
 // Exactly one of EpisodeID or SessionID must be set. AfterID is a global
 // store cursor (EventRecord.ID), not a per-run sequence.
 type ScopedEventQuery struct {
+	TenantID  string
 	EpisodeID string
 	SessionID string
 	AfterID   int64
@@ -102,6 +106,7 @@ func (sink *EventStoreSink) Emit(ctx context.Context, event core.Event) error {
 	if sink == nil || sink.store == nil {
 		return fmt.Errorf("observability: event store is nil")
 	}
+	StampEventTenant(ctx, &event)
 	record, err := sink.store.Append(ctx, event)
 	if err != nil {
 		return err
@@ -136,6 +141,7 @@ func (sink *fanoutSink) Emit(ctx context.Context, event core.Event) error {
 }
 
 type EventSubscriptionFilter struct {
+	TenantID  string
 	RunID     string
 	EpisodeID string
 	SessionID string
@@ -217,6 +223,9 @@ func (hub *EventHub) PublishEvent(ctx context.Context, record EventRecord) error
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
 	for _, subscriber := range hub.subscribers {
+		if subscriber.filter.TenantID != "" && subscriber.filter.TenantID != record.Event.TenantID {
+			continue
+		}
 		if subscriber.filter.RunID != "" && subscriber.filter.RunID != record.Event.RunID {
 			continue
 		}

@@ -79,9 +79,17 @@ func TestClearRunScopedStateDropsInterjections(t *testing.T) {
 	if got := engine.interjections.PendingCount("run-interject"); got != 1 {
 		t.Fatalf("expected buffered interjection, got %d", got)
 	}
+	engine.loadedToolsForRun("run-interject").add("deferred.tool")
+	engine.markSelfCompactPending("run-interject")
 	engine.clearRunScopedState("run-interject")
 	if got := engine.interjections.PendingCount("run-interject"); got != 0 {
 		t.Fatalf("interjection buffer must be cleared, got %d", got)
+	}
+	if _, ok := engine.loadedTools.Load("run-interject"); ok {
+		t.Fatal("loaded tool state must be cleared")
+	}
+	if _, ok := engine.pendingSelfCompact.Load("run-interject"); ok {
+		t.Fatal("pending self-compact state must be cleared")
 	}
 }
 

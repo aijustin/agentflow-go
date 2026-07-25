@@ -1,8 +1,10 @@
 # Deferred Tool Catalog
 
 The `pkg/toolcatalog` package provides keyword search and schema loading for
-large tool surfaces. MCP clients negotiate protocol version `2026-07-28`
-(see `pkg/mcp.ProtocolVersion`).
+large tool surfaces. MCP clients default to legacy protocol `2025-11-25`;
+select modern stateless `2026-07-28` explicitly with
+`mcp.ClientOptions{Mode: mcp.ProtocolModeModern}`. Clients never auto-fallback
+between protocol eras.
 
 When attached to a `Framework` via `WithToolCatalog`,
 the runtime advertises only:

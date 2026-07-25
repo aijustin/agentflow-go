@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
 )
 
@@ -136,5 +137,35 @@ func TestStoreWithNowOption(t *testing.T) {
 	}
 	if !record.CreatedAt.Equal(fixed) {
 		t.Fatalf("expected configured timestamp, got %v", record.CreatedAt)
+	}
+}
+
+func TestStoreFiltersRunsAndEventsByTenant(t *testing.T) {
+	store := NewStore()
+	ctxA := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "service-a", Type: identity.PrincipalService, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	ctxB := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "service-b", Type: identity.PrincipalService, Scope: identity.Scope{TenantID: "tenant-b"},
+	})
+	if _, err := store.Append(ctxA, core.Event{Type: core.EventRunStarted, RunID: "run-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(ctxB, core.Event{Type: core.EventRunStarted, RunID: "run-b"}); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := store.ListRuns(ctxA, obspkg.RunQuery{TenantID: "tenant-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].RunID != "run-a" || runs[0].TenantID != "tenant-a" {
+		t.Fatalf("cross-tenant runs leaked: %+v", runs)
+	}
+	events, err := store.ListEvents(ctxB, "run-a", obspkg.EventQuery{TenantID: "tenant-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("cross-tenant events leaked: %+v", events)
 	}
 }

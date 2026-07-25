@@ -21,6 +21,20 @@ if err != nil {
 
 客户端支持 `tools/list` 和 `tools/call`。它有意只依赖标准库 `net/http` 客户端，因此应用可以注入自定义 TLS、代理、重试或认证 transport。
 
+### 显式协议模式
+
+现有构造器默认使用 legacy `2025-11-25`（`initialize` + session）。对
+modern `2026-07-28` 无状态服务必须显式选择模式：
+
+```go
+mcpClient, err := adapters.NewMCPHTTPClientWithOptions(endpoint, httpClient, mcp.ClientOptions{
+  Mode: mcp.ProtocolModeModern,
+})
+```
+
+Stdio 使用 `MCPStdioClientConfig.Options` 设置同一选项。客户端不会探测、
+自动降级或在协议版本间重试；配置与服务端不匹配时直接返回错误。
+
 ## Stdio 客户端
 
 当 MCP server 以本地子进程方式运行时，使用 `NewMCPStdioClient`：

@@ -16,11 +16,18 @@ func NewMCPHTTPClient(endpoint string, client *http.Client) (mcp.Client, error) 
 	return mcphttp.NewClient(endpoint, client)
 }
 
+// NewMCPHTTPClientWithOptions creates an MCP HTTP client in the explicitly
+// selected protocol mode.
+func NewMCPHTTPClientWithOptions(endpoint string, client *http.Client, options mcp.ClientOptions) (mcp.Client, error) {
+	return mcphttp.NewClientWithOptions(endpoint, client, options)
+}
+
 type MCPStdioClientConfig struct {
 	Command string
 	Args    []string
 	Env     []string
 	Dir     string
+	Options mcp.ClientOptions
 }
 
 type MCPStdioClient interface {
@@ -30,7 +37,13 @@ type MCPStdioClient interface {
 
 // NewMCPStdioClient creates an MCP JSON-RPC client over a child process stdio transport.
 func NewMCPStdioClient(ctx context.Context, config MCPStdioClientConfig) (MCPStdioClient, error) {
-	return mcpstdio.NewClient(ctx, mcpstdio.Config{Command: config.Command, Args: config.Args, Env: config.Env, Dir: config.Dir})
+	return mcpstdio.NewClient(ctx, mcpstdio.Config{
+		Command: config.Command,
+		Args:    config.Args,
+		Env:     config.Env,
+		Dir:     config.Dir,
+		Options: config.Options,
+	})
 }
 
 // NewMCPToolExecutor adapts one MCP server tool into an AgentFlow tool executor.
