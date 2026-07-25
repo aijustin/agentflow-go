@@ -8,10 +8,13 @@ import (
 
 	queueinmem "github.com/aijustin/agentflow-go/internal/adapter/queue/inmem"
 	"github.com/aijustin/agentflow-go/pkg/identity"
+	"github.com/aijustin/agentflow-go/pkg/security"
 )
 
 func TestHandlerMountsAsyncJobRoutes(t *testing.T) {
-	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), IDGenerator: func() string { return "job-1" }})
+	handler, err := NewHandler(HandlerConfig{
+		Queue: queueinmem.NewQueue(), IDGenerator: func() string { return "job-1" }, InsecureAllowNoAuth: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,11 +54,15 @@ func TestHandlerMountsAsyncRunsBehindAuthMiddleware(t *testing.T) {
 				ID:    "test-user",
 				Type:  identity.PrincipalUser,
 				Scope: identity.Scope{TenantID: "tenant-test"},
+				Roles: []identity.Role{identity.RoleService},
 			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), AuthMiddleware: authMiddleware, IDGenerator: func() string { return "run-1" }})
+	handler, err := NewHandler(HandlerConfig{
+		Queue: queueinmem.NewQueue(), AuthMiddleware: authMiddleware,
+		Policy: security.NewDefaultRolePolicy(), IDGenerator: func() string { return "run-1" },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -199,7 +199,7 @@ func TestHandlerRejectsForbiddenCancel(t *testing.T) {
 }
 
 func TestHandlerReturnsNotFoundForMissingRun(t *testing.T) {
-	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue()})
+	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestHandlerListJobsAndRequeue(t *testing.T) {
 	if err := queue.Fail(ctx, lease, errors.New("boom")); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(HandlerConfig{Queue: queue})
+	handler, err := NewHandler(HandlerConfig{Queue: queue, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestHandlerJobReadsAndAdminListAreTenantScoped(t *testing.T) {
 }
 
 func TestHandlerRejectsInvalidEventAndResumeBodies(t *testing.T) {
-	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue()})
+	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestHandlerRejectsInvalidConfigAndBody(t *testing.T) {
 	if _, err := NewHandler(HandlerConfig{}); err == nil {
 		t.Fatal("expected missing queue error")
 	}
-	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), MaxBodyBytes: 8})
+	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), MaxBodyBytes: 8, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestHandlerRejectsInvalidConfigAndBody(t *testing.T) {
 
 func TestHandlerDefaultGenerateRunID(t *testing.T) {
 	queue := queueinmem.NewQueue()
-	handler, err := NewHandler(HandlerConfig{Queue: queue})
+	handler, err := NewHandler(HandlerConfig{Queue: queue, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestHandlerDefaultGenerateRunID(t *testing.T) {
 func TestHandlerUsesConfiguredClockForGeneratedJobs(t *testing.T) {
 	queue := queueinmem.NewQueue()
 	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
-	handler, err := NewHandler(HandlerConfig{Queue: queue, IDGenerator: func() string { return "run-1" }, Now: func() time.Time { return now }})
+	handler, err := NewHandler(HandlerConfig{Queue: queue, IDGenerator: func() string { return "run-1" }, Now: func() time.Time { return now }, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,9 +365,27 @@ func TestHandlerUsesConfiguredClockForGeneratedJobs(t *testing.T) {
 	}
 }
 
-func TestHandlerSubmitRunWithoutPolicyUsesContextPrincipal(t *testing.T) {
+func TestHandlerSubmitRunWithoutPolicyDefaultsToDeny(t *testing.T) {
 	queue := queueinmem.NewQueue()
 	handler, err := NewHandler(HandlerConfig{Queue: queue, IDGenerator: func() string { return "run-open" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/runs", bytes.NewBufferString(`{"prompt":"hello"}`)))
+	if rec.Code != nethttp.StatusForbidden {
+		t.Fatalf("expected 403, got %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := queue.Load(context.Background(), "run-open"); !errors.Is(err, asyncpkg.ErrJobNotFound) {
+		t.Fatalf("denied request enqueued a job: %v", err)
+	}
+}
+
+func TestHandlerSubmitRunInsecureOptOut(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	handler, err := NewHandler(HandlerConfig{
+		Queue: queue, IDGenerator: func() string { return "run-open" }, InsecureAllowNoAuth: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +408,7 @@ func TestHandlerCancelCompletedRunStateIsNoOp(t *testing.T) {
 	}, 0); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(HandlerConfig{Queue: queue, RunState: runs})
+	handler, err := NewHandler(HandlerConfig{Queue: queue, RunState: runs, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +425,7 @@ func TestHandlerCancelJobRoute(t *testing.T) {
 	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: asyncpkg.EventJobType, MaxAttempts: 1}); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(HandlerConfig{Queue: queue})
+	handler, err := NewHandler(HandlerConfig{Queue: queue, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +454,7 @@ func TestHandlerNotFoundAndMethodNotAllowed(t *testing.T) {
 }
 
 func TestHandlerListJobsRequiresAdminQueue(t *testing.T) {
-	handler, err := NewHandler(HandlerConfig{Queue: stubQueueWithoutAdmin{Queue: queueinmem.NewQueue()}})
+	handler, err := NewHandler(HandlerConfig{Queue: stubQueueWithoutAdmin{Queue: queueinmem.NewQueue()}, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +466,7 @@ func TestHandlerListJobsRequiresAdminQueue(t *testing.T) {
 }
 
 func TestHandlerRequeueRequiresAdminQueue(t *testing.T) {
-	handler, err := NewHandler(HandlerConfig{Queue: stubQueueWithoutAdmin{Queue: queueinmem.NewQueue()}})
+	handler, err := NewHandler(HandlerConfig{Queue: stubQueueWithoutAdmin{Queue: queueinmem.NewQueue()}, InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +478,7 @@ func TestHandlerRequeueRequiresAdminQueue(t *testing.T) {
 }
 
 func TestHandlerSubmitResumeRejectsInvalidDecision(t *testing.T) {
-	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue()})
+	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), InsecureAllowNoAuth: true})
 	if err != nil {
 		t.Fatal(err)
 	}

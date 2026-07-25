@@ -29,14 +29,14 @@ type CheckpointHTTPHandlerConfig struct {
 	MaxBodyBytes int64
 	// Policy authorizes requests: reads as run.read, writes (resume-from-step,
 	// resume-from-checkpoint, fork) as hitl.resume / run.submit, with the
-	// caller's tenant bound to the resource. When Policy is nil the write
-	// endpoints default-deny with 403 auth_required — mounting them open was
-	// a privilege-escalation hole (any caller could resume or fork any run).
+	// caller's tenant bound to the resource. When Policy is nil every endpoint
+	// defaults to 403 auth_required because reads expose run data and writes
+	// can mint fresh execution.
 	Policy security.Policy
 	// Audit receives policy-denied records when configured.
 	Audit audit.Sink
-	// InsecureAllowNoAuth disables the default-deny protection on write
-	// endpoints when Policy is nil. Only set it behind an authenticating
+	// InsecureAllowNoAuth disables the default-deny protection when Policy is
+	// nil. Only set it behind an authenticating
 	// reverse proxy or in tests.
 	InsecureAllowNoAuth bool
 }
@@ -49,8 +49,8 @@ type CheckpointHTTPHandlerConfig struct {
 //   - POST /v1/runs/{run_id}/resume-from-checkpoint
 //   - POST /v1/runs/{run_id}/fork
 //
-// Write routes require CheckpointHTTPHandlerConfig.Policy (or an explicit
-// InsecureAllowNoAuth opt-out) since they mint fresh execution for a run.
+// Every route requires CheckpointHTTPHandlerConfig.Policy (or an explicit
+// InsecureAllowNoAuth opt-out).
 func NewCheckpointHTTPHandler(config CheckpointHTTPHandlerConfig) (http.Handler, error) {
 	if config.Framework == nil {
 		return nil, fmt.Errorf("agentflow: checkpoint handler requires framework")
@@ -260,17 +260,21 @@ type AsyncRunHTTPHandlerConfig struct {
 	IDGenerator  func() string
 	Now          func() time.Time
 	MaxBodyBytes int64
+	// InsecureAllowNoAuth explicitly opens the async endpoints when Policy is
+	// nil. It is intended only for loopback development and tests.
+	InsecureAllowNoAuth bool
 }
 
 func NewAsyncRunHTTPHandler(config AsyncRunHTTPHandlerConfig) (http.Handler, error) {
 	return asynchttp.NewHandler(asynchttp.HandlerConfig{
-		Queue:        config.Queue,
-		RunState:     config.RunState,
-		Policy:       config.Policy,
-		Audit:        config.Audit,
-		IDGenerator:  config.IDGenerator,
-		Now:          config.Now,
-		MaxBodyBytes: config.MaxBodyBytes,
+		Queue:               config.Queue,
+		RunState:            config.RunState,
+		Policy:              config.Policy,
+		Audit:               config.Audit,
+		IDGenerator:         config.IDGenerator,
+		Now:                 config.Now,
+		MaxBodyBytes:        config.MaxBodyBytes,
+		InsecureAllowNoAuth: config.InsecureAllowNoAuth,
 	})
 }
 
@@ -290,25 +294,41 @@ type ProductionHTTPHandlerConfig struct {
 	Framework *agentflow.Framework
 	// StudioSavePath enables POST /v1/studio/save for the configured scenario file.
 	StudioSavePath string
+	// VerifyWebhookSignature validates the raw /v1/events request body before
+	// event decoding, in addition to the shared AuthMiddleware.
+	VerifyWebhookSignature func(r *http.Request, body []byte) error
+	// InsecureAllowNoAuth explicitly opens production routes without
+	// AuthMiddleware and Policy. Only use it for loopback development/tests.
+	InsecureAllowNoAuth bool
 }
 
 func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler, error) {
+	if !config.InsecureAllowNoAuth {
+		if config.AuthMiddleware == nil {
+			return nil, fmt.Errorf("agentflow: production HTTP handler requires AuthMiddleware; set InsecureAllowNoAuth only for loopback development")
+		}
+		if config.Policy == nil {
+			return nil, fmt.Errorf("agentflow: production HTTP handler requires Policy; set InsecureAllowNoAuth only for loopback development")
+		}
+	}
 	apiConfig := apihttp.HandlerConfig{
-		Queue:          config.Queue,
-		Policy:         config.Policy,
-		Audit:          config.Audit,
-		AuthMiddleware: config.AuthMiddleware,
-		MetricsHandler: config.MetricsHandler,
-		IDGenerator:    config.IDGenerator,
-		Now:            config.Now,
-		MaxBodyBytes:   config.MaxBodyBytes,
-		Version:        config.Version,
+		Queue:               config.Queue,
+		Policy:              config.Policy,
+		Audit:               config.Audit,
+		AuthMiddleware:      config.AuthMiddleware,
+		MetricsHandler:      config.MetricsHandler,
+		IDGenerator:         config.IDGenerator,
+		Now:                 config.Now,
+		MaxBodyBytes:        config.MaxBodyBytes,
+		Version:             config.Version,
+		InsecureAllowNoAuth: config.InsecureAllowNoAuth,
 	}
 	if config.Framework != nil {
 		apiConfig.RunState = config.Framework.RunStateRepository()
 		eventsHandler, err := NewWebhookHTTPHandler(WebhookHTTPHandlerConfig{
-			Framework:    config.Framework,
-			MaxBodyBytes: config.MaxBodyBytes,
+			Framework:       config.Framework,
+			MaxBodyBytes:    config.MaxBodyBytes,
+			VerifySignature: config.VerifyWebhookSignature,
 		})
 		if err != nil {
 			return nil, err
@@ -319,31 +339,34 @@ func NewProductionHTTPHandler(config ProductionHTTPHandlerConfig) (http.Handler,
 			MaxBodyBytes: config.MaxBodyBytes,
 		})
 		checkpointHandler, err := NewCheckpointHTTPHandler(CheckpointHTTPHandlerConfig{
-			Framework:    config.Framework,
-			MaxBodyBytes: config.MaxBodyBytes,
-			Policy:       config.Policy,
-			Audit:        config.Audit,
+			Framework:           config.Framework,
+			MaxBodyBytes:        config.MaxBodyBytes,
+			Policy:              config.Policy,
+			Audit:               config.Audit,
+			InsecureAllowNoAuth: config.InsecureAllowNoAuth,
 		})
 		if err != nil {
 			return nil, err
 		}
 		apiConfig.CheckpointHandler = checkpointHandler
 		studioHandler, err := NewStudioHTTPHandler(StudioHTTPHandlerConfig{
-			Framework:      config.Framework,
-			StudioSavePath: config.StudioSavePath,
-			MaxBodyBytes:   config.MaxBodyBytes,
-			Policy:         config.Policy,
-			Audit:          config.Audit,
+			Framework:           config.Framework,
+			StudioSavePath:      config.StudioSavePath,
+			MaxBodyBytes:        config.MaxBodyBytes,
+			Policy:              config.Policy,
+			Audit:               config.Audit,
+			InsecureAllowNoAuth: config.InsecureAllowNoAuth,
 		})
 		if err != nil {
 			return nil, err
 		}
 		apiConfig.StudioHandler = studioHandler
 		retentionHandler, err := NewRetentionHTTPHandler(RetentionHTTPHandlerConfig{
-			Framework:    config.Framework,
-			Policy:       config.Policy,
-			Audit:        config.Audit,
-			MaxBodyBytes: config.MaxBodyBytes,
+			Framework:           config.Framework,
+			Policy:              config.Policy,
+			Audit:               config.Audit,
+			MaxBodyBytes:        config.MaxBodyBytes,
+			InsecureAllowNoAuth: config.InsecureAllowNoAuth,
 		})
 		if err != nil {
 			return nil, err
