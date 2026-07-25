@@ -2,11 +2,13 @@ package agentflow
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -156,6 +158,62 @@ func TestPurgeWithPolicyByStatusFilter(t *testing.T) {
 	}
 	if _, err := repo.Load(ctx, "active"); err != nil {
 		t.Fatalf("running run should remain: %v", err)
+	}
+}
+
+func TestPurgeWithPolicyScopesAuthenticatedTenant(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	fw, err := New(core.Scenario{
+		Name:   "retention-tenant",
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant", LLM: "mock"}},
+		LLMs:   map[string]core.LLMProfileRef{"mock": {Provider: "mock", Model: "test"}},
+	}, WithRunStateRepository(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, snapshot := range []runstate.RunSnapshot{
+		{RunID: "tenant-a-run", ScenarioName: "retention-tenant", TenantID: "tenant-a", Status: runstate.RunStatusCompleted},
+		{RunID: "tenant-b-run", ScenarioName: "retention-tenant", TenantID: "tenant-b", Status: runstate.RunStatusCompleted},
+	} {
+		snapshot := snapshot
+		if err := repo.Save(context.Background(), &snapshot, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "admin-a", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	removed, err := fw.PurgeWithPolicy(ctx, RetentionPolicy{Status: runstate.RunStatusCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed=%d, want 1", removed)
+	}
+	if _, err := repo.Load(context.Background(), "tenant-a-run"); !errors.Is(err, runstate.ErrNotFound) {
+		t.Fatalf("tenant-a run should be deleted, got %v", err)
+	}
+	if _, err := repo.Load(context.Background(), "tenant-b-run"); err != nil {
+		t.Fatalf("tenant-b run must remain: %v", err)
+	}
+}
+
+func TestPurgeRunsRejectsCrossTenantFilter(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	fw, err := New(core.Scenario{
+		Name:   "retention-tenant-filter",
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant", LLM: "mock"}},
+		LLMs:   map[string]core.LLMProfileRef{"mock": {Provider: "mock", Model: "test"}},
+	}, WithRunStateRepository(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "admin-a", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	_, err = fw.PurgeRuns(ctx, runstate.ListFilter{TenantID: "tenant-b"})
+	if !errors.Is(err, runstate.ErrTenantMismatch) {
+		t.Fatalf("expected tenant mismatch, got %v", err)
 	}
 }
 

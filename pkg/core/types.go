@@ -252,10 +252,12 @@ type RuntimePolicy struct {
 	MaxRetries          int           `json:"max_retries,omitempty"`
 	MaxParallel         int           `json:"max_parallel,omitempty"`
 	StepOutputThreshold int64         `json:"step_output_threshold,omitempty"`
-	// ValidateToolInput, when true, validates each tool call's input against
-	// the tool's declared InputSchema before execution. Defaults to false to
-	// preserve the previous behavior (schema is advisory to the model only).
+	// ValidateToolInput is retained for source/configuration compatibility.
+	// Tool input validation is now enabled by default.
 	ValidateToolInput bool `json:"validate_tool_input,omitempty"`
+	// DisableToolInputValidation explicitly restores advisory-only schemas.
+	// Production scenarios should leave this false.
+	DisableToolInputValidation bool `json:"disable_tool_input_validation,omitempty"`
 	// DoomLoopLimit, when > 0, denies a tool call that repeats the same
 	// canonical input this many times within one autonomous run (including
 	// the current attempt). Zero disables the check.

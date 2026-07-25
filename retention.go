@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
@@ -51,6 +50,11 @@ func isTerminalRunStatus(status runstate.RunStatus) bool {
 func (f *Framework) PurgeRuns(ctx context.Context, filter runstate.ListFilter, opts ...PurgeRunsOption) (int, error) {
 	if f.runs == nil {
 		return 0, nil
+	}
+	var err error
+	filter, err = runstate.ScopeListFilter(ctx, filter)
+	if err != nil {
+		return 0, err
 	}
 	options := purgeRunsOptions{}
 	for _, opt := range opts {
@@ -138,8 +142,9 @@ func (f *Framework) PurgeExpired(ctx context.Context, maxAge time.Duration) (int
 			Status:        status,
 			UpdatedBefore: cutoff,
 		}
-		if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
-			filter.TenantID = principal.Scope.TenantID
+		filter, err := runstate.ScopeListFilter(ctx, filter)
+		if err != nil {
+			return removed, err
 		}
 		snapshots, err := f.runs.List(ctx, filter)
 		if err != nil {
@@ -205,8 +210,9 @@ func (f *Framework) purgeExpiredWithLimit(ctx context.Context, policy RetentionP
 		if filter.ScenarioName == "" {
 			filter.ScenarioName = f.currentScenario().Name
 		}
-		if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
-			filter.TenantID = principal.Scope.TenantID
+		filter, err := runstate.ScopeListFilter(ctx, filter)
+		if err != nil {
+			return removed, err
 		}
 		if policy.Limit > 0 {
 			remaining := policy.Limit - removed
@@ -247,8 +253,9 @@ func (f *Framework) PurgeOrphanBlobs(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 	filter := runstate.ListFilter{ScenarioName: f.currentScenario().Name}
-	if principal, ok := identity.PrincipalFromContext(ctx); ok && principal.Scope.TenantID != "" {
-		filter.TenantID = principal.Scope.TenantID
+	filter, err := runstate.ScopeListFilter(ctx, filter)
+	if err != nil {
+		return 0, err
 	}
 	return runstate.PurgeOrphanBlobs(ctx, f.runs, f.blobs, filter)
 }

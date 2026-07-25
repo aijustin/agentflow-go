@@ -18,6 +18,10 @@ func (r *recordingRecorder) IncCounter(context.Context, observability.MetricName
 	r.counters++
 }
 
+func (r *recordingRecorder) AddCounter(_ context.Context, _ observability.MetricName, value float64, _ ...observability.Attribute) {
+	r.counters += int(value)
+}
+
 func (r *recordingRecorder) ObserveHistogram(context.Context, observability.MetricName, float64, ...observability.Attribute) {
 }
 

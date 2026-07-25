@@ -9,7 +9,7 @@ import (
 
 func TestRecorderFuncDelegatesAllMethods(t *testing.T) {
 	called := 0
-	fn := observability.RecorderFunc(func(ctx context.Context, name observability.MetricName, attrs ...observability.Attribute) {
+	fn := observability.RecorderFunc(func(ctx context.Context, name observability.MetricName, value float64, attrs ...observability.Attribute) {
 		called++
 	})
 	fn.IncCounter(context.Background(), observability.MetricRuntimeEventsTotal)
@@ -24,6 +24,7 @@ func TestNoopRecorderAndTracer(t *testing.T) {
 	ctx := context.Background()
 	var recorder observability.NoopRecorder
 	recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal)
+	recorder.AddCounter(ctx, observability.MetricLLMTokensTotal, 42)
 	recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, 1.0)
 	recorder.SetGauge(ctx, observability.MetricMemoryTierRecords, 1.0)
 
@@ -39,14 +40,28 @@ func TestNoopRecorderAndTracer(t *testing.T) {
 
 func TestRecorderFuncDelegatesIncCounter(t *testing.T) {
 	called := false
-	fn := observability.RecorderFunc(func(ctx context.Context, name observability.MetricName, attrs ...observability.Attribute) {
+	fn := observability.RecorderFunc(func(ctx context.Context, name observability.MetricName, value float64, attrs ...observability.Attribute) {
 		called = true
 		if name != observability.MetricRuntimeEventsTotal {
 			t.Fatalf("unexpected metric: %s", name)
+		}
+		if value != 1 {
+			t.Fatalf("unexpected increment: %v", value)
 		}
 	})
 	fn.IncCounter(context.Background(), observability.MetricRuntimeEventsTotal)
 	if !called {
 		t.Fatal("expected recorder func to be invoked")
+	}
+}
+
+func TestRecorderFuncDelegatesCounterDelta(t *testing.T) {
+	var got float64
+	fn := observability.RecorderFunc(func(_ context.Context, _ observability.MetricName, value float64, _ ...observability.Attribute) {
+		got = value
+	})
+	fn.AddCounter(context.Background(), observability.MetricLLMTokensTotal, 128)
+	if got != 128 {
+		t.Fatalf("counter delta = %v, want 128", got)
 	}
 }

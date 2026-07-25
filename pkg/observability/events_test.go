@@ -125,9 +125,10 @@ func TestNormalizeQueriesAndEvents(t *testing.T) {
 func TestNoopRecorderAndTracer(t *testing.T) {
 	ctx := context.Background()
 	NoopRecorder{}.IncCounter(ctx, MetricRuntimeEventsTotal)
+	NoopRecorder{}.AddCounter(ctx, MetricLLMTokensTotal, 5)
 	NoopRecorder{}.ObserveHistogram(ctx, MetricRunDurationSeconds, 1.0)
 	NoopRecorder{}.SetGauge(ctx, MetricQueueJobsQueued, 2)
-	rec := RecorderFunc(func(context.Context, MetricName, ...Attribute) {})
+	rec := RecorderFunc(func(context.Context, MetricName, float64, ...Attribute) {})
 	rec.ObserveHistogram(ctx, MetricRunDurationSeconds, 1.0)
 	rec.SetGauge(ctx, MetricQueueJobsRunning, 3)
 	_, span := NoopTracer{}.Start(ctx, SpanRun)

@@ -53,7 +53,7 @@ func TestBuilderExtendedOptionHelpers(t *testing.T) {
 			builder.CollectionEmbedProfile("embed"), builder.CollectionTenantScoped(true), builder.CollectionAgents("assistant")).
 		Agent("assistant").Description("helper").Role("support").Tools("git").SubAgent("worker").
 		LLM("chat").Memory("custom").Skill("review").Done().
-		Runtime(builder.RuntimeMaxSteps(10), builder.RuntimeMaxRetries(2), builder.RuntimeSecret("KEY", "value")).
+		Runtime(builder.RuntimeMaxSteps(10), builder.RuntimeMaxRetries(2), builder.RuntimeValidateToolInput(), builder.RuntimeSecret("KEY", "value")).
 		Orchestration(builder.Mode(builder.ModeAutonomous), builder.MaxParallel(3), builder.Planning(true, builder.PlanningAgent("planner"), builder.PlanningExecute(true), builder.PlanningMaxSteps(5))).
 		Autonomous().
 		Scenario()
@@ -63,7 +63,7 @@ func TestBuilderExtendedOptionHelpers(t *testing.T) {
 	if scenario.Memories["custom"].Type != builder.MemoryTypeCustom {
 		t.Fatalf("memory=%+v", scenario.Memories["custom"])
 	}
-	if scenario.Runtime.Secrets["KEY"] != "value" || scenario.Runtime.MaxSteps != 10 {
+	if scenario.Runtime.Secrets["KEY"] != "value" || scenario.Runtime.MaxSteps != 10 || !scenario.Runtime.ValidateToolInput {
 		t.Fatalf("runtime=%+v", scenario.Runtime)
 	}
 	if scenario.Orchestration.Planning.Agent != "planner" || scenario.Orchestration.MaxParallel != 3 {
@@ -72,6 +72,16 @@ func TestBuilderExtendedOptionHelpers(t *testing.T) {
 	agent := scenario.Agents["assistant"]
 	if agent.Role != "support" || len(agent.Skills) != 1 || len(agent.SubAgents) != 1 {
 		t.Fatalf("agent=%+v", agent)
+	}
+}
+
+func TestRuntimeDisableToolInputValidationOption(t *testing.T) {
+	scenario := builder.New("runtime-validation-opt-out").
+		Runtime(builder.RuntimeDisableToolInputValidation()).
+		Autonomous().
+		Scenario()
+	if !scenario.Runtime.DisableToolInputValidation || scenario.Runtime.ValidateToolInput {
+		t.Fatalf("runtime=%+v", scenario.Runtime)
 	}
 }
 

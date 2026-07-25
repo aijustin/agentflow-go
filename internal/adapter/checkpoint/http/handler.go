@@ -379,11 +379,19 @@ func (h *Handler) requireWriteAuth(w nethttp.ResponseWriter, r *nethttp.Request,
 	return h.authorize(w, r, action, security.Resource{Type: "run", ID: runID})
 }
 
-// requireReadAuth authorizes read endpoints when a Policy is configured;
-// reads stay open otherwise.
+// requireReadAuth protects checkpoint payloads with the same default-deny
+// contract as writes. Step outputs and snapshots may contain prompts, tool
+// results, or other tenant data and must not become IDOR endpoints.
 func (h *Handler) requireReadAuth(w nethttp.ResponseWriter, r *nethttp.Request, runID string) bool {
 	if h.policy == nil {
-		return true
+		if h.insecure {
+			return true
+		}
+		writeJSON(w, nethttp.StatusForbidden, map[string]string{
+			"error":      "checkpoint read endpoints require an authorization policy; configure Policy or explicitly set InsecureAllowNoAuth to disable this protection",
+			"error_code": "auth_required",
+		})
+		return false
 	}
 	return h.authorize(w, r, security.ActionRunRead, security.Resource{Type: "run", ID: runID})
 }

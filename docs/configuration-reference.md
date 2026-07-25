@@ -454,6 +454,8 @@ go run ./examples/go/event-trigger/main.go
 | `max_steps` | 整数 | 否 | 全局 autonomous 步骤上限。 |
 | `max_retries` | 整数 | 否 | 全局重试上限。 |
 | `max_parallel` | 整数 | 否 | 全局并行度上限（工作流与工具批次共用；工具批次未设置时默认全并行）。 |
+| `validate_tool_input` | 布尔 | 否 | 兼容字段；工具输入现在默认按 `input_schema` 校验。 |
+| `disable_tool_input_validation` | 布尔 | 否 | 显式关闭工具输入校验，仅用于受控兼容迁移；生产环境保持 `false`。 |
 | `doom_loop_limit` | 整数 | 否 | 同一 tool+canonical input 在单次 run 内重复达到该次数时显式拒绝（含当前次）；`0` 关闭。 |
 | `hitl_deny_limit` | 整数 | 否 | 连续审批拒绝（soft deny / cached deny）达到该次数时失败结束 run；`0` 关闭。与 `doom_loop_limit` 正交。 |
 | `step_output_threshold` | 整数 | 否 | 单步输出超过该字节阈值时外置到已配置的 BlobStore；未配置 BlobStore 或未超过阈值时继续内联保存。 |

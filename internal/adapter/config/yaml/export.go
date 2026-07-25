@@ -59,13 +59,16 @@ func DocumentFromCore(scenario core.Scenario) (Document, error) {
 			},
 		},
 		Runtime: Runtime{
-			Timeout:             scenario.Runtime.Timeout,
-			MaxSteps:            scenario.Runtime.MaxSteps,
-			MaxRetries:          scenario.Runtime.MaxRetries,
-			MaxParallel:         scenario.Runtime.MaxParallel,
-			StepOutputThreshold: scenario.Runtime.StepOutputThreshold,
-			DoomLoopLimit:       scenario.Runtime.DoomLoopLimit,
-			Secrets:             scenario.Runtime.Secrets,
+			Timeout:                    scenario.Runtime.Timeout,
+			MaxSteps:                   scenario.Runtime.MaxSteps,
+			MaxRetries:                 scenario.Runtime.MaxRetries,
+			MaxParallel:                scenario.Runtime.MaxParallel,
+			StepOutputThreshold:        scenario.Runtime.StepOutputThreshold,
+			ValidateToolInput:          scenario.Runtime.ValidateToolInput,
+			DisableToolInputValidation: scenario.Runtime.DisableToolInputValidation,
+			DoomLoopLimit:              scenario.Runtime.DoomLoopLimit,
+			HITLDenyLimit:              scenario.Runtime.HITLDenyLimit,
+			Secrets:                    scenario.Runtime.Secrets,
 		},
 	}}
 	for name, profile := range scenario.LLMs {

@@ -2,17 +2,14 @@ package memory
 
 import "strings"
 
-// TenantScopedNamespace prefixes namespace identifiers with tenantID when present.
+// TenantScopedNamespace assigns tenantID as a dedicated namespace dimension.
+// Session and run identifiers remain unchanged, so tenant strings and
+// user-configured namespace prefixes cannot collide.
 func TenantScopedNamespace(ns Namespace, tenantID string) Namespace {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
 		return ns
 	}
-	if ns.SessionID != "" && !strings.HasPrefix(ns.SessionID, tenantID+"/") {
-		ns.SessionID = tenantID + "/" + ns.SessionID
-	}
-	if ns.RunID != "" && !strings.HasPrefix(ns.RunID, tenantID+"/") {
-		ns.RunID = tenantID + "/" + ns.RunID
-	}
+	ns.TenantID = tenantID
 	return ns
 }

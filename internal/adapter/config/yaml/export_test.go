@@ -32,6 +32,9 @@ scenario:
       memory: session
       tools: [echo]
       instructions: help
+  runtime:
+    validate_tool_input: true
+    hitl_deny_limit: 4
   orchestration:
     mode: fixed_workflow
     workflow:
@@ -62,6 +65,34 @@ scenario:
 	}
 	if loaded.Orchestration.Workflow == nil || len(loaded.Orchestration.Workflow.Nodes) != 1 {
 		t.Fatalf("unexpected workflow: %+v", loaded.Orchestration.Workflow)
+	}
+	if !loaded.Runtime.ValidateToolInput || loaded.Runtime.DisableToolInputValidation || loaded.Runtime.HITLDenyLimit != 4 {
+		t.Fatalf("runtime fields did not round-trip: %+v", loaded.Runtime)
+	}
+}
+
+func TestMarshalRoundTripPreservesToolValidationOptOut(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "runtime-opt-out",
+		LLMs: map[string]core.LLMProfileRef{
+			"default": {Provider: "mock", Model: "test"},
+		},
+		Agents: map[string]core.Agent{
+			"worker": {Name: "worker", LLM: "default"},
+		},
+		Runtime:       core.RuntimePolicy{DisableToolInputValidation: true},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+	data, err := Marshal(scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Runtime.DisableToolInputValidation {
+		t.Fatalf("runtime validation opt-out did not round-trip: %+v", loaded.Runtime)
 	}
 }
 

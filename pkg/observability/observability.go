@@ -42,6 +42,9 @@ type Attribute struct {
 
 type Recorder interface {
 	IncCounter(ctx context.Context, name MetricName, attrs ...Attribute)
+	// AddCounter adds a non-negative delta in one operation. Token and byte
+	// totals must use this instead of issuing one IncCounter call per unit.
+	AddCounter(ctx context.Context, name MetricName, value float64, attrs ...Attribute)
 	ObserveHistogram(ctx context.Context, name MetricName, value float64, attrs ...Attribute)
 	SetGauge(ctx context.Context, name MetricName, value float64, attrs ...Attribute)
 }
@@ -56,10 +59,14 @@ type Tracer interface {
 	Start(ctx context.Context, name SpanName, attrs ...Attribute) (context.Context, Span)
 }
 
-type RecorderFunc func(ctx context.Context, name MetricName, attrs ...Attribute)
+type RecorderFunc func(ctx context.Context, name MetricName, value float64, attrs ...Attribute)
 
 func (fn RecorderFunc) IncCounter(ctx context.Context, name MetricName, attrs ...Attribute) {
-	fn(ctx, name, attrs...)
+	fn(ctx, name, 1, attrs...)
+}
+
+func (fn RecorderFunc) AddCounter(ctx context.Context, name MetricName, value float64, attrs ...Attribute) {
+	fn(ctx, name, value, attrs...)
 }
 
 func (fn RecorderFunc) ObserveHistogram(context.Context, MetricName, float64, ...Attribute) {}
@@ -69,6 +76,8 @@ func (fn RecorderFunc) SetGauge(context.Context, MetricName, float64, ...Attribu
 type NoopRecorder struct{}
 
 func (NoopRecorder) IncCounter(context.Context, MetricName, ...Attribute) {}
+
+func (NoopRecorder) AddCounter(context.Context, MetricName, float64, ...Attribute) {}
 
 func (NoopRecorder) ObserveHistogram(context.Context, MetricName, float64, ...Attribute) {}
 

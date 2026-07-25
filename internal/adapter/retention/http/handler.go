@@ -123,8 +123,10 @@ func (h *Handler) handlePurgeRuns(w nethttp.ResponseWriter, r *nethttp.Request) 
 		TenantID:     req.TenantID,
 		Limit:        req.Limit,
 	}
-	if filter.TenantID == "" && principal.Scope.TenantID != "" {
-		filter.TenantID = principal.Scope.TenantID
+	filter, err := runstate.ScopeListFilter(r.Context(), filter)
+	if err != nil {
+		nethttp.Error(w, "forbidden", nethttp.StatusForbidden)
+		return
 	}
 	removed, err := h.purger.PurgeRuns(r.Context(), filter)
 	if err != nil {

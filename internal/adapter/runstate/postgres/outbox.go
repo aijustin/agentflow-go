@@ -242,13 +242,21 @@ func (r *Repository) DeleteOutboxForRun(ctx context.Context, runID string) (int6
 }
 
 // PurgeOutboxPublishedBefore implements runstate.OutboxRepository. Only
-// published rows are removed; unpublished rows are undelivered events.
+// published rows in the caller's tenant scope are removed; unpublished rows
+// are undelivered events.
 func (r *Repository) PurgeOutboxPublishedBefore(ctx context.Context, cutoff time.Time) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	query := fmt.Sprintf(`DELETE FROM %s WHERE published_at IS NOT NULL AND published_at < $1`, r.outboxTable)
-	result, err := r.db.ExecContext(ctx, query, cutoff.UTC())
+	scope, err := runstate.ScopeListFilter(ctx, runstate.ListFilter{})
+	if err != nil {
+		return 0, err
+	}
+	query := fmt.Sprintf(`DELETE FROM %s
+WHERE published_at IS NOT NULL
+  AND published_at < $1
+  AND ($2 = '' OR payload_json->>'tenant_id' = $2)`, r.outboxTable)
+	result, err := r.db.ExecContext(ctx, query, cutoff.UTC(), scope.TenantID)
 	if err != nil {
 		return 0, fmt.Errorf("postgres runstate: purge published outbox: %w", err)
 	}

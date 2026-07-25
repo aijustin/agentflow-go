@@ -119,6 +119,7 @@ make validate-builder
 
 - Go 1.25.12+
 - macOS/Linux shell
+- 构建 Studio SPA：Node.js 24 LTS + pnpm 10（普通 Go 构建无需 Node.js）
 
 ### 作为框架在其他 Go 项目中使用
 
@@ -343,7 +344,7 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`httpx.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz`、异步 run/event/resume job API；当配置 `Framework` 时还会挂载同步 `/v1/events` 和 `/v1/hitl/resume`。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
+`httpx.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz`、异步 run/event/resume job API；当配置 `Framework` 时还会挂载同步 `/v1/events` 和 `/v1/hitl/resume`。构造器默认要求 `AuthMiddleware` + `Policy`；仅 loopback 本地开发可显式设置 `InsecureAllowNoAuth`。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
 
 MCP Server 可以通过适配器变成普通受治理工具，无需改变 runtime core：
 
@@ -766,6 +767,7 @@ http.Handle("/v1/", middleware(handler))
 api, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
   Queue:     queue,
   Framework: fw,
+  AuthMiddleware: authMiddleware,
   Policy:    security.NewDefaultRolePolicy(),
   Audit:     auditSink,
   Version:   agentflow.Version,
@@ -966,7 +968,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 ## 当前状态
 
-**下一版本：v0.4.5（待合并与打标）** — 补齐 Job/Blob 租户隔离、detached run 显式取消、Studio 试跑输出闭环、MCP/ToolResolver 生命周期和安全发布流程；当前稳定发布仍为 v0.4.3。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+**当前发布：v0.5.0** — 完成 Memory/RunState/Outbox 多租户隔离、生产 HTTP 默认失败关闭、全编排模式 Tool Schema 强校验、稳定工具幂等键，以及 React 19 / Router 8 Studio 安全升级。完整变更与迁移说明见 [CHANGELOG.md](CHANGELOG.md)。
 
 核心模块已可用：
 

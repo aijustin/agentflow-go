@@ -245,6 +245,8 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 			return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: decode checkpoint messages: %w", err))
 		}
 	}
+	stepsConsumed := checkpointStepsConsumed(snapshot.Variables)
+	messages, pending = normalizeCheckpointToolCallIDs(snapshot.RunID, stepsConsumed, messages, pending)
 	tracker := newToolCallTracker()
 	if raw := snapshot.Variables[checkpointToolCountsVar]; len(raw) > 0 {
 		decoded, err := decodeToolCallTracker(raw)
@@ -276,7 +278,6 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	if !ok || !e.llm.Supports(agent.LLM, llm.CapToolCall) {
 		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: llm profile %q does not support tool calling", agent.LLM))
 	}
-	stepsConsumed := checkpointStepsConsumed(snapshot.Variables)
 	// Cumulative across the whole run (including replans before this pause)
 	// so pausing and resuming cannot reset the replan budget.
 	replanAttempts := checkpointIntVar(snapshot.Variables, checkpointReplanAttemptsVar)
@@ -307,6 +308,34 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		return RunResult{}, err
 	}
 	return RunResult{RunID: snapshot.RunID, Status: runstate.RunStatusRunning, Output: output}, nil
+}
+
+func normalizeCheckpointToolCallIDs(runID string, logicalStep int, messages []llm.Message, pending []llm.ToolCall) ([]llm.Message, []llm.ToolCall) {
+	assistantIndex := lastAssistantWithToolCallsIndex(messages)
+	if assistantIndex < 0 {
+		return messages, ensureToolCallIDs(runID, logicalStep, pending)
+	}
+	allCalls := ensureToolCallIDs(runID, logicalStep, messages[assistantIndex].ToolCalls)
+	messages[assistantIndex].ToolCalls = allCalls
+	out := append([]llm.ToolCall(nil), pending...)
+	start := len(allCalls) - len(out)
+	if start < 0 {
+		start = 0
+	}
+	for index := range out {
+		if strings.TrimSpace(out[index].ID) != "" {
+			continue
+		}
+		position := start + index
+		if position < len(allCalls) &&
+			allCalls[position].Name == out[index].Name &&
+			canonicalJSON(allCalls[position].Input) == canonicalJSON(out[index].Input) {
+			out[index].ID = allCalls[position].ID
+			continue
+		}
+		out[index].ID = stableToolCallID(runID, logicalStep, position, out[index])
+	}
+	return messages, out
 }
 
 func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, messages []llm.Message, pending []llm.ToolCall, tracker *toolCallTracker, caller llm.ToolCaller, prompt string, amendment string, stepsConsumed int, replanAttempts int) (string, error) {

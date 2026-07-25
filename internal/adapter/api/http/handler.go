@@ -14,21 +14,22 @@ import (
 )
 
 type HandlerConfig struct {
-	Queue             asyncpkg.Queue
-	RunState          runstate.Repository
-	Policy            security.Policy
-	Audit             audit.Sink
-	AuthMiddleware    func(nethttp.Handler) nethttp.Handler
-	MetricsHandler    nethttp.Handler
-	IDGenerator       func() string
-	Now               func() time.Time
-	MaxBodyBytes      int64
-	Version           string
-	EventsHandler     nethttp.Handler
-	HITLHandler       nethttp.Handler
-	CheckpointHandler nethttp.Handler
-	StudioHandler     nethttp.Handler
-	RetentionHandler  nethttp.Handler
+	Queue               asyncpkg.Queue
+	RunState            runstate.Repository
+	Policy              security.Policy
+	Audit               audit.Sink
+	AuthMiddleware      func(nethttp.Handler) nethttp.Handler
+	MetricsHandler      nethttp.Handler
+	IDGenerator         func() string
+	Now                 func() time.Time
+	MaxBodyBytes        int64
+	Version             string
+	EventsHandler       nethttp.Handler
+	HITLHandler         nethttp.Handler
+	CheckpointHandler   nethttp.Handler
+	StudioHandler       nethttp.Handler
+	RetentionHandler    nethttp.Handler
+	InsecureAllowNoAuth bool
 }
 
 type Handler struct {
@@ -41,13 +42,14 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, fmt.Errorf("api http: queue is nil")
 	}
 	runHandler, err := asynchttp.NewHandler(asynchttp.HandlerConfig{
-		Queue:        config.Queue,
-		RunState:     config.RunState,
-		Policy:       config.Policy,
-		Audit:        config.Audit,
-		IDGenerator:  config.IDGenerator,
-		Now:          config.Now,
-		MaxBodyBytes: config.MaxBodyBytes,
+		Queue:               config.Queue,
+		RunState:            config.RunState,
+		Policy:              config.Policy,
+		Audit:               config.Audit,
+		IDGenerator:         config.IDGenerator,
+		Now:                 config.Now,
+		MaxBodyBytes:        config.MaxBodyBytes,
+		InsecureAllowNoAuth: config.InsecureAllowNoAuth,
 	})
 	if err != nil {
 		return nil, err

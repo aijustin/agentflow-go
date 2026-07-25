@@ -123,6 +123,9 @@ func main() {
 		Version:        agentflow.Version,
 		MetricsHandler: adapters.PrometheusMetricsHandler(recorder),
 		StudioSavePath: studioSavePath,
+		// This example binds to loopback by default. Production deployments
+		// must configure AuthMiddleware instead of enabling this opt-out.
+		InsecureAllowNoAuth: true,
 	})
 	if err != nil {
 		log.Fatal(err)

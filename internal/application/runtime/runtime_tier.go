@@ -12,6 +12,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
 	"github.com/aijustin/agentflow-go/pkg/observability"
+	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 func (e *Engine) tierManager(agent core.Agent) (tier.Manager, tier.Settings, bool) {
@@ -50,9 +51,17 @@ func (e *Engine) scopedMemoryNamespace(ctx context.Context, runID string, agent 
 	if err != nil || !ok {
 		return memory.Namespace{}, false, err
 	}
-	if principal, ok := identity.PrincipalFromContext(ctx); ok {
-		ns = memory.TenantScopedNamespace(ns, principal.Scope.TenantID)
+	principal, hasPrincipal := identity.PrincipalFromContext(ctx)
+	if !hasPrincipal {
+		if runstate.TenantStrictModeFromContext(ctx) {
+			return memory.Namespace{}, false, runstate.ErrTenantRequired
+		}
+		return ns, true, nil
 	}
+	if err := principal.Validate(); err != nil {
+		return memory.Namespace{}, false, runstate.ErrTenantRequired
+	}
+	ns = memory.TenantScopedNamespace(ns, principal.Scope.TenantID)
 	return ns, true, nil
 }
 

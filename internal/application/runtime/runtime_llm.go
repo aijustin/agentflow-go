@@ -590,7 +590,8 @@ func (e *Engine) answerWithToolsFrom(
 		}
 		assistant := resp.Message
 		assistant.Role = llm.RoleAssistant
-		assistant.ToolCalls = llm.NormalizeToolCallInputs(resp.ToolCalls)
+		logicalStep := stepsConsumedBase + step + 1
+		assistant.ToolCalls = ensureToolCallIDs(runID, logicalStep, llm.NormalizeToolCallInputs(resp.ToolCalls))
 		resp.ToolCalls = assistant.ToolCalls
 		messages = append(messages, assistant)
 		if len(resp.ToolCalls) == 0 {
@@ -641,7 +642,7 @@ func (e *Engine) answerWithToolsFrom(
 		var dispatchErr error
 		messages, userPromptPersisted, dispatchErr = e.dispatchToolCalls(
 			stepRunCtx, runID, agent, profile, assistant, resp.ToolCalls, messages, tracker,
-			prompt, true, stepsConsumedBase+step+1, replanAttempts, userPromptPersisted, emit,
+			prompt, true, logicalStep, replanAttempts, userPromptPersisted, emit,
 		)
 		if dispatchErr != nil {
 			return "", dispatchErr
@@ -657,7 +658,7 @@ func (e *Engine) answerWithToolsFrom(
 		// scratch. A persistence failure fails the run - the already-saved
 		// iterations keep it resumable.
 		if e.autonomousIterationPersistenceEnabled(ctx) {
-			if err := e.persistAutonomousIteration(ctx, runID, stepsConsumedBase+step+1, messages); err != nil {
+			if err := e.persistAutonomousIteration(ctx, runID, logicalStep, messages); err != nil {
 				return "", err
 			}
 		}
@@ -1141,8 +1142,8 @@ func (e *Engine) recordLLMUsage(ctx context.Context, profileName string, usage *
 		{"prompt", usage.InputTokens},
 		{"completion", usage.OutputTokens},
 	} {
-		for i := 0; i < bucket.tokens; i++ {
-			e.recorder.IncCounter(ctx, observability.MetricLLMTokensTotal,
+		if bucket.tokens > 0 {
+			e.recorder.AddCounter(ctx, observability.MetricLLMTokensTotal, float64(bucket.tokens),
 				observability.Attribute{Key: "profile", Value: profileName},
 				observability.Attribute{Key: "kind", Value: bucket.kind})
 		}

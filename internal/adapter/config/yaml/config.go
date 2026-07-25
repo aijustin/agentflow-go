@@ -244,13 +244,16 @@ type RetryPolicy struct {
 }
 
 type Runtime struct {
-	Timeout             time.Duration     `yaml:"timeout"`
-	MaxSteps            int               `yaml:"max_steps"`
-	MaxRetries          int               `yaml:"max_retries"`
-	MaxParallel         int               `yaml:"max_parallel"`
-	StepOutputThreshold int64             `yaml:"step_output_threshold"`
-	DoomLoopLimit       int               `yaml:"doom_loop_limit"`
-	Secrets             map[string]string `yaml:"secrets"`
+	Timeout                    time.Duration     `yaml:"timeout"`
+	MaxSteps                   int               `yaml:"max_steps"`
+	MaxRetries                 int               `yaml:"max_retries"`
+	MaxParallel                int               `yaml:"max_parallel"`
+	StepOutputThreshold        int64             `yaml:"step_output_threshold"`
+	ValidateToolInput          bool              `yaml:"validate_tool_input"`
+	DisableToolInputValidation bool              `yaml:"disable_tool_input_validation"`
+	DoomLoopLimit              int               `yaml:"doom_loop_limit"`
+	HITLDenyLimit              int               `yaml:"hitl_deny_limit"`
+	Secrets                    map[string]string `yaml:"secrets"`
 }
 
 func LoadFile(path string) (core.Scenario, error) {
@@ -301,13 +304,16 @@ func (d Document) ToCore() (core.Scenario, error) {
 			},
 		},
 		Runtime: core.RuntimePolicy{
-			Timeout:             d.Scenario.Runtime.Timeout,
-			MaxSteps:            d.Scenario.Runtime.MaxSteps,
-			MaxRetries:          d.Scenario.Runtime.MaxRetries,
-			MaxParallel:         d.Scenario.Runtime.MaxParallel,
-			StepOutputThreshold: d.Scenario.Runtime.StepOutputThreshold,
-			DoomLoopLimit:       d.Scenario.Runtime.DoomLoopLimit,
-			Secrets:             d.Scenario.Runtime.Secrets,
+			Timeout:                    d.Scenario.Runtime.Timeout,
+			MaxSteps:                   d.Scenario.Runtime.MaxSteps,
+			MaxRetries:                 d.Scenario.Runtime.MaxRetries,
+			MaxParallel:                d.Scenario.Runtime.MaxParallel,
+			StepOutputThreshold:        d.Scenario.Runtime.StepOutputThreshold,
+			ValidateToolInput:          d.Scenario.Runtime.ValidateToolInput,
+			DisableToolInputValidation: d.Scenario.Runtime.DisableToolInputValidation,
+			DoomLoopLimit:              d.Scenario.Runtime.DoomLoopLimit,
+			HITLDenyLimit:              d.Scenario.Runtime.HITLDenyLimit,
+			Secrets:                    d.Scenario.Runtime.Secrets,
 		},
 	}
 	for name, profile := range d.Scenario.LLMs {

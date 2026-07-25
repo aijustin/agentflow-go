@@ -28,6 +28,9 @@ type HandlerConfig struct {
 	IDGenerator  func() string
 	Now          func() time.Time
 	MaxBodyBytes int64
+	// InsecureAllowNoAuth explicitly restores the legacy open behavior when
+	// Policy is nil. Production callers should configure a policy instead.
+	InsecureAllowNoAuth bool
 }
 
 type Handler struct {
@@ -38,6 +41,7 @@ type Handler struct {
 	idGenerator  func() string
 	now          func() time.Time
 	maxBodyBytes int64
+	insecure     bool
 }
 
 type SubmitRunRequest struct {
@@ -102,6 +106,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		idGenerator:  idGenerator,
 		now:          now,
 		maxBodyBytes: maxBodyBytes,
+		insecure:     config.InsecureAllowNoAuth,
 	}, nil
 }
 
@@ -436,7 +441,15 @@ func (handler *Handler) cancelRunState(ctx context.Context, runID string) error 
 
 func (handler *Handler) authorize(w nethttp.ResponseWriter, r *nethttp.Request, action security.Action, resource security.Resource) (identity.Principal, bool) {
 	if handler.policy == nil {
-		return principalFromContext(r.Context()), true
+		if handler.insecure {
+			return principalFromContext(r.Context()), true
+		}
+		handler.recordDenied(r.Context(), identity.Principal{}, action, resource, security.ErrUnauthenticated)
+		writeJSON(w, nethttp.StatusForbidden, map[string]string{
+			"error":      "async endpoints require an authorization policy; configure Policy or explicitly set InsecureAllowNoAuth",
+			"error_code": "auth_required",
+		})
+		return identity.Principal{}, false
 	}
 	principal, err := identity.RequirePrincipal(r.Context())
 	if err != nil {

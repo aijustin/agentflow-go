@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -108,6 +110,91 @@ func TestWriteMemoryDefaultIsUnbounded(t *testing.T) {
 	}
 	if len(stored) != 4 {
 		t.Fatalf("expected all 4 messages retained by default, got %d", len(stored))
+	}
+}
+
+func TestFlatMemoryIsIsolatedByTenant(t *testing.T) {
+	memRepo := memoryinmem.NewRepository()
+	scenario := baseScenario(false)
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "shared-session"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:   runstateinmem.NewRepository(),
+		LLM:    &capturingGateway{response: "ok"},
+		Memory: map[string]memory.Repository{"session": memRepo},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantContext := func(tenant string) context.Context {
+		return identity.WithPrincipal(context.Background(), identity.Principal{
+			ID: "svc-" + tenant, Type: identity.PrincipalService,
+			Scope: identity.Scope{TenantID: tenant}, Roles: []identity.Role{identity.RoleService},
+		})
+	}
+	ctxA := tenantContext("tenant-a")
+	ctxB := tenantContext("tenant-b")
+	if err := engine.writeMemory(ctxA, "run-a", agent, []memoryMessage{
+		runTurnMemoryMessage(string(llm.RoleUser), "tenant-a-only"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.writeMemory(ctxB, "run-b", agent, []memoryMessage{
+		runTurnMemoryMessage(string(llm.RoleUser), "tenant-b-only"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	messagesA, err := engine.readMemory(ctxA, "run-a", agent, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	messagesB, err := engine.readMemory(ctxB, "run-b", agent, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messagesA) != 1 || messagesA[0].Content != "tenant-a-only" {
+		t.Fatalf("tenant-a memory leaked or missing: %+v", messagesA)
+	}
+	if len(messagesB) != 1 || messagesB[0].Content != "tenant-b-only" {
+		t.Fatalf("tenant-b memory leaked or missing: %+v", messagesB)
+	}
+}
+
+func TestFlatMemoryRequiresTenantInStrictMode(t *testing.T) {
+	memRepo := memoryinmem.NewRepository()
+	scenario := baseScenario(false)
+	scenario.Memories = map[string]core.MemoryRef{
+		"session": {Type: "in_memory", Scope: string(memory.ScopeSession), Namespace: "strict-session"},
+	}
+	agent := scenario.Agents["assistant"]
+	agent.Memory = "session"
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:   runstateinmem.NewRepository(),
+		LLM:    &capturingGateway{response: "ok"},
+		Memory: map[string]memory.Repository{"session": memRepo},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contexts := []context.Context{
+		runstate.ContextWithTenantStrictMode(context.Background()),
+		runstate.ContextWithTenantStrictMode(identity.WithPrincipal(context.Background(), identity.Principal{
+			ID: "svc-invalid", Type: identity.PrincipalService,
+			Scope: identity.Scope{TenantID: " "}, Roles: []identity.Role{identity.RoleService},
+		})),
+	}
+	for _, ctx := range contexts {
+		err = engine.writeMemory(ctx, "run-strict", agent, []memoryMessage{
+			runTurnMemoryMessage(string(llm.RoleUser), "must-not-write"),
+		})
+		if !errors.Is(err, runstate.ErrTenantRequired) {
+			t.Fatalf("expected tenant required, got %v", err)
+		}
 	}
 }
 

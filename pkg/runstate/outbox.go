@@ -54,7 +54,8 @@ type OutboxRepository interface {
 	// DeleteOutboxForRun removes every outbox row of a run (published or
 	// not); used by the retention cascade when the run itself is deleted.
 	DeleteOutboxForRun(ctx context.Context, runID string) (int64, error)
-	// PurgeOutboxPublishedBefore removes published rows older than cutoff.
+	// PurgeOutboxPublishedBefore removes published rows older than cutoff,
+	// scoped to the authenticated tenant when the context carries one.
 	// Unpublished rows are never purged here: they are undelivered events,
 	// not garbage.
 	PurgeOutboxPublishedBefore(ctx context.Context, cutoff time.Time) (int64, error)

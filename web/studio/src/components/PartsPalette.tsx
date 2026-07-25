@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParts } from '../api/hooks';
 import { useCanvasStore } from '../store/canvas';
 import type { StudioPart } from '../api/types';
+import { QueryError } from './QueryError';
 
 const groups = [
   { key: 'agents', label: 'Agents', kind: 'agent' },
@@ -42,7 +43,7 @@ export function PartsPalette() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {isLoading && <p className="p-2 text-[12px] text-muted">加载中…</p>}
-        {error && <p className="p-2 text-[12px] text-fail">零件加载失败</p>}
+        {error && <QueryError error={error} label="零件加载失败" />}
         {groups.map((group) => {
           const items = (parts?.[group.key] ?? []) as StudioPart[];
           const isCollapsed = collapsed[group.key];

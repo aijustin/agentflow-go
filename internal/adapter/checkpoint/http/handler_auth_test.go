@@ -132,15 +132,24 @@ func TestWriteEndpointsPolicyRequiresPrincipal(t *testing.T) {
 	}
 }
 
-// TestReadEndpointsStayOpenWithoutPolicy: reads do not require auth when no
-// Policy is configured.
-func TestReadEndpointsStayOpenWithoutPolicy(t *testing.T) {
+func TestReadEndpointsDefaultDenyWithoutPolicy(t *testing.T) {
 	handler := NewHandler(HandlerConfig{
 		Steps: stubSteps{result: map[string]string{"steps": "none"}},
 	})
 	rec := getReq(t, handler, "/v1/runs/run-1/steps")
+	if rec.Code != nethttp.StatusForbidden {
+		t.Fatalf("expected 403 for read endpoint, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReadEndpointsInsecureOptOut(t *testing.T) {
+	handler := NewHandler(HandlerConfig{
+		Steps:               stubSteps{result: map[string]string{"steps": "none"}},
+		InsecureAllowNoAuth: true,
+	})
+	rec := getReq(t, handler, "/v1/runs/run-1/steps")
 	if rec.Code != nethttp.StatusOK {
-		t.Fatalf("expected 200 for read endpoint, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 with insecure opt-out, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

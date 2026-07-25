@@ -120,6 +120,7 @@ make validate-builder
 
 - Go 1.25.12+
 - macOS/Linux shell
+- Studio SPA builds: Node.js 24 LTS + pnpm 10 (regular Go builds do not require Node.js)
 
 ### Use as a framework in another Go project
 
@@ -342,7 +343,7 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`httpx.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, async run/event/resume job APIs, and—when `Framework` is set—sync `/v1/events` and `/v1/hitl/resume`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
+`httpx.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, async run/event/resume job APIs, and—when `Framework` is set—sync `/v1/events` and `/v1/hitl/resume`. Construction requires both `AuthMiddleware` and `Policy` by default; only loopback development should explicitly set `InsecureAllowNoAuth`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
 
 MCP servers can be adapted into regular governed tools without changing the runtime core:
 
@@ -768,6 +769,7 @@ Production handler with optional sync event/HITL routes:
 api, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
   Queue:     queue,
   Framework: fw,
+  AuthMiddleware: authMiddleware,
   Policy:    security.NewDefaultRolePolicy(),
   Audit:     auditSink,
   Version:   agentflow.Version,
@@ -968,7 +970,7 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 ## Current status
 
-**Next release: v0.4.5 (pending merge and tag)** — tenant-scoped jobs/blobs, explicit detached-run cancellation, complete Studio trial output, MCP/ToolResolver lifecycle controls, and a hardened release pipeline. The current stable release remains v0.4.3. Full notes are in [CHANGELOG.md](CHANGELOG.md).
+**Current release: v0.5.0** — completes multi-tenant isolation for memory/run state/outbox, fail-closed production HTTP, tool-schema validation across every orchestration mode, stable tool idempotency keys, and the React 19 / Router 8 Studio security upgrade. See [CHANGELOG.md](CHANGELOG.md) for migration notes.
 
 Core modules are production-ready:
 

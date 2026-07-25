@@ -10,7 +10,7 @@ import (
 // --- Version ---
 
 // Version is the library release version exposed to embedders.
-const Version = "0.4.5"
+const Version = "0.5.0"
 
 // SchemaVersion is the JSON Schema draft used by ScenarioJSONSchema.
 const SchemaVersion = "2020-12"

@@ -123,3 +123,45 @@ func TestEngineToolRetryKeepsIdempotencyKey(t *testing.T) {
 		t.Fatalf("retry must reuse the same idempotency key, got %v", keys)
 	}
 }
+
+func TestEnsureToolCallIDsAreStableAndStepScoped(t *testing.T) {
+	calls := []llm.ToolCall{{Name: "echo", Input: json.RawMessage(`{"b":2,"a":1}`)}}
+	first := ensureToolCallIDs("run-stable", 2, calls)
+	replayed := ensureToolCallIDs("run-stable", 2, []llm.ToolCall{{
+		Name: "echo", Input: json.RawMessage(`{"a":1,"b":2}`),
+	}})
+	nextStep := ensureToolCallIDs("run-stable", 3, calls)
+	if first[0].ID == "" || replayed[0].ID != first[0].ID {
+		t.Fatalf("same logical call must keep its synthesized ID: %q vs %q", first[0].ID, replayed[0].ID)
+	}
+	if nextStep[0].ID == first[0].ID {
+		t.Fatalf("different logical steps must not share an ID: %q", first[0].ID)
+	}
+}
+
+func TestEngineSynthesizesToolCallIDBeforeDispatch(t *testing.T) {
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{Name: "echo", Input: json.RawMessage(`{"query":"hello"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	tool := &idempotencyCaptureTool{}
+	engine, err := NewEngine(toolScenario(core.ApprovalNever, core.SideEffectRead, 4), Dependencies{
+		Runs:  runstateinmem.NewRepository(),
+		LLM:   gateway,
+		Tools: mapToolRegistry{"echo": tool},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(context.Background(), RunRequest{RunID: "run-no-provider-id", Agent: "assistant", Prompt: "use echo"}); err != nil {
+		t.Fatal(err)
+	}
+	keys := tool.captured()
+	if len(keys) != 1 || keys[0] == "run-no-provider-id:" {
+		t.Fatalf("expected one stable synthesized idempotency key, got %v", keys)
+	}
+}

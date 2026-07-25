@@ -23,7 +23,7 @@
 
 ### 指标
 
-框架已提供轻量级指标端口 `pkg/observability.Recorder` 和事件适配器 `adapters.NewObservabilityEventSink`。`adapters.NewPrometheusRecorder` 提供零依赖的 Prometheus text exposition，`PrometheusMetricsHandler` 可挂载到 `NewProductionHTTPHandler` 的 `/metrics` 路由。
+框架已提供轻量级指标端口 `pkg/observability.Recorder` 和事件适配器 `adapters.NewObservabilityEventSink`。计数器的批量增量（如 token 总量）使用 `AddCounter`，普通事件使用 `IncCounter`。`adapters.NewPrometheusRecorder` 提供零依赖的 Prometheus text exposition，`PrometheusMetricsHandler` 可挂载到 `NewProductionHTTPHandler` 的 `/metrics` 路由。
 
 ```go
 recorder := adapters.NewPrometheusRecorder()
@@ -41,6 +41,8 @@ fw, err := agentflow.New(scenario, agentflow.WithRecorder(recorder),
 handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
 	Queue:          queue,
 	Framework:      fw,
+	AuthMiddleware: authMiddleware,
+	Policy:         security.NewDefaultRolePolicy(),
 	MetricsHandler: adapters.PrometheusMetricsHandler(recorder),
 })
 ```

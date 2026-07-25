@@ -81,9 +81,10 @@ func TestProductionHTTPHandlerMountsMetrics(t *testing.T) {
 	recorder.IncCounter(context.Background(), observability.MetricRuntimeEventsTotal)
 	queue := adapters.NewInMemoryJobQueue()
 	handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
-		Queue:          queue,
-		Version:        "test",
-		MetricsHandler: adapters.PrometheusMetricsHandler(recorder),
+		Queue:               queue,
+		Version:             "test",
+		MetricsHandler:      adapters.PrometheusMetricsHandler(recorder),
+		InsecureAllowNoAuth: true,
 	})
 	if err != nil {
 		t.Fatal(err)

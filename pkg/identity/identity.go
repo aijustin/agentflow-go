@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 var ErrPrincipalMissing = errors.New("identity: principal missing")
@@ -40,7 +41,9 @@ type Principal struct {
 }
 
 func (p Principal) Validate() error {
-	if p.ID == "" || p.Type == "" || p.Scope.TenantID == "" {
+	id := strings.TrimSpace(p.ID)
+	tenantID := strings.TrimSpace(p.Scope.TenantID)
+	if id == "" || p.Type == "" || tenantID == "" || id != p.ID || tenantID != p.Scope.TenantID {
 		return ErrPrincipalMissing
 	}
 	return nil

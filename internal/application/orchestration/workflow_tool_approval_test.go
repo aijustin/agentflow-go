@@ -316,7 +316,7 @@ func TestWorkflowRunnerEnforcesRateCap(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunnerValidatesToolInputWhenEnabled(t *testing.T) {
+func TestWorkflowRunnerValidatesToolInputByDefault(t *testing.T) {
 	repo := runstateinmem.NewRepository()
 	reg := registry.New()
 	if err := reg.RegisterTool("risky", staticTool{}); err != nil {
@@ -331,7 +331,6 @@ func TestWorkflowRunnerValidatesToolInputWhenEnabled(t *testing.T) {
 				InputSchema: json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string"}}}`),
 			},
 		},
-		Runtime: core.RuntimePolicy{ValidateToolInput: true},
 		Orchestration: core.Orchestration{
 			Mode: core.OrchestrationFixedWorkflow,
 			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
@@ -347,6 +346,39 @@ func TestWorkflowRunnerValidatesToolInputWhenEnabled(t *testing.T) {
 	err := runner.Run(context.Background(), scenario, "run-validate")
 	if err == nil || !strings.Contains(err.Error(), "invalid tool input") {
 		t.Fatalf("expected input validation denial, got %v", err)
+	}
+}
+
+func TestWorkflowRunnerCanExplicitlyDisableToolInputValidation(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	reg := registry.New()
+	if err := reg.RegisterTool("risky", staticTool{}); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewWorkflowRunner(reg, repo, nil)
+	scenario := core.Scenario{
+		Name: "wf-validation-opt-out",
+		Tools: map[string]core.Tool{
+			"risky": {
+				Name: "risky", Type: "builtin.static", Approval: core.ApprovalNever,
+				InputSchema: json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string"}}}`),
+			},
+		},
+		Runtime: core.RuntimePolicy{DisableToolInputValidation: true},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "call", Kind: core.NodeTool, Ref: "risky", Input: json.RawMessage(`{}`)},
+			}},
+		},
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-validation-opt-out", ScenarioName: scenario.Name, Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(context.Background(), scenario, "run-validation-opt-out"); err != nil {
+		t.Fatalf("explicit validation opt-out should execute workflow: %v", err)
 	}
 }
 
