@@ -29,7 +29,7 @@ const (
 var (
 	bucketPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{1,61}[A-Za-z0-9]$`)
 	prefixPattern = regexp.MustCompile(`^[A-Za-z0-9._=/!-]*$`)
-	blobIDPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	blobIDPattern = regexp.MustCompile(`^(?:[a-f0-9]{64}|[a-f0-9]{128})$`)
 )
 
 type Config struct {
@@ -95,8 +95,10 @@ func (s *Store) Put(ctx context.Context, data []byte) (runstate.BlobRef, error) 
 	if err := ctx.Err(); err != nil {
 		return runstate.BlobRef{}, err
 	}
-	ref := runstate.NewBlobRef("", data)
-	ref.ID = ref.Sha256
+	ref, err := runstate.NewBlobRefForContext(ctx, data)
+	if err != nil {
+		return runstate.BlobRef{}, err
+	}
 	requestURL := s.objectURL(ref.ID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, requestURL.String(), bytes.NewReader(data))
 	if err != nil {
@@ -123,6 +125,9 @@ func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
 	}
 	if !blobIDPattern.MatchString(ref.ID) {
 		return nil, fmt.Errorf("s3 blob: invalid blob id %q", ref.ID)
+	}
+	if err := runstate.AuthorizeBlobAccess(ctx, ref); err != nil {
+		return nil, err
 	}
 	requestURL := s.objectURL(ref.ID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
@@ -200,14 +205,18 @@ func (s *Store) List(ctx context.Context) ([]runstate.BlobRef, error) {
 			if !ok {
 				continue
 			}
-			out = append(out, runstate.BlobRef{ID: id, Size: item.Size, Sha256: id})
+			_, digest, _, err := runstate.ParseBlobID(id)
+			if err != nil {
+				continue
+			}
+			out = append(out, runstate.BlobRef{ID: id, Size: item.Size, Sha256: digest})
 		}
 		if !result.IsTruncated || strings.TrimSpace(result.NextContinuationToken) == "" {
 			break
 		}
 		continuationToken = result.NextContinuationToken
 	}
-	return out, nil
+	return runstate.FilterBlobRefsForContext(ctx, out)
 }
 
 func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
@@ -216,6 +225,9 @@ func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
 	}
 	if !blobIDPattern.MatchString(ref.ID) {
 		return fmt.Errorf("s3 blob: invalid blob id %q", ref.ID)
+	}
+	if err := runstate.AuthorizeBlobAccess(ctx, ref); err != nil {
+		return err
 	}
 	requestURL := s.objectURL(ref.ID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, requestURL.String(), nil)

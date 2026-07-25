@@ -31,6 +31,9 @@ func (queue *Queue) Enqueue(ctx context.Context, job asyncpkg.Job) (asyncpkg.Job
 	if err := job.Validate(); err != nil {
 		return asyncpkg.Job{}, err
 	}
+	if err := asyncpkg.StampTenant(ctx, &job); err != nil {
+		return asyncpkg.Job{}, err
+	}
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 	if _, exists := queue.jobs[job.ID]; exists {
@@ -96,6 +99,9 @@ func (queue *Queue) Load(ctx context.Context, jobID string) (asyncpkg.Job, error
 	job, exists := queue.jobs[jobID]
 	if !exists {
 		return asyncpkg.Job{}, asyncpkg.ErrJobNotFound
+	}
+	if err := asyncpkg.AuthorizeTenant(ctx, job); err != nil {
+		return asyncpkg.Job{}, err
 	}
 	return asyncpkg.CloneJob(job), nil
 }
@@ -234,6 +240,9 @@ func (queue *Queue) Cancel(ctx context.Context, jobID string) error {
 	if !exists {
 		return asyncpkg.ErrJobNotFound
 	}
+	if err := asyncpkg.AuthorizeTenant(ctx, job); err != nil {
+		return err
+	}
 	// Only completed/dead_letter are terminal; a paused job (e.g. awaiting
 	// HITL approval) must remain cancellable like the postgres adapter,
 	// otherwise a run stuck waiting on human input can never be abandoned
@@ -274,12 +283,19 @@ func (queue *Queue) ListJobs(ctx context.Context, filter asyncpkg.JobFilter) ([]
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	filter, err := asyncpkg.ScopeJobFilter(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 	out := make([]asyncpkg.Job, 0, len(queue.order))
 	for _, jobID := range queue.order {
 		job := queue.jobs[jobID]
 		if filter.State != "" && job.State != filter.State {
+			continue
+		}
+		if filter.TenantID != "" && job.TenantID != filter.TenantID {
 			continue
 		}
 		out = append(out, asyncpkg.CloneJob(job))
@@ -299,6 +315,9 @@ func (queue *Queue) Requeue(ctx context.Context, jobID string) error {
 	job, exists := queue.jobs[jobID]
 	if !exists {
 		return asyncpkg.ErrJobNotFound
+	}
+	if err := asyncpkg.AuthorizeTenant(ctx, job); err != nil {
+		return err
 	}
 	if job.State != asyncpkg.JobDeadLetter {
 		return asyncpkg.ErrInvalidJob

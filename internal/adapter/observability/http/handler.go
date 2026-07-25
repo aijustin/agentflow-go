@@ -41,10 +41,9 @@ type Config struct {
 	Compare         RunComparer
 	Thread          ThreadLister
 	Fork            RunForker
-	// InsecureAllowNoAuth disables the default-deny guard on mutating
-	// endpoints (HITL resume, resume-from-step/checkpoint, fork, studio
-	// run/save) when AuthMiddleware is nil. Only set it behind an
-	// authenticating reverse proxy or in tests.
+	// InsecureAllowNoAuth disables the default-deny guard on the dashboard
+	// and every API endpoint when AuthMiddleware is nil. Only set it behind
+	// an authenticating reverse proxy or in local tests and demos.
 	InsecureAllowNoAuth bool
 	// Logger receives the one-time construction warning emitted when
 	// AuthMiddleware is nil; nil discards it.
@@ -148,6 +147,9 @@ type Handler struct {
 	thread          ThreadLister
 	fork            RunForker
 	traceExploreURL string
+	// guardUnauthenticated default-denies the whole observability surface
+	// when no AuthMiddleware or explicit insecure opt-out is configured.
+	guardUnauthenticated bool
 	// guardMutating default-denies mutating endpoints when no AuthMiddleware
 	// is configured and InsecureAllowNoAuth was not set explicitly.
 	guardMutating bool
@@ -184,13 +186,10 @@ func NewHandler(config Config) (*Handler, error) {
 		mux:             nethttp.NewServeMux(),
 	}
 	if config.AuthMiddleware == nil {
-		handler.guardMutating = !config.InsecureAllowNoAuth
+		handler.guardUnauthenticated = !config.InsecureAllowNoAuth
+		handler.guardMutating = handler.guardUnauthenticated
 		if config.Logger != nil {
-			// One-time construction warning: read endpoints are public, and
-			// mutating endpoints are either default-denied or (with the
-			// explicit insecure opt-out) wide open — production deployments
-			// should always configure AuthMiddleware.
-			config.Logger.Warn(context.Background(), "observability http: AuthMiddleware is not configured; read-only endpoints are publicly accessible and mutating endpoints rely on the default-deny guard or InsecureAllowNoAuth — configure AuthMiddleware in production")
+			config.Logger.Warn(context.Background(), "observability http: AuthMiddleware is not configured; all endpoints are default-denied unless InsecureAllowNoAuth explicitly opts out")
 		}
 	}
 	handler.routes()
@@ -205,6 +204,13 @@ func NewHandler(config Config) (*Handler, error) {
 }
 
 func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if handler.guardUnauthenticated {
+		writeJSON(w, nethttp.StatusForbidden, map[string]string{
+			"error":      errAuthRequired.Error(),
+			"error_code": "auth_required",
+		})
+		return
+	}
 	handler.handler.ServeHTTP(w, r)
 }
 
@@ -998,10 +1004,10 @@ func writeError(w nethttp.ResponseWriter, status int, err error) {
 	writeStudioError(w, status, err)
 }
 
-// errAuthRequired is reported (403, auth_required) when a mutating endpoint
-// is reached without an AuthMiddleware and without the explicit insecure
+// errAuthRequired is reported (403, auth_required) when the observability
+// surface is reached without AuthMiddleware and without the explicit insecure
 // opt-out.
-var errAuthRequired = errors.New("mutating endpoints require AuthMiddleware; configure it or explicitly set InsecureAllowNoAuth to disable this protection")
+var errAuthRequired = errors.New("observability endpoints require AuthMiddleware; configure it or explicitly set InsecureAllowNoAuth to disable this protection")
 
 // mutatingForbidden writes the default-deny response and reports true when a
 // mutating endpoint is guarded (no AuthMiddleware configured and

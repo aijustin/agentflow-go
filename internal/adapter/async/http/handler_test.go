@@ -39,7 +39,7 @@ func TestHandlerSubmitsEventAndResumeContinueJobs(t *testing.T) {
 	if err := json.Unmarshal(eventSubmit.Body.Bytes(), &eventJob); err != nil {
 		t.Fatal(err)
 	}
-	if eventJob.Job.Type != asyncpkg.EventJobType || eventJob.Job.State != asyncpkg.JobQueued {
+	if eventJob.Job.Type != asyncpkg.EventJobType || eventJob.Job.State != asyncpkg.JobQueued || eventJob.Job.TenantID != "tenant-1" {
 		t.Fatalf("unexpected event job: %+v", eventJob.Job)
 	}
 
@@ -52,7 +52,7 @@ func TestHandlerSubmitsEventAndResumeContinueJobs(t *testing.T) {
 	if err := json.Unmarshal(resumeSubmit.Body.Bytes(), &resumeJob); err != nil {
 		t.Fatal(err)
 	}
-	if resumeJob.Job.Type != asyncpkg.ResumeContinueJobType {
+	if resumeJob.Job.Type != asyncpkg.ResumeContinueJobType || resumeJob.Job.TenantID != "tenant-1" {
 		t.Fatalf("unexpected resume job type: %+v", resumeJob.Job)
 	}
 
@@ -81,7 +81,7 @@ func TestHandlerSubmitsReadsAndCancelsRunJobs(t *testing.T) {
 	if err := json.Unmarshal(submit.Body.Bytes(), &submitted); err != nil {
 		t.Fatal(err)
 	}
-	if submitted.Job.ID != "run-1" || submitted.Job.RunID != "run-1" || submitted.Job.State != asyncpkg.JobQueued {
+	if submitted.Job.ID != "run-1" || submitted.Job.RunID != "run-1" || submitted.Job.State != asyncpkg.JobQueued || submitted.Job.TenantID != "tenant-1" {
 		t.Fatalf("unexpected submitted job: %+v", submitted.Job)
 	}
 
@@ -111,12 +111,19 @@ func TestHandlerSubmitsReadsAndCancelsRunJobs(t *testing.T) {
 func TestHandlerCancelUpdatesRunState(t *testing.T) {
 	queue := queueinmem.NewQueue()
 	runs := runstateinmem.NewRepository()
-	if _, err := queue.Enqueue(context.Background(), asyncpkg.Job{ID: "run-1", RunID: "run-1", Type: asyncpkg.RunJobType}); err != nil {
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID:    "svc-1",
+		Type:  identity.PrincipalService,
+		Scope: identity.Scope{TenantID: "tenant-1"},
+		Roles: []identity.Role{identity.RoleService},
+	})
+	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "run-1", RunID: "run-1", Type: asyncpkg.RunJobType}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runs.Save(context.Background(), &runstate.RunSnapshot{
+	if err := runs.Save(ctx, &runstate.RunSnapshot{
 		RunID:        "run-1",
 		ScenarioName: "scenario",
+		TenantID:     "tenant-1",
 		Status:       runstate.RunStatusRunning,
 	}, 0); err != nil {
 		t.Fatal(err)
@@ -129,12 +136,6 @@ func TestHandlerCancelUpdatesRunState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
-		ID:    "svc-1",
-		Type:  identity.PrincipalService,
-		Scope: identity.Scope{TenantID: "tenant-1"},
-		Roles: []identity.Role{identity.RoleService},
-	})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(nethttp.MethodPost, "/v1/runs/run-1/cancel", nil).WithContext(ctx))
 	if rec.Code != nethttp.StatusOK {
@@ -235,6 +236,56 @@ func TestHandlerListJobsAndRequeue(t *testing.T) {
 	handler.ServeHTTP(requeue, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/job-dead/requeue", nil))
 	if requeue.Code != nethttp.StatusOK {
 		t.Fatalf("requeue code=%d body=%s", requeue.Code, requeue.Body.String())
+	}
+}
+
+func TestHandlerJobReadsAndAdminListAreTenantScoped(t *testing.T) {
+	queue := queueinmem.NewQueue()
+	tenantA := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID:    "svc-a",
+		Type:  identity.PrincipalService,
+		Scope: identity.Scope{TenantID: "tenant-a"},
+		Roles: []identity.Role{identity.RoleService},
+	})
+	tenantB := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID:    "svc-b",
+		Type:  identity.PrincipalService,
+		Scope: identity.Scope{TenantID: "tenant-b"},
+		Roles: []identity.Role{identity.RoleService},
+	})
+	if _, err := queue.Enqueue(tenantA, asyncpkg.Job{ID: "job-a", Type: asyncpkg.RunJobType}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(tenantB, asyncpkg.Job{ID: "job-b", Type: asyncpkg.RunJobType}); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(HandlerConfig{Queue: queue, Policy: security.NewDefaultRolePolicy()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, httptest.NewRequest(nethttp.MethodGet, "/v1/jobs", nil).WithContext(tenantA))
+	if list.Code != nethttp.StatusOK {
+		t.Fatalf("list jobs code=%d body=%s", list.Code, list.Body.String())
+	}
+	var response JobsResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Jobs) != 1 || response.Jobs[0].ID != "job-a" {
+		t.Fatalf("expected only tenant-a job, got %+v", response.Jobs)
+	}
+
+	read := httptest.NewRecorder()
+	handler.ServeHTTP(read, httptest.NewRequest(nethttp.MethodGet, "/v1/jobs/job-b", nil).WithContext(tenantA))
+	if read.Code != nethttp.StatusNotFound {
+		t.Fatalf("expected cross-tenant read to be hidden, got %d: %s", read.Code, read.Body.String())
+	}
+	cancel := httptest.NewRecorder()
+	handler.ServeHTTP(cancel, httptest.NewRequest(nethttp.MethodPost, "/v1/jobs/job-b/cancel", nil).WithContext(tenantA))
+	if cancel.Code != nethttp.StatusNotFound {
+		t.Fatalf("expected cross-tenant cancel to be hidden, got %d: %s", cancel.Code, cancel.Body.String())
 	}
 }
 

@@ -63,6 +63,9 @@ func (q *Queue) Enqueue(ctx context.Context, job asyncpkg.Job) (asyncpkg.Job, er
 	if err := job.Validate(); err != nil {
 		return asyncpkg.Job{}, err
 	}
+	if err := asyncpkg.StampTenant(ctx, &job); err != nil {
+		return asyncpkg.Job{}, err
+	}
 	now := q.now().UTC()
 	if job.State == "" {
 		job.State = asyncpkg.JobQueued
@@ -92,10 +95,10 @@ func (q *Queue) Enqueue(ctx context.Context, job asyncpkg.Job) (asyncpkg.Job, er
 	job.Attempts = 0
 	job.LeaseWorkerID = ""
 	job.LeaseExpiresAt = time.Time{}
-	query := fmt.Sprintf(`INSERT INTO %s (id, type, run_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW() + make_interval(secs => GREATEST($11, 0::float8)), $12, $13)
+	query := fmt.Sprintf(`INSERT INTO %s (id, type, run_id, tenant_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW() + make_interval(secs => GREATEST($12, 0::float8)), $13, $14)
 ON CONFLICT (id) DO NOTHING`, q.table)
-	result, err := q.db.ExecContext(ctx, query, job.ID, job.Type, nullString(job.RunID), []byte(job.Payload), string(job.State), int64(job.Attempts), int64(job.MaxAttempts), nullString(job.LastError), job.CreatedAt, job.UpdatedAt, delaySeconds, nullString(job.LeaseWorkerID), nullTime(job.LeaseExpiresAt))
+	result, err := q.db.ExecContext(ctx, query, job.ID, job.Type, nullString(job.RunID), job.TenantID, []byte(job.Payload), string(job.State), int64(job.Attempts), int64(job.MaxAttempts), nullString(job.LastError), job.CreatedAt, job.UpdatedAt, delaySeconds, nullString(job.LeaseWorkerID), nullTime(job.LeaseExpiresAt))
 	if err != nil {
 		return asyncpkg.Job{}, fmt.Errorf("postgres queue: enqueue job %q: %w", job.ID, err)
 	}
@@ -128,7 +131,7 @@ WHERE id = (
 	LIMIT 1
 	FOR UPDATE SKIP LOCKED
 )
-RETURNING id, type, run_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at`, q.table, q.table)
+RETURNING id, type, run_id, tenant_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at`, q.table, q.table)
 	job, err := q.scanJob(q.db.QueryRowContext(ctx, query, string(asyncpkg.JobRunning), workerID, ttl.Seconds(), string(asyncpkg.JobQueued), string(asyncpkg.JobRunning)))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -143,7 +146,7 @@ func (q *Queue) Load(ctx context.Context, jobID string) (asyncpkg.Job, error) {
 	if err := ctx.Err(); err != nil {
 		return asyncpkg.Job{}, err
 	}
-	query := fmt.Sprintf(`SELECT id, type, run_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at
+	query := fmt.Sprintf(`SELECT id, type, run_id, tenant_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at
 FROM %s WHERE id = $1`, q.table)
 	job, err := q.scanJob(q.db.QueryRowContext(ctx, query, jobID))
 	if err != nil {
@@ -151,6 +154,9 @@ FROM %s WHERE id = $1`, q.table)
 			return asyncpkg.Job{}, asyncpkg.ErrJobNotFound
 		}
 		return asyncpkg.Job{}, fmt.Errorf("postgres queue: load job %q: %w", jobID, err)
+	}
+	if err := asyncpkg.AuthorizeTenant(ctx, job); err != nil {
+		return asyncpkg.Job{}, err
 	}
 	return job, nil
 }
@@ -168,7 +174,7 @@ func (q *Queue) Renew(ctx context.Context, lease asyncpkg.Lease, ttl time.Durati
 	query := fmt.Sprintf(`UPDATE %s
 SET lease_expires_at = NOW() + make_interval(secs => $1), updated_at = NOW()
 WHERE id = $2 AND state = $3 AND lease_worker_id = $4 AND attempts = $5
-RETURNING id, type, run_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at`, q.table)
+RETURNING id, type, run_id, tenant_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at`, q.table)
 	job, err := q.scanJob(q.db.QueryRowContext(ctx, query, ttl.Seconds(), lease.JobID, string(asyncpkg.JobRunning), lease.WorkerID, int64(lease.Attempt)))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -303,6 +309,7 @@ func (q *Queue) scanJob(row interface{ Scan(dest ...any) error }) (asyncpkg.Job,
 	// application-clock time to make local expiry decisions.
 	var job asyncpkg.Job
 	var runID sql.NullString
+	var tenantID string
 	var payload []byte
 	var state string
 	var lastError sql.NullString
@@ -310,10 +317,11 @@ func (q *Queue) scanJob(row interface{ Scan(dest ...any) error }) (asyncpkg.Job,
 	var leaseExpiresAt sql.NullTime
 	var attempts int64
 	var maxAttempts int64
-	if err := row.Scan(&job.ID, &job.Type, &runID, &payload, &state, &attempts, &maxAttempts, &lastError, &job.CreatedAt, &job.UpdatedAt, &job.AvailableAt, &leaseWorkerID, &leaseExpiresAt); err != nil {
+	if err := row.Scan(&job.ID, &job.Type, &runID, &tenantID, &payload, &state, &attempts, &maxAttempts, &lastError, &job.CreatedAt, &job.UpdatedAt, &job.AvailableAt, &leaseWorkerID, &leaseExpiresAt); err != nil {
 		return asyncpkg.Job{}, err
 	}
 	job.RunID = runID.String
+	job.TenantID = tenantID
 	job.Payload = append(job.Payload[:0], payload...)
 	job.State = asyncpkg.JobState(state)
 	job.Attempts = int(attempts)
@@ -371,11 +379,23 @@ func (q *Queue) ListJobs(ctx context.Context, filter asyncpkg.JobFilter) ([]asyn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	query := fmt.Sprintf(`SELECT id, type, run_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at FROM %s`, q.table)
-	args := make([]any, 0, 2)
+	filter, err := asyncpkg.ScopeJobFilter(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`SELECT id, type, run_id, tenant_id, payload_json, state, attempts, max_attempts, last_error, created_at, updated_at, available_at, lease_worker_id, lease_expires_at FROM %s`, q.table)
+	args := make([]any, 0, 3)
+	conditions := make([]string, 0, 2)
 	if filter.State != "" {
-		query += ` WHERE state = $1`
+		conditions = append(conditions, fmt.Sprintf(`state = $%d`, len(args)+1))
 		args = append(args, string(filter.State))
+	}
+	if filter.TenantID != "" {
+		conditions = append(conditions, fmt.Sprintf(`tenant_id = $%d`, len(args)+1))
+		args = append(args, filter.TenantID)
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
 	}
 	query += ` ORDER BY created_at ASC`
 	if filter.Limit > 0 {
@@ -406,6 +426,13 @@ func (q *Queue) Requeue(ctx context.Context, jobID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	job, err := q.Load(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if job.State != asyncpkg.JobDeadLetter {
+		return asyncpkg.ErrInvalidJob
+	}
 	query := fmt.Sprintf(`UPDATE %s SET state = $1, attempts = 0, last_error = NULL, updated_at = NOW(), available_at = NOW(), lease_worker_id = NULL, lease_expires_at = NULL WHERE id = $2 AND state = $3`, q.table)
 	result, err := q.db.ExecContext(ctx, query, string(asyncpkg.JobQueued), jobID, string(asyncpkg.JobDeadLetter))
 	if err != nil {
@@ -416,13 +443,6 @@ func (q *Queue) Requeue(ctx context.Context, jobID string) error {
 		return err
 	}
 	if affected == 0 {
-		job, loadErr := q.Load(ctx, jobID)
-		if loadErr != nil {
-			return loadErr
-		}
-		if job.State != asyncpkg.JobDeadLetter {
-			return asyncpkg.ErrInvalidJob
-		}
 		return fmt.Errorf("async postgres: requeue job %q: no rows updated", jobID)
 	}
 	return nil

@@ -2,8 +2,6 @@ package file
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,13 +26,15 @@ func (s *Store) Put(ctx context.Context, data []byte) (runstate.BlobRef, error) 
 	if err := ctx.Err(); err != nil {
 		return runstate.BlobRef{}, err
 	}
-	sum := sha256.Sum256(data)
-	id := hex.EncodeToString(sum[:])
-	path := filepath.Join(s.dir, id+".blob")
+	ref, err := runstate.NewBlobRefForContext(ctx, data)
+	if err != nil {
+		return runstate.BlobRef{}, err
+	}
+	path := filepath.Join(s.dir, ref.ID+".blob")
 	if err := fsatomic.WriteFile(path, data, 0o600); err != nil {
 		return runstate.BlobRef{}, err
 	}
-	return runstate.BlobRef{ID: id, Size: int64(len(data)), Sha256: id}, nil
+	return ref, nil
 }
 
 func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
@@ -44,12 +44,14 @@ func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
 	if ref.ID == "" {
 		return nil, fmt.Errorf("blob file: id is required")
 	}
+	if err := runstate.AuthorizeBlobAccess(ctx, ref); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir, ref.ID+".blob"))
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(data)
-	got := hex.EncodeToString(sum[:])
+	got := runstate.NewBlobRef("", data).Sha256
 	if ref.Sha256 != "" && got != ref.Sha256 {
 		return nil, fmt.Errorf("blob file: checksum mismatch for %s", ref.ID)
 	}
@@ -76,16 +78,20 @@ func (s *Store) List(ctx context.Context) ([]runstate.BlobRef, error) {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".blob")
-		// The file name is the content's sha256 (see Put), so listing does not
-		// need to read every blob body just to derive its ref; the size comes
-		// from the directory entry's metadata. Get still verifies the hash.
+		_, digest, _, err := runstate.ParseBlobID(id)
+		if err != nil {
+			continue
+		}
+		// The ID contains the content digest (and, for scoped blobs, a tenant
+		// hash), so listing does not need to read every body. Get still
+		// verifies the content hash.
 		info, err := entry.Info()
 		if err != nil {
 			return nil, fmt.Errorf("blob file: stat %s: %w", entry.Name(), err)
 		}
-		out = append(out, runstate.BlobRef{ID: id, Size: info.Size(), Sha256: id})
+		out = append(out, runstate.BlobRef{ID: id, Size: info.Size(), Sha256: digest})
 	}
-	return out, nil
+	return runstate.FilterBlobRefsForContext(ctx, out)
 }
 
 func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
@@ -94,6 +100,9 @@ func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
 	}
 	if ref.ID == "" {
 		return fmt.Errorf("blob file: id is required")
+	}
+	if err := runstate.AuthorizeBlobAccess(ctx, ref); err != nil {
+		return err
 	}
 	err := os.Remove(filepath.Join(s.dir, ref.ID+".blob"))
 	if err != nil && !os.IsNotExist(err) {

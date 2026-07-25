@@ -20,8 +20,10 @@ func (s *Store) Put(ctx context.Context, data []byte) (runstate.BlobRef, error) 
 	if err := ctx.Err(); err != nil {
 		return runstate.BlobRef{}, err
 	}
-	ref := runstate.NewBlobRef("", data)
-	ref.ID = ref.Sha256
+	ref, err := runstate.NewBlobRefForContext(ctx, data)
+	if err != nil {
+		return runstate.BlobRef{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data[ref.ID] = clone(data)
@@ -30,6 +32,9 @@ func (s *Store) Put(ctx context.Context, data []byte) (runstate.BlobRef, error) 
 
 func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := runstate.AuthorizeBlobAccess(ctx, ref); err != nil {
 		return nil, err
 	}
 	s.mu.RLock()
@@ -51,11 +56,14 @@ func (s *Store) List(ctx context.Context) ([]runstate.BlobRef, error) {
 	for id, data := range s.data {
 		out = append(out, runstate.NewBlobRef(id, data))
 	}
-	return out, nil
+	return runstate.FilterBlobRefsForContext(ctx, out)
 }
 
 func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := runstate.AuthorizeBlobAccess(ctx, ref); err != nil {
 		return err
 	}
 	s.mu.Lock()

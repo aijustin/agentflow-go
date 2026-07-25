@@ -12,10 +12,9 @@ import (
 	obsinmem "github.com/aijustin/agentflow-go/internal/adapter/observability/inmem"
 )
 
-// TestMutatingEndpointsDefaultDeny: without AuthMiddleware and without the
-// explicit insecure opt-out, mutating endpoints 403 with auth_required while
-// read-only endpoints stay open.
-func TestMutatingEndpointsDefaultDeny(t *testing.T) {
+// TestEndpointsDefaultDeny: without AuthMiddleware and without the explicit
+// insecure opt-out, the dashboard and every API endpoint fail closed.
+func TestEndpointsDefaultDeny(t *testing.T) {
 	handler, err := NewHandler(Config{Store: obsinmem.NewStore()})
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +24,9 @@ func TestMutatingEndpointsDefaultDeny(t *testing.T) {
 		path   string
 		body   string
 	}{
+		{nethttp.MethodGet, "/", ""},
+		{nethttp.MethodGet, "/api/runs", ""},
+		{nethttp.MethodGet, "/api/runs/run-1/events", ""},
 		{nethttp.MethodPost, "/api/runs/run-1/hitl/resume", `{"decision":"approve"}`},
 		{nethttp.MethodPost, "/api/runs/run-1/resume-from-step", `{"node_id":"n1"}`},
 		{nethttp.MethodPost, "/api/runs/run-1/resume-from-checkpoint", `{"version":1}`},
@@ -42,18 +44,11 @@ func TestMutatingEndpointsDefaultDeny(t *testing.T) {
 			t.Fatalf("%s: expected auth_required code, got %s", tc.path, rec.Body.String())
 		}
 	}
-	// Read-only endpoints stay open.
-	req := httptest.NewRequest(nethttp.MethodGet, "/api/runs", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != nethttp.StatusOK {
-		t.Fatalf("expected read endpoint open, got %d: %s", rec.Code, rec.Body.String())
-	}
 }
 
-// TestMutatingEndpointsInsecureOptOut: the explicit opt-out restores the old
-// open behavior for mutating endpoints.
-func TestMutatingEndpointsInsecureOptOut(t *testing.T) {
+// TestEndpointsInsecureOptOut: the explicit opt-out restores the open local
+// demo behavior for both reads and writes.
+func TestEndpointsInsecureOptOut(t *testing.T) {
 	handler, err := NewHandler(Config{
 		Store:               obsinmem.NewStore(),
 		InsecureAllowNoAuth: true,
@@ -67,6 +62,11 @@ func TestMutatingEndpointsInsecureOptOut(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != nethttp.StatusOK {
 		t.Fatalf("expected 200 with insecure opt-out, got %d: %s", rec.Code, rec.Body.String())
+	}
+	readRec := httptest.NewRecorder()
+	handler.ServeHTTP(readRec, httptest.NewRequest(nethttp.MethodGet, "/api/runs", nil))
+	if readRec.Code != nethttp.StatusOK {
+		t.Fatalf("expected read endpoint open with insecure opt-out, got %d: %s", readRec.Code, readRec.Body.String())
 	}
 }
 

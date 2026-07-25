@@ -24,10 +24,9 @@ type ObservabilityHTTPHandlerConfig struct {
 	StudioSavePath string
 	// TraceExploreURL is an optional trace UI link template, e.g. https://jaeger.example.com/trace/{trace_id}.
 	TraceExploreURL string
-	// InsecureAllowNoAuth disables the default-deny guard on mutating
-	// endpoints (HITL resume, resume-from-step/checkpoint, fork, studio
-	// run/save) when AuthMiddleware is nil. Only set it behind an
-	// authenticating reverse proxy or in tests.
+	// InsecureAllowNoAuth disables the default-deny guard on the dashboard
+	// and every API endpoint when AuthMiddleware is nil. Only set it behind
+	// an authenticating reverse proxy or in local tests and demos.
 	InsecureAllowNoAuth bool
 	// Logger receives the one-time construction warning emitted when
 	// AuthMiddleware is nil; nil discards it.

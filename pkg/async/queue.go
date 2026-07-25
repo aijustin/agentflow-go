@@ -29,6 +29,7 @@ type Job struct {
 	ID             string          `json:"id"`
 	Type           string          `json:"type"`
 	RunID          string          `json:"run_id,omitempty"`
+	TenantID       string          `json:"tenant_id,omitempty"`
 	Payload        json.RawMessage `json:"payload,omitempty"`
 	State          JobState        `json:"state"`
 	Attempts       int             `json:"attempts"`

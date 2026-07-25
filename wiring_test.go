@@ -118,12 +118,12 @@ func (r schemaVersionRepo) SchemaVersion(context.Context) (int, error) { return 
 
 func TestValidateWiringRequiresMinimumSchemaVersion(t *testing.T) {
 	scenario := builder.MinimalAutonomous("assistant")
-	if err := agentflow.ValidateWiring(scenario, agentflow.WithRunStateRepository(schemaVersionRepo{version: 6})); err != nil {
-		t.Fatalf("schema version 6 must pass wiring: %v", err)
+	if err := agentflow.ValidateWiring(scenario, agentflow.WithRunStateRepository(schemaVersionRepo{version: 7})); err != nil {
+		t.Fatalf("schema version 7 must pass wiring: %v", err)
 	}
-	err := agentflow.ValidateWiring(scenario, agentflow.WithRunStateRepository(schemaVersionRepo{version: 5}))
+	err := agentflow.ValidateWiring(scenario, agentflow.WithRunStateRepository(schemaVersionRepo{version: 6}))
 	if err == nil {
-		t.Fatal("expected schema version error for version 5")
+		t.Fatal("expected schema version error for version 6")
 	}
 	if !strings.Contains(err.Error(), "migrations") {
 		t.Fatalf("error must point at the migrations, got %v", err)

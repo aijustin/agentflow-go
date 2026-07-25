@@ -206,7 +206,7 @@ func (handler *Handler) handleSubmitRun(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	now := handler.now().UTC()
-	job, err := handler.queue.Enqueue(r.Context(), asyncpkg.Job{ID: runID, Type: asyncpkg.RunJobType, RunID: runID, Payload: payload, MaxAttempts: req.MaxAttempts, CreatedAt: now, UpdatedAt: now, AvailableAt: now})
+	job, err := handler.queue.Enqueue(r.Context(), asyncpkg.Job{ID: runID, Type: asyncpkg.RunJobType, RunID: runID, TenantID: principal.Scope.TenantID, Payload: payload, MaxAttempts: req.MaxAttempts, CreatedAt: now, UpdatedAt: now, AvailableAt: now})
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusConflict)
 		return
@@ -254,6 +254,7 @@ func (handler *Handler) handleSubmitEvent(w nethttp.ResponseWriter, r *nethttp.R
 		ID:          jobID,
 		Type:        asyncpkg.EventJobType,
 		RunID:       req.RunID,
+		TenantID:    principal.Scope.TenantID,
 		Payload:     payload,
 		MaxAttempts: req.MaxAttempts,
 		CreatedAt:   now,
@@ -313,6 +314,7 @@ func (handler *Handler) handleSubmitResumeContinue(w nethttp.ResponseWriter, r *
 		ID:          jobID,
 		Type:        asyncpkg.ResumeContinueJobType,
 		RunID:       req.RunID,
+		TenantID:    principal.Scope.TenantID,
 		Payload:     payload,
 		MaxAttempts: req.MaxAttempts,
 		CreatedAt:   now,
@@ -332,7 +334,7 @@ func (handler *Handler) handleRead(w nethttp.ResponseWriter, r *nethttp.Request,
 	if _, ok := handler.authorize(w, r, security.ActionRunRead, resource); !ok {
 		return
 	}
-	job, err := handler.queue.Load(r.Context(), runID)
+	job, err := asyncpkg.LoadAuthorized(r.Context(), handler.queue, runID)
 	if err != nil {
 		writeQueueError(w, err)
 		return
@@ -347,11 +349,12 @@ func (handler *Handler) handleListJobs(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 	resource := security.Resource{Type: "queue", ID: "jobs"}
-	if _, ok := handler.authorize(w, r, security.ActionRunRead, resource); !ok {
+	principal, ok := handler.authorize(w, r, security.ActionRunRead, resource)
+	if !ok {
 		return
 	}
 	state := asyncpkg.JobState(strings.TrimSpace(r.URL.Query().Get("state")))
-	filter := asyncpkg.JobFilter{State: state}
+	filter := asyncpkg.JobFilter{State: state, TenantID: principal.Scope.TenantID}
 	jobs, err := admin.ListJobs(r.Context(), filter)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
@@ -371,11 +374,11 @@ func (handler *Handler) handleRequeue(w nethttp.ResponseWriter, r *nethttp.Reque
 	if !ok {
 		return
 	}
-	if err := admin.Requeue(r.Context(), jobID); err != nil {
+	if err := asyncpkg.RequeueAuthorized(r.Context(), handler.queue, admin, jobID); err != nil {
 		writeQueueError(w, err)
 		return
 	}
-	job, err := handler.queue.Load(r.Context(), jobID)
+	job, err := asyncpkg.LoadAuthorized(r.Context(), handler.queue, jobID)
 	if err != nil {
 		writeQueueError(w, err)
 		return
@@ -390,7 +393,7 @@ func (handler *Handler) handleCancel(w nethttp.ResponseWriter, r *nethttp.Reques
 	if !ok {
 		return
 	}
-	if err := handler.queue.Cancel(r.Context(), runID); err != nil {
+	if err := asyncpkg.CancelAuthorized(r.Context(), handler.queue, runID); err != nil {
 		writeQueueError(w, err)
 		return
 	}
@@ -398,7 +401,7 @@ func (handler *Handler) handleCancel(w nethttp.ResponseWriter, r *nethttp.Reques
 		nethttp.Error(w, err.Error(), nethttp.StatusConflict)
 		return
 	}
-	job, err := handler.queue.Load(r.Context(), runID)
+	job, err := asyncpkg.LoadAuthorized(r.Context(), handler.queue, runID)
 	if err != nil {
 		writeQueueError(w, err)
 		return
@@ -494,8 +497,12 @@ func writeDecodeError(w nethttp.ResponseWriter, err error) {
 }
 
 func writeQueueError(w nethttp.ResponseWriter, err error) {
-	if errors.Is(err, asyncpkg.ErrJobNotFound) {
+	if errors.Is(err, asyncpkg.ErrJobNotFound) || errors.Is(err, asyncpkg.ErrTenantMismatch) {
 		nethttp.Error(w, "run not found", nethttp.StatusNotFound)
+		return
+	}
+	if errors.Is(err, asyncpkg.ErrTenantRequired) {
+		nethttp.Error(w, "tenant identity required", nethttp.StatusUnauthorized)
 		return
 	}
 	nethttp.Error(w, err.Error(), nethttp.StatusConflict)

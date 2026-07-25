@@ -7,6 +7,7 @@ import (
 	"time"
 
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 )
 
 func TestQueueLeasesAndCompletesJobs(t *testing.T) {
@@ -186,4 +187,34 @@ func TestQueueCancelsPausedJobs(t *testing.T) {
 	if loaded.State != asyncpkg.JobCancelled {
 		t.Fatalf("expected cancelled, got %+v", loaded)
 	}
+}
+
+func TestQueueEnforcesTenantOnLoadAndCancel(t *testing.T) {
+	queue := NewQueue()
+	tenantA := tenantQueueContext("tenant-a")
+	tenantB := tenantQueueContext("tenant-b")
+	job, err := queue.Enqueue(tenantA, asyncpkg.Job{ID: "tenant-job", Type: "run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.TenantID != "tenant-a" {
+		t.Fatalf("expected stamped tenant-a, got %+v", job)
+	}
+	if _, err := queue.Load(tenantB, job.ID); !errors.Is(err, asyncpkg.ErrTenantMismatch) {
+		t.Fatalf("expected cross-tenant load rejection, got %v", err)
+	}
+	if err := queue.Cancel(tenantB, job.ID); !errors.Is(err, asyncpkg.ErrTenantMismatch) {
+		t.Fatalf("expected cross-tenant cancel rejection, got %v", err)
+	}
+	if err := queue.Cancel(tenantA, job.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func tenantQueueContext(tenantID string) context.Context {
+	return identity.WithPrincipal(context.Background(), identity.Principal{
+		ID:    "user-" + tenantID,
+		Type:  identity.PrincipalUser,
+		Scope: identity.Scope{TenantID: tenantID},
+	})
 }

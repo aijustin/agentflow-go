@@ -29,6 +29,7 @@ func PurgeOrphanBlobs(ctx context.Context, runs Repository, blobs BlobStore, fil
 	if err != nil {
 		return 0, err
 	}
+	stored = FilterBlobRefsForTenant(stored, filter.TenantID)
 	snapshots, err := runs.List(ctx, filter)
 	if err != nil {
 		return 0, err

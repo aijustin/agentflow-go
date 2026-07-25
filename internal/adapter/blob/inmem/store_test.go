@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -66,4 +67,40 @@ func TestStoreListAndDelete(t *testing.T) {
 	if err != nil || len(refs) != 0 {
 		t.Fatalf("expected empty list after delete: %+v err=%v", refs, err)
 	}
+}
+
+func TestStoreScopesBlobsByTenant(t *testing.T) {
+	store := NewStore()
+	tenantA := inmemBlobTenantContext("tenant-a")
+	tenantB := inmemBlobTenantContext("tenant-b")
+	refA, err := store.Put(tenantA, []byte("shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refB, err := store.Put(tenantB, []byte("shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refA.ID == refB.ID {
+		t.Fatal("expected tenant-scoped blob IDs")
+	}
+	if _, err := store.Get(tenantB, refA); !errors.Is(err, runstate.ErrTenantMismatch) {
+		t.Fatalf("expected cross-tenant rejection, got %v", err)
+	}
+	refs, err := store.List(tenantA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || refs[0].ID != refA.ID {
+		t.Fatalf("expected only tenant-a blob, got %+v", refs)
+	}
+}
+
+func inmemBlobTenantContext(tenantID string) context.Context {
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID:    "user-" + tenantID,
+		Type:  identity.PrincipalUser,
+		Scope: identity.Scope{TenantID: tenantID},
+	})
+	return runstate.ContextWithTenantStrictMode(ctx)
 }
