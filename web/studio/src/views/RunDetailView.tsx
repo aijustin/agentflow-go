@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiGet, apiPost } from '../api/client';
 import type { EventRecord, RunResult, RunSnapshot } from '../api/types';
 import { useRunCheckpoints, useRunSteps, useRunThread } from '../api/hooks';
+import { QueryError } from '../components/QueryError';
 import { StatusBadge } from '../components/StatusBadge';
 import { formatTime, prettyJSON } from '../lib/format';
 
@@ -59,7 +60,7 @@ export function RunDetailView() {
 }
 
 function TraceTab({ runID }: { runID: string }) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['events', runID],
     queryFn: () => apiGet<{ events: EventRecord[] }>(`runs/${runID}/events?limit=500&preset=product_ui`),
   });
@@ -67,6 +68,7 @@ function TraceTab({ runID }: { runID: string }) {
   const events = data?.events ?? [];
 
   if (isLoading) return <p className="p-4 text-[13px] text-muted">加载事件中…</p>;
+  if (isError) return <QueryError error={error} onRetry={() => void refetch()} label="Trace 加载失败" />;
 
   // Build a span tree: roots ordered by sequence, children nested by parent_span_id.
   const byParent = new Map<string | undefined, EventRecord[]>();
@@ -110,11 +112,12 @@ function TraceTab({ runID }: { runID: string }) {
 }
 
 function StepsTab({ runID }: { runID: string }) {
-  const { data: steps, isLoading } = useRunSteps(runID);
+  const { data: steps, isLoading, isError, error, refetch } = useRunSteps(runID);
   const [resumeMsg, setResumeMsg] = useState('');
 
   if (isLoading) return <p className="p-4 text-[13px] text-muted">加载 steps…</p>;
-  if (!steps) return null;
+  if (isError) return <QueryError error={error} onRetry={() => void refetch()} label="Steps 加载失败" />;
+  if (!steps) return <p className="p-4 text-[13px] text-muted">暂无 step 数据</p>;
 
   const resumeFrom = async (nodeID: string) => {
     try {
@@ -150,21 +153,23 @@ function StepsTab({ runID }: { runID: string }) {
 }
 
 function CheckpointsTab({ runID }: { runID: string }) {
-  const { data, isLoading } = useRunCheckpoints(runID);
+  const { data, isLoading, isError, error, refetch } = useRunCheckpoints(runID);
   const { data: thread } = useRunThread(runID);
   const [selected, setSelected] = useState<number | null>(null);
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [message, setMessage] = useState('');
 
   if (isLoading) return <p className="p-4 text-[13px] text-muted">加载 checkpoints…</p>;
+  if (isError) return <QueryError error={error} onRetry={() => void refetch()} label="Checkpoints 加载失败" />;
   const checkpoints = data?.checkpoints ?? [];
 
   const loadVersion = async (version: number) => {
     setSelected(version);
     try {
       setSnapshot(await apiGet<RunSnapshot>(`runs/${runID}/checkpoints/${version}`));
-    } catch {
+    } catch (err) {
       setSnapshot(null);
+      setMessage(err instanceof Error ? err.message : `Checkpoint v${version} 加载失败`);
     }
   };
 

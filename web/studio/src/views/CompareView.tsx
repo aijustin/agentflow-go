@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { useCompare, useRuns } from '../api/hooks';
+import { QueryError } from '../components/QueryError';
 import { StatusBadge } from '../components/StatusBadge';
 import { prettyJSON, shortID } from '../lib/format';
 
 export function CompareView() {
-  const { data } = useRuns();
+  const { data, isError: runsFailed, error: runsError, refetch: refetchRuns } = useRuns();
   const runs = data?.runs ?? [];
   const [runA, setRunA] = useState('');
   const [runB, setRunB] = useState('');
-  const { data: result, isLoading, error } = useCompare(runA || undefined, runB || undefined);
+  const { data: result, isLoading, error: compareError } = useCompare(runA || undefined, runB || undefined);
 
   const picker = (value: string, set: (v: string) => void, label: string) => (
     <label className="flex items-center gap-2">
@@ -36,14 +37,16 @@ export function CompareView() {
         {picker(runB, setRunB, 'Run B')}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {!runA || !runB ? (
+        {runsFailed ? (
+          <QueryError error={runsError} onRetry={() => void refetchRuns()} label="Run 列表加载失败" />
+        ) : !runA || !runB ? (
           <div className="flex h-full items-center justify-center text-[13px] text-muted">
             选择两个 run 查看 step 级差异
           </div>
         ) : isLoading ? (
           <p className="text-[13px] text-muted">对比中…</p>
-        ) : error ? (
-          <p className="font-mono text-[12px] text-fail">{error instanceof Error ? error.message : '对比失败'}</p>
+        ) : compareError ? (
+          <p className="font-mono text-[12px] text-fail">{compareError instanceof Error ? compareError.message : '对比失败'}</p>
         ) : result ? (
           <div>
             <div className="mb-3 flex items-center gap-3 font-mono text-[11.5px] text-fg-1">

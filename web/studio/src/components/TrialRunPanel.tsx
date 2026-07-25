@@ -64,22 +64,28 @@ export function TrialRunPanel() {
     const source = new EventSource(apiURL(`runs/${runID}/stream?preset=product_ui`));
     sourceRef.current = source;
     source.addEventListener('runtime_event', (raw) => {
-      const record = JSON.parse((raw as MessageEvent).data) as EventRecord;
-      const type = record.event.type;
-      const payload = (record.event.payload ?? {}) as Record<string, unknown>;
-      const nodeID = (payload.node_id ?? payload.node ?? payload.step) as string | undefined;
-      if (nodeID) {
-        if (type === 'StepStarted') setNodeRunState(nodeID, 'running');
-        if (type === 'StepCompleted') setNodeRunState(nodeID, 'done');
-        if (type === 'StepFailed') setNodeRunState(nodeID, 'failed');
-      }
-      setLog((prev) => [...prev.slice(-199), eventLine(record)]);
-      if (type === 'RunCompleted' || type === 'RunFailed' || type === 'RunCancelled') {
-        const status: RunStatus = type === 'RunCompleted' ? 'completed' : type === 'RunFailed' ? 'failed' : 'cancelled';
-        void finishRun(runID, status);
-      }
-      if (type === 'RunPaused') {
-        void finishRun(runID, 'paused');
+      try {
+        const record = JSON.parse((raw as MessageEvent).data) as EventRecord;
+        const type = record.event.type;
+        const payload = (record.event.payload ?? {}) as Record<string, unknown>;
+        const nodeID = (payload.node_id ?? payload.node ?? payload.step) as string | undefined;
+        if (nodeID) {
+          if (type === 'StepStarted') setNodeRunState(nodeID, 'running');
+          if (type === 'StepCompleted') setNodeRunState(nodeID, 'done');
+          if (type === 'StepFailed') setNodeRunState(nodeID, 'failed');
+        }
+        setLog((prev) => [...prev.slice(-199), eventLine(record)]);
+        if (type === 'RunCompleted' || type === 'RunFailed' || type === 'RunCancelled') {
+          const status: RunStatus = type === 'RunCompleted' ? 'completed' : type === 'RunFailed' ? 'failed' : 'cancelled';
+          void finishRun(runID, status);
+        }
+        if (type === 'RunPaused') {
+          void finishRun(runID, 'paused');
+        }
+      } catch {
+        stopStream();
+        setError('运行事件格式无效，请在 Runs 页面查看最终状态');
+        setPhase('done');
       }
     });
     source.onerror = () => {
