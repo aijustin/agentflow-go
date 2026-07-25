@@ -106,27 +106,27 @@ func (adapter *studioFramework) ExportScenarioGraph() any {
 }
 
 func (adapter *studioFramework) ValidateStudioGraph(ctx context.Context, edited any) (any, error) {
-	graph, err := decodeStudioGraph(edited)
+	graph, draft, err := decodeStudioSaveRequest(edited)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.framework.ValidateStudioGraph(ctx, graph)
+	return adapter.framework.ValidateStudioGraphWithScenario(ctx, graph, draft)
 }
 
 func (adapter *studioFramework) GenerateStudioBuilderCode(ctx context.Context, edited any) (any, error) {
-	graph, err := decodeStudioGraph(edited)
+	graph, draft, err := decodeStudioSaveRequest(edited)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.framework.GenerateStudioBuilderCode(ctx, graph)
+	return adapter.framework.GenerateStudioBuilderCodeWithScenario(ctx, graph, draft)
 }
 
 func (adapter *studioFramework) GenerateStudioScenarioYAML(ctx context.Context, edited any) (any, error) {
-	graph, err := decodeStudioGraph(edited)
+	graph, draft, err := decodeStudioSaveRequest(edited)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.framework.GenerateStudioScenarioYAML(ctx, graph)
+	return adapter.framework.GenerateStudioScenarioYAMLWithScenario(ctx, graph, draft)
 }
 
 func (adapter *studioFramework) ImportStudioScenarioYAML(ctx context.Context, yamlData []byte, layout any) (any, error) {

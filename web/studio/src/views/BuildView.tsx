@@ -10,7 +10,7 @@ import { TrialRunPanel } from '../components/TrialRunPanel';
 import { StatusBadge } from '../components/StatusBadge';
 
 export function BuildView() {
-  const { data: graph, isLoading } = useGraph();
+  const { data: graph, isLoading, error, refetch } = useGraph();
   const doc = useCanvasStore((s) => s.doc);
   const setDoc = useCanvasStore((s) => s.setDoc);
   const overlayRunID = useCanvasStore((s) => s.overlayRunID);
@@ -48,6 +48,19 @@ export function BuildView() {
 
   if (isLoading) {
     return <div className="flex h-full items-center justify-center text-[13px] text-muted">加载场景中…</div>;
+  }
+  if (error) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-[13px] text-fail" role="alert">
+        <span>场景加载失败：{error instanceof Error ? error.message : '未知错误'}</span>
+        <button
+          onClick={() => void refetch()}
+          className="rounded border border-line-strong px-3 py-1.5 text-fg-1 hover:bg-ink-2"
+        >
+          重新加载
+        </button>
+      </div>
+    );
   }
 
   return (

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { apiPost, apiURL } from '../api/client';
-import type { EventRecord, RunResult } from '../api/types';
+import { apiGet, apiPost, apiURL } from '../api/client';
+import type { EventRecord, RunResult, RunStatus, RunStepsResult } from '../api/types';
 import { useCanvasStore } from '../store/canvas';
 import { StatusBadge } from './StatusBadge';
 
@@ -17,6 +17,7 @@ export function TrialRunPanel() {
   const [prompt, setPrompt] = useState('');
   const [phase, setPhase] = useState<TrialPhase>('idle');
   const [run, setRun] = useState<RunResult | null>(null);
+  const [steps, setSteps] = useState<RunStepsResult | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState('');
   const sourceRef = useRef<EventSource | null>(null);
@@ -34,6 +35,7 @@ export function TrialRunPanel() {
     setParams({}); // a trial run replaces any run overlay on the canvas
     clearNodeRunState();
     setLog([]);
+    setSteps(null);
     setError('');
     setRun(null);
     setOpen(true);
@@ -46,6 +48,7 @@ export function TrialRunPanel() {
       });
       setRun(result);
       if (result.status !== 'running' && result.status !== 'paused') {
+        await hydrateResult(result.run_id);
         setPhase('done');
         return;
       }
@@ -70,23 +73,46 @@ export function TrialRunPanel() {
         if (type === 'StepCompleted') setNodeRunState(nodeID, 'done');
         if (type === 'StepFailed') setNodeRunState(nodeID, 'failed');
       }
-      const label = record.event.display_label || type;
-      setLog((prev) => [...prev.slice(-199), `${new Date(record.event.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}  ${label}${nodeID ? `  ·  ${nodeID}` : ''}`]);
+      setLog((prev) => [...prev.slice(-199), eventLine(record)]);
       if (type === 'RunCompleted' || type === 'RunFailed' || type === 'RunCancelled') {
-        setRun((prev) => (prev ? { ...prev, status: type === 'RunCompleted' ? 'completed' : type === 'RunFailed' ? 'failed' : 'cancelled' } : prev));
-        stopStream();
-        setPhase('done');
+        const status: RunStatus = type === 'RunCompleted' ? 'completed' : type === 'RunFailed' ? 'failed' : 'cancelled';
+        void finishRun(runID, status);
       }
       if (type === 'RunPaused') {
-        setRun((prev) => (prev ? { ...prev, status: 'paused' } : prev));
-        stopStream();
-        setPhase('done');
+        void finishRun(runID, 'paused');
       }
     });
     source.onerror = () => {
       stopStream();
+      setError('运行事件流已中断，请在 Runs 页面查看最终状态');
       setPhase('done');
     };
+  };
+
+  const hydrateResult = async (runID: string) => {
+    const [stepResult, eventResult] = await Promise.all([
+      apiGet<RunStepsResult>(`runs/${runID}/steps`),
+      apiGet<{ events: EventRecord[] }>(`runs/${runID}/events?preset=product_ui`),
+    ]);
+    setSteps(stepResult);
+    setLog(eventResult.events.slice(-200).map(eventLine));
+    clearNodeRunState();
+    for (const step of stepResult.steps) setNodeRunState(step.node_id, 'done');
+    if (stepResult.current_node_id) {
+      setNodeRunState(stepResult.current_node_id, stepResult.status === 'failed' ? 'failed' : 'running');
+    }
+  };
+
+  const finishRun = async (runID: string, status: RunStatus) => {
+    stopStream();
+    setRun((prev) => (prev ? { ...prev, status } : prev));
+    try {
+      await hydrateResult(runID);
+    } catch (err) {
+      setError(err instanceof Error ? `试跑结果加载失败：${err.message}` : '试跑结果加载失败');
+    } finally {
+      setPhase('done');
+    }
   };
 
   const hitlResume = async (decision: 'approve' | 'deny') => {
@@ -95,7 +121,7 @@ export function TrialRunPanel() {
       const result = await apiPost<RunResult>(`runs/${run.run_id}/hitl/resume`, { decision });
       setRun(result);
       if (result.status === 'running' || result.status === 'paused') subscribe(run.run_id);
-      else setPhase('done');
+      else await finishRun(run.run_id, result.status);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'HITL 恢复失败');
     }
@@ -137,10 +163,15 @@ export function TrialRunPanel() {
             </button>
           </span>
         )}
-        {error && <span className="font-mono text-[11px] text-fail">{error}</span>}
+        {error && <span className="font-mono text-[11px] text-fail" role="alert">{error}</span>}
       </div>
-      {open && (log.length > 0 || run?.output) && (
-        <div className="max-h-44 overflow-y-auto border-t border-line px-4 py-2">
+      {open && (
+        <div className="max-h-56 overflow-y-auto border-t border-line px-4 py-2" aria-live="polite">
+          {phase !== 'idle' && log.length === 0 && !run?.output && run?.structured_output == null && !steps && (
+            <div className="font-mono text-[11px] text-muted">
+              {phase === 'done' ? '运行已结束，未返回可展示的输出。' : '等待运行事件与输出…'}
+            </div>
+          )}
           {log.map((line, i) => (
             <div key={i} className="font-mono text-[11px] leading-relaxed text-fg-1">
               {line}
@@ -149,8 +180,30 @@ export function TrialRunPanel() {
           {run?.output && (
             <pre className="mt-2 rounded border border-line bg-ink-2 p-2 font-mono text-[11px] text-fg-0">{run.output}</pre>
           )}
+          {run?.structured_output != null && (
+            <pre className="mt-2 rounded border border-line bg-ink-2 p-2 font-mono text-[11px] text-fg-0">
+              {JSON.stringify(run.structured_output, null, 2)}
+            </pre>
+          )}
+          {steps && steps.steps.length > 0 && (
+            <div className="mt-2 space-y-1.5">
+              {steps.steps.map((step) => (
+                <div key={step.node_id} className="rounded border border-line bg-ink-2 p-2">
+                  <div className="label-micro mb-1">{step.node_id}</div>
+                  <pre className="overflow-x-auto font-mono text-[11px] text-fg-1">{JSON.stringify(step.output, null, 2)}</pre>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function eventLine(record: EventRecord): string {
+  const payload = (record.event.payload ?? {}) as Record<string, unknown>;
+  const nodeID = (payload.node_id ?? payload.node ?? payload.step) as string | undefined;
+  const label = record.event.display_label || record.event.type;
+  return `${new Date(record.event.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}  ${label}${nodeID ? `  ·  ${nodeID}` : ''}`;
 }

@@ -111,8 +111,14 @@ func (s Studio) Parts() StudioParts {
 }
 
 // ValidateStudioGraph validates an edited Studio graph against the framework scenario.
-func (s Studio) ValidateStudioGraph(_ context.Context, edited graph.ScenarioGraph) (ValidateStudioResult, error) {
-	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
+func (s Studio) ValidateStudioGraph(ctx context.Context, edited graph.ScenarioGraph) (ValidateStudioResult, error) {
+	return s.ValidateStudioGraphWithScenario(ctx, edited, nil)
+}
+
+// ValidateStudioGraphWithScenario validates a graph together with the
+// additive agents/skills returned by scenario-mode composition.
+func (s Studio) ValidateStudioGraphWithScenario(_ context.Context, edited graph.ScenarioGraph, draft *core.Scenario) (ValidateStudioResult, error) {
+	scenario, err := resolveStudioScenario(s.f.currentScenario(), edited, draft)
 	if err != nil {
 		payload := studio.ErrorPayloadFrom(studio.WrapGraphError(err))
 		return ValidateStudioResult{Valid: false, Error: payload.Message, ErrorCode: payload.Code, Scenario: s.f.currentScenario().Name}, nil
@@ -125,8 +131,14 @@ func (s Studio) ValidateStudioGraph(_ context.Context, edited graph.ScenarioGrap
 }
 
 // GenerateStudioBuilderCode renders builder Go code for an edited Studio graph.
-func (s Studio) GenerateStudioBuilderCode(_ context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
-	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
+func (s Studio) GenerateStudioBuilderCode(ctx context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
+	return s.GenerateStudioBuilderCodeWithScenario(ctx, edited, nil)
+}
+
+// GenerateStudioBuilderCodeWithScenario renders builder code including an
+// optional additive scenario-mode composition draft.
+func (s Studio) GenerateStudioBuilderCodeWithScenario(_ context.Context, edited graph.ScenarioGraph, draft *core.Scenario) (CodegenResult, error) {
+	scenario, err := resolveStudioScenario(s.f.currentScenario(), edited, draft)
 	if err != nil {
 		return CodegenResult{}, err
 	}
@@ -138,8 +150,14 @@ func (s Studio) GenerateStudioBuilderCode(_ context.Context, edited graph.Scenar
 }
 
 // GenerateStudioScenarioYAML renders legacy scenario YAML for an edited Studio graph.
-func (s Studio) GenerateStudioScenarioYAML(_ context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
-	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
+func (s Studio) GenerateStudioScenarioYAML(ctx context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
+	return s.GenerateStudioScenarioYAMLWithScenario(ctx, edited, nil)
+}
+
+// GenerateStudioScenarioYAMLWithScenario renders YAML including an optional
+// additive scenario-mode composition draft.
+func (s Studio) GenerateStudioScenarioYAMLWithScenario(_ context.Context, edited graph.ScenarioGraph, draft *core.Scenario) (CodegenResult, error) {
+	scenario, err := resolveStudioScenario(s.f.currentScenario(), edited, draft)
 	if err != nil {
 		return CodegenResult{}, err
 	}
@@ -415,6 +433,10 @@ func (f *Framework) ValidateStudioGraph(ctx context.Context, edited graph.Scenar
 	return f.Studio().ValidateStudioGraph(ctx, edited)
 }
 
+func (f *Framework) ValidateStudioGraphWithScenario(ctx context.Context, edited graph.ScenarioGraph, draft *core.Scenario) (ValidateStudioResult, error) {
+	return f.Studio().ValidateStudioGraphWithScenario(ctx, edited, draft)
+}
+
 // StudioParts is a thin Framework delegate — prefer Framework.Studio().
 func (f *Framework) StudioParts() StudioParts {
 	return f.Studio().Parts()
@@ -424,8 +446,16 @@ func (f *Framework) GenerateStudioBuilderCode(ctx context.Context, edited graph.
 	return f.Studio().GenerateStudioBuilderCode(ctx, edited)
 }
 
+func (f *Framework) GenerateStudioBuilderCodeWithScenario(ctx context.Context, edited graph.ScenarioGraph, draft *core.Scenario) (CodegenResult, error) {
+	return f.Studio().GenerateStudioBuilderCodeWithScenario(ctx, edited, draft)
+}
+
 func (f *Framework) GenerateStudioScenarioYAML(ctx context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {
 	return f.Studio().GenerateStudioScenarioYAML(ctx, edited)
+}
+
+func (f *Framework) GenerateStudioScenarioYAMLWithScenario(ctx context.Context, edited graph.ScenarioGraph, draft *core.Scenario) (CodegenResult, error) {
+	return f.Studio().GenerateStudioScenarioYAMLWithScenario(ctx, edited, draft)
 }
 
 func (f *Framework) ImportStudioScenarioYAML(ctx context.Context, yamlData []byte, layout graph.ScenarioGraph) (ImportStudioResult, error) {
