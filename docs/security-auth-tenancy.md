@@ -111,6 +111,10 @@ type Policy interface {
 - 事件 sink 和审计 sink。
 - 具有有限基数的指标标签。
 
+Memory 使用 `memory.Namespace.TenantID` 作为独立维度，并在存储 key 中编码；
+不能把 tenant 字符串与业务 `session_id` / `run_id` 直接拼接。认证 Principal 的
+tenant 必须是非空且无首尾空白的规范值。
+
 HTTP 授权会在 principal 存在且 resource 未显式设置租户时，自动把 `tenant_id` 绑定到 `security.Resource`。异步 API（run submit/read/cancel、job requeue）因此会执行跨租户 RBAC 检查。
 
 `PurgeExpired` / `PurgeWithPolicy` 在 principal 存在时会按租户过滤，避免清理其他租户的历史 run。

@@ -39,7 +39,7 @@ func StampTenant(ctx context.Context, snapshot *RunSnapshot) {
 		return
 	}
 	principal, ok := identity.PrincipalFromContext(ctx)
-	if !ok || principal.Scope.TenantID == "" {
+	if !ok || principal.Validate() != nil {
 		return
 	}
 	if snapshot.TenantID == "" {
@@ -54,11 +54,14 @@ func StampTenant(ctx context.Context, snapshot *RunSnapshot) {
 // ErrTenantMismatch.
 func AuthorizeTenant(ctx context.Context, snapshot RunSnapshot) error {
 	principal, ok := identity.PrincipalFromContext(ctx)
-	if !ok || principal.Scope.TenantID == "" {
+	if !ok {
 		if TenantStrictModeFromContext(ctx) {
 			return ErrTenantRequired
 		}
 		return nil
+	}
+	if err := principal.Validate(); err != nil {
+		return ErrTenantRequired
 	}
 	if snapshot.TenantID == "" {
 		if TenantStrictModeFromContext(ctx) {
@@ -78,11 +81,14 @@ func AuthorizeTenant(ctx context.Context, snapshot RunSnapshot) error {
 // scope unless tenant-strict mode is enabled.
 func ScopeListFilter(ctx context.Context, filter ListFilter) (ListFilter, error) {
 	principal, ok := identity.PrincipalFromContext(ctx)
-	if !ok || principal.Scope.TenantID == "" {
+	if !ok {
 		if TenantStrictModeFromContext(ctx) {
 			return ListFilter{}, ErrTenantRequired
 		}
 		return filter, nil
+	}
+	if err := principal.Validate(); err != nil {
+		return ListFilter{}, ErrTenantRequired
 	}
 	if filter.TenantID != "" && filter.TenantID != principal.Scope.TenantID {
 		return ListFilter{}, ErrTenantMismatch

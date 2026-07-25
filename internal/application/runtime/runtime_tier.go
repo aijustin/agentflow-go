@@ -52,11 +52,14 @@ func (e *Engine) scopedMemoryNamespace(ctx context.Context, runID string, agent 
 		return memory.Namespace{}, false, err
 	}
 	principal, hasPrincipal := identity.PrincipalFromContext(ctx)
-	if !hasPrincipal || principal.Scope.TenantID == "" {
+	if !hasPrincipal {
 		if runstate.TenantStrictModeFromContext(ctx) {
 			return memory.Namespace{}, false, runstate.ErrTenantRequired
 		}
 		return ns, true, nil
+	}
+	if err := principal.Validate(); err != nil {
+		return memory.Namespace{}, false, runstate.ErrTenantRequired
 	}
 	ns = memory.TenantScopedNamespace(ns, principal.Scope.TenantID)
 	return ns, true, nil

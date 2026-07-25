@@ -790,14 +790,24 @@ func (c *testConn) deleteOutboxForRun(args []driver.NamedValue) (driver.Result, 
 // purgeOutboxPublished backs the age-based published-row cleanup.
 func (c *testConn) purgeOutboxPublished(args []driver.NamedValue) (driver.Result, error) {
 	cutoff := args[0].Value.(time.Time)
+	tenantID := args[1].Value.(string)
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	var removed int64
 	for id, row := range c.state.outbox {
-		if !row.publishedAt.IsZero() && row.publishedAt.Before(cutoff) {
-			delete(c.state.outbox, id)
-			removed++
+		if row.publishedAt.IsZero() || !row.publishedAt.Before(cutoff) {
+			continue
 		}
+		if tenantID != "" {
+			var event struct {
+				TenantID string `json:"tenant_id"`
+			}
+			if err := json.Unmarshal(row.payload, &event); err != nil || event.TenantID != tenantID {
+				continue
+			}
+		}
+		delete(c.state.outbox, id)
+		removed++
 	}
 	return driver.RowsAffected(removed), nil
 }

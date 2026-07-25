@@ -181,12 +181,20 @@ func TestFlatMemoryRequiresTenantInStrictMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := runstate.ContextWithTenantStrictMode(context.Background())
-	err = engine.writeMemory(ctx, "run-strict", agent, []memoryMessage{
-		runTurnMemoryMessage(string(llm.RoleUser), "must-not-write"),
-	})
-	if !errors.Is(err, runstate.ErrTenantRequired) {
-		t.Fatalf("expected tenant required, got %v", err)
+	contexts := []context.Context{
+		runstate.ContextWithTenantStrictMode(context.Background()),
+		runstate.ContextWithTenantStrictMode(identity.WithPrincipal(context.Background(), identity.Principal{
+			ID: "svc-invalid", Type: identity.PrincipalService,
+			Scope: identity.Scope{TenantID: " "}, Roles: []identity.Role{identity.RoleService},
+		})),
+	}
+	for _, ctx := range contexts {
+		err = engine.writeMemory(ctx, "run-strict", agent, []memoryMessage{
+			runTurnMemoryMessage(string(llm.RoleUser), "must-not-write"),
+		})
+		if !errors.Is(err, runstate.ErrTenantRequired) {
+			t.Fatalf("expected tenant required, got %v", err)
+		}
 	}
 }
 

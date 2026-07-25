@@ -32,6 +32,16 @@ func TestPrincipalValidateAndRoles(t *testing.T) {
 	if err := (Principal{}).Validate(); !errors.Is(err, ErrPrincipalMissing) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+	for _, principal := range []Principal{
+		{ID: " ", Type: PrincipalUser, Scope: Scope{TenantID: "t1"}},
+		{ID: "u1", Type: PrincipalUser, Scope: Scope{TenantID: " "}},
+		{ID: " u1", Type: PrincipalUser, Scope: Scope{TenantID: "t1"}},
+		{ID: "u1", Type: PrincipalUser, Scope: Scope{TenantID: "t1 "}},
+	} {
+		if err := principal.Validate(); !errors.Is(err, ErrPrincipalMissing) {
+			t.Fatalf("expected non-canonical principal rejection for %+v, got %v", principal, err)
+		}
+	}
 	principal := Principal{ID: "u1", Type: PrincipalUser, Scope: Scope{TenantID: "t1"}, Roles: []Role{RoleAdmin, RoleViewer}}
 	if err := principal.Validate(); err != nil {
 		t.Fatal(err)

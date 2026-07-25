@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 )
@@ -18,6 +19,7 @@ const (
 )
 
 type Namespace struct {
+	TenantID  string `json:"tenant_id,omitempty"`
 	RunID     string `json:"run_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	Agent     string `json:"agent,omitempty"`
@@ -25,7 +27,12 @@ type Namespace struct {
 }
 
 func (n Namespace) KeyPrefix() string {
-	return string(n.Scope) + ":" + n.SessionID + ":" + n.RunID + ":" + n.Agent
+	base := string(n.Scope) + ":" + n.SessionID + ":" + n.RunID + ":" + n.Agent
+	if n.TenantID == "" {
+		return base
+	}
+	tenant := base64.RawURLEncoding.EncodeToString([]byte(n.TenantID))
+	return "tenant:" + tenant + ":" + base
 }
 
 type Entry struct {

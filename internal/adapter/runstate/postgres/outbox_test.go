@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -287,5 +288,63 @@ func TestOutboxFetchMarkAndPurge(t *testing.T) {
 	}
 	if len(remaining) != 0 {
 		t.Fatalf("expected empty outbox, got %+v", remaining)
+	}
+}
+
+func TestPurgeOutboxPublishedBeforeScopesAuthenticatedTenant(t *testing.T) {
+	db, state := openTestDBWithState(t)
+	repo, err := NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range []struct {
+		tenant string
+		runID  string
+	}{
+		{tenant: "tenant-a", runID: "run-a"},
+		{tenant: "tenant-b", runID: "run-b"},
+	} {
+		snapshot := runstate.RunSnapshot{
+			RunID: spec.runID, ScenarioName: "scenario", TenantID: spec.tenant, Status: runstate.RunStatusRunning,
+		}
+		event := testEvent(spec.runID, core.EventRunStarted)
+		event.TenantID = spec.tenant
+		if err := repo.SaveWithEvents(context.Background(), &snapshot, 0, []core.Event{event}, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := outboxRows(state)
+	for _, row := range rows {
+		if err := repo.MarkOutboxPublished(context.Background(), row.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state.mu.Lock()
+	for id, row := range state.outbox {
+		row.publishedAt = time.Now().UTC().Add(-time.Hour)
+		state.outbox[id] = row
+	}
+	state.mu.Unlock()
+	ctxA := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "admin-a", Type: identity.PrincipalUser,
+		Scope: identity.Scope{TenantID: "tenant-a"}, Roles: []identity.Role{identity.RoleAdmin},
+	})
+	removed, err := repo.PurgeOutboxPublishedBefore(ctxA, time.Now().UTC().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed=%d, want tenant-a row only", removed)
+	}
+	remaining := outboxRows(state)
+	if len(remaining) != 1 {
+		t.Fatalf("remaining rows=%d, want 1", len(remaining))
+	}
+	var event core.Event
+	if err := json.Unmarshal(remaining[0].payload, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.TenantID != "tenant-b" {
+		t.Fatalf("remaining tenant=%q, want tenant-b", event.TenantID)
 	}
 }
