@@ -158,6 +158,8 @@ prod, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
     Queue: queue,
     Framework: fw,
     StudioSavePath: savePath,
+    AuthMiddleware: authMiddleware,
+    Policy: security.NewDefaultRolePolicy(),
 })
 ```
 

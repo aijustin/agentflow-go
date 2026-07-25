@@ -34,18 +34,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Tenant-scoped async jobs and Blob object IDs, including PostgreSQL migration `0007` and tenant-safe orphan cleanup.
 - Scenario-compose drafts now participate in Studio validation, YAML export, and Go code generation before save.
 - Configurable principal-scoped LRU bound for lazy `ToolResolver` executors.
+- Weighted `observability.Recorder.AddCounter` updates for token and byte totals, plus production webhook signature verification wiring.
 
 ### Changed
 
 - The standalone observability dashboard now default-denies every route without `AuthMiddleware`; local demos must opt in with `InsecureAllowNoAuth`.
 - MCP clients created by scenario wiring are terminated/closed by `Framework.Close`.
 - Release tags must match `agentflow.Version`, publish a GitHub Release after validation, and use Go `1.25.12`.
+- **BREAKING — production HTTP and async handlers now fail closed.** `NewProductionHTTPHandler` requires both `AuthMiddleware` and `Policy`; loopback demos/tests must explicitly set `InsecureAllowNoAuth`. Standalone async and checkpoint-read routes also default-deny without a policy.
+- **BREAKING — tool input schemas are enforced by default.** Set `runtime.disable_tool_input_validation` only for a controlled compatibility migration.
+- **BREAKING — custom metric recorders implement `AddCounter`; `RecorderFunc` now receives the counter delta.**
 
 ### Fixed
 
 - Explicit cancellation now stops detached streams instead of allowing LLM/tool work to continue after the run snapshot is `Cancelled`.
 - Studio hydrates persisted events and step outputs for synchronously completed trials and displays structured output and terminal empty states.
 - Reference worker and HITL examples use valid signing secrets; the Helm reference consumes the secret from Kubernetes.
+- Flat memory and retention filters now enforce the authenticated tenant instead of sharing session namespaces or accepting cross-tenant purge targets.
+- Providers that omit `tool_call_id` receive a deterministic runtime ID before checkpoints and iteration state are persisted, keeping replay idempotency keys stable.
+- LLM token metrics apply one weighted counter update per usage bucket instead of one lock acquisition per token.
+- Studio upgrades React Router past the disclosed redirect/XSS issues and renders retryable API/SSE errors instead of misleading empty states.
 
 ## [0.4.3] - 2026-07-25
 

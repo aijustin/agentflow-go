@@ -78,7 +78,7 @@ fw, _ := agentflow.New(scenario,
 )
 queue, _ := adapters.NewPostgresJobQueue(db) // or NewInMemoryJobQueue()
 handler, _ := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
-  Queue: queue, Policy: policy, Framework: fw,
+  Queue: queue, Policy: policy, Framework: fw, AuthMiddleware: authMiddleware,
 })
 jobHandler, _ := agentflow.NewFrameworkJobHandler(agentflow.FrameworkRunJobHandlerConfig{Framework: fw})
 worker, _ := async.NewWorker(queue, jobHandler, async.WorkerConfig{WorkerID: "w1"})

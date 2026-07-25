@@ -343,7 +343,7 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`httpx.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz`、异步 run/event/resume job API；当配置 `Framework` 时还会挂载同步 `/v1/events` 和 `/v1/hitl/resume`。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
+`httpx.NewProductionHTTPHandler` 会挂载 `/healthz`、`/readyz`、异步 run/event/resume job API；当配置 `Framework` 时还会挂载同步 `/v1/events` 和 `/v1/hitl/resume`。构造器默认要求 `AuthMiddleware` + `Policy`；仅 loopback 本地开发可显式设置 `InsecureAllowNoAuth`。更多说明见 [docs/async-runtime.md](docs/async-runtime.md) 和 [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md)。
 
 MCP Server 可以通过适配器变成普通受治理工具，无需改变 runtime core：
 
@@ -766,6 +766,7 @@ http.Handle("/v1/", middleware(handler))
 api, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
   Queue:     queue,
   Framework: fw,
+  AuthMiddleware: authMiddleware,
   Policy:    security.NewDefaultRolePolicy(),
   Audit:     auditSink,
   Version:   agentflow.Version,

@@ -169,6 +169,11 @@ Resume continue 请求体示例：
 
 生产服务如果希望将健康检查、就绪探针、异步 API，以及可选的同步事件/HITL 路由一起挂载，可以优先使用封装 Handler：
 
+`NewProductionHTTPHandler` 默认失败关闭：必须同时配置 `AuthMiddleware` 和
+`Policy`。仅绑定 loopback 的本地示例或测试可以显式设置
+`InsecureAllowNoAuth: true`。同步 Webhook 如需来源签名校验，可同时设置
+`VerifyWebhookSignature`；签名校验不会替代负责注入租户 Principal 的认证中间件。
+
 ```go
 fw, err := agentflow.New(builder.MinimalTicketHandling("support"))
 if err != nil {
@@ -182,6 +187,7 @@ api, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
     Policy:         security.NewDefaultRolePolicy(),
     Audit:          auditSink,
     Version:        agentflow.Version,
+    VerifyWebhookSignature: verifyWebhookSignature,
 })
 if err != nil {
     log.Fatal(err)

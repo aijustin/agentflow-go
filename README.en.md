@@ -342,7 +342,7 @@ worker, err := async.NewWorker(queue, runHandler, async.WorkerConfig{
 })
 ```
 
-`httpx.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, async run/event/resume job APIs, and—when `Framework` is set—sync `/v1/events` and `/v1/hitl/resume`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
+`httpx.NewProductionHTTPHandler` mounts `/healthz`, `/readyz`, async run/event/resume job APIs, and—when `Framework` is set—sync `/v1/events` and `/v1/hitl/resume`. Construction requires both `AuthMiddleware` and `Policy` by default; only loopback development should explicitly set `InsecureAllowNoAuth`. See [docs/async-runtime.md](docs/async-runtime.md) and [docs/persistence/postgres-queue.md](docs/persistence/postgres-queue.md).
 
 MCP servers can be adapted into regular governed tools without changing the runtime core:
 
@@ -768,6 +768,7 @@ Production handler with optional sync event/HITL routes:
 api, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
   Queue:     queue,
   Framework: fw,
+  AuthMiddleware: authMiddleware,
   Policy:    security.NewDefaultRolePolicy(),
   Audit:     auditSink,
   Version:   agentflow.Version,

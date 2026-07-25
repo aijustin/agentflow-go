@@ -28,7 +28,7 @@ func (t *myTool) Execute(ctx context.Context, call core.ToolCall) (core.ToolResu
 
 具体组成：
 
-- **autonomous（LLM 工具循环）**：`{run_id}:{tool_call_id}`。`tool_call_id` 由 LLM 下发，随 assistant 消息一起持久化（run memory 与 tool_approval checkpoint 的 pending calls），恢复后以同一 ID 重新分发，因此天然满足重放稳定性，框架直接复用而不另造键。若 provider 不下发 tool_call_id，框架退化为一次性随机键——该 run 内的执行仍可追踪，但重放去重依赖 provider 提供稳定的 tool_call_id。
+- **autonomous（LLM 工具循环）**：`{run_id}:{tool_call_id}`。Provider 下发的 ID 会直接复用；若 Provider 省略 ID，Runtime 会在持久化 assistant turn/checkpoint 之前，按 `run_id + logical_step + call_index + tool + canonical_input` 生成稳定 ID。恢复同一 iteration 时生成结果一致，不同 step 中的相同参数调用仍保持不同 ID。
 - **workflow 工具节点**：`{run_id}:{node_id}:{attempt}`。`node_id` 含 loop/subgraph 的层级前缀（如 `loop.2.body`），`attempt` 是 `runNodeWithRetry` 的重试计数（从 1 开始）。`ResumeFromStep` 截断输出后重跑同一节点时 attempt 重新从 1 计起，因此重放键相同；节点级重试（`Retry.MaxAttempts`）的每次 attempt 是不同的逻辑执行，键不同。注意：声明了 `write`/`external`/`dangerous` 副作用的工具节点默认不会被自动重试（`attempts=1`），只有显式配置 per-node retry 才会产生多个 attempt 键。
 
 ## 自定义工具的建议实现模式
