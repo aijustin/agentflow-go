@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check studio-ui verify-studio-ui
+.PHONY: build test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check verify-release-version studio-ui verify-studio-ui
 
 GO_TEST_LDFLAGS ?= -w
 
@@ -61,5 +61,9 @@ validate-catalog:
 		echo "validating $$file"; \
 		go run ./examples/go/validate -kind skill "$$file" >/dev/null; \
 	done
+
+verify-release-version:
+	@test -n "$(RELEASE_TAG)" || (echo "RELEASE_TAG is required" >&2; exit 2)
+	@scripts/check-release-version.sh "$(RELEASE_TAG)"
 
 release-check: fmt test vet security validate-builder validate-catalog verify-studio-ui

@@ -1,6 +1,6 @@
 module github.com/aijustin/agentflow-go
 
-go 1.25.10
+go 1.25.12
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
