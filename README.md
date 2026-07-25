@@ -968,7 +968,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 ## 当前状态
 
-**下一版本：v0.4.5（待合并与打标）** — 补齐 Job/Blob 租户隔离、detached run 显式取消、Studio 试跑输出闭环、MCP/ToolResolver 生命周期和安全发布流程；当前稳定发布仍为 v0.4.3。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+**当前发布：v0.5.0** — 完成 Memory/RunState/Outbox 多租户隔离、生产 HTTP 默认失败关闭、全编排模式 Tool Schema 强校验、稳定工具幂等键，以及 React 19 / Router 8 Studio 安全升级。完整变更与迁移说明见 [CHANGELOG.md](CHANGELOG.md)。
 
 核心模块已可用：
 
