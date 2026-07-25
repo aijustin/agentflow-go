@@ -175,7 +175,7 @@ func (e *Engine) readMemory(ctx context.Context, runID string, agent core.Agent,
 	if manager, settings, ok := e.tierManager(agent); ok {
 		return e.readTierMemory(ctx, runID, agent, manager, settings, query)
 	}
-	repo, ns, ok, err := e.memoryRepository(runID, agent)
+	repo, ns, ok, err := e.memoryRepository(ctx, runID, agent)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +238,7 @@ func (e *Engine) writeMemory(ctx context.Context, runID string, agent core.Agent
 	if manager, _, ok := e.tierManager(agent); ok {
 		return e.writeTierMemory(ctx, runID, agent, manager, messages)
 	}
-	repo, ns, ok, err := e.memoryRepository(runID, agent)
+	repo, ns, ok, err := e.memoryRepository(ctx, runID, agent)
 	if err != nil {
 		return err
 	}
@@ -601,7 +601,7 @@ func (e *Engine) memoryNamespace(runID string, agent core.Agent) (memory.Namespa
 	return ns, true, nil
 }
 
-func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Repository, memory.Namespace, bool, error) {
+func (e *Engine) memoryRepository(ctx context.Context, runID string, agent core.Agent) (memory.Repository, memory.Namespace, bool, error) {
 	if agent.Memory == "" || e.memory == nil {
 		return nil, memory.Namespace{}, false, nil
 	}
@@ -609,7 +609,7 @@ func (e *Engine) memoryRepository(runID string, agent core.Agent) (memory.Reposi
 	if !ok || repo == nil {
 		return nil, memory.Namespace{}, false, nil
 	}
-	ns, ok, err := e.memoryNamespace(runID, agent)
+	ns, ok, err := e.scopedMemoryNamespace(ctx, runID, agent)
 	if err != nil || !ok {
 		return nil, memory.Namespace{}, false, err
 	}

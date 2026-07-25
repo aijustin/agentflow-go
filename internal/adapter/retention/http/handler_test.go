@@ -19,9 +19,13 @@ type stubPurger struct {
 	runsRemoved  int
 	blobsRemoved int
 	lastPolicy   retentionhttp.RetentionPolicy
+	lastFilter   runstate.ListFilter
+	runsCalls    int
 }
 
-func (s *stubPurger) PurgeRuns(context.Context, runstate.ListFilter) (int, error) {
+func (s *stubPurger) PurgeRuns(_ context.Context, filter runstate.ListFilter) (int, error) {
+	s.lastFilter = filter
+	s.runsCalls++
 	return s.runsRemoved, nil
 }
 
@@ -195,6 +199,34 @@ func TestHandlerAuthorizeAllowsAdminPrincipal(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if purger.lastFilter.TenantID != "tenant-a" {
+		t.Fatalf("purge filter tenant = %q, want tenant-a", purger.lastFilter.TenantID)
+	}
+}
+
+func TestHandlerPurgeRunsRejectsCrossTenantSelection(t *testing.T) {
+	purger := &stubPurger{runsRemoved: 1}
+	handler, err := retentionhttp.NewHandler(retentionhttp.HandlerConfig{
+		Purger: purger,
+		Policy: security.NewDefaultRolePolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.NewBufferString(`{"tenant_id":"tenant-b","limit":5}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/retention/purge-runs", body)
+	req = req.WithContext(identity.WithPrincipal(req.Context(), identity.Principal{
+		ID: "admin-1", Type: identity.PrincipalUser, Roles: []identity.Role{identity.RoleAdmin},
+		Scope: identity.Scope{TenantID: "tenant-a"},
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if purger.runsCalls != 0 {
+		t.Fatalf("cross-tenant purge reached adapter %d time(s)", purger.runsCalls)
 	}
 }
 

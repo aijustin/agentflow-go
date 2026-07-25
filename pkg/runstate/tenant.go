@@ -72,6 +72,25 @@ func AuthorizeTenant(ctx context.Context, snapshot RunSnapshot) error {
 	return nil
 }
 
+// ScopeListFilter binds a repository list operation to the authenticated
+// tenant. Authenticated callers cannot select a different tenant; internal
+// maintenance callers without a principal retain the explicitly requested
+// scope unless tenant-strict mode is enabled.
+func ScopeListFilter(ctx context.Context, filter ListFilter) (ListFilter, error) {
+	principal, ok := identity.PrincipalFromContext(ctx)
+	if !ok || principal.Scope.TenantID == "" {
+		if TenantStrictModeFromContext(ctx) {
+			return ListFilter{}, ErrTenantRequired
+		}
+		return filter, nil
+	}
+	if filter.TenantID != "" && filter.TenantID != principal.Scope.TenantID {
+		return ListFilter{}, ErrTenantMismatch
+	}
+	filter.TenantID = principal.Scope.TenantID
+	return filter, nil
+}
+
 // LoadAuthorized loads a snapshot and enforces tenant access when a principal is present.
 func LoadAuthorized(ctx context.Context, repo Repository, runID string) (RunSnapshot, error) {
 	snapshot, err := repo.Load(ctx, runID)

@@ -38,7 +38,7 @@ func (e *Engine) conversationMemoryLen(ctx context.Context, runID string, agent 
 	if _, _, ok := e.tierManager(agent); ok {
 		return 0, false
 	}
-	repo, ns, ok, err := e.memoryRepository(runID, agent)
+	repo, ns, ok, err := e.memoryRepository(ctx, runID, agent)
 	if err != nil || !ok {
 		return 0, false
 	}
@@ -103,7 +103,7 @@ func (e *Engine) RewindConversationMemory(ctx context.Context, runID, agentName 
 	if _, _, ok := e.tierManager(agent); ok {
 		return nil
 	}
-	repo, ns, ok, err := e.memoryRepository(runID, agent)
+	repo, ns, ok, err := e.memoryRepository(ctx, runID, agent)
 	if err != nil {
 		return err
 	}

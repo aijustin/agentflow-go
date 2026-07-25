@@ -38,6 +38,36 @@ func TestAuthorizeTenantAllowsLegacySnapshots(t *testing.T) {
 	}
 }
 
+func TestScopeListFilterBindsAuthenticatedTenant(t *testing.T) {
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "user-1", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	filter, err := ScopeListFilter(ctx, ListFilter{Status: RunStatusCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filter.TenantID != "tenant-a" {
+		t.Fatalf("tenant_id = %q, want tenant-a", filter.TenantID)
+	}
+}
+
+func TestScopeListFilterRejectsCrossTenantSelection(t *testing.T) {
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "user-1", Type: identity.PrincipalUser, Scope: identity.Scope{TenantID: "tenant-a"},
+	})
+	_, err := ScopeListFilter(ctx, ListFilter{TenantID: "tenant-b"})
+	if !errors.Is(err, ErrTenantMismatch) {
+		t.Fatalf("expected tenant mismatch, got %v", err)
+	}
+}
+
+func TestScopeListFilterRequiresTenantInStrictMode(t *testing.T) {
+	ctx := ContextWithTenantStrictMode(context.Background())
+	if _, err := ScopeListFilter(ctx, ListFilter{}); !errors.Is(err, ErrTenantRequired) {
+		t.Fatalf("expected tenant required, got %v", err)
+	}
+}
+
 type stubRepo struct {
 	snapshot RunSnapshot
 }
