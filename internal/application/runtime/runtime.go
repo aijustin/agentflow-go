@@ -531,7 +531,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 				case <-ticker.C:
 					snapshot, loadErr := runstate.LoadAuthorized(observerCtx, e.runs, req.RunID)
 					if loadErr != nil {
-						e.logWarn(observerCtx, "runtime: detached cancellation watcher stopped after run-state load failed", "run_id", req.RunID, "error", loadErr)
+						cancelDetached(fmt.Errorf("runtime: observe detached run %q cancellation: %w", req.RunID, loadErr))
 						return
 					}
 					if snapshot.Status == runstate.RunStatusRunning {
