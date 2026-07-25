@@ -690,7 +690,7 @@ if err := repo.Save(context.Background(), &snapshot, 0); err != nil {
 签发并验证 HITL Token：
 
 ```go
-signer, err := runstate.NewTokenSigner([]byte("secret"))
+signer, err := runstate.NewTokenSigner([]byte("replace-with-at-least-16-bytes"))
 if err != nil {
     log.Fatal(err)
 }
