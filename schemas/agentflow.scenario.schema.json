@@ -808,6 +808,14 @@
           "type": "integer",
           "minimum": 0
         },
+        "validate_tool_input": {
+          "type": "boolean",
+          "description": "Compatibility field; tool inputs are validated by default."
+        },
+        "disable_tool_input_validation": {
+          "type": "boolean",
+          "description": "Explicitly disable runtime tool input validation for a controlled compatibility migration."
+        },
         "doom_loop_limit": {
           "type": "integer",
           "minimum": 0,

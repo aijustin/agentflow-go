@@ -547,7 +547,8 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if reason := toolinvoke.DenialWithoutGateWithEvaluator(ctx, tool, r.gate != nil, approvedResume, r.approvalEvaluator, runID, call); reason != "" {
 		return fmt.Errorf("orchestration: tool %q: %s", node.Ref, reason)
 	}
-	if err := toolinvoke.ValidateInput(scenario.Runtime.ValidateToolInput, tool, input); err != nil {
+	validateToolInput := scenario.Runtime.ValidateToolInput || !scenario.Runtime.DisableToolInputValidation
+	if err := toolinvoke.ValidateInput(validateToolInput, tool, input); err != nil {
 		return fmt.Errorf("orchestration: tool %q: %w", node.Ref, err)
 	}
 	if tool.RateCap > 0 {
