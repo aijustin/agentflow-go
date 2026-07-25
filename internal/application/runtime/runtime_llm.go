@@ -408,10 +408,16 @@ func (e *Engine) wrapLLMStream(ctx context.Context, source <-chan llm.ChatChunk,
 		var streamErr error
 		var usage llm.TokenUsage
 		sawDone := false
-		defer func() {
+		finished := false
+		finish := func() {
+			if finished {
+				return
+			}
+			finished = true
 			e.recordLLMUsage(ctx, profileName, normalizeEmittedUsage(usage))
 			e.finishLLMCall(ctx, span, profileName, start, streamErr)
-		}()
+		}
+		defer finish()
 		for chunk := range source {
 			if chunk.Usage.TotalTokens > 0 || chunk.Usage.InputTokens > 0 || chunk.Usage.OutputTokens > 0 {
 				usage = chunk.Usage
@@ -422,6 +428,13 @@ func (e *Engine) wrapLLMStream(ctx context.Context, source <-chan llm.ChatChunk,
 			if chunk.Done {
 				sawDone = true
 			}
+			terminal := chunk.Done || chunk.Error != ""
+			if terminal {
+				// Complete observability before publishing the terminal chunk.
+				// Its channel send then establishes the happens-before edge
+				// required by Engine.Stream's user-visible channel closure.
+				finish()
+			}
 			select {
 			case out <- chunk:
 			case <-ctx.Done():
@@ -430,6 +443,9 @@ func (e *Engine) wrapLLMStream(ctx context.Context, source <-chan llm.ChatChunk,
 				if streamErr == nil && !sawDone {
 					streamErr = ctx.Err()
 				}
+				return
+			}
+			if terminal {
 				return
 			}
 		}
