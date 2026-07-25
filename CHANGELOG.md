@@ -29,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-25
+
 ### Added
 
 - Explicit MCP protocol modes: legacy `2025-11-25` remains the default, while modern `2026-07-28` is an opt-in stateless client mode with required per-request metadata and no automatic fallback.

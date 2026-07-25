@@ -967,7 +967,7 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 ## Current status
 
-**Latest release: [v0.4.2](CHANGELOG.md)** — deferred tool catalogs, observation masking, and mandatory fencing; since v0.3 adapter and HTTP constructors live in `pkg/adapters` / `pkg/httpx`. Full notes in [CHANGELOG.md](CHANGELOG.md).
+**Latest release: [v0.4.3](CHANGELOG.md)** — explicit MCP protocol modes, tenant-aware observability, Studio scenario persistence and autonomous trials, execution-slot hardening and cancellation fixes; since v0.3 adapter and HTTP constructors live in `pkg/adapters` / `pkg/httpx`. Full notes in [CHANGELOG.md](CHANGELOG.md).
 
 Core modules are production-ready:
 
