@@ -1,6 +1,6 @@
 # agentflow-go
 
-Go runtime library for Agents, Tools, Skills, LLM gateways, Memory, Run State, and Human-in-the-loop orchestration. **Primary audience: Go backend engineers.**
+Go runtime library for Agents, Tools, Skills, LLM gateways, Memory, Run State, and Human-in-the-loop orchestration. **Primary audience: Go backend engineers.** Version: 0.4.0.
 
 ## Important files
 
@@ -10,9 +10,14 @@ Go runtime library for Agents, Tools, Skills, LLM gateways, Memory, Run State, a
 - `docs/manual.html`: standalone HTML integration manual (open in browser).
 - `docs/library-integration.md`: how to embed the library in Go services.
 - `docs/builder-reference.md`: **primary** Go DSL builder API.
+- `docs/compose-graph.md`: AI ComposeGraph usage.
+- `docs/observability-dashboard.md`: Studio SPA + observability dashboard.
 - `pkg/builder`: fluent Go DSL for core.Scenario.
+- `pkg/adapters`: persistence, LLM, tools, MCP, knowledge, observability constructors (since v0.3).
+- `pkg/httpx`: Production/Studio/observability HTTP handlers (since v0.3).
 - `examples/go/scenario`: shared builder stacks for runnable examples.
-- `framework.go`: root importable facade (`New`, `ValidateScenario`).
+- `examples/go/compose-graph`: AI graph composition demo.
+- `framework.go`: root importable facade (`New`, `ValidateScenario`, `ComposeGraph`).
 - `builder.go`: re-exported builder stack helpers (MinimalAutonomous, etc.).
 
 ## Commands
@@ -21,8 +26,10 @@ Go runtime library for Agents, Tools, Skills, LLM gateways, Memory, Run State, a
 make test
 make validate-builder
 make validate-catalog
+make studio-ui
 go run ./examples/go/minimal/main.go
 go run ./examples/go/builder/main.go
+go run ./examples/go/compose-graph
 ```
 
 ## Primary API path
@@ -31,6 +38,8 @@ go run ./examples/go/builder/main.go
 scenario := builder.MinimalAutonomous("assistant")
 fw, err := agentflow.New(scenario, opts...)
 result, err := fw.Run(ctx, agentflow.RunRequest{...})
+// AI composition: fw.ComposeGraph(ctx, agentflow.ComposeGraphRequest{Prompt: "..."})
 ```
 
 Studio YAML interchange: `ImportStudioScenarioYAML`, `GenerateStudioScenarioYAML`.
+Studio HTTP: `POST /api/studio/compose`, `GET /api/studio/parts` (via `httpx.NewObservabilityHTTPHandler`).

@@ -4,7 +4,7 @@ PostgreSQL 适配器会在既有 `runstate.Repository` 契约背后持久化 `ru
 
 ## 驱动策略
 
-agentflow-go 不直接导入 PostgreSQL 驱动。应用注册自己偏好的 `database/sql` 驱动，并将初始化好的 `*sql.DB` 传入根构造函数。
+agentflow-go 不直接导入 PostgreSQL 驱动。应用注册自己偏好的 `database/sql` 驱动，并将初始化好的 `*sql.DB` 传入 `adapters.NewPostgresRunStateRepository`。
 
 可选驱动包括 `github.com/jackc/pgx/v5/stdlib` 和 `github.com/lib/pq`。驱动依赖应放在拥有部署和连接池策略的应用中。
 
@@ -17,6 +17,7 @@ import (
     "time"
 
     agentflow "github.com/aijustin/agentflow-go"
+    "github.com/aijustin/agentflow-go/pkg/adapters"
     _ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -29,7 +30,7 @@ func openRunState(dsn string) agentflow.Option {
     db.SetMaxIdleConns(10)
     db.SetConnMaxLifetime(5 * time.Minute)
 
-    runs, err := agentflow.NewPostgresRunStateRepository(db)
+    runs, err := adapters.NewPostgresRunStateRepository(db)
     if err != nil {
         log.Fatal(err)
     }

@@ -1,9 +1,15 @@
 # Redis RunState Repository
 
-`agentflow.NewRedisRunStateRepository` provides a Redis-backed implementation of `runstate.Repository` for production deployments that prefer Redis over PostgreSQL for workflow snapshots.
+`adapters.NewRedisRunStateRepository` provides a Redis-backed implementation of `runstate.Repository` for production deployments that prefer Redis over PostgreSQL for workflow snapshots.
 
 ```go
-runs, err := agentflow.NewRedisRunStateRepository(agentflow.RedisRunStateRepositoryConfig{
+import (
+  agentflow "github.com/aijustin/agentflow-go"
+  "github.com/aijustin/agentflow-go/pkg/adapters"
+  "github.com/aijustin/agentflow-go/pkg/builder"
+)
+
+runs, err := adapters.NewRedisRunStateRepository(adapters.RedisRunStateRepositoryConfig{
   Addr:      os.Getenv("AGENTFLOW_REDIS_ADDR"),
   Password:  os.Getenv("AGENTFLOW_REDIS_PASSWORD"),
   DB:        0,

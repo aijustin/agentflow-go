@@ -18,6 +18,7 @@
 - **Graph features**: nested subgraphs, dynamic `map` fan-out, `parallel_group`, `loop`, conditional edges; Builder DSL helpers such as `MapOver`, `RouteIf`, `ParallelGroup`
 - **Skills**: prompt fragments + tool whitelist/policy + inline workflow subgraphs, expanded at compile time
 - **Multi-agent**: supervisor + virtual `sub_agents` delegation tools; optional planning pass before autonomous execution
+- **AI graph composition (`ComposeGraph`)**: natural-language task → agentic composer with `compose_*` tools and incremental validation; `catalog` mode orchestrates registered parts only, `scenario` mode can add new Agent/Skill (refuses overwriting existing IDs); default ephemeral execution does not mutate the live scenario (see [compose-graph.md](docs/compose-graph.md), orchestration-flow §11, example `examples/go/compose-graph`)
 
 ### Production governance
 
@@ -26,24 +27,24 @@
 - **Enterprise**: identity context, API key / JWT middleware, RBAC, `AuditSink` events
 - **Persistence & time travel**: file / PostgreSQL / Redis run state; S3-compatible blobs; CAS snapshots, checkpoint history, **resume or fork from any step/checkpoint**
 
-### AgentFlow Studio (built-in debug UI)
+### AgentFlow Studio (built-in web workbench)
 
-Mount `NewObservabilityHTTPHandler` for a web panel at `/observability/` (Chinese by default, English available):
+Mount `httpx.NewObservabilityHTTPHandler` for a panel at `/observability/` (Chinese by default). The current Studio is an **AI-first composition workbench** (React + React Flow SPA, `go:embed`; falls back to the legacy inline UI when the frontend bundle is absent):
 
-| Tab | Capabilities |
-|-----|--------------|
-| **Graph** | topology highlighting, live done/current states, subgraph drill-down, node inspector, autonomous trace |
-| **Time Travel** | checkpoint timeline scrub, revision diff, resume/fork from checkpoint |
-| **Editor** | drag-and-drop editing, undo/redo, YAML import/export, Go codegen, **live run preview**, subgraph canvas drill-down |
-| **Compare / Thread** | multi-run step output diff, fork lineage |
-| **Inspector** | step output, related events, nested **trace/span tree** (optional Jaeger/Tempo link) |
+| View | Capabilities |
+|------|--------------|
+| **Build** | **AI compose bar** (one sentence → catalog/scenario draft on an editable canvas), parts palette drag-in, React Flow editing, node inspector, Undo/Redo, validate / YAML / Go codegen / save, trial-run panel (SSE node highlighting + HITL approve) |
+| **Runs** | run list polling, trace tree (nested spans), step outputs, checkpoint timeline (inspect / resume / fork), thread lineage |
+| **Compare** | dual-run step-level diff (only A / only B / mismatched outputs) |
+
+Frontend lives in `web/studio/` (Vite + React + TS + Tailwind); build with `make studio-ui`. New HTTP APIs: `POST /api/studio/compose` and `GET /api/studio/parts` (production mirrors: `/v1/studio/compose`, `/v1/studio/parts`).
 
 Try: `go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7060/observability/`. See [observability-dashboard.md](docs/observability-dashboard.md) and [studio-roadmap.md](docs/studio-roadmap.md).
 
 ### Observability & deployment
 
 - **Metrics & tracing**: Prometheus recorder, OpenTelemetry tracer, event-level `parent_span_id` propagation
-- **HTTP production kit**: `NewProductionHTTPHandler`, async job workers (`run` / `event` / `resume.continue`)
+- **HTTP production kit**: `httpx.NewProductionHTTPHandler`, async job workers (`run` / `event` / `resume.continue`)
 - **Memory tier**: Postgres warm + file/S3 cold tier, migration events, optional RAG summary integration
 - **Reference deploy**: [Compose stack](examples/deploy/README.md), [Helm chart](examples/deploy/helm/agentflow-reference/)
 
@@ -83,7 +84,7 @@ For a guided HTML manual, open [docs/manual.html](docs/manual.html) in your brow
 | Tests and examples wiring | [pkg/testutil](pkg/testutil/testutil.go) |
 | Go DSL scenario builder | [docs/builder-reference.md](docs/builder-reference.md) · [examples/go/builder/main.go](examples/go/builder/main.go) |
 
-Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHandler`, `NewFrameworkJobHandler`, `NewPrometheusRecorder`, `NewOpenTelemetryTracer`, `ScenarioJSONSchema`, `Version`; builder stack helpers in [builder.go](builder.go) (e.g. `MinimalAutonomous`).
+Library surface (root): `ValidateWiring`, `New`, `Framework.Run` / `ComposeGraph`, `NewFrameworkJobHandler`, `ScenarioJSONSchema`, `Version`; HTTP constructors in `pkg/httpx` (e.g. `NewProductionHTTPHandler`, `NewObservabilityHTTPHandler`); adapters in `pkg/adapters` (e.g. `NewPrometheusRecorder`, `NewOpenTelemetryTracer`, run-state/blob/event-store); builder stack helpers in [builder.go](builder.go) (e.g. `MinimalAutonomous`).
 
 ## Example paths
 
@@ -92,14 +93,15 @@ Library surface: `ValidateWiring`, `New`, `Framework.Run`, `NewProductionHTTPHan
 | Directory | Purpose | Command |
 |-----------|---------|---------|
 | [minimal](examples/go/minimal/main.go) | Minimal in-process embed: builder scenario → `testutil.WiringOptions` → `New` → `Run` | `go run ./examples/go/minimal/main.go` |
+| [builder](examples/go/builder/main.go) | Build scenario with Go DSL and run in-process | `go run ./examples/go/builder/main.go` |
+| [compose-graph](examples/go/compose-graph/main.go) | AI ComposeGraph (catalog / scenario modes) | `go run ./examples/go/compose-graph` |
 | [postgres](examples/go/postgres/main.go) | Postgres RunState / JobQueue persistence | `go run ./examples/go/postgres/main.go` |
-| [http-worker](examples/go/http-worker/main.go) | `NewProductionHTTPHandler` + async worker | `go run ./examples/go/http-worker/main.go` |
+| [http-worker](examples/go/http-worker/main.go) | `httpx.NewProductionHTTPHandler` + async worker + Studio | `go run ./examples/go/http-worker/main.go` |
 | [hitl-resume](examples/go/hitl-resume/main.go) | HITL pause and `ResumeAndContinue` | `go run ./examples/go/hitl-resume/main.go` |
 | [event-trigger](examples/go/event-trigger/main.go) | Event-driven runs via `scenario.triggers` | `go run ./examples/go/event-trigger/main.go` |
 | [tier-memory](examples/go/tier-memory/main.go) | In-process tier memory minimal example | `go run ./examples/go/tier-memory/main.go` |
 | [tier-worker](examples/go/tier-worker/main.go) | Postgres warm/cold tier + `memory.reconcile` async worker | See [examples/deploy/](examples/deploy/README.md) |
 | [validate](examples/go/validate/main.go) | Validate builder catalog stacks or tool/skill manifests | `go run ./examples/go/validate -kind builder all` |
-| [builder](examples/go/builder/main.go) | Build scenario with Go DSL and run in-process | `go run ./examples/go/builder/main.go` |
 
 Use `WithLLMGateway` / `WithToolExecutor` in production instead of `testutil.WiringOptions`. Builder reference: [docs/builder-reference.md](docs/builder-reference.md).
 
@@ -612,7 +614,7 @@ go run ./examples/go/http-worker/main.go
 
 Default bind address is `127.0.0.1:7060` (override with `AGENT_HTTP_ADDR`); Studio dashboard: `http://127.0.0.1:7060/observability/`.
 
-Production HITL continuation uses `NewProductionHTTPHandler` or `NewHumanHTTPHandler` at `POST /v1/hitl/resume`. Set `"continue": true` to call `ResumeAndContinue`:
+Production HITL continuation uses `httpx.NewProductionHTTPHandler` or `httpx.NewHumanHTTPHandler` at `POST /v1/hitl/resume`. Set `"continue": true` to call `ResumeAndContinue`:
 
 ```sh
 curl -X POST http://localhost:7060/v1/hitl/resume \
@@ -908,10 +910,10 @@ Design boundaries:
 - `sub_agents` are available to supervisor agents as virtual delegation tools during autonomous execution.
 - Skill prompt fragments, agent policies, tool policies, and workflow segments are expanded during scenario build with namespaced workflow node IDs.
 - Tools have separate declaration and execution surfaces: `scenario.tools` exposes manifests to LLMs and validators, `WithToolExecutor` eagerly registers light executors, and `WithToolResolver` lazily binds heavy or tenant-scoped executors only when a permitted invocation reaches execution.
-- File-backed RunState, BlobStore, and Memory adapters are available from the root facade for durable local persistence; PostgreSQL-backed and Redis-backed RunState are available for production persistence; S3-compatible BlobStore is available for large runtime/workflow outputs and supports MinIO/AWS S3 style endpoints plus verified S3-compatible COS/OSS endpoints; Redis-backed leases are available for worker coordination; async queue and worker contracts support `run`, `event`, and `resume.continue` jobs through `NewFrameworkJobHandler`, with HTTP routes on `NewAsyncRunHTTPHandler` and `NewProductionHTTPHandler`; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
+- File / PostgreSQL / Redis RunState, S3-compatible BlobStore, and Memory adapters are constructed via `pkg/adapters`; Redis distributed leases (`NewRedisLocker`) remain on the root package; async queue and worker contracts support `run`, `event`, and `resume.continue` jobs through `NewFrameworkJobHandler`, with HTTP routes on `httpx.NewAsyncRunHTTPHandler` / `httpx.NewProductionHTTPHandler`; large step outputs are externalized to BlobStore when `step_output_threshold` is exceeded.
 - Enterprise identity context, API key middleware, static and OIDC/JWKS JWT middleware, authorization middleware, RBAC policy contracts, and runtime tool authorization are available through `pkg/identity`, `pkg/security`, `NewStaticAPIKeyAuthenticator`, `NewOIDCJWTAuthenticator`, `NewAPIKeyMiddleware`, `NewJWTMiddleware`, `NewAuthorizationMiddleware`, and `WithSecurityPolicy`.
 - Audit event contracts and noop/in-memory/file sinks are available through `pkg/audit`, `NewNoopAuditSink`, `NewInMemoryAuditSink`, `NewFileAuditSink`, and `WithAuditSink`.
-- Runtime observability dashboard, event store, live event hub, and automatic PostgreSQL schema setup are available through `NewPostgresEventStore`, `NewInMemoryEventStore`, `NewEventStoreSink`, `NewEventHub`, and `NewObservabilityHTTPHandler`.
+- Runtime observability dashboard, event store, live event hub, and automatic PostgreSQL schema setup are available through `adapters.NewPostgresEventStore`, `NewInMemoryEventStore`, `NewEventStoreSink`, `NewEventHub`, and `httpx.NewObservabilityHTTPHandler`; the Studio SPA also exposes ComposeGraph / parts APIs.
 - Enterprise auth/tenancy and observability/governance designs are documented in [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md), [docs/observability-governance.md](docs/observability-governance.md), and [docs/observability-dashboard.md](docs/observability-dashboard.md).
 - In-memory adapters are concurrency-safe and namespaced by run/session where applicable.
 
@@ -965,16 +967,16 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 ## Current status
 
-**Latest release: [v0.2.2](CHANGELOG.md)** — Studio P11 (Editor live preview, trace/span tree, subgraph canvas drill-down), P10 graph debugging, Builder DSL sugar, reference Helm chart, cross-process integration tests. Full notes in [CHANGELOG.md](CHANGELOG.md).
+**Latest release: [v0.4.0](CHANGELOG.md)** — AI ComposeGraph, Studio SPA (Build / Runs / Compare), ContinueRun / StreamDetached / RunReaper, HITL key rotation and tenant-strict mode; since v0.3 adapter and HTTP constructors live in `pkg/adapters` / `pkg/httpx`. Full notes in [CHANGELOG.md](CHANGELOG.md).
 
 Core modules are production-ready:
 
-- **Scenarios**: `pkg/builder` (`CoreCatalog` + legacy `ExampleCatalog`), `ValidateScenario`, Studio YAML interchange; mode policy in [docs/orchestration-modes.md](docs/orchestration-modes.md)
+- **Scenarios**: `pkg/builder` (`CoreCatalog` + legacy `ExampleCatalog`), `ValidateScenario`, Studio YAML interchange, `ComposeGraph`; mode policy in [docs/orchestration-modes.md](docs/orchestration-modes.md)
 - **Runtime**: autonomous / fixed_workflow / hybrid, subgraph / map / loop / parallel, planning pass, skill expansion
 - **Governance**: tool whitelist & approval, HITL, identity/RBAC/audit, timeouts & classified retries
 - **Persistence**: file / Postgres / Redis run state, S3 blobs, checkpoint history, memory tier
-- **Integration**: production HTTP, async workers, webhook/event triggers, Prometheus + OTel
-- **Studio**: Graph / Editor / Time Travel / Compare / Thread debug UI
+- **Integration**: `httpx` production HTTP, async workers, webhook/event triggers, Prometheus + OTel (`pkg/adapters`)
+- **Studio**: AI-first SPA (compose bar + parts palette + trial run), run traces / checkpoint time travel, dual-run compare
 
 Next (non-blocking): versioned Tool/Skill catalog manifests, expanded managed-service integration tests, `TraceExploreURL` wiring in http-worker example. Product boundaries: [product-direction.md](docs/product-direction.md) (no `agent_loop` graph node, no full LangGraph Store parity).
 

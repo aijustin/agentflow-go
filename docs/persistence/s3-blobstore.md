@@ -20,7 +20,13 @@ BlobStore 主要用于把大块步骤输出从 RunState 中拆出去，避免 Po
 ## 用法
 
 ```go
-blobs, err := agentflow.NewS3BlobStore(agentflow.S3BlobStoreConfig{
+import (
+    agentflow "github.com/aijustin/agentflow-go"
+    "github.com/aijustin/agentflow-go/pkg/adapters"
+    "github.com/aijustin/agentflow-go/pkg/builder"
+)
+
+blobs, err := adapters.NewS3BlobStore(adapters.S3BlobStoreConfig{
     Endpoint:        os.Getenv("AGENTFLOW_S3_ENDPOINT"),
     Bucket:          os.Getenv("AGENTFLOW_S3_BUCKET"),
     Region:          os.Getenv("AGENTFLOW_S3_REGION"),

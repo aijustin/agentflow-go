@@ -44,7 +44,7 @@
 ### 可观测与部署
 
 - **指标与追踪**：Prometheus recorder、OpenTelemetry tracer、事件级 `parent_span_id` 传播
-- **HTTP 生产套件**：`NewProductionHTTPHandler`、异步 Job Worker（`run` / `event` / `resume.continue`）
+- **HTTP 生产套件**：`httpx.NewProductionHTTPHandler`、异步 Job Worker（`run` / `event` / `resume.continue`）
 - **Memory Tier**：Postgres warm + file/S3 cold tier、迁移事件、可选 RAG 摘要协同
 - **参考部署**：[Compose 栈](examples/deploy/README.md)、[Helm chart](examples/deploy/helm/agentflow-reference/)
 
@@ -83,7 +83,7 @@ make test
 | 事件触发 | [examples/go/event-trigger/main.go](examples/go/event-trigger/main.go) |
 | 测试与示例接线 | [pkg/testutil](pkg/testutil/testutil.go) |
 
-库 API：`ValidateWiring`、`New`、`Framework.Run`、`NewProductionHTTPHandler`、`NewFrameworkJobHandler`、`NewPrometheusRecorder`、`NewOpenTelemetryTracer`、`ScenarioJSONSchema`、`Version`；Builder 栈入口见 [builder.go](builder.go)（如 `MinimalAutonomous`）。
+库 API（根包）：`ValidateWiring`、`New`、`Framework.Run` / `ComposeGraph`、`NewFrameworkJobHandler`、`ScenarioJSONSchema`、`Version`；HTTP 构造器在 `pkg/httpx`（如 `NewProductionHTTPHandler`、`NewObservabilityHTTPHandler`）；适配器在 `pkg/adapters`（如 `NewPrometheusRecorder`、`NewOpenTelemetryTracer`、RunState/Blob/EventStore）；Builder 栈入口见 [builder.go](builder.go)（如 `MinimalAutonomous`）。
 
 ## 示例路径对照表
 
@@ -93,8 +93,9 @@ make test
 |------|------|----------|
 | [builder](examples/go/builder/main.go) | Go DSL 构造场景并进程内 Run（**推荐起点**） | `go run ./examples/go/builder/main.go` |
 | [minimal](examples/go/minimal/main.go) | 最小嵌入：`builder` → `testutil.WiringOptions` → `New` → `Run` | `go run ./examples/go/minimal/main.go` |
+| [compose-graph](examples/go/compose-graph/main.go) | AI ComposeGraph（catalog / scenario 模式） | `go run ./examples/go/compose-graph` |
 | [postgres](examples/go/postgres/main.go) | Postgres / 文件 RunState 持久化 | `go run ./examples/go/postgres/main.go` |
-| [http-worker](examples/go/http-worker/main.go) | 挂载 `NewProductionHTTPHandler` + 异步 Worker | `go run ./examples/go/http-worker/main.go` |
+| [http-worker](examples/go/http-worker/main.go) | 挂载 `httpx.NewProductionHTTPHandler` + 异步 Worker + Studio | `go run ./examples/go/http-worker/main.go` |
 | [hitl-resume](examples/go/hitl-resume/main.go) | HITL 暂停与 `ResumeAndContinue` | `go run ./examples/go/hitl-resume/main.go` |
 | [event-trigger](examples/go/event-trigger/main.go) | `scenario.triggers` 事件驱动 Run | `go run ./examples/go/event-trigger/main.go` |
 | [tier-memory](examples/go/tier-memory/main.go) | 进程内 tier 记忆最小示例 | `go run ./examples/go/tier-memory/main.go` |
@@ -608,7 +609,7 @@ go run ./examples/go/http-worker/main.go
 
 默认监听 `127.0.0.1:7060`（可通过 `AGENT_HTTP_ADDR` 覆盖）；Studio 面板：`http://127.0.0.1:7060/observability/`。
 
-生产环境 HITL 续跑使用 `NewProductionHTTPHandler` 或 `NewHumanHTTPHandler` 的 `POST /v1/hitl/resume`。设置 `"continue": true` 会调用 `ResumeAndContinue`：
+生产环境 HITL 续跑使用 `httpx.NewProductionHTTPHandler` 或 `httpx.NewHumanHTTPHandler` 的 `POST /v1/hitl/resume`。设置 `"continue": true` 会调用 `ResumeAndContinue`：
 
 ```sh
 curl -X POST http://localhost:7060/v1/hitl/resume \
@@ -907,10 +908,10 @@ internal/
 - `sub_agents` 会在自主执行中作为虚拟 delegation tool 暴露给 supervisor Agent。
 - Skill prompt fragments、Agent policy、Tool policy 和 workflow segments 会在场景构建阶段展开为命名空间化的 workflow 节点。
 - Tool 的声明面和执行面已经分离：`scenario.tools` 向 LLM 和校验器暴露 manifest，`WithToolExecutor` 提前注册轻量 executor，`WithToolResolver` 则在允许的调用真正进入执行阶段时按需绑定重型或租户隔离 executor。
-- 文件版 RunState、BlobStore 和 Memory 适配器可通过根门面使用；PostgreSQL RunState 和 Redis RunState 可用于生产持久化；S3-compatible BlobStore 可用于大输出对象存储，支持 MinIO/AWS S3 风格 endpoint，以及经过验证的腾讯云 COS/阿里云 OSS S3 兼容接口；Redis 分布式租约可用于 Worker 协调；异步队列和 Worker 契约支持 `run`、`event`、`resume.continue` 任务（`NewFrameworkJobHandler`），HTTP 路由由 `NewAsyncRunHTTPHandler` 和 `NewProductionHTTPHandler` 提供；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
-- 企业 identity context、API Key middleware、静态和 OIDC/JWKS JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、`NewStaticAPIKeyAuthenticator`、`NewOIDCJWTAuthenticator`、`NewAPIKeyMiddleware`、`NewJWTMiddleware`、`NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
-- Audit event 契约和 noop/内存/文件 sink 可通过 `pkg/audit`、`NewNoopAuditSink`、`NewInMemoryAuditSink`、`NewFileAuditSink` 和 `WithAuditSink` 使用。
-- 运行时可观测面板、事件仓库、实时 EventHub 和 PostgreSQL 自动建表可通过 `NewPostgresEventStore`、`NewInMemoryEventStore`、`NewEventStoreSink`、`NewEventHub` 和 `NewObservabilityHTTPHandler` 使用。
+- 文件 / PostgreSQL / Redis RunState、S3-compatible BlobStore、Memory 适配器通过 `pkg/adapters` 构造；Redis 分布式租约（`NewRedisLocker`）仍在根包；异步队列与 Worker 契约支持 `run`、`event`、`resume.continue`（`NewFrameworkJobHandler`），HTTP 路由由 `httpx.NewAsyncRunHTTPHandler` / `httpx.NewProductionHTTPHandler` 提供；当输出超过 `step_output_threshold` 时会外置到 BlobStore。
+- 企业 identity context、API Key middleware、静态和 OIDC/JWKS JWT middleware、授权 middleware、RBAC policy 契约和 runtime tool authorization 可通过 `pkg/identity`、`pkg/security`、根包 `NewStaticAPIKeyAuthenticator` / `NewOIDCJWTAuthenticator` / `NewAPIKeyMiddleware` / `NewJWTMiddleware` / `NewAuthorizationMiddleware` 和 `WithSecurityPolicy` 使用。
+- Audit event 契约与 sink 可通过 `pkg/audit` 与 `adapters.NewNoopAuditSink` / `NewInMemoryAuditSink` / `NewFileAuditSink`，以及 `WithAuditSink` 使用。
+- 运行时可观测面板、事件仓库、实时 EventHub 和 PostgreSQL 自动建表可通过 `adapters.NewPostgresEventStore`、`NewInMemoryEventStore`、`NewEventStoreSink`、`NewEventHub` 和 `httpx.NewObservabilityHTTPHandler` 使用；Studio SPA 另提供 ComposeGraph / parts API。
 - 企业认证/租户和可观测/治理设计见 [docs/security-auth-tenancy.md](docs/security-auth-tenancy.md)、[docs/observability-governance.md](docs/observability-governance.md) 与 [docs/observability-dashboard.md](docs/observability-dashboard.md)。
 - 内存适配器是并发安全的，并按 run/session 命名空间隔离。
 
@@ -964,16 +965,16 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 ## 当前状态
 
-**最新发布：[v0.2.2](CHANGELOG.md)** — Studio P11（Editor 实时预览、Trace/Span 树、subgraph 画布钻取）、P10 Graph 调试增强、Builder DSL sugar、Helm 参考 chart、跨进程集成测试。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+**最新发布：[v0.4.0](CHANGELOG.md)** — AI ComposeGraph、Studio SPA（画布 / 运行 / 对比）、ContinueRun / StreamDetached / RunReaper、HITL 密钥轮换与租户严格模式；v0.3 起适配器与 HTTP 构造器拆至 `pkg/adapters` / `pkg/httpx`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 核心模块已可用：
 
-- **场景构造**：`pkg/builder`（`CoreCatalog` + legacy `ExampleCatalog`）、`ValidateScenario`、Studio YAML 互操作；三模式立场见 [docs/orchestration-modes.md](docs/orchestration-modes.md)
+- **场景构造**：`pkg/builder`（`CoreCatalog` + legacy `ExampleCatalog`）、`ValidateScenario`、Studio YAML 互操作、`ComposeGraph`；三模式立场见 [docs/orchestration-modes.md](docs/orchestration-modes.md)
 - **运行时**：autonomous / fixed_workflow / hybrid、subgraph / map / loop / parallel、planning pass、Skill 展开
 - **治理**：工具白名单与审批、HITL、Identity/RBAC/Audit、timeout 与分类重试
 - **持久化**：File / Postgres / Redis RunState、S3 Blob、Checkpoint 历史、Memory Tier
-- **集成**：Production HTTP、异步 Worker、Webhook/事件触发、Prometheus + OTel
-- **Studio**：Graph / Editor / Time Travel / Compare / Thread 全链路调试 UI
+- **集成**：`httpx` Production HTTP、异步 Worker、Webhook/事件触发、Prometheus + OTel（`pkg/adapters`）
+- **Studio**：AI-first SPA（ComposeBar + 零件箱 + 试跑）、运行追踪 / checkpoint 时间旅行、双 run 对比
 
 后续方向（非阻塞）：Tool/Skill catalog 版本化 manifest、托管环境集成测试矩阵扩展、http-worker 示例接 `TraceExploreURL`。产品边界见 [product-direction.md](docs/product-direction.md)（不做 `agent_loop` 图节点、不做 LangGraph Store 全量 parity）。
 

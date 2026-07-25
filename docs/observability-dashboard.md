@@ -50,6 +50,9 @@ import (
     "time"
 
     agentflow "github.com/aijustin/agentflow-go"
+    "github.com/aijustin/agentflow-go/pkg/adapters"
+    "github.com/aijustin/agentflow-go/pkg/builder"
+    "github.com/aijustin/agentflow-go/pkg/httpx"
     _ "github.com/jackc/pgx/v5/stdlib"
 )
 

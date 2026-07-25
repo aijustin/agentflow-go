@@ -1,6 +1,6 @@
 # PostgreSQL 异步队列适配器
 
-`agentflow.NewPostgresJobQueue(db)` 提供基于 `database/sql` 的 `pkg/async.Queue` 实现。应用拥有 PostgreSQL 驱动导入、连接池配置、迁移、保留任务和运维索引。
+`adapters.NewPostgresJobQueue(db)` 提供基于 `database/sql` 的 `pkg/async.Queue` 实现。应用拥有 PostgreSQL 驱动导入、连接池配置、迁移、保留任务和运维索引。
 
 ## 表契约
 
@@ -31,7 +31,13 @@
 ## 用法
 
 ```go
-queue, err := agentflow.NewPostgresJobQueue(db)
+import (
+    agentflow "github.com/aijustin/agentflow-go"
+    "github.com/aijustin/agentflow-go/pkg/adapters"
+    "github.com/aijustin/agentflow-go/pkg/async"
+)
+
+queue, err := adapters.NewPostgresJobQueue(db)
 if err != nil {
     log.Fatal(err)
 }

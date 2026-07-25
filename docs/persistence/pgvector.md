@@ -5,7 +5,9 @@ pgvector 适配器使用 `database/sql` 实现 `knowledge.VectorStore`。应用�
 ## 构造函数
 
 ```go
-store, err := agentflow.NewPostgresVectorStore(agentflow.PostgresVectorStoreConfig{
+import "github.com/aijustin/agentflow-go/pkg/adapters"
+
+store, err := adapters.NewPostgresVectorStore(adapters.PostgresVectorStoreConfig{
   DB:        db,
   TableName: "agentflow_knowledge_embeddings",
 })
