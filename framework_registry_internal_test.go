@@ -99,7 +99,12 @@ func TestToolRegistryEvictsLeastRecentlyUsedExecutor(t *testing.T) {
 }
 
 func TestWithToolResolverCacheLimitRejectsNegativeValue(t *testing.T) {
-	if _, err := New(testAutonomousScenario(), WithToolResolverCacheLimit(-1)); err == nil {
+	scenario := core.Scenario{
+		Name:          "resolver-cache-limit",
+		Agents:        map[string]core.Agent{"assistant": {Name: "assistant"}},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+	if _, err := New(scenario, WithToolResolverCacheLimit(-1)); err == nil {
 		t.Fatal("expected negative cache limit error")
 	}
 }

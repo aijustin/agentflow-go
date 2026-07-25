@@ -43,7 +43,9 @@ func TestStorePutGetCloneAndDigest(t *testing.T) {
 
 func TestStoreGetMissing(t *testing.T) {
 	store := NewStore()
-	_, err := store.Get(context.Background(), runstate.BlobRef{ID: "missing"})
+	ref := runstate.NewBlobRef("", []byte("missing"))
+	ref.ID = ref.Sha256
+	_, err := store.Get(context.Background(), ref)
 	if !errors.Is(err, runstate.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
