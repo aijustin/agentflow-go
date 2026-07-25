@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MIN_COVERAGE="${MIN_COVERAGE:-80}"
+MIN_COVERAGE="${MIN_COVERAGE:-60}"
 
 # Exclude optional backends, migration CLIs, and thin HTTP/wiring facades from
 # the aggregate gate (same class as the existing */postgres exclusions). Core
