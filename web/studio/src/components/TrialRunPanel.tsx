@@ -167,7 +167,7 @@ export function TrialRunPanel() {
       </div>
       {open && (
         <div className="max-h-56 overflow-y-auto border-t border-line px-4 py-2" aria-live="polite">
-          {phase !== 'idle' && log.length === 0 && !run?.output && run?.structured_output == null && !steps && (
+          {phase !== 'idle' && log.length === 0 && !run?.output && run?.structured_output == null && (!steps || steps.steps.length === 0) && (
             <div className="font-mono text-[11px] text-muted">
               {phase === 'done' ? '运行已结束，未返回可展示的输出。' : '等待运行事件与输出…'}
             </div>

@@ -29,8 +29,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.4.5] - 2026-07-25
-
 ### Added
 
 - Tenant-scoped async jobs and Blob object IDs, including PostgreSQL migration `0007` and tenant-safe orphan cleanup.

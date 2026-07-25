@@ -8,7 +8,7 @@
 
 **架构：** 保持既有 `runstate.Repository` 和 `runstate.BlobStore` 契约稳定。通过构造函数暴露生产适配器，集成测试使用 build tag 控制，并且不引入 ORM 依赖。
 
-**技术栈：** Go 1.25.10+、`database/sql`、PostgreSQL 兼容 SQL、后续切片中的 S3 兼容对象存储、带 build tag 的集成测试。
+**技术栈：** Go 1.25.12+、`database/sql`、PostgreSQL 兼容 SQL、后续切片中的 S3 兼容对象存储、带 build tag 的集成测试。
 
 ---
 

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -96,5 +97,24 @@ func TestCloseOwnedMCPClientsTerminatesSessionsAndProcesses(t *testing.T) {
 	}
 	if client.terminated != 1 || client.closed != 1 {
 		t.Fatalf("expected terminate and close once, got terminated=%d closed=%d", client.terminated, client.closed)
+	}
+}
+
+func TestMCPWiringOptionsClosesOwnedClientsOnValidationError(t *testing.T) {
+	client := &lifecycleMCPClient{}
+	scenario := core.Scenario{
+		Name:   "mcp-cleanup",
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant"}},
+		MCP:    core.MCPConfig{Servers: []core.MCPServer{{Name: "docs", Transport: "http", URL: "http://example.test/mcp"}}},
+		Tools:  map[string]core.Tool{"search": {Name: "search", Type: "mcp.tool"}},
+	}
+	_, err := mcpWiringOptions(context.Background(), scenario, MCPRegistry{}, func(context.Context, core.MCPServer, *http.Client) (mcp.Client, error) {
+		return client, nil
+	})
+	if err == nil {
+		t.Fatal("expected missing mcp_tool validation error")
+	}
+	if client.terminated != 1 || client.closed != 1 {
+		t.Fatalf("owned client leaked on wiring error: terminated=%d closed=%d", client.terminated, client.closed)
 	}
 }

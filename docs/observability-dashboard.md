@@ -84,8 +84,9 @@ fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventFano
     _ = fw
 
     dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
-        Store: eventStore,
-        Hub:   eventHub,
+        Store:               eventStore,
+        Hub:                 eventHub,
+        InsecureAllowNoAuth: true, // local example only
     })
     if err != nil {
         log.Fatal(err)
@@ -246,6 +247,7 @@ dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandl
     Store:           eventStore,
     Hub:             eventHub,
     Framework:       fw,
+    AuthMiddleware:  authMiddleware,
     TraceExploreURL: "https://jaeger.example.com/trace/{trace_id}",
 })
 ```
@@ -266,8 +268,9 @@ Minimum wiring for **timeline-only** vs **full Studio**:
 ```go
 // Timeline + SSE only
 httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
-    Store: store,
-    Hub:   hub,
+    Store:          store,
+    Hub:            hub,
+    AuthMiddleware: authMiddleware,
 })
 
 // Full Studio (graph, editor, time travel, compare, thread)
@@ -276,6 +279,7 @@ httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
     Hub:            hub,
     Framework:      fw,
     StudioSavePath: "/path/to/scenario.yaml",
+    AuthMiddleware: authMiddleware,
 })
 ```
 

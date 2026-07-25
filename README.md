@@ -117,7 +117,7 @@ make validate-builder
 
 ## 环境要求
 
-- Go 1.25.10+
+- Go 1.25.12+
 - macOS/Linux shell
 
 ### 作为框架在其他 Go 项目中使用
@@ -257,7 +257,7 @@ for chunk := range chunks {
 ```go
 scenario := builder.MinimalHumanInLoop("assistant")
 fw, err := agentflow.New(scenario,
-    agentflow.WithHITLTokenSecret([]byte("strong-secret"), nil),
+    agentflow.WithHITLTokenSecret([]byte("strong-secret-16bytes"), nil),
 )
 if err != nil {
     log.Fatal(err)
@@ -547,8 +547,9 @@ fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventFano
 )
 
 dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
-  Store: eventStore,
-  Hub:   eventHub,
+  Store:               eventStore,
+  Hub:                 eventHub,
+  InsecureAllowNoAuth: true, // 仅限本地开发；生产必须配置 AuthMiddleware
 })
 mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
 ```
@@ -965,7 +966,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 ## 当前状态
 
-**最新发布：[v0.4.5](CHANGELOG.md)** — 补齐 Job/Blob 租户隔离、detached run 显式取消、Studio 试跑输出闭环、MCP/ToolResolver 生命周期和安全发布流程；v0.3 起适配器与 HTTP 构造器拆至 `pkg/adapters` / `pkg/httpx`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+**下一版本：v0.4.5（待合并与打标）** — 补齐 Job/Blob 租户隔离、detached run 显式取消、Studio 试跑输出闭环、MCP/ToolResolver 生命周期和安全发布流程；当前稳定发布仍为 v0.4.3。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 核心模块已可用：
 

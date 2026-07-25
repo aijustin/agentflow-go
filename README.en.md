@@ -118,7 +118,7 @@ make validate-builder
 
 ### Requirements
 
-- Go 1.25.10+
+- Go 1.25.12+
 - macOS/Linux shell
 
 ### Use as a framework in another Go project
@@ -256,7 +256,7 @@ Enable the built-in HMAC-token HITL gate:
 ```go
 scenario := builder.MinimalHumanInLoop("assistant")
 fw, err := agentflow.New(scenario,
-    agentflow.WithHITLTokenSecret([]byte("strong-secret"), nil),
+    agentflow.WithHITLTokenSecret([]byte("strong-secret-16bytes"), nil),
 )
 if err != nil {
     log.Fatal(err)
@@ -552,8 +552,9 @@ fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventFano
 )
 
 dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
-  Store: eventStore,
-  Hub:   eventHub,
+  Store:               eventStore,
+  Hub:                 eventHub,
+  InsecureAllowNoAuth: true, // local development only; configure AuthMiddleware in production
 })
 mux.Handle("/observability/", http.StripPrefix("/observability", dashboard))
 ```
@@ -967,7 +968,7 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 ## Current status
 
-**Latest release: [v0.4.5](CHANGELOG.md)** — tenant-scoped jobs/blobs, explicit detached-run cancellation, complete Studio trial output, MCP/ToolResolver lifecycle controls, and a hardened release pipeline; since v0.3 adapter and HTTP constructors live in `pkg/adapters` / `pkg/httpx`. Full notes in [CHANGELOG.md](CHANGELOG.md).
+**Next release: v0.4.5 (pending merge and tag)** — tenant-scoped jobs/blobs, explicit detached-run cancellation, complete Studio trial output, MCP/ToolResolver lifecycle controls, and a hardened release pipeline. The current stable release remains v0.4.3. Full notes are in [CHANGELOG.md](CHANGELOG.md).
 
 Core modules are production-ready:
 

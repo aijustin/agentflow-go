@@ -85,8 +85,8 @@ err := agentflow.ValidateWiring(scenario, agentflow.WithToolExecutor("http.statu
 
 **修复**
 
-- 示例：`examples/go/hitl-resume` 使用 `dev-secret`；生产请使用强密钥。
-- 库：`WithHITLTokenSecret([]byte("secret"), tokenWriter)` 或 `WithHumanGate(gate)`。
+- 示例：`examples/go/hitl-resume` 使用仅供本地演示的 `dev-secret-16bytes`；生产请使用密钥管理器生成的强密钥。
+- 库：`WithHITLTokenSecret([]byte("replace-with-at-least-16-bytes"), tokenWriter)` 或 `WithHumanGate(gate)`。
 
 ---
 

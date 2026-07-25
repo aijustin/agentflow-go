@@ -69,4 +69,22 @@ describe('TrialRunPanel', () => {
     expect(screen.getByText(/"value": 1/)).toBeInTheDocument();
     await waitFor(() => expect(mockedGet).toHaveBeenCalledTimes(2));
   });
+
+  it('shows a terminal empty state when a completed run has no output', async () => {
+    mockedPost.mockResolvedValue({ run_id: 'run-empty', status: 'completed' });
+    mockedGet.mockImplementation(async (path: string) => (
+      path.endsWith('/steps')
+        ? { run_id: 'run-empty', version: 1, status: 'completed', steps: [] }
+        : { events: [] }
+    ));
+    render(
+      <MemoryRouter>
+        <TrialRunPanel />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /试跑当前图/ }));
+
+    expect(await screen.findByText('运行已结束，未返回可展示的输出。')).toBeInTheDocument();
+  });
 });
