@@ -53,7 +53,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Flat memory and retention filters now enforce the authenticated tenant instead of sharing session namespaces or accepting cross-tenant purge targets.
 - Providers that omit `tool_call_id` receive a deterministic runtime ID before checkpoints and iteration state are persisted, keeping replay idempotency keys stable.
 - LLM token metrics apply one weighted counter update per usage bucket instead of one lock acquisition per token.
-- Studio upgrades React Router past the disclosed redirect/XSS issues and renders retryable API/SSE errors instead of misleading empty states.
+- Studio upgrades to React 19.2, React Router 8.3, and Vite 8.1 to clear the disclosed router advisories; it renders retryable API/SSE errors instead of misleading empty states.
 
 ## [0.4.3] - 2026-07-25
 

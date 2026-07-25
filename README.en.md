@@ -120,6 +120,7 @@ make validate-builder
 
 - Go 1.25.12+
 - macOS/Linux shell
+- Studio SPA builds: Node.js 24 LTS + pnpm 10 (regular Go builds do not require Node.js)
 
 ### Use as a framework in another Go project
 

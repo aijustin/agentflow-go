@@ -119,6 +119,7 @@ make validate-builder
 
 - Go 1.25.12+
 - macOS/Linux shell
+- 构建 Studio SPA：Node.js 24 LTS + pnpm 10（普通 Go 构建无需 Node.js）
 
 ### 作为框架在其他 Go 项目中使用
 

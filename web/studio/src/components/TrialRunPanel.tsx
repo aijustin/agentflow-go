@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { apiGet, apiPost, apiURL } from '../api/client';
 import type { EventRecord, RunResult, RunStatus, RunStepsResult } from '../api/types';
 import { useCanvasStore } from '../store/canvas';

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { useRuns } from '../api/hooks';
 import { QueryError } from '../components/QueryError';
 import { StatusBadge } from '../components/StatusBadge';

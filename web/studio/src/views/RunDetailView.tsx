@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet, apiPost } from '../api/client';
 import type { EventRecord, RunResult, RunSnapshot } from '../api/types';
