@@ -33,6 +33,15 @@ func (f *Framework) runWorkflow(ctx context.Context, req RunRequest) (RunResult,
 }
 
 func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scenario, req RunRequest) (RunResult, error) {
+	return f.runWorkflowScenarioWith(ctx, scenario, req, f.currentEngine(), f.newWorkflowRunner())
+}
+
+// runWorkflowScenarioWith executes a fixed-workflow scenario with the given
+// engine and runner, allowing ephemeral runs against a temporary scenario
+// (graph composition) without swapping the live engine. The runner must have
+// been built for scenario/engine — passing the cached live runner with a
+// patched scenario would resolve agent nodes against stale bindings.
+func (f *Framework) runWorkflowScenarioWith(ctx context.Context, scenario core.Scenario, req RunRequest, engine *appexec.Engine, runner *orchestration.WorkflowRunner) (RunResult, error) {
 	ctx, cancel := withScenarioTimeout(ctx, scenario.Runtime.Timeout)
 	defer cancel()
 	ctx = core.ContextWithTrustMode(ctx, string(req.TrustMode))
@@ -53,7 +62,7 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
-	resolvedAgent, _ := f.currentEngine().ResolveAgentName(req.Agent)
+	resolvedAgent, _ := engine.ResolveAgentName(req.Agent)
 	saveRunResumeMetadata(&snapshot, req, resolvedAgent)
 	stampRunLeaseOwner(ctx, &snapshot)
 	runstate.StampTenant(ctx, &snapshot)
@@ -64,7 +73,6 @@ func (f *Framework) runWorkflowScenario(ctx context.Context, scenario core.Scena
 		return RunResult{}, err
 	}
 	f.emitJSON(ctx, core.EventRunStarted, req.RunID, runStartedPayload(req))
-	runner := f.newWorkflowRunner()
 	if err := runner.Run(ctx, scenario, req.RunID); err != nil {
 		var paused orchestration.WorkflowPausedError
 		if errors.As(err, &paused) {

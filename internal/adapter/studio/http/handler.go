@@ -40,6 +40,17 @@ type Saver interface {
 	SaveStudioGraph(ctx context.Context, graph any) (any, error)
 }
 
+// Composer runs AI graph composition (ComposeGraphRequest in,
+// ComposeGraphResult out, both passed as any for decoupling).
+type Composer interface {
+	ComposeStudioGraph(ctx context.Context, req any) (any, error)
+}
+
+// PartsLister returns the live scenario's composable parts.
+type PartsLister interface {
+	ListStudioParts() any
+}
+
 type HandlerConfig struct {
 	Validate     Validator
 	Codegen      CodeGenerator
@@ -47,6 +58,8 @@ type HandlerConfig struct {
 	ImportYAML   YAMLImporter
 	Run          Runner
 	Save         Saver
+	Compose      Composer
+	Parts        PartsLister
 	MaxBodyBytes int64
 	// Policy authorizes the mutating endpoints: studio run as run.submit and
 	// studio save as admin.configure, mirroring the checkpoint handler.
@@ -69,6 +82,8 @@ type Handler struct {
 	importYAML   YAMLImporter
 	run          Runner
 	save         Saver
+	compose      Composer
+	parts        PartsLister
 	maxBodyBytes int64
 	policy       security.Policy
 	audit        audit.Sink
@@ -87,6 +102,8 @@ func NewHandler(config HandlerConfig) *Handler {
 		importYAML:   config.ImportYAML,
 		run:          config.Run,
 		save:         config.Save,
+		compose:      config.Compose,
+		parts:        config.Parts,
 		maxBodyBytes: maxBodyBytes,
 		policy:       config.Policy,
 		audit:        config.Audit,
@@ -113,6 +130,10 @@ func (h *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {
 		h.handleRun(w, r)
 	case "v1/studio/save":
 		h.handleSave(w, r)
+	case "v1/studio/compose":
+		h.handleCompose(w, r)
+	case "v1/studio/parts":
+		h.handleParts(w, r)
 	default:
 		nethttp.NotFound(w, r)
 	}
@@ -285,6 +306,72 @@ func (h *Handler) handleSave(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (h *Handler) handleCompose(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if !h.requireWriteAuth(w, r, security.ActionRunSubmit, "compose") {
+		return
+	}
+	if h.compose == nil {
+		writeError(w, nethttp.StatusNotImplemented, "studio compose is not configured")
+		return
+	}
+	body, err := readBody(r, h.maxBodyBytes)
+	if err != nil {
+		writeStudioError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	var payload struct {
+		Prompt      string          `json:"prompt"`
+		Mode        string          `json:"mode"`
+		ComposerLLM string          `json:"composer_llm"`
+		MaxSteps    int             `json:"max_steps"`
+		Run         bool            `json:"run"`
+		RunRequest  json.RawMessage `json:"run_request"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeStudioError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(payload.Prompt) == "" {
+		writeError(w, nethttp.StatusBadRequest, "prompt is required")
+		return
+	}
+	req := map[string]any{
+		"prompt":       strings.TrimSpace(payload.Prompt),
+		"mode":         strings.TrimSpace(payload.Mode),
+		"composer_llm": strings.TrimSpace(payload.ComposerLLM),
+		"max_steps":    payload.MaxSteps,
+		"run":          payload.Run,
+	}
+	if len(payload.RunRequest) > 0 {
+		var runRequest any
+		if err := json.Unmarshal(payload.RunRequest, &runRequest); err == nil {
+			req["run_request"] = runRequest
+		}
+	}
+	result, err := h.compose.ComposeStudioGraph(r.Context(), req)
+	if err != nil {
+		writeStudioError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (h *Handler) handleParts(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	if h.parts == nil {
+		writeError(w, nethttp.StatusNotImplemented, "studio parts listing is not configured")
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, h.parts.ListStudioParts())
 }
 
 func decodeBody(r *nethttp.Request, maxBodyBytes int64) (any, error) {

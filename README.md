@@ -18,6 +18,7 @@
 - **图表达能力**：subgraph 嵌套、`map` 动态 fan-out、`parallel_group`、`loop`、条件边；Builder 提供 `MapOver`、`RouteIf`、`ParallelGroup` 等 DSL
 - **Skill 语义**：prompt 片段 + tool 白名单/策略 + 可内联 workflow 子图，编译期展开为命名空间节点
 - **多 Agent**：supervisor + `sub_agents` 虚拟 delegation tool；可选 planning pass（自主执行前 JSON 计划）
+- **AI 自动构图（ComposeGraph）**：一句话任务 → agentic composer 带构图工具循环 + 增量校验反馈，产出可校验 DAG；`catalog` 模式只编排已注册零件，`scenario` 模式可增量新建 Agent/Skill（拒绝覆盖已有 ID）；默认 ephemeral 执行，不改写 live 场景（用法见 [compose-graph.md](docs/compose-graph.md)，机制见 [orchestration-flow.md](docs/orchestration-flow.md) 第十一节，示例 `examples/go/compose-graph`）
 
 ### 生产治理
 
@@ -28,15 +29,15 @@
 
 ### AgentFlow Studio（内置 Web 调试台）
 
-挂载 `NewObservabilityHTTPHandler` 即可在 `/observability/` 获得可视化面板（默认中文，可切换 English）：
+挂载 `NewObservabilityHTTPHandler` 即可在 `/observability/` 获得可视化面板（默认中文）。新一代 Studio 是 **AI-first 构图工作台**（React + React Flow SPA，`go:embed` 内嵌，单二进制分发；未构建前端时回退旧版内联 UI）：
 
-| 标签 | 能力 |
+| 视图 | 能力 |
 |------|------|
-| **Graph** | 拓扑高亮、运行中 done/current 状态、subgraph 钻取、节点 Inspector、autonomous trace |
-| **Time Travel** | Checkpoint 时间轴 scrub、revision diff、从 checkpoint 恢复/分叉 |
-| **Editor** | 拖拽编辑、Undo/Redo、YAML 导入/导出、Go codegen、Studio Run **实时画布预览**、subgraph 画布钻取 |
-| **Compare / Thread** | 多 run 步骤输出 diff、分叉 lineage |
-| **Inspector** | step 输出、关联事件、嵌套 **Trace/Span 树**（可选 Jaeger/Tempo 外链） |
+| **画布** | **AI 构图栏**（一句话 → catalog/scenario 两种模式生成图，上图即为可编辑草稿）、零件箱拖入、React Flow 画布编辑、节点 Inspector、Undo/Redo、校验 / YAML / Go codegen / 保存、试跑面板（SSE 节点实时高亮 + HITL 批准） |
+| **运行** | runs 列表轮询、Trace 树（span 嵌套）、step 输出、checkpoint 时间轴（查看快照 / 从版本恢复 / 分叉）、thread lineage |
+| **对比** | 双 run step 级 diff（仅 A / 仅 B / 输出不一致高亮） |
+
+前端工程在 `web/studio/`（Vite + React + TS + Tailwind），`make studio-ui` 构建并嵌入；HTTP API 新增 `POST /api/studio/compose` 与 `GET /api/studio/parts`（生产侧镜像为 `/v1/studio/compose`、`/v1/studio/parts`）。
 
 示例：`go run ./examples/go/http-worker/main.go` → `http://127.0.0.1:7060/observability/`。详见 [observability-dashboard.md](docs/observability-dashboard.md)、[studio-roadmap.md](docs/studio-roadmap.md)。
 

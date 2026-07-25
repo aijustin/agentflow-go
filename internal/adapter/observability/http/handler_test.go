@@ -33,11 +33,23 @@ func TestHandlerServesDashboardRunsAndEvents(t *testing.T) {
 
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "AgentFlow 可观测性") || !strings.Contains(page.Body.String(), "id=\"langSelect\"") {
+	// The dashboard serves the built SPA when the frontend bundle is embedded
+	// (`make studio-ui`), and falls back to the legacy inline UI otherwise.
+	// Accept either so the test is deterministic with and without the bundle.
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "<!doctype html") {
 		t.Fatalf("dashboard page was not served: code=%d body=%q", page.Code, page.Body.String())
 	}
-	if !strings.Contains(page.Body.String(), "const apiURL") || !strings.Contains(page.Body.String(), "capabilityBanner") {
-		t.Fatalf("dashboard missing apiURL helper or capability banner")
+	if _, spa := spaIndex(); spa {
+		if !strings.Contains(page.Body.String(), "AgentFlow Studio") || !strings.Contains(page.Body.String(), "id=\"root\"") {
+			t.Fatalf("SPA dashboard missing expected markers")
+		}
+	} else {
+		if !strings.Contains(page.Body.String(), "AgentFlow 可观测性") || !strings.Contains(page.Body.String(), "id=\"langSelect\"") {
+			t.Fatalf("legacy dashboard missing expected markers")
+		}
+		if !strings.Contains(page.Body.String(), "const apiURL") || !strings.Contains(page.Body.String(), "capabilityBanner") {
+			t.Fatalf("dashboard missing apiURL helper or capability banner")
+		}
 	}
 
 	runs := httptest.NewRecorder()

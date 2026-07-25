@@ -1,6 +1,14 @@
-.PHONY: build test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check
+.PHONY: build test test-integration test-race test-realmodel vet lint security fmt validate-builder validate-catalog release-check studio-ui
 
 GO_TEST_LDFLAGS ?= -w
+
+# studio-ui builds the Studio SPA (web/studio) and copies the bundle into the
+# observability handler's embedded uistatic directory. The Go build works
+# without it (legacy inline UI fallback), so this target is opt-in.
+studio-ui:
+	cd web/studio && pnpm install && pnpm build
+	find internal/adapter/observability/http/uistatic -type f ! -name 'placeholder.txt' -delete
+	cp -R web/studio/dist/ internal/adapter/observability/http/uistatic/
 
 build:
 	CGO_ENABLED=0 go build ./...

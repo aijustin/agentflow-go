@@ -57,6 +57,8 @@ func NewObservabilityHTTPHandler(config ObservabilityHTTPHandlerConfig) (http.Ha
 		httpConfig.YAML = adapter
 		httpConfig.ImportYAML = adapter
 		httpConfig.RunStudio = adapter
+		httpConfig.Compose = adapter
+		httpConfig.Parts = adapter
 		if config.StudioSavePath != "" {
 			httpConfig.StudioSave = adapter
 		}
@@ -162,6 +164,22 @@ func decodeStudioRunRequest(value any) (agentflow.RunRequest, error) {
 		return agentflow.RunRequest{}, fmt.Errorf("studio run request: decode: %w", err)
 	}
 	return req, nil
+}
+
+func (adapter *studioFramework) ComposeStudioGraph(ctx context.Context, value any) (any, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("studio compose request: encode: %w", err)
+	}
+	var req agentflow.ComposeGraphRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, fmt.Errorf("studio compose request: decode: %w", err)
+	}
+	return adapter.framework.ComposeGraph(ctx, req)
+}
+
+func (adapter *studioFramework) ListStudioParts() any {
+	return adapter.framework.StudioParts()
 }
 
 func (adapter *studioFramework) CompareRuns(ctx context.Context, runA, runB string) (any, error) {

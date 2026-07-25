@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -18,6 +19,8 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/httpx"
+	"github.com/aijustin/agentflow-go/pkg/llm"
+	llmmock "github.com/aijustin/agentflow-go/pkg/llm/mock"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/security"
 	"github.com/aijustin/agentflow-go/pkg/testutil"
@@ -29,6 +32,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Demo LLM: a fallback mock whose queued tool-call turns play the AI graph
+	// composer (two identical catalog sessions, so the Studio "AI 构图" button
+	// can be tried twice). A real provider needs no such setup.
+	demoGateway := llmmock.NewFallbackGateway()
+	demoGateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	for range 2 {
+		queueComposerTurn(demoGateway, "p1", "compose_list_parts", `{}`)
+		queueComposerTurn(demoGateway, "p2", "compose_add_node", `{"id":"echo_input","kind":"tool","ref":"echo"}`)
+		queueComposerTurn(demoGateway, "p3", "compose_add_node", `{"id":"mark_done","kind":"transform","input":{"set":{"done":true}}}`)
+		queueComposerTurn(demoGateway, "p4", "compose_connect", `{"from":"echo_input","to":"mark_done"}`)
+		queueComposerTurn(demoGateway, "p5", "compose_finish", `{}`)
+		demoGateway.QueueToolCall("default", llm.ToolCallResponse{
+			ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "graph ready"}},
+		})
+	}
+	opts = append(opts, agentflow.WithLLMGateway(demoGateway))
 
 	recorder := adapters.NewPrometheusRecorder()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -69,7 +88,7 @@ func main() {
 	opts = append(opts,
 		agentflow.WithJobQueue(queue),
 		agentflow.WithCheckpointHistory(adapters.NewInMemoryCheckpointHistory()),
-		agentflow.WithHITLTokenSecret([]byte("dev-secret"), os.Stderr),
+		agentflow.WithHITLTokenSecret([]byte("dev-secret-16bytes"), os.Stderr),
 		agentflow.WithRecorder(recorder),
 		agentflow.WithEventSink(eventSink),
 	)
@@ -112,6 +131,9 @@ func main() {
 		Hub:            eventHub,
 		Framework:      fw,
 		StudioSavePath: studioSavePath,
+		// Local demo: no auth middleware, so explicitly open the mutating
+		// endpoints (studio run/save/compose, resume, fork) for the Studio UI.
+		InsecureAllowNoAuth: true,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -175,6 +197,12 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = server.Shutdown(shutdownCtx)
+}
+
+func queueComposerTurn(gateway *llmmock.FallbackGateway, id, tool, input string) {
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: id, Name: tool, Input: json.RawMessage(input)}},
+	})
 }
 
 func envOr(key, fallback string) string {

@@ -11,6 +11,29 @@ AgentFlow can persist runtime events and serve a lightweight operations dashboar
 
 The dashboard uses the existing `core.EventSink` signal path, so no runtime fork is required. Events are appended once and can be fanned out to storage, metrics/tracing, and logs.
 
+## Studio SPA Frontend
+
+The dashboard ships two frontends, selected at runtime:
+
+- **New Studio SPA** (`web/studio/`, Vite + React + TypeScript + Tailwind + React Flow): an AI-first composition workbench — the AI compose bar (`POST /api/studio/compose`) generates a draft graph onto an editable canvas, the parts palette (`GET /api/studio/parts`) lists scenario agents/tools/skills, and a trial-run panel streams node-level execution state over SSE. The 运行 (runs/trace/checkpoints/time-travel) and 对比 (run compare) views cover the observability surface.
+- **Legacy inline UI**: the pre-SPA single-string HTML page, served automatically when the SPA bundle has not been built. `go build` never requires Node.js.
+
+Build and embed the SPA (output is `go:embed`-ed into the binary; single-binary distribution is unchanged):
+
+```sh
+make studio-ui   # pnpm install + vite build + copy into internal/adapter/observability/http/uistatic
+```
+
+The SPA uses relative asset URLs and hash routing, so it works under any mount prefix (`http.StripPrefix`) without configuration. Frontend sources live in `web/studio/src/`: `views/` (Build / Runs / RunDetail / Compare), `components/` (ComposeBar, GraphCanvas, PartsPalette, NodeInspector, TrialRunPanel), `store/canvas.ts` (draft document + undo/redo), and `api/` (typed client for the dashboard endpoints).
+
+Additional endpoints the SPA relies on (also mirrored on the production Studio handler):
+
+| Method | Dashboard path | Production path | Purpose |
+|--------|----------------|-----------------|---------|
+| POST | `/api/studio/compose` | `/v1/studio/compose` | AI graph composition (`ComposeGraphRequest` → `ComposeGraphResult`); mutating — same auth guard as studio run |
+| GET | `/api/studio/parts` | `/v1/studio/parts` | Scenario parts palette (agents/tools/skills/subgraphs with descriptions) |
+
+
 ## Quick Start With PostgreSQL
 
 Register a `database/sql` driver in the host application, open a pool, and create the event store. `NewPostgresEventStore` creates the table and indexes automatically unless `SkipSchemaSetup` is set. Automatic setup is intended to make first enablement simple; teams with locked-down database permissions should apply the migration SQL first and then disable startup DDL.

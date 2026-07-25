@@ -556,6 +556,34 @@ flowchart LR
 
 ---
 
+## 十一、AI 自动构图（ComposeGraph）
+
+> 本节讲内部机制；调用方式、字段说明与持久化见 [compose-graph.md](compose-graph.md)。
+
+`Studio.ComposeGraph` 把一句话任务变成可校验的场景图。与 planning（运行时线性 `steps[{goal,tool}]`）不同，Compose 是**编译期图合成**：一个内部 composer agent 通过 `compose_*` 工具循环逐步搭建 DAG，每一步都被增量校验（编译反馈回路），而不是单轮生成一整段 JSON 再整体验尸。
+
+```mermaid
+flowchart LR
+    PROMPT["用户任务 Prompt"] --> COMPOSER["composer agent<br/>临时 autonomous scenario + 临时 engine"]
+    PARTS["compose_list_parts<br/>零件箱检索"] --> COMPOSER
+    COMPOSER -->|"add_node / connect<br/>(非法 ref / 环当场拒绝并反馈)"| DRAFT["内存 GraphBuilder 草稿"]
+    DRAFT --> VALIDATE["compose_validate / finish<br/>合并深拷贝 + ValidateScenario 全量校验"]
+    VALIDATE --> MERGE{"mode"}
+    MERGE -->|"catalog：只编排已有零件"| GA["DeepCopy + graph.ApplyGraph"]
+    MERGE -->|"scenario：可新建 Agent/Skill<br/>（拒绝覆盖已有 ID）"| PATCH["graph.ApplyScenarioPatch"]
+    GA --> RUN["可选 ephemeral Run<br/>（catalog 走 RunStudioGraph；<br/>scenario 走临时 engine + runner，仅 fixed_workflow）"]
+    PATCH --> RUN
+```
+
+关键约束：
+
+- **ephemeral 默认**：合并发生在 live scenario 的深拷贝上，live engine / scenario 不被改写；持久化显式走 `SaveStudioGraph`。
+- **工具声明与执行分离**：scenario 模式新建的 Agent 只能绑定已有 Tool（或新建 prompt Skill）；没有宿主 executor/resolver 的 Tool 无法执行，校验/运行正常失败，不做降级。
+- **kind 白名单**：composer 只能生成 `agent` / `tool` / `skill` / `transform` / `human_gate` / `parallel_group` / `loop` / `subgraph` 八类节点。
+- composer 通过 `CompletionRequirement` 被强制调用 `compose_finish` 才能收尾，`MaxSteps`（默认 15）兜底工具循环失控。
+
+---
+
 ## 关键代码索引
 
 | 阶段 | 文件 | 核心函数 |
@@ -572,3 +600,4 @@ flowchart LR
 | LLM 接口 | `pkg/llm/types.go` | `Gateway`, `ToolCaller`, `StructuredOutputter` |
 | HITL Gate | `internal/adapter/human/cli/gate.go` | `Pause`, `Resume` |
 | 上下文窗口 | `pkg/contextwindow/manager.go` | `Manager.Prepare` |
+| AI 构图 | `framework_compose.go`, `compose_builder.go`, `pkg/graph/patch.go` | `Studio.ComposeGraph`, `ApplyScenarioPatch` |

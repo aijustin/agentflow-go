@@ -62,6 +62,52 @@ func (f *Framework) Studio() Studio {
 	return Studio{f: f}
 }
 
+// StudioPart describes one composable part of the live scenario.
+type StudioPart struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// StudioParts groups the live scenario's composable parts by kind, sorted by
+// name. It backs the Studio parts palette and AI composition catalog.
+type StudioParts struct {
+	Agents    []StudioPart `json:"agents"`
+	Tools     []StudioPart `json:"tools"`
+	Skills    []StudioPart `json:"skills"`
+	Subgraphs []StudioPart `json:"subgraphs"`
+}
+
+// Parts lists the composable parts of the live scenario.
+func (s Studio) Parts() StudioParts {
+	scenario := s.f.currentScenario()
+	parts := StudioParts{
+		Agents:    make([]StudioPart, 0, len(scenario.Agents)),
+		Tools:     make([]StudioPart, 0, len(scenario.Tools)),
+		Skills:    make([]StudioPart, 0, len(scenario.Skills)),
+		Subgraphs: make([]StudioPart, 0, len(scenario.Orchestration.Workflows)),
+	}
+	for name, agent := range scenario.Agents {
+		parts.Agents = append(parts.Agents, StudioPart{Name: name, Description: agent.Description})
+	}
+	for name, tool := range scenario.Tools {
+		parts.Tools = append(parts.Tools, StudioPart{Name: name, Description: tool.Description})
+	}
+	for name, skill := range scenario.Skills {
+		parts.Skills = append(parts.Skills, StudioPart{Name: name, Description: skill.Description})
+	}
+	for name := range scenario.Orchestration.Workflows {
+		parts.Subgraphs = append(parts.Subgraphs, StudioPart{Name: name})
+	}
+	sortParts := func(list []StudioPart) {
+		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	}
+	sortParts(parts.Agents)
+	sortParts(parts.Tools)
+	sortParts(parts.Skills)
+	sortParts(parts.Subgraphs)
+	return parts
+}
+
 // ValidateStudioGraph validates an edited Studio graph against the framework scenario.
 func (s Studio) ValidateStudioGraph(_ context.Context, edited graph.ScenarioGraph) (ValidateStudioResult, error) {
 	scenario, err := graph.ApplyGraph(s.f.currentScenario(), edited)
@@ -291,6 +337,11 @@ func resolveThreadID(snapshot runstate.RunSnapshot) string {
 
 func (f *Framework) ValidateStudioGraph(ctx context.Context, edited graph.ScenarioGraph) (ValidateStudioResult, error) {
 	return f.Studio().ValidateStudioGraph(ctx, edited)
+}
+
+// StudioParts is a thin Framework delegate — prefer Framework.Studio().
+func (f *Framework) StudioParts() StudioParts {
+	return f.Studio().Parts()
 }
 
 func (f *Framework) GenerateStudioBuilderCode(ctx context.Context, edited graph.ScenarioGraph) (CodegenResult, error) {

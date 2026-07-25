@@ -2,6 +2,7 @@ package agentflow
 
 import (
 	"fmt"
+	"maps"
 
 	memoryinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/inmem"
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
@@ -141,4 +142,51 @@ func (f *Framework) rebuildLiveEngine(scenario core.Scenario) (*appexec.Engine, 
 		transforms, drain = f.engine.LateConfig()
 	}
 	return appexec.NewEngine(scenario, f.engineDependencies(transforms, drain))
+}
+
+// buildEphemeralEngine constructs an engine for an arbitrary scenario without
+// mutating Framework state (rebuildLiveEngine swaps the live memory wiring).
+// Memory maps are cloned before tier wiring so ephemeral runs cannot leak
+// repositories into the live maps. When tools is non-nil it replaces the
+// default tool registry (used by graph composition to inject per-call tools).
+func (f *Framework) buildEphemeralEngine(scenario core.Scenario, tools appexec.ToolRegistry) (*appexec.Engine, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	cfg := &options{
+		memory:              maps.Clone(f.memory),
+		tierMemory:          maps.Clone(f.tierMemory),
+		tierStores:          f.tierStores,
+		tierStorePolicies:   f.tierStorePolicies,
+		tierColdIndexers:    f.tierColdIndexers,
+		tierColdSummarizers: f.tierColdSummarizers,
+		cognitive:           maps.Clone(f.cognitive),
+		recorder:            f.recorder,
+		events:              f.events,
+		llm:                 f.llm,
+	}
+	if cfg.memory == nil {
+		cfg.memory = make(map[string]memory.Repository)
+	}
+	if cfg.tierMemory == nil {
+		cfg.tierMemory = make(map[string]tier.Manager)
+	}
+	if cfg.cognitive == nil {
+		cfg.cognitive = make(map[string]memory.CognitiveMemory)
+	}
+	if err := wireTierMemory(scenario, cfg); err != nil {
+		return nil, err
+	}
+	var transforms map[string]contextwindow.ToolOutputTransform
+	var drain interjection.DrainPolicy
+	if f.engine != nil {
+		transforms, drain = f.engine.LateConfig()
+	}
+	deps := f.engineDependencies(transforms, drain)
+	deps.Memory = cfg.memory
+	deps.TierMemory = cfg.tierMemory
+	deps.Cognitive = cfg.cognitive
+	if tools != nil {
+		deps.Tools = tools
+	}
+	return appexec.NewEngine(scenario, deps)
 }

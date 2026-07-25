@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ink scale — background depths */
+  --color-ink-0: #07090c;
+  --color-ink-1: #0c0f14;
+  --color-ink-2: #11151c;
+  --color-ink-3: #171d26;
+  --color-ink-4: #1f2733;
+
+  /* hairlines */
+  --color-line: #1f2733;
+  --color-line-strong: #2c3646;
+
+  /* foreground */
+  --color-fg-0: #e9ecf2;
+  --color-fg-1: #a8b1c0;
+  --color-fg-2: #69748847;
+  --color-muted: #6d7889;
+
+  /* signal — the one sharp accent (AI compose / primary action) */
+  --color-signal: #ffb224;
+  --color-signal-strong: #ffc860;
+  --color-signal-dim: #8a5f12;
+
+  /* status */
+  --color-ok: #3ecf8e;
+  --color-live: #4cc2ff;
+  --color-warn: #ffd166;
+  --color-fail: #ff6b6b;
+
+  /* node kind accents */
+  --color-kind-agent: #8b9cf9;
+  --color-kind-tool: #3ecf8e;
+  --color-kind-skill: #f47ac2;
+  --color-kind-transform: #93a1b5;
+  --color-kind-human_gate: #ffd166;
+  --color-kind-parallel_group: #4cc2ff;
+  --color-kind-loop: #b79bf7;
+  --color-kind-subgraph: #ff9f6b;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink-0);
+  color: var(--color-fg-0);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-signal) 32%, transparent);
+}
+
+/* micro section label: instrument-panel engraving */
+.label-micro {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* canvas dot grid */
+.dot-grid {
+  background-image: radial-gradient(circle, #232c3a 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-4) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-ink-4);
+  border-radius: 4px;
+}
+
+/* live pulse for running nodes */
+@keyframes node-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-live) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+.node-running {
+  animation: node-pulse 1.4s ease-in-out infinite;
+}
+
+/* panel entrance */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise-in {
+  animation: rise-in 180ms ease-out both;
+}
+
+/* React Flow dark overrides */
+.react-flow {
+  --xy-background-color: var(--color-ink-1);
+  --xy-edge-stroke: var(--color-line-strong);
+  --xy-edge-stroke-selected: var(--color-signal);
+  --xy-handle-background-color: var(--color-ink-4);
+  --xy-handle-border-color: var(--color-line-strong);
+  --xy-minimap-background-color: var(--color-ink-1);
+  --xy-minimap-node-background-color: var(--color-ink-4);
+  --xy-controls-background-color: var(--color-ink-2);
+  --xy-controls-button-background-color: var(--color-ink-2);
+  --xy-controls-button-background-color-hover: var(--color-ink-3);
+  --xy-controls-button-color: var(--color-fg-1);
+  --xy-controls-button-border-color: var(--color-line);
+}
+.react-flow__attribution {
+  background: transparent;
+  color: var(--color-muted);
+}

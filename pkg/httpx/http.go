@@ -154,9 +154,11 @@ type StudioHTTPHandlerConfig struct {
 //   - POST /v1/studio/import-yaml
 //   - POST /v1/studio/run
 //   - POST /v1/studio/save (when StudioSavePath is set)
+//   - POST /v1/studio/compose
+//   - GET  /v1/studio/parts
 //
-// The run/save routes require StudioHTTPHandlerConfig.Policy (or an explicit
-// InsecureAllowNoAuth opt-out).
+// The run/save/compose routes require StudioHTTPHandlerConfig.Policy (or an
+// explicit InsecureAllowNoAuth opt-out).
 func NewStudioHTTPHandler(config StudioHTTPHandlerConfig) (http.Handler, error) {
 	if config.Framework == nil {
 		return nil, fmt.Errorf("agentflow: studio handler requires framework")
@@ -168,6 +170,8 @@ func NewStudioHTTPHandler(config StudioHTTPHandlerConfig) (http.Handler, error) 
 		YAML:                adapter,
 		ImportYAML:          adapter,
 		Run:                 adapter,
+		Compose:             adapter,
+		Parts:               adapter,
 		MaxBodyBytes:        config.MaxBodyBytes,
 		Policy:              config.Policy,
 		Audit:               config.Audit,

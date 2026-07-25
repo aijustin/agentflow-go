@@ -35,6 +35,8 @@ type Config struct {
 	ImportYAML      StudioYAMLImporter
 	RunStudio       StudioRunner
 	StudioSave      StudioSaver
+	Compose         StudioComposer
+	Parts           StudioPartsLister
 	Compare         RunComparer
 	Thread          ThreadLister
 	Fork            RunForker
@@ -100,6 +102,17 @@ type StudioSaver interface {
 	SaveStudioGraph(ctx context.Context, graph any) (any, error)
 }
 
+// StudioComposer runs AI graph composition (agentflow.ComposeGraphRequest in,
+// agentflow.ComposeGraphResult out, both passed as any for decoupling).
+type StudioComposer interface {
+	ComposeStudioGraph(ctx context.Context, req any) (any, error)
+}
+
+// StudioPartsLister returns the live scenario's composable parts.
+type StudioPartsLister interface {
+	ListStudioParts() any
+}
+
 type RunComparer interface {
 	CompareRuns(ctx context.Context, runA, runB string) (any, error)
 }
@@ -128,6 +141,8 @@ type Handler struct {
 	importYAML      StudioYAMLImporter
 	runStudio       StudioRunner
 	studioSave      StudioSaver
+	compose         StudioComposer
+	parts           StudioPartsLister
 	compare         RunComparer
 	thread          ThreadLister
 	fork            RunForker
@@ -159,6 +174,8 @@ func NewHandler(config Config) (*Handler, error) {
 		importYAML:      config.ImportYAML,
 		runStudio:       config.RunStudio,
 		studioSave:      config.StudioSave,
+		compose:         config.Compose,
+		parts:           config.Parts,
 		compare:         config.Compare,
 		thread:          config.Thread,
 		fork:            config.Fork,
@@ -189,6 +206,7 @@ func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/", handler.handleDashboard)
+	handler.mux.Handle("/assets/", spaAssets())
 	handler.mux.HandleFunc("/api/ui-config", handler.handleUIConfig)
 	handler.mux.HandleFunc("/api/graph", handler.handleGraph)
 	handler.mux.HandleFunc("/api/compare", handler.handleCompare)
@@ -198,6 +216,8 @@ func (handler *Handler) routes() {
 	handler.mux.HandleFunc("/api/studio/import-yaml", handler.handleStudioImportYAML)
 	handler.mux.HandleFunc("/api/studio/run", handler.handleStudioRun)
 	handler.mux.HandleFunc("/api/studio/save", handler.handleStudioSave)
+	handler.mux.HandleFunc("/api/studio/compose", handler.handleStudioCompose)
+	handler.mux.HandleFunc("/api/studio/parts", handler.handleStudioParts)
 	handler.mux.HandleFunc("/api/runs", handler.handleRuns)
 	handler.mux.HandleFunc("/api/runs/", handler.handleRunResource)
 	handler.mux.HandleFunc("/api/episodes/", handler.handleEpisodeResource)
@@ -227,6 +247,12 @@ func (handler *Handler) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Req
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
+	// Prefer the built SPA (web/studio via `make studio-ui`); fall back to the
+	// legacy inline UI when the frontend bundle was never built.
+	if index, ok := spaIndex(); ok {
+		_, _ = w.Write(index)
+		return
+	}
 	_, _ = w.Write([]byte(indexHTML))
 }
 
@@ -622,6 +648,64 @@ func (handler *Handler) handleStudioSave(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleStudioCompose(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		methodNotAllowed(w, nethttp.MethodPost)
+		return
+	}
+	if handler.mutatingForbidden(w) {
+		return
+	}
+	if handler.compose == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio compose is not configured"))
+		return
+	}
+	var body struct {
+		Prompt      string `json:"prompt"`
+		Mode        string `json:"mode"`
+		ComposerLLM string `json:"composer_llm"`
+		MaxSteps    int    `json:"max_steps"`
+		Run         bool   `json:"run"`
+		RunRequest  any    `json:"run_request"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("decode body: %w", err))
+		return
+	}
+	if strings.TrimSpace(body.Prompt) == "" {
+		writeError(w, nethttp.StatusBadRequest, fmt.Errorf("prompt is required"))
+		return
+	}
+	req := map[string]any{
+		"prompt":       strings.TrimSpace(body.Prompt),
+		"mode":         strings.TrimSpace(body.Mode),
+		"composer_llm": strings.TrimSpace(body.ComposerLLM),
+		"max_steps":    body.MaxSteps,
+		"run":          body.Run,
+	}
+	if body.RunRequest != nil {
+		req["run_request"] = body.RunRequest
+	}
+	result, err := handler.compose.ComposeStudioGraph(r.Context(), req)
+	if err != nil {
+		writeStudioError(w, nethttp.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
+func (handler *Handler) handleStudioParts(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		methodNotAllowed(w, nethttp.MethodGet)
+		return
+	}
+	if handler.parts == nil {
+		writeError(w, nethttp.StatusNotImplemented, fmt.Errorf("studio parts listing is not configured"))
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, handler.parts.ListStudioParts())
 }
 
 func (handler *Handler) handleRunThread(w nethttp.ResponseWriter, r *nethttp.Request, runID string) {

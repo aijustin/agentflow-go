@@ -1,0 +1,4 @@
+This directory holds the built Studio SPA bundle (copied from web/studio/dist
+by `make studio-ui`). It is gitignored except for this placeholder, which keeps
+the go:embed directive in ui_assets.go compilable on checkouts that never build
+the frontend — the dashboard then falls back to the legacy inline UI.
