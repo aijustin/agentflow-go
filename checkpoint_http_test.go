@@ -31,7 +31,9 @@ func TestNewCheckpointHTTPHandlerListsSteps(t *testing.T) {
 	if _, err := fw.Run(context.Background(), agentflow.RunRequest{RunID: runID, Agent: "assistant", Prompt: "hi"}); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := httpx.NewCheckpointHTTPHandler(httpx.CheckpointHTTPHandlerConfig{Framework: fw})
+	handler, err := httpx.NewCheckpointHTTPHandler(httpx.CheckpointHTTPHandlerConfig{
+		Framework: fw, InsecureAllowNoAuth: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
