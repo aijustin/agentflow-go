@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	queueinmem "github.com/aijustin/agentflow-go/internal/adapter/queue/inmem"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 )
 
 func TestHandlerMountsAsyncJobRoutes(t *testing.T) {
@@ -46,7 +47,12 @@ func TestHandlerMountsAsyncRunsBehindAuthMiddleware(t *testing.T) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			next.ServeHTTP(w, r)
+			ctx := identity.WithPrincipal(r.Context(), identity.Principal{
+				ID:    "test-user",
+				Type:  identity.PrincipalUser,
+				Scope: identity.Scope{TenantID: "tenant-test"},
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 	handler, err := NewHandler(HandlerConfig{Queue: queueinmem.NewQueue(), AuthMiddleware: authMiddleware, IDGenerator: func() string { return "run-1" }})
