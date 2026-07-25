@@ -15,7 +15,7 @@ const filters = [
 
 export function RunsView() {
   const [status, setStatus] = useState('');
-  const { data, isLoading, isError, error, refetch } = useRuns(status || undefined);
+  const { data, isLoading, isError, error } = useRuns(status || undefined);
   const runs = data?.runs ?? [];
 
   return (
@@ -38,7 +38,7 @@ export function RunsView() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading && <p className="p-4 text-[13px] text-muted">加载中…</p>}
-        {isError && <QueryError error={error} onRetry={() => void refetch()} label="运行记录加载失败" />}
+        {isError && <QueryError error={error} label="运行记录加载失败" />}
         {!isLoading && !isError && runs.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-muted">
             <p className="text-[13px]">还没有运行记录</p>

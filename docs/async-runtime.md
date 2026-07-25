@@ -173,6 +173,8 @@ Resume continue 请求体示例：
 `Policy`。仅绑定 loopback 的本地示例或测试可以显式设置
 `InsecureAllowNoAuth: true`。同步 Webhook 如需来源签名校验，可同时设置
 `VerifyWebhookSignature`；签名校验不会替代负责注入租户 Principal 的认证中间件。
+`/healthz`、`/readyz` 与可选 `/metrics` 是运维探针例外，不经过
+`AuthMiddleware`；`/metrics` 应只暴露在内部 listener/network，或传入已自行包装认证的 Handler。
 
 ```go
 fw, err := agentflow.New(builder.MinimalTicketHandling("support"))

@@ -44,6 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **BREAKING — production HTTP and async handlers now fail closed.** `NewProductionHTTPHandler` requires both `AuthMiddleware` and `Policy`; loopback demos/tests must explicitly set `InsecureAllowNoAuth`. Standalone async and checkpoint-read routes also default-deny without a policy.
 - **BREAKING — tool input schemas are enforced by default.** Set `runtime.disable_tool_input_validation` only for a controlled compatibility migration.
 - **BREAKING — custom metric recorders implement `AddCounter`; `RecorderFunc` now receives the counter delta.**
+- **BREAKING — tenant-scoped memory keys use a dedicated encoded `Namespace.TenantID` dimension.** Existing tenant-prefixed flat/tier memory keys require migration before upgrade.
 
 ### Fixed
 
@@ -53,7 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Flat memory and retention filters now enforce the authenticated tenant instead of sharing session namespaces or accepting cross-tenant purge targets.
 - Providers that omit `tool_call_id` receive a deterministic runtime ID before checkpoints and iteration state are persisted, keeping replay idempotency keys stable.
 - LLM token metrics apply one weighted counter update per usage bucket instead of one lock acquisition per token.
-- Studio upgrades to React 19.2, React Router 8.3, and Vite 8.1 to clear the disclosed router advisories; it renders retryable API/SSE errors instead of misleading empty states.
+- Studio upgrades to React 19.2, React Router 8.3, and Vite 8.1 to clear the disclosed router advisories; it renders explicit API/SSE errors instead of misleading empty states.
 
 ## [0.4.3] - 2026-07-25
 

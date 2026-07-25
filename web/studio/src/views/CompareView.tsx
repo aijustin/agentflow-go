@@ -5,7 +5,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { prettyJSON, shortID } from '../lib/format';
 
 export function CompareView() {
-  const { data, isError: runsFailed, error: runsError, refetch: refetchRuns } = useRuns();
+  const { data, isError: runsFailed, error: runsError } = useRuns();
   const runs = data?.runs ?? [];
   const [runA, setRunA] = useState('');
   const [runB, setRunB] = useState('');
@@ -38,7 +38,7 @@ export function CompareView() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {runsFailed ? (
-          <QueryError error={runsError} onRetry={() => void refetchRuns()} label="Run 列表加载失败" />
+          <QueryError error={runsError} label="Run 列表加载失败" />
         ) : !runA || !runB ? (
           <div className="flex h-full items-center justify-center text-[13px] text-muted">
             选择两个 run 查看 step 级差异
@@ -46,7 +46,7 @@ export function CompareView() {
         ) : isLoading ? (
           <p className="text-[13px] text-muted">对比中…</p>
         ) : compareError ? (
-          <p className="font-mono text-[12px] text-fail">{compareError instanceof Error ? compareError.message : '对比失败'}</p>
+          <QueryError error={compareError} label="运行对比加载失败" />
         ) : result ? (
           <div>
             <div className="mb-3 flex items-center gap-3 font-mono text-[11.5px] text-fg-1">

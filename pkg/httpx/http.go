@@ -285,6 +285,8 @@ type ProductionHTTPHandlerConfig struct {
 	Policy         security.Policy
 	Audit          audit.Sink
 	AuthMiddleware func(http.Handler) http.Handler
+	// MetricsHandler is mounted outside AuthMiddleware for infrastructure
+	// scrapers. Bind it to an internal listener/network or wrap it before use.
 	MetricsHandler http.Handler
 	IDGenerator    func() string
 	Now            func() time.Time

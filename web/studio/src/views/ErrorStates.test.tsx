@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiGet } from '../api/client';
+import { PartsPalette } from '../components/PartsPalette';
 import { RunDetailView } from './RunDetailView';
 import { RunsView } from './RunsView';
 
@@ -26,7 +27,7 @@ describe('Studio query errors', () => {
     mockedGet.mockRejectedValue(new Error('backend unavailable'));
   });
 
-  it('shows a retryable error instead of an empty runs state', async () => {
+  it('shows an explicit error instead of an empty runs state', async () => {
     render(
       <QueryClientProvider client={queryClient()}>
         <MemoryRouter>
@@ -37,7 +38,6 @@ describe('Studio query errors', () => {
 
     expect(await screen.findByText('运行记录加载失败')).toBeInTheDocument();
     expect(screen.queryByText('还没有运行记录')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
   });
 
   it('shows errors for run trace and steps tabs', async () => {
@@ -54,5 +54,14 @@ describe('Studio query errors', () => {
     expect(await screen.findByText('Trace 加载失败')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Steps' }));
     expect(await screen.findByText('Steps 加载失败')).toBeInTheDocument();
+  });
+
+  it('shows an explicit parts loading error', async () => {
+    render(
+      <QueryClientProvider client={queryClient()}>
+        <PartsPalette />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('零件加载失败')).toBeInTheDocument();
   });
 });
