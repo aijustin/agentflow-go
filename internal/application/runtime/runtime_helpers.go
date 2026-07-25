@@ -854,7 +854,7 @@ func cloneStringMap(in map[string]string) map[string]string {
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {
-	out := make(map[string]string, len(metadata)+1)
+	out := make(map[string]string, len(metadata))
 	for key, value := range metadata {
 		out[key] = value
 	}

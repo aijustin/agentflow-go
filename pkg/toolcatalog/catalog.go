@@ -12,14 +12,14 @@ import (
 
 // Entry describes one tool available through a deferred catalog.
 type Entry struct {
-	Name        string              `json:"name"`
-	Description string              `json:"description,omitempty"`
-	Server      string              `json:"server,omitempty"`
-	RemoteName  string              `json:"remote_name,omitempty"`
-	InputSchema json.RawMessage     `json:"input_schema,omitempty"`
+	Name        string               `json:"name"`
+	Description string               `json:"description,omitempty"`
+	Server      string               `json:"server,omitempty"`
+	RemoteName  string               `json:"remote_name,omitempty"`
+	InputSchema json.RawMessage      `json:"input_schema,omitempty"`
 	SideEffect  core.SideEffectLevel `json:"side_effect,omitempty"`
 	Approval    core.ApprovalPolicy  `json:"approval,omitempty"`
-	Tags        []string            `json:"tags,omitempty"`
+	Tags        []string             `json:"tags,omitempty"`
 	// Pin marks a tool as always injected alongside catalog meta-tools.
 	Pin bool `json:"pin,omitempty"`
 }
@@ -174,7 +174,7 @@ func (s *Snapshot) Entry(name string) (Entry, bool) {
 
 // MutableSnapshot wraps a catalog snapshot that can be refreshed atomically.
 type MutableSnapshot struct {
-	mu   sync.RWMutex
+	mu    sync.RWMutex
 	inner *Snapshot
 }
 

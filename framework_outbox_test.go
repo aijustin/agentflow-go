@@ -161,12 +161,6 @@ func (s *fakeSequencedStore) AppendSequenced(ctx context.Context, sequence int64
 	return s.Store.AppendSequenced(ctx, sequence, event)
 }
 
-func (s *fakeSequencedStore) deliveryCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.deliveries
-}
-
 // plainEventStore implements observability.EventStore but none of the
 // extension interfaces, for option-validation tests.
 type plainEventStore struct{}
