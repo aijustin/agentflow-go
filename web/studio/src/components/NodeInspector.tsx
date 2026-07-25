@@ -169,7 +169,8 @@ function ScenarioActions() {
 
   const validate = () =>
     run(async () => {
-      const result = await apiPost<ValidateStudioResult>('studio/validate', doc);
+      const payload = scenarioDraft ? { graph: doc, scenario: scenarioDraft } : doc;
+      const result = await apiPost<ValidateStudioResult>('studio/validate', payload);
       return result.valid
         ? { kind: 'ok' as const, text: '校验通过' }
         : { kind: 'err' as const, text: result.error || '校验失败' };
@@ -177,7 +178,8 @@ function ScenarioActions() {
 
   const codegen = (language: 'go' | 'yaml') => async () => {
     try {
-      const result = await apiPost<CodegenResult>(language === 'go' ? 'studio/codegen' : 'studio/yaml', doc);
+      const payload = scenarioDraft ? { graph: doc, scenario: scenarioDraft } : doc;
+      const result = await apiPost<CodegenResult>(language === 'go' ? 'studio/codegen' : 'studio/yaml', payload);
       setExport(result);
     } catch (err) {
       setMessage({ kind: 'err', text: err instanceof Error ? err.message : '导出失败' });

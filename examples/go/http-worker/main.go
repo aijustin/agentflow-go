@@ -133,8 +133,8 @@ func main() {
 		Hub:            eventHub,
 		Framework:      fw,
 		StudioSavePath: studioSavePath,
-		// Local demo: no auth middleware, so explicitly open the mutating
-		// endpoints (studio run/save/compose, resume, fork) for the Studio UI.
+		// Local demo: no auth middleware, so explicitly open the dashboard
+		// and API routes for the Studio UI.
 		InsecureAllowNoAuth: true,
 	})
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
+	"github.com/aijustin/agentflow-go/pkg/identity"
 )
 
 const testDriverName = "agentflow_postgres_queue_test"
@@ -312,6 +313,44 @@ func TestQueueEnqueueAnchorsDelayedAvailabilityAtDatabaseClock(t *testing.T) {
 	}
 }
 
+func TestQueueAdminOperationsAreTenantScoped(t *testing.T) {
+	queue, state := newTestQueue(t)
+	tenantA := postgresTenantContext("tenant-a")
+	tenantB := postgresTenantContext("tenant-b")
+	jobA, err := queue.Enqueue(tenantA, asyncpkg.Job{ID: "job-a", Type: asyncpkg.RunJobType})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobA.TenantID != "tenant-a" {
+		t.Fatalf("expected stamped tenant-a, got %+v", jobA)
+	}
+	if _, err := queue.Enqueue(tenantB, asyncpkg.Job{ID: "job-b", Type: asyncpkg.RunJobType}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Load(tenantB, jobA.ID); !errors.Is(err, asyncpkg.ErrTenantMismatch) {
+		t.Fatalf("expected cross-tenant load rejection, got %v", err)
+	}
+	jobs, err := queue.ListJobs(tenantA, asyncpkg.JobFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != "job-a" {
+		t.Fatalf("expected only tenant-a job, got %+v", jobs)
+	}
+	if err := queue.Cancel(tenantB, jobA.ID); !errors.Is(err, asyncpkg.ErrTenantMismatch) {
+		t.Fatalf("expected cross-tenant cancel rejection, got %v", err)
+	}
+
+	state.mu.Lock()
+	jobB := state.rows["job-b"]
+	jobB.State = asyncpkg.JobDeadLetter
+	state.rows["job-b"] = jobB
+	state.mu.Unlock()
+	if err := queue.Requeue(tenantA, "job-b"); !errors.Is(err, asyncpkg.ErrTenantMismatch) {
+		t.Fatalf("expected cross-tenant requeue rejection, got %v", err)
+	}
+}
+
 func TestNewQueueValidatesInputs(t *testing.T) {
 	if _, err := NewQueue(nil); err == nil {
 		t.Fatal("expected nil db error")
@@ -323,6 +362,14 @@ func TestNewQueueValidatesInputs(t *testing.T) {
 	if _, err := NewQueue(db, WithTableName("bad;drop")); err == nil {
 		t.Fatal("expected invalid table name error")
 	}
+}
+
+func postgresTenantContext(tenantID string) context.Context {
+	return identity.WithPrincipal(context.Background(), identity.Principal{
+		ID:    "user-" + tenantID,
+		Type:  identity.PrincipalUser,
+		Scope: identity.Scope{TenantID: tenantID},
+	})
 }
 
 func newTestQueue(t *testing.T) (*Queue, *testState) {
@@ -467,6 +514,8 @@ func (c *testConn) QueryContext(ctx context.Context, query string, args []driver
 		return c.lease(args)
 	case strings.HasPrefix(normalized, "UPDATE") && strings.Contains(normalized, "RETURNING"):
 		return c.renew(args)
+	case strings.HasPrefix(normalized, "SELECT") && strings.Contains(normalized, "ORDER BY CREATED_AT ASC"):
+		return c.list(normalized, args)
 	case strings.HasPrefix(normalized, "SELECT"):
 		return c.load(args)
 	default:
@@ -477,23 +526,24 @@ func (c *testConn) QueryContext(ctx context.Context, query string, args []driver
 func (c *testConn) insert(args []driver.NamedValue) (driver.Result, error) {
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
-	// $11 carries the relative delay in seconds; the server anchors it at
-	// its own NOW(), mirroring NOW() + make_interval(secs => $11).
+	// $12 carries the relative delay in seconds; the server anchors it at
+	// its own NOW(), mirroring NOW() + make_interval(secs => $12).
 	now := c.state.dbNow()
 	job := asyncpkg.Job{
 		ID:             args[0].Value.(string),
 		Type:           args[1].Value.(string),
 		RunID:          stringValue(args[2].Value),
-		Payload:        bytesValue(args[3].Value),
-		State:          asyncpkg.JobState(args[4].Value.(string)),
-		Attempts:       int(args[5].Value.(int64)),
-		MaxAttempts:    int(args[6].Value.(int64)),
-		LastError:      stringValue(args[7].Value),
-		CreatedAt:      args[8].Value.(time.Time),
-		UpdatedAt:      args[9].Value.(time.Time),
-		AvailableAt:    now.Add(secondsToDuration(args[10].Value.(float64))),
-		LeaseWorkerID:  stringValue(args[11].Value),
-		LeaseExpiresAt: timeValue(args[12].Value),
+		TenantID:       stringValue(args[3].Value),
+		Payload:        bytesValue(args[4].Value),
+		State:          asyncpkg.JobState(args[5].Value.(string)),
+		Attempts:       int(args[6].Value.(int64)),
+		MaxAttempts:    int(args[7].Value.(int64)),
+		LastError:      stringValue(args[8].Value),
+		CreatedAt:      args[9].Value.(time.Time),
+		UpdatedAt:      args[10].Value.(time.Time),
+		AvailableAt:    now.Add(secondsToDuration(args[11].Value.(float64))),
+		LeaseWorkerID:  stringValue(args[12].Value),
+		LeaseExpiresAt: timeValue(args[13].Value),
 	}
 	if _, exists := c.state.rows[job.ID]; exists {
 		return driver.RowsAffected(0), nil
@@ -538,6 +588,41 @@ func (c *testConn) load(args []driver.NamedValue) (driver.Rows, error) {
 		return rows(nil), nil
 	}
 	return rows([][]driver.Value{jobValues(job)}), nil
+}
+
+func (c *testConn) list(normalized string, args []driver.NamedValue) (driver.Rows, error) {
+	argIndex := 0
+	state := asyncpkg.JobState("")
+	tenantID := ""
+	limit := 0
+	if strings.Contains(normalized, "STATE = $") {
+		state = asyncpkg.JobState(args[argIndex].Value.(string))
+		argIndex++
+	}
+	if strings.Contains(normalized, "TENANT_ID = $") {
+		tenantID = args[argIndex].Value.(string)
+		argIndex++
+	}
+	if strings.Contains(normalized, " LIMIT $") {
+		limit = int(args[argIndex].Value.(int64))
+	}
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	values := make([][]driver.Value, 0, len(c.state.order))
+	for _, jobID := range c.state.order {
+		job := c.state.rows[jobID]
+		if state != "" && job.State != state {
+			continue
+		}
+		if tenantID != "" && job.TenantID != tenantID {
+			continue
+		}
+		values = append(values, jobValues(job))
+		if limit > 0 && len(values) >= limit {
+			break
+		}
+	}
+	return rows(values), nil
 }
 
 func (c *testConn) renew(args []driver.NamedValue) (driver.Rows, error) {
@@ -688,11 +773,11 @@ func (c *testConn) cancel(args []driver.NamedValue) (driver.Result, error) {
 }
 
 func jobValues(job asyncpkg.Job) []driver.Value {
-	return []driver.Value{job.ID, job.Type, job.RunID, []byte(job.Payload), string(job.State), int64(job.Attempts), int64(job.MaxAttempts), job.LastError, job.CreatedAt, job.UpdatedAt, job.AvailableAt, nullableString(job.LeaseWorkerID), nullableTime(job.LeaseExpiresAt)}
+	return []driver.Value{job.ID, job.Type, job.RunID, job.TenantID, []byte(job.Payload), string(job.State), int64(job.Attempts), int64(job.MaxAttempts), job.LastError, job.CreatedAt, job.UpdatedAt, job.AvailableAt, nullableString(job.LeaseWorkerID), nullableTime(job.LeaseExpiresAt)}
 }
 
 func rows(values [][]driver.Value) driver.Rows {
-	return &testRows{columns: []string{"id", "type", "run_id", "payload_json", "state", "attempts", "max_attempts", "last_error", "created_at", "updated_at", "available_at", "lease_worker_id", "lease_expires_at"}, values: values}
+	return &testRows{columns: []string{"id", "type", "run_id", "tenant_id", "payload_json", "state", "attempts", "max_attempts", "last_error", "created_at", "updated_at", "available_at", "lease_worker_id", "lease_expires_at"}, values: values}
 }
 
 type testRows struct {

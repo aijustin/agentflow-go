@@ -18,9 +18,10 @@
 
 ```go
 dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
-    Store:     eventStore,
-    Hub:       eventHub,
-    Framework: fw, // 启用 graph / steps / resume-from-step
+    Store:               eventStore,
+    Hub:                 eventHub,
+    Framework:           fw, // 启用 graph / steps / resume-from-step
+    InsecureAllowNoAuth: true, // 仅限本地开发
 })
 ```
 
@@ -151,6 +152,7 @@ dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandl
     Hub:   eventHub,
     Framework: fw,
     StudioSavePath: savePath,
+    AuthMiddleware: authMiddleware,
 })
 prod, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
     Queue: queue,

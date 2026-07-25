@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -170,6 +171,53 @@ func TestStoreListPaginates(t *testing.T) {
 	if len(refs) != total {
 		t.Fatalf("expected %d refs across pages, got %d", total, len(refs))
 	}
+}
+
+func TestStoreScopesBlobsByTenant(t *testing.T) {
+	server := newFakeS3(t)
+	store, err := NewStore(Config{
+		Endpoint:        server.URL,
+		Bucket:          "agentflow-blobs",
+		Region:          "us-east-1",
+		Prefix:          "runs/steps",
+		AccessKeyID:     "test-access",
+		SecretAccessKey: "test-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantA := s3BlobTenantContext("tenant-a")
+	tenantB := s3BlobTenantContext("tenant-b")
+	refA, err := store.Put(tenantA, []byte("shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refB, err := store.Put(tenantB, []byte("shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refA.ID == refB.ID || len(refA.ID) != 128 {
+		t.Fatalf("expected distinct scoped IDs, a=%+v b=%+v", refA, refB)
+	}
+	if _, err := store.Get(tenantB, refA); !errors.Is(err, runstate.ErrTenantMismatch) {
+		t.Fatalf("expected cross-tenant rejection, got %v", err)
+	}
+	refs, err := store.List(tenantA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || refs[0].ID != refA.ID || refs[0].Sha256 != refA.Sha256 {
+		t.Fatalf("expected only tenant-a blob, got %+v", refs)
+	}
+}
+
+func s3BlobTenantContext(tenantID string) context.Context {
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID:    "user-" + tenantID,
+		Type:  identity.PrincipalUser,
+		Scope: identity.Scope{TenantID: tenantID},
+	})
+	return runstate.ContextWithTenantStrictMode(ctx)
 }
 
 func TestNewStoreValidatesConfig(t *testing.T) {

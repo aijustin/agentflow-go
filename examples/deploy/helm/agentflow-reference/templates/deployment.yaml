@@ -31,6 +31,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.postgres.secretName }}
                   key: {{ .Values.postgres.secretKey }}
+            - name: AGENTFLOW_HITL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.hitl.secretName }}
+                  key: {{ .Values.hitl.secretKey }}
             - name: AGENT_TIER_COLD_DIR
               value: {{ .Values.tier.coldDir | quote }}
             - name: AGENT_HTTP_ADDR

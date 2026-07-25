@@ -24,10 +24,9 @@ type ObservabilityHTTPHandlerConfig struct {
 	StudioSavePath string
 	// TraceExploreURL is an optional trace UI link template, e.g. https://jaeger.example.com/trace/{trace_id}.
 	TraceExploreURL string
-	// InsecureAllowNoAuth disables the default-deny guard on mutating
-	// endpoints (HITL resume, resume-from-step/checkpoint, fork, studio
-	// run/save) when AuthMiddleware is nil. Only set it behind an
-	// authenticating reverse proxy or in tests.
+	// InsecureAllowNoAuth disables the default-deny guard on the dashboard
+	// and every API endpoint when AuthMiddleware is nil. Only set it behind
+	// an authenticating reverse proxy or in local tests and demos.
 	InsecureAllowNoAuth bool
 	// Logger receives the one-time construction warning emitted when
 	// AuthMiddleware is nil; nil discards it.
@@ -107,27 +106,27 @@ func (adapter *studioFramework) ExportScenarioGraph() any {
 }
 
 func (adapter *studioFramework) ValidateStudioGraph(ctx context.Context, edited any) (any, error) {
-	graph, err := decodeStudioGraph(edited)
+	graph, draft, err := decodeStudioSaveRequest(edited)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.framework.ValidateStudioGraph(ctx, graph)
+	return adapter.framework.ValidateStudioGraphWithScenario(ctx, graph, draft)
 }
 
 func (adapter *studioFramework) GenerateStudioBuilderCode(ctx context.Context, edited any) (any, error) {
-	graph, err := decodeStudioGraph(edited)
+	graph, draft, err := decodeStudioSaveRequest(edited)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.framework.GenerateStudioBuilderCode(ctx, graph)
+	return adapter.framework.GenerateStudioBuilderCodeWithScenario(ctx, graph, draft)
 }
 
 func (adapter *studioFramework) GenerateStudioScenarioYAML(ctx context.Context, edited any) (any, error) {
-	graph, err := decodeStudioGraph(edited)
+	graph, draft, err := decodeStudioSaveRequest(edited)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.framework.GenerateStudioScenarioYAML(ctx, graph)
+	return adapter.framework.GenerateStudioScenarioYAMLWithScenario(ctx, graph, draft)
 }
 
 func (adapter *studioFramework) ImportStudioScenarioYAML(ctx context.Context, yamlData []byte, layout any) (any, error) {

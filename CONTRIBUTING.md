@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.25.10+
+- Go 1.25.12+
 - `make`
 
 ## Setup

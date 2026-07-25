@@ -54,6 +54,10 @@ defer mcpClient.Close()
 
 Stdio 客户端同样支持 `tools/list` 和 `tools/call`，并通过 `exec.CommandContext` 直接传递命令和参数，不经过 shell 拼接。应用应只运行可信的 MCP server，并将命令、工作目录和环境变量来自受控配置或部署系统。
 
+通过 `httpx.MCPWiringOptions` / `WireMCPTools` 从场景自动创建的客户端会注册到
+`Framework.Close()`：legacy HTTP session 会先终止，stdio 子进程会关闭。通过
+`MCPRegistry.Clients` 注入的客户端仍由调用方管理生命周期。
+
 ## 工具执行器适配器
 
 将一个 MCP server 工具包装为普通 AgentFlow `core.ToolExecutor`：

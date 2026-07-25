@@ -28,6 +28,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/studio/pnpm-lock.yaml
 
+      - name: Test Studio
+        run: cd web/studio && pnpm install --frozen-lockfile && pnpm test
+
       - name: Build embedded Studio
         run: make studio-ui
 

@@ -1,6 +1,7 @@
 package agentflow
 
 import (
+	"container/list"
 	"context"
 	"encoding/json"
 	"errors"
@@ -140,63 +141,73 @@ type Framework struct {
 }
 
 type options struct {
-	llm                  llm.Gateway
-	runs                 runstate.Repository
-	checkpointHistory    runstate.CheckpointHistory
-	blobs                runstate.BlobStore
-	events               core.EventSink
-	gate                 core.HumanGate
-	approvalEvaluator    core.ToolApprovalEvaluator
-	tools                map[string]core.ToolExecutor
-	resolver             core.ToolResolver
-	memory               map[string]memory.Repository
-	tierMemory           map[string]tier.Manager
-	tierStores           map[string]tier.Store
-	tierStorePolicies    map[string]tier.Policy
-	tierColdIndexers     map[string]tier.ColdSummaryIndexer
-	tierColdSummarizers  map[string]tier.ContentSummarizer
-	cognitive            map[string]memory.CognitiveMemory
-	jobQueue             async.Queue
-	tokenSecret          []byte
-	tokenSecretSecondary []byte
-	tokenTTL             time.Duration
-	tokenTTLSet          bool
-	tokenWriter          io.Writer
-	policy               security.Policy
-	audit                audit.Sink
-	toolGov              governance.ToolPolicy
-	redactor             governance.OutputRedactor
-	llmPayloadCapture    bool
-	recorder             observability.Recorder
-	tracer               observability.Tracer
-	logger               log.Logger
-	requireLLM           bool
-	runLocker            coordination.Locker
-	runLeaseOwner        string
-	runLeaseTTL          time.Duration
-	runReaperInterval    time.Duration
-	runReaperGrace       time.Duration
-	closers              []func(context.Context) error
-	toolTransforms       map[string]contextwindow.ToolOutputTransform
-	toolCatalog          toolcatalog.Catalog
-	deferredTools        bool
-	deferredToolsSet     bool
-	interjectDrain       interjection.DrainPolicy
-	toolOrchestrator     toolorch.ToolOrchestrator
-	approvalStore        toolorch.ApprovalStore
-	turnStopHook         core.TurnStopHook
-	resumeAuthHook       ResumeAuthorizationHook
-	eventStore           observability.EventStore
-	outboxRelay          bool
-	outboxRelayInterval  time.Duration
+	llm                    llm.Gateway
+	runs                   runstate.Repository
+	checkpointHistory      runstate.CheckpointHistory
+	blobs                  runstate.BlobStore
+	events                 core.EventSink
+	gate                   core.HumanGate
+	approvalEvaluator      core.ToolApprovalEvaluator
+	tools                  map[string]core.ToolExecutor
+	resolver               core.ToolResolver
+	toolResolverCacheLimit int
+	memory                 map[string]memory.Repository
+	tierMemory             map[string]tier.Manager
+	tierStores             map[string]tier.Store
+	tierStorePolicies      map[string]tier.Policy
+	tierColdIndexers       map[string]tier.ColdSummaryIndexer
+	tierColdSummarizers    map[string]tier.ContentSummarizer
+	cognitive              map[string]memory.CognitiveMemory
+	jobQueue               async.Queue
+	tokenSecret            []byte
+	tokenSecretSecondary   []byte
+	tokenTTL               time.Duration
+	tokenTTLSet            bool
+	tokenWriter            io.Writer
+	policy                 security.Policy
+	audit                  audit.Sink
+	toolGov                governance.ToolPolicy
+	redactor               governance.OutputRedactor
+	llmPayloadCapture      bool
+	recorder               observability.Recorder
+	tracer                 observability.Tracer
+	logger                 log.Logger
+	requireLLM             bool
+	runLocker              coordination.Locker
+	runLeaseOwner          string
+	runLeaseTTL            time.Duration
+	runReaperInterval      time.Duration
+	runReaperGrace         time.Duration
+	closers                []func(context.Context) error
+	toolTransforms         map[string]contextwindow.ToolOutputTransform
+	toolCatalog            toolcatalog.Catalog
+	deferredTools          bool
+	deferredToolsSet       bool
+	interjectDrain         interjection.DrainPolicy
+	toolOrchestrator       toolorch.ToolOrchestrator
+	approvalStore          toolorch.ApprovalStore
+	turnStopHook           core.TurnStopHook
+	resumeAuthHook         ResumeAuthorizationHook
+	eventStore             observability.EventStore
+	outboxRelay            bool
+	outboxRelayInterval    time.Duration
 }
 
 type toolRegistry struct {
-	mu       sync.Mutex
-	eager    map[string]core.ToolExecutor
-	cache    map[string]core.ToolExecutor
-	resolver core.ToolResolver
+	mu         sync.Mutex
+	eager      map[string]core.ToolExecutor
+	cache      map[string]toolCacheEntry
+	cacheOrder *list.List
+	cacheLimit int
+	resolver   core.ToolResolver
 }
+
+type toolCacheEntry struct {
+	executor core.ToolExecutor
+	element  *list.Element
+}
+
+const defaultToolResolverCacheLimit = 1024
 
 type workflowAgentRegistry struct {
 	agents map[string]core.Agent
@@ -235,11 +246,17 @@ func (r workflowAgentRunner) Run(ctx context.Context, input core.AgentInput) (co
 	return core.AgentOutput{}, err
 }
 
-func newToolRegistry(eager map[string]core.ToolExecutor, resolver core.ToolResolver) *toolRegistry {
+func newToolRegistry(eager map[string]core.ToolExecutor, resolver core.ToolResolver, cacheLimit int) *toolRegistry {
 	if eager == nil {
 		eager = make(map[string]core.ToolExecutor)
 	}
-	return &toolRegistry{eager: eager, cache: make(map[string]core.ToolExecutor), resolver: resolver}
+	return &toolRegistry{
+		eager:      eager,
+		cache:      make(map[string]toolCacheEntry),
+		cacheOrder: list.New(),
+		cacheLimit: cacheLimit,
+		resolver:   resolver,
+	}
 }
 
 func (r *toolRegistry) ResolveTool(ctx context.Context, tool core.Tool) (core.ToolExecutor, bool, error) {
@@ -256,9 +273,10 @@ func (r *toolRegistry) ResolveTool(ctx context.Context, tool core.Tool) (core.To
 		r.mu.Unlock()
 		return executor, true, nil
 	}
-	if executor, ok := r.cache[cacheKey]; ok {
+	if entry, ok := r.cache[cacheKey]; ok {
+		r.cacheOrder.MoveToFront(entry.element)
 		r.mu.Unlock()
-		return executor, true, nil
+		return entry.executor, true, nil
 	}
 	resolver := r.resolver
 	r.mu.Unlock()
@@ -277,10 +295,20 @@ func (r *toolRegistry) ResolveTool(ctx context.Context, tool core.Tool) (core.To
 	if existing, ok := r.eager[name]; ok {
 		return existing, true, nil
 	}
-	if existing, ok := r.cache[cacheKey]; ok {
-		return existing, true, nil
+	if entry, ok := r.cache[cacheKey]; ok {
+		r.cacheOrder.MoveToFront(entry.element)
+		return entry.executor, true, nil
 	}
-	r.cache[cacheKey] = executor
+	if r.cacheLimit == 0 {
+		return executor, true, nil
+	}
+	element := r.cacheOrder.PushFront(cacheKey)
+	r.cache[cacheKey] = toolCacheEntry{executor: executor, element: element}
+	if r.cacheOrder.Len() > r.cacheLimit {
+		oldest := r.cacheOrder.Back()
+		delete(r.cache, oldest.Value.(string))
+		r.cacheOrder.Remove(oldest)
+	}
 	return executor, true, nil
 }
 
@@ -364,7 +392,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 	if err := validateWiring(scenario, cfg, autoMemory, wiringRules); err != nil {
 		return nil, err
 	}
-	tools := newToolRegistry(cfg.tools, cfg.resolver)
+	tools := newToolRegistry(cfg.tools, cfg.resolver, cfg.toolResolverCacheLimit)
 	var tokenSigner *runstate.TokenSigner
 	if len(cfg.tokenSecret) > 0 {
 		if cfg.gate != nil {
@@ -765,6 +793,18 @@ func WithToolResolver(resolver core.ToolResolver) Option {
 			return fmt.Errorf("agentflow: tool resolver is nil")
 		}
 		o.resolver = resolver
+		return nil
+	}
+}
+
+// WithToolResolverCacheLimit bounds principal-scoped lazy executor caching.
+// The default is 1024 entries; zero disables caching.
+func WithToolResolverCacheLimit(limit int) Option {
+	return func(o *options) error {
+		if limit < 0 {
+			return fmt.Errorf("agentflow: tool resolver cache limit must be >= 0")
+		}
+		o.toolResolverCacheLimit = limit
 		return nil
 	}
 }

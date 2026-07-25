@@ -166,6 +166,65 @@ func TestFrameworkSaveStudioGraphWithScenarioPersistsNewAgent(t *testing.T) {
 	}
 }
 
+func TestFrameworkScenarioDraftParticipatesInValidateAndExport(t *testing.T) {
+	base := core.Scenario{
+		Name: "studio-scenario-preview",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"existing": {Name: "existing", LLM: "default", Instructions: "existing"},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{
+				Nodes: []core.WorkflowNode{{ID: "seed", Kind: core.NodeTransform, Input: json.RawMessage(`{"set":{"ready":true}}`)}},
+			},
+		},
+	}
+	fw, err := agentflow.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := graph.DeepCopyScenario(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft.Agents["writer"] = core.Agent{Name: "writer", LLM: "default", Instructions: "write"}
+	edited := fw.ExportScenarioGraph()
+	edited.Workflow.Nodes = append(edited.Workflow.Nodes, graph.GraphNode{ID: "writer", Kind: string(core.NodeAgent), Ref: "writer"})
+	edited.Workflow.Edges = append(edited.Workflow.Edges, graph.GraphEdge{From: "seed", To: "writer"})
+
+	validated, err := fw.ValidateStudioGraphWithScenario(context.Background(), edited, &draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validated.Valid {
+		t.Fatalf("scenario draft should validate before save: %+v", validated)
+	}
+	yamlResult, err := fw.GenerateStudioScenarioYAMLWithScenario(context.Background(), edited, &draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(yamlResult.Code, "writer") {
+		t.Fatalf("scenario draft missing from YAML export:\n%s", yamlResult.Code)
+	}
+	goResult, err := fw.GenerateStudioBuilderCodeWithScenario(context.Background(), edited, &draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(goResult.Code, "writer") {
+		t.Fatalf("scenario draft missing from Go export:\n%s", goResult.Code)
+	}
+
+	draft.Agents["existing"] = core.Agent{Name: "existing", LLM: "default", Instructions: "tampered"}
+	rejected, err := fw.ValidateStudioGraphWithScenario(context.Background(), edited, &draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Valid || rejected.ErrorCode == "" {
+		t.Fatalf("expected tampered existing agent to be rejected: %+v", rejected)
+	}
+}
+
 func TestFrameworkForkAndCompareRuns(t *testing.T) {
 	scenario := core.Scenario{
 		Name: "fork-compare",

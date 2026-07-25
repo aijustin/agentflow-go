@@ -48,3 +48,24 @@ func TestPurgeOrphanBlobs(t *testing.T) {
 		t.Fatalf("unexpected purge result removed=%d deleted=%v", removed, blobs.deleted)
 	}
 }
+
+func TestPurgeOrphanBlobsFiltersStoredBlobsByTenant(t *testing.T) {
+	refA, err := NewBlobRefForContext(blobTenantContext("tenant-a", false), []byte("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refB, err := NewBlobRefForContext(blobTenantContext("tenant-b", false), []byte("b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := NewBlobRef("", []byte("legacy"))
+	legacy.ID = legacy.Sha256
+	blobs := &blobAdminStub{list: []BlobRef{refA, refB, legacy}}
+	removed, err := PurgeOrphanBlobs(context.Background(), &repoStub{}, blobs, ListFilter{TenantID: "tenant-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 || len(blobs.deleted) != 1 || blobs.deleted[0] != refA.ID {
+		t.Fatalf("tenant purge crossed ownership boundary: removed=%d deleted=%v", removed, blobs.deleted)
+	}
+}

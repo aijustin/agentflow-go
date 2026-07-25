@@ -105,9 +105,9 @@ type Policy interface {
 租户上下文必须流经：
 
 - 运行快照（`RunSnapshot.tenant_id`，由认证上下文在创建时写入；加载/续跑时校验）。
-- 任务队列载荷和状态。
+- 任务队列载荷和状态（`Job.tenant_id`；HTTP 读取、取消、列表与重新入队均校验）。
 - 记忆命名空间。
-- Blob 引用和对象前缀。
+- Blob 引用和对象键（租户哈希与内容摘要组合，租户内去重、跨租户隔离）。
 - 事件 sink 和审计 sink。
 - 具有有限基数的指标标签。
 
@@ -115,7 +115,7 @@ HTTP 授权会在 principal 存在且 resource 未显式设置租户时，自动
 
 `PurgeExpired` / `PurgeWithPolicy` 在 principal 存在时会按租户过滤，避免清理其他租户的历史 run。
 
-未设置 `tenant_id` 的历史快照仍可在无 principal 的本地/CLI 路径访问；生产 API 应始终携带 tenant 上下文。
+未设置 `tenant_id` 的历史快照仍可在无 principal 的本地/CLI 路径访问；生产 API 应始终携带 tenant 上下文。tenant-strict 模式拒绝历史未分区 Blob，迁移后写入的 Blob 使用租户作用域 ID。
 
 ## 密钥处理
 

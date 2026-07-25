@@ -15,7 +15,7 @@ func CollectQueueMetrics(ctx context.Context, queue Queue) (QueueMetrics, error)
 	if !ok {
 		return QueueMetrics{}, nil
 	}
-	jobs, err := admin.ListJobs(ctx, JobFilter{})
+	jobs, err := admin.ListJobs(ctx, JobFilter{TenantID: TenantIDFromContext(ctx)})
 	if err != nil {
 		return QueueMetrics{}, err
 	}

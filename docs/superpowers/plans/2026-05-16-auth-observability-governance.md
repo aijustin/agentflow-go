@@ -8,7 +8,7 @@
 
 **架构：** 先增加身份和策略端口，再将它们接入 HTTP/运行时路径。保持 Debug UI 与生产 API 行为分离。
 
-**技术栈：** Go 1.25.10+、`context`、`log/slog`，Prometheus/OpenTelemetry 依赖需经过显式依赖评审后再引入。
+**技术栈：** Go 1.25.12+、`context`、`log/slog`，Prometheus/OpenTelemetry 依赖需经过显式依赖评审后再引入。
 
 ---
 

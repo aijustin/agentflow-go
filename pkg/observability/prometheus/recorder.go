@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -102,14 +103,14 @@ func (r *Recorder) Handler() http.Handler {
 				b.WriteString("_bucket")
 				b.WriteString(formatHistogramLabels(labels, fmt.Sprintf("%g", bound)))
 				b.WriteString(" ")
-				b.WriteString(fmt.Sprintf("%d", sample.le[bound]))
+				b.WriteString(strconv.FormatUint(sample.le[bound], 10))
 				b.WriteByte('\n')
 			}
 			b.WriteString(name)
 			b.WriteString("_bucket")
 			b.WriteString(formatHistogramLabels(labels, "+Inf"))
 			b.WriteString(" ")
-			b.WriteString(fmt.Sprintf("%d", sample.count))
+			b.WriteString(strconv.FormatUint(sample.count, 10))
 			b.WriteByte('\n')
 			writeSampleLine(&b, name+"_sum", labels, sample.sum)
 			writeSampleLine(&b, name+"_count", labels, float64(sample.count))

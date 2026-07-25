@@ -3,8 +3,9 @@ package async
 import "context"
 
 type JobFilter struct {
-	State JobState
-	Limit int
+	State    JobState
+	TenantID string
+	Limit    int
 }
 
 // JobAdmin extends Queue with dead-letter inspection and requeue support.

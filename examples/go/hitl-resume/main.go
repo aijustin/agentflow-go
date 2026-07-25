@@ -23,7 +23,7 @@ func main() {
 		log.Fatal(err)
 	}
 	opts = append(opts,
-		agentflow.WithHITLTokenSecret([]byte("dev-secret"), &tokenBuf),
+		agentflow.WithHITLTokenSecret([]byte("dev-secret-16bytes"), &tokenBuf),
 	)
 
 	fw, err := agentflow.New(scenario, opts...)

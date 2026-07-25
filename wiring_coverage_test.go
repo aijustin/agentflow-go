@@ -133,10 +133,11 @@ func TestObservabilityHTTPHandlerStudioAdapterRoutes(t *testing.T) {
 	}
 	savePath := filepath.Join(t.TempDir(), "scenario.yaml")
 	handler, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
-		Store:          adapters.NewInMemoryEventStore(),
-		Hub:            adapters.NewEventHub(),
-		Framework:      fw,
-		StudioSavePath: savePath,
+		Store:               adapters.NewInMemoryEventStore(),
+		Hub:                 adapters.NewEventHub(),
+		Framework:           fw,
+		StudioSavePath:      savePath,
+		InsecureAllowNoAuth: true,
 	})
 	if err != nil {
 		t.Fatal(err)

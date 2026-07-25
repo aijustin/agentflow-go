@@ -86,8 +86,9 @@ fw, err := agentflow.New(scenario, agentflow.WithEventSink(adapters.NewEventFano
 )
 
 dashboard, err := httpx.NewObservabilityHTTPHandler(httpx.ObservabilityHTTPHandlerConfig{
-	Store: eventStore,
-	Hub:   eventHub,
+	Store:          eventStore,
+	Hub:            eventHub,
+	AuthMiddleware: authMiddleware,
 })
 ```
 

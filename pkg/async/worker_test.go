@@ -142,6 +142,9 @@ func (q *testQueue) ListJobs(_ context.Context, filter JobFilter) ([]Job, error)
 		if filter.State != "" && job.State != filter.State {
 			continue
 		}
+		if filter.TenantID != "" && job.TenantID != filter.TenantID {
+			continue
+		}
 		out = append(out, CloneJob(job))
 	}
 	return out, nil
