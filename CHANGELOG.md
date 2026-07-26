@@ -29,6 +29,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt caching.** A tool loop re-sends its whole prefix — tool catalog, system prompt, conversation so far — on every iteration, so the share of it served from the provider's cache is the dominant cost term. `llm.PromptCacheConfig` (scenario `llms.<name>.prompt_cache.enabled`, builder `LLMPromptCache`) keeps that prefix stable and cacheable: the Anthropic adapter places cache breakpoints after the tool catalog, the system prompt and the conversation tail, and the runtime suppresses governance that would rewrite the prefix per turn (`context.tool_schema_pruning`). OpenAI-compatible providers cache automatically by matching a stable prefix and need no markers. Off by default, because writing the cache carries a provider premium that a profile with no prefix reuse would pay for nothing. Measured against Anthropic's published multipliers on the request shape the adapter emits: a 12-turn tool loop costs ~60% less in input tokens at a 74.7% hit rate, while a single call with no reuse costs ~27% more. See [configuration-reference.md](docs/configuration-reference.md#prompt-缓存).
+- **Cache-token accounting.** `llm.TokenUsage` gains `CachedInputTokens` and `CacheWriteTokens`, plus `CacheHitRate()` and `UncachedInputTokens()`. Providers disagree on the shape — OpenAI reports cached tokens as a subset of the prompt, Anthropic reports reads and writes alongside an input count that excludes them — so adapters normalize to one meaning: `InputTokens` is the whole prompt and `CachedInputTokens` the part read from cache. `agentflow_llm_tokens_total` gains `cache_read` and `cache_write` kinds; both are subsets of `prompt`, so summing every kind would double count.
+
 ### Fixed
 
 - **Scenario validation no longer crashes the process.** A subgraph node referencing its own workflow (directly or mutually) recursed until the goroutine stack overflowed, and a loop node in a skill-only scenario dereferenced the nil `orchestration.workflow`. Both are reachable from the Studio `validate` / `import-yaml` endpoints.
