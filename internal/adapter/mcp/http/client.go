@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/mcp"
@@ -21,6 +22,11 @@ import (
 // so a misbehaving or compromised MCP server cannot exhaust memory by
 // returning an unbounded response.
 const DefaultMaxResponseBytes int64 = 16 << 20
+
+// DefaultTimeout bounds a single RPC when the caller does not supply a client.
+// An MCP server that accepts the connection and then stalls would otherwise
+// hold the tool call — and the run — open forever.
+const DefaultTimeout = 60 * time.Second
 
 const sseScanBuf = 4 * 1024 * 1024
 
@@ -76,7 +82,7 @@ func NewClientWithOptions(endpoint string, client *nethttp.Client, options mcp.C
 		return nil, fmt.Errorf("mcp http: endpoint is required")
 	}
 	if client == nil {
-		client = nethttp.DefaultClient
+		client = &nethttp.Client{Timeout: DefaultTimeout}
 	}
 	version := core.FrameworkVersion()
 	normalized, err := mcp.NormalizeClientOptions(options, version)

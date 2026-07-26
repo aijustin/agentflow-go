@@ -8,8 +8,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/knowledge"
+	"github.com/aijustin/agentflow-go/pkg/security/ssrf"
 )
 
 // DefaultMaxBytes caps a fetched document's size when Config.MaxBytes is
@@ -17,12 +19,20 @@ import (
 // cannot exhaust memory during knowledge ingestion.
 const DefaultMaxBytes int64 = 64 << 20
 
+// DefaultTimeout bounds a single document fetch. Ingestion runs in the
+// caller's goroutine, so an unresponsive source would otherwise stall startup
+// or a scheduled refresh indefinitely.
+const DefaultTimeout = 60 * time.Second
+
 type Config struct {
 	URLs      []string
 	Namespace string
 	Metadata  map[string]string
 	MaxBytes  int64
 	Client    *nethttp.Client
+
+	// BlockLoopback refuses sources that resolve to the loopback interface.
+	BlockLoopback bool
 }
 
 type Loader struct {
@@ -54,9 +64,17 @@ func NewLoader(config Config) (*Loader, error) {
 		}
 		urls = append(urls, rawURL)
 	}
-	client := config.Client
-	if client == nil {
-		client = nethttp.DefaultClient
+	baseClient := config.Client
+	if baseClient == nil {
+		baseClient = &nethttp.Client{Timeout: DefaultTimeout}
+	}
+	// Knowledge sources are operator-configured, but a scenario file is not a
+	// trust boundary: it can be imported through Studio. Enforcing the address
+	// policy in the dialer keeps ingestion from reaching link-local metadata
+	// or private services, including through redirects.
+	client, err := ssrf.Guard{BlockLoopback: config.BlockLoopback}.ProtectClient(baseClient)
+	if err != nil {
+		return nil, fmt.Errorf("http knowledge loader: %w", err)
 	}
 	maxBytes := config.MaxBytes
 	if maxBytes <= 0 {

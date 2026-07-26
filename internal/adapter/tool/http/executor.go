@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/security/ssrf"
@@ -17,12 +18,22 @@ import (
 
 const DefaultMaxResponseBytes int64 = 1 << 20
 
+// DefaultTimeout bounds a single tool request when the caller does not supply
+// its own client. Without it an unresponsive upstream pins the calling
+// goroutine — and the run's tool budget — indefinitely.
+const DefaultTimeout = 30 * time.Second
+
 type Config struct {
 	AllowedHosts     []string
 	AllowedMethods   []string
 	DefaultHeaders   map[string]string
 	MaxResponseBytes int64
 	Client           *nethttp.Client
+
+	// BlockLoopback refuses connections that resolve to the loopback
+	// interface. Deployments where the agent shares a network namespace with
+	// unauthenticated admin endpoints or a metadata proxy should set it.
+	BlockLoopback bool
 }
 
 type Executor struct {
@@ -58,15 +69,22 @@ func NewExecutor(config Config) (*Executor, error) {
 	}
 	baseClient := config.Client
 	if baseClient == nil {
-		baseClient = nethttp.DefaultClient
+		baseClient = &nethttp.Client{Timeout: DefaultTimeout}
 	}
-	// Copy rather than mutate the caller-supplied client: the allowlist
-	// check on the request URL only covers the initial request, and
-	// net/http follows redirects by default. Without re-checking the
-	// allowlist on every hop, an allowed host can redirect the request to
-	// an internal/metadata address (e.g. 169.254.169.254) and this tool
-	// would happily fetch and return it, defeating the allowlist (SSRF).
-	client := *baseClient
+	// Address policy is enforced by the dialer rather than by inspecting URLs.
+	// A URL check happens before net/http resolves the hostname, so the name
+	// can resolve to a different address than the one that was validated (DNS
+	// rebinding); the dialer sees the address the kernel actually connects to,
+	// on the initial request and on every redirect hop alike.
+	guard := ssrf.Guard{BlockLoopback: config.BlockLoopback}
+	client, err := guard.ProtectClient(baseClient)
+	if err != nil {
+		return nil, fmt.Errorf("http tool: %w", err)
+	}
+	// The dialer cannot enforce the host allowlist: it only sees addresses,
+	// and several hostnames may share one. Redirect hops are still checked
+	// by name here so an allowed host cannot bounce the request to an
+	// unlisted public host.
 	client.CheckRedirect = func(req *nethttp.Request, via []*nethttp.Request) error {
 		if len(via) >= 10 {
 			return fmt.Errorf("http tool: stopped after 10 redirects")
@@ -74,12 +92,9 @@ func NewExecutor(config Config) (*Executor, error) {
 		if !allowedHosts[req.URL.Host] {
 			return fmt.Errorf("http tool: redirect to host %q is not allowed", req.URL.Host)
 		}
-		if err := ssrf.CheckURLHost(req.URL.String()); err != nil {
-			return fmt.Errorf("http tool: redirect blocked: %w", err)
-		}
 		return nil
 	}
-	return &Executor{allowedHosts: allowedHosts, allowedMethods: allowedMethods, defaultHeaders: cloneMap(config.DefaultHeaders), maxResponseBytes: maxResponseBytes, client: &client}, nil
+	return &Executor{allowedHosts: allowedHosts, allowedMethods: allowedMethods, defaultHeaders: cloneMap(config.DefaultHeaders), maxResponseBytes: maxResponseBytes, client: client}, nil
 }
 
 func (e *Executor) Execute(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
@@ -107,10 +122,9 @@ func (e *Executor) Execute(ctx context.Context, call core.ToolCall) (core.ToolRe
 	if !e.allowedHosts[parsed.Host] {
 		return core.ToolResult{}, fmt.Errorf("http tool: host %q is not allowed", parsed.Host)
 	}
+	// Cheap early reject with a clear message when the URL names a blocked
+	// address outright. Hostnames are settled by the dialer, not here.
 	if err := ssrf.CheckURLHost(parsed.String()); err != nil {
-		return core.ToolResult{}, fmt.Errorf("http tool: %w", err)
-	}
-	if err := ssrf.LookupAndCheck(parsed.Hostname()); err != nil {
 		return core.ToolResult{}, fmt.Errorf("http tool: %w", err)
 	}
 	var body io.Reader

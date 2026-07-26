@@ -15,10 +15,14 @@ type ErrBlocked struct {
 }
 
 func (e ErrBlocked) Error() string {
-	if e.IP != nil {
+	switch {
+	case e.IP != nil && e.Host != "":
 		return fmt.Sprintf("ssrf: blocked address %s for host %q", e.IP, e.Host)
+	case e.IP != nil:
+		return fmt.Sprintf("ssrf: blocked address %s", e.IP)
+	default:
+		return fmt.Sprintf("ssrf: blocked host %q", e.Host)
 	}
-	return fmt.Sprintf("ssrf: blocked host %q", e.Host)
 }
 
 // IsBlockedIP reports whether ip is in a private, link-local, CGNAT, or

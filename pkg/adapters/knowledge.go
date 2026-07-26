@@ -45,6 +45,9 @@ type HTTPKnowledgeLoaderConfig struct {
 	Metadata  map[string]string
 	MaxBytes  int64
 	Client    *http.Client
+
+	// BlockLoopback refuses sources that resolve to the loopback interface.
+	BlockLoopback bool
 }
 
 type KnowledgeIndexerConfig struct {
@@ -94,11 +97,12 @@ func NewFileKnowledgeLoader(config FileKnowledgeLoaderConfig) (knowledge.Loader,
 // NewHTTPKnowledgeLoader creates an HTTP document loader for knowledge ingestion.
 func NewHTTPKnowledgeLoader(config HTTPKnowledgeLoaderConfig) (knowledge.Loader, error) {
 	return knowledgehttp.NewLoader(knowledgehttp.Config{
-		URLs:      config.URLs,
-		Namespace: config.Namespace,
-		Metadata:  config.Metadata,
-		MaxBytes:  config.MaxBytes,
-		Client:    config.Client,
+		URLs:          config.URLs,
+		Namespace:     config.Namespace,
+		Metadata:      config.Metadata,
+		MaxBytes:      config.MaxBytes,
+		Client:        config.Client,
+		BlockLoopback: config.BlockLoopback,
 	})
 }
 

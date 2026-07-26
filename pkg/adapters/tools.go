@@ -23,6 +23,12 @@ type HTTPToolConfig struct {
 	DefaultHeaders   map[string]string
 	MaxResponseBytes int64
 	Client           *http.Client
+
+	// BlockLoopback refuses requests that resolve to the loopback interface.
+	// Private, link-local, CGNAT and unspecified ranges are always refused;
+	// loopback is separate because local development and in-process test
+	// servers depend on it.
+	BlockLoopback bool
 }
 
 type FilesystemToolConfig struct {
@@ -54,6 +60,7 @@ func NewHTTPToolExecutor(config HTTPToolConfig) (core.ToolExecutor, error) {
 		DefaultHeaders:   config.DefaultHeaders,
 		MaxResponseBytes: config.MaxResponseBytes,
 		Client:           config.Client,
+		BlockLoopback:    config.BlockLoopback,
 	})
 }
 
