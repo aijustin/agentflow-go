@@ -113,6 +113,10 @@ type S3BlobStoreConfig struct {
 	SecretAccessKey string
 	SessionToken    string
 	HTTPClient      *http.Client
+
+	// MaxObjectBytes caps how much of a single object a read buffers in
+	// memory. Zero uses the adapter default.
+	MaxObjectBytes int64
 }
 
 // NewS3BlobStore creates an S3-compatible blob store for large runtime and
@@ -128,6 +132,7 @@ func NewS3BlobStore(config S3BlobStoreConfig) (runstate.BlobStore, error) {
 		SecretAccessKey: config.SecretAccessKey,
 		SessionToken:    config.SessionToken,
 		Client:          config.HTTPClient,
+		MaxObjectBytes:  config.MaxObjectBytes,
 	})
 }
 

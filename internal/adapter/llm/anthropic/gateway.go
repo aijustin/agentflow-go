@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/aijustin/agentflow-go/internal/httpclient"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
 
@@ -23,7 +24,7 @@ type Gateway struct {
 
 func NewGateway(profiles []llm.Profile, client *http.Client) *Gateway {
 	if client == nil {
-		client = http.DefaultClient
+		client = httpclient.New()
 	}
 	index := make(map[string]llm.Profile, len(profiles))
 	for _, profile := range profiles {

@@ -16,10 +16,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aijustin/agentflow-go/internal/httpclient"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
 var _ runstate.BlobAdmin = (*Store)(nil)
+
+// DefaultMaxObjectBytes caps how much of a single object Get buffers in
+// memory when Config.MaxObjectBytes is unset.
+const DefaultMaxObjectBytes int64 = 256 << 20
 
 const (
 	serviceName = "s3"
@@ -41,6 +46,10 @@ type Config struct {
 	SecretAccessKey string
 	SessionToken    string
 	Client          *http.Client
+
+	// MaxObjectBytes caps how much of an object Get will read into memory.
+	// Zero uses DefaultMaxObjectBytes.
+	MaxObjectBytes int64
 }
 
 type Store struct {
@@ -52,6 +61,7 @@ type Store struct {
 	secretAccessKey string
 	sessionToken    string
 	client          *http.Client
+	maxObjectBytes  int64
 }
 
 func NewStore(config Config) (*Store, error) {
@@ -77,7 +87,11 @@ func NewStore(config Config) (*Store, error) {
 	}
 	client := config.Client
 	if client == nil {
-		client = http.DefaultClient
+		client = httpclient.New()
+	}
+	maxObjectBytes := config.MaxObjectBytes
+	if maxObjectBytes <= 0 {
+		maxObjectBytes = DefaultMaxObjectBytes
 	}
 	return &Store{
 		endpoint:        endpoint,
@@ -88,6 +102,7 @@ func NewStore(config Config) (*Store, error) {
 		secretAccessKey: config.SecretAccessKey,
 		sessionToken:    config.SessionToken,
 		client:          client,
+		maxObjectBytes:  maxObjectBytes,
 	}, nil
 }
 
@@ -149,9 +164,16 @@ func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, responseError("get", ref.ID, resp)
 	}
-	data, err := io.ReadAll(resp.Body)
+	// Read through a limit even though the caller usually knows ref.Size: the
+	// bucket is a separate trust domain, and an object that grew unexpectedly
+	// (or a substituted response) must not be able to exhaust the heap.
+	limit := s.maxObjectBytes
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("s3 blob: read %s: %w", ref.ID, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("s3 blob: object %s exceeds max object bytes %d", ref.ID, limit)
 	}
 	got := sha256Hex(data)
 	if ref.Sha256 != "" && got != ref.Sha256 {
