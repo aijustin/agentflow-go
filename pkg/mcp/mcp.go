@@ -71,6 +71,16 @@ type ClientOptions struct {
 	Mode               ProtocolMode
 	ClientInfo         Implementation
 	ClientCapabilities map[string]any
+
+	// Elicitor answers server requests for user input during a tool call.
+	// Setting one declares the elicitation capability, which a server must
+	// see before it is allowed to ask. Multi round-trip input requires
+	// ProtocolModeModern.
+	Elicitor Elicitor
+
+	// MaxInputRounds bounds how many times one tool call may be sent back for
+	// more input. Zero uses DefaultMaxInputRounds.
+	MaxInputRounds int
 }
 
 // NormalizeClientOptions validates options and fills deterministic defaults.
@@ -93,6 +103,19 @@ func NormalizeClientOptions(options ClientOptions, defaultVersion string) (Clien
 	}
 	if options.ClientCapabilities == nil {
 		options.ClientCapabilities = map[string]any{}
+	}
+	if options.MaxInputRounds <= 0 {
+		options.MaxInputRounds = DefaultMaxInputRounds
+	}
+	// A server may only send an input request the client declared support
+	// for, so the capability has to track whether an Elicitor exists. It is
+	// derived rather than caller-supplied to keep the two from drifting: a
+	// declared capability with no handler would strand the server waiting on
+	// an answer that can never come.
+	if options.Elicitor != nil {
+		options.ClientCapabilities["elicitation"] = map[string]any{}
+	} else {
+		delete(options.ClientCapabilities, "elicitation")
 	}
 	return options, nil
 }

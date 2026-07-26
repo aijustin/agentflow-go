@@ -127,15 +127,16 @@ func (c *Client) CallTool(ctx context.Context, req mcp.CallToolRequest) (mcp.Cal
 	if strings.TrimSpace(req.Name) == "" {
 		return mcp.CallToolResult{}, fmt.Errorf("mcp http: tool name is required")
 	}
-	params, err := json.Marshal(req)
-	if err != nil {
-		return mcp.CallToolResult{}, err
-	}
-	var result mcp.CallToolResult
-	if err := c.call(ctx, "tools/call", params, &result); err != nil {
-		return mcp.CallToolResult{}, err
-	}
-	return result, nil
+	// The result is decoded as raw JSON first: under protocol 2026-07-28 a
+	// tools/call may answer with a request for input instead of a result, and
+	// CallToolWithInput drives that round trip to completion.
+	return mcp.CallToolWithInput(ctx, req, c.options, func(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+		var raw json.RawMessage
+		if err := c.call(ctx, "tools/call", params, &raw); err != nil {
+			return nil, err
+		}
+		return raw, nil
+	})
 }
 
 // SessionID returns the MCP session id assigned during initialize (empty until

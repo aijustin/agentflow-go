@@ -136,6 +136,13 @@ func firstEmbedProfile(profiles map[string]core.LLMProfileRef) string {
 type MCPRegistry struct {
 	Clients    map[string]mcp.Client
 	HTTPClient *http.Client
+
+	// Elicitor answers server requests for user input raised during a tool
+	// call (MCP protocol 2026-07-28 multi round-trip requests). It is host
+	// supplied because only the host knows whether asking the user means
+	// rendering a form, pausing behind a human gate, or refusing. Servers are
+	// only told the client can be asked when this is set.
+	Elicitor mcp.Elicitor
 }
 
 // WireMCPTools binds scenario MCP servers to mcp.tool executors.
@@ -148,7 +155,7 @@ func MCPWiringOptions(ctx context.Context, scenario core.Scenario, registry MCPR
 	return mcpWiringOptions(ctx, scenario, registry, mcpClientForServer)
 }
 
-type mcpClientFactory func(context.Context, core.MCPServer, *http.Client) (mcp.Client, error)
+type mcpClientFactory func(context.Context, core.MCPServer, MCPRegistry) (mcp.Client, error)
 
 func mcpWiringOptions(ctx context.Context, scenario core.Scenario, registry MCPRegistry, factory mcpClientFactory) (opts []agentflow.Option, err error) {
 	clients := make(map[string]mcp.Client, len(registry.Clients))
@@ -168,7 +175,7 @@ func mcpWiringOptions(ctx context.Context, scenario core.Scenario, registry MCPR
 		if _, exists := clients[server.Name]; exists {
 			continue
 		}
-		client, err := factory(ctx, server, registry.HTTPClient)
+		client, err := factory(ctx, server, registry)
 		if err != nil {
 			return nil, fmt.Errorf("agentflow: mcp server %q: %w", server.Name, err)
 		}
@@ -232,11 +239,13 @@ func closeOwnedMCPClients(ctx context.Context, clients []mcp.Client) error {
 	return errors.Join(errs...)
 }
 
-func mcpClientForServer(ctx context.Context, server core.MCPServer, httpClient *http.Client) (mcp.Client, error) {
+func mcpClientForServer(ctx context.Context, server core.MCPServer, registry MCPRegistry) (mcp.Client, error) {
 	options, err := mcpClientOptions(server)
 	if err != nil {
 		return nil, err
 	}
+	options.Elicitor = registry.Elicitor
+	httpClient := registry.HTTPClient
 	switch strings.ToLower(strings.TrimSpace(server.Transport)) {
 	case "", "http":
 		if strings.TrimSpace(server.URL) == "" {

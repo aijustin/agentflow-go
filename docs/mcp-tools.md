@@ -35,6 +35,42 @@ mcpClient, err := adapters.NewMCPHTTPClientWithOptions(endpoint, httpClient, mcp
 Stdio 使用 `MCPStdioClientConfig.Options` 设置同一选项。客户端不会探测、
 自动降级或在协议版本间重试；配置与服务端不匹配时直接返回错误。
 
+### Multi Round-Trip Requests 与 elicitation
+
+`2026-07-28` 把服务端「反向发起请求」的旧流程换成了 **MRTR**：无状态服务不再
+回连客户端并挂住连接，而是用 `InputRequiredResult` 代替结果返回——里面带着它
+需要被回答的 `inputRequests`，以及一段不透明的 `requestState`。客户端收集答案
+后，把**原始调用**连同 `inputResponses` 和原样回传的 `requestState` 重发一次。
+因为所有状态都在载荷里，重试可以落到任意一个服务实例上。
+
+客户端侧已实现该循环。宿主提供一个 `mcp.Elicitor` 来回答服务端的提问：
+
+```go
+opts, err := httpx.MCPWiringOptions(ctx, scenario, httpx.MCPRegistry{
+  Elicitor: mcp.ElicitorFunc(func(ctx context.Context, req mcp.ElicitRequest) (mcp.ElicitResult, error) {
+    // req.Mode 为 form 或 url；url 模式是规范要求服务端用于凭据的方式。
+    // 宿主可以渲染表单、接到 HITL human gate 上、或直接拒绝。
+    return mcp.ElicitResult{Action: mcp.ElicitAccept, Content: answer}, nil
+  }),
+})
+```
+
+几条契约值得注意：
+
+- **不配 `Elicitor` 就不声明 `elicitation` 能力**，规范要求服务端只能提出客户端
+  已声明支持的请求。能力位由是否存在 `Elicitor` 推导，不接受调用方单独设置，
+  避免「声明了却没人应答」把服务端挂死。
+- **未配置时收到提问直接报错**，不猜测、不静默跳过——服务端正在等这个答案。
+- **`sampling/createMessage` 与 `roots/list` 一律拒绝**。二者在引入 MRTR 的同一
+  版本里已被废弃（分别改为宿主直连 LLM provider、改用工具参数），本客户端不
+  声明、也不实现。
+- **轮次有上限**（`MaxInputRounds`，默认 8），避免服务端反复追问把调用方挂住。
+- MRTR 仅在 `ProtocolModeModern` 下驱动；legacy 模式收到 `input_required` 会明确
+  报错而不是发送服务端读不懂的字段。
+
+`ElicitResult.Action` 为 `accept` / `decline` / `cancel`。`decline` 是**合法答案**
+而非错误，如何处理由服务端决定。
+
 ## Stdio 客户端
 
 当 MCP server 以本地子进程方式运行时，使用 `NewMCPStdioClient`：
