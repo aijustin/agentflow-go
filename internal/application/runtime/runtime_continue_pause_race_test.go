@@ -27,7 +27,7 @@ type pauseOnCompleteRepository struct {
 func (r *pauseOnCompleteRepository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
 	if snapshot.Status == runstate.RunStatusCompleted {
 		r.once.Do(func() {
-			current, err := r.Repository.Load(ctx, snapshot.RunID)
+			current, err := r.Load(ctx, snapshot.RunID)
 			if err != nil {
 				return
 			}
@@ -121,7 +121,7 @@ type cancelOnCompleteRepository struct {
 func (r *cancelOnCompleteRepository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
 	if snapshot.Status == runstate.RunStatusCompleted {
 		r.once.Do(func() {
-			current, err := r.Repository.Load(ctx, snapshot.RunID)
+			current, err := r.Load(ctx, snapshot.RunID)
 			if err != nil {
 				return
 			}
