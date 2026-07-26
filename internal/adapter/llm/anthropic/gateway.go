@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/aijustin/agentflow-go/internal/httpclient"
@@ -95,6 +96,19 @@ func (g *Gateway) StructuredChat(ctx context.Context, profileName string, schema
 }
 
 func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.ChatRequest) (<-chan llm.ChatChunk, error) {
+	return g.streamChat(ctx, profileName, req, nil)
+}
+
+// StreamChatWithTools streams a completion with tools enabled. Text deltas are
+// forwarded as they arrive for live presentation; tool_use blocks are
+// accumulated from their input_json_delta fragments and emitted as tool-call
+// chunks just before the terminal Done, matching the OpenAI adapter's
+// contract.
+func (g *Gateway) StreamChatWithTools(ctx context.Context, profileName string, req llm.ToolCallRequest) (<-chan llm.ChatChunk, error) {
+	return g.streamChat(ctx, profileName, req.ChatRequest, req.Tools)
+}
+
+func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.ChatRequest, tools []llm.ToolSpec) (<-chan llm.ChatChunk, error) {
 	profile, ok := g.profiles[profileName]
 	if !ok {
 		return nil, fmt.Errorf("anthropic: profile %q not found", profileName)
@@ -105,7 +119,7 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 		req.ExtraBody = cloneExtraBody(req.ExtraBody)
 	}
 	req.ExtraBody["stream"] = true
-	httpReq, err := g.messageRequest(ctx, profile, req, nil)
+	httpReq, err := g.messageRequest(ctx, profile, req, tools)
 	if err != nil {
 		return nil, err
 	}
@@ -131,9 +145,40 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 				return false
 			}
 		}
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		var usage llm.TokenUsage
+		blocks := map[int]*streamBlock{}
 		sentDone := false
+		// finish emits the accumulated tool calls followed by exactly one
+		// terminal Done. Every exit path routes through it: a consumer that
+		// blocks on Done would otherwise hang when the stream ends without an
+		// explicit message_stop, which a truncated connection or a proxy
+		// timeout can easily produce.
+		finish := func(streamErr error) {
+			if sentDone {
+				return
+			}
+			sentDone = true
+			if streamErr != nil {
+				send(llm.ChatChunk{Done: true, Error: streamErr.Error(), Err: streamErr, Usage: usage})
+				return
+			}
+			for _, call := range finalizeStreamBlocks(blocks) {
+				if !send(llm.ChatChunk{
+					Kind:       llm.ChunkKindToolCall,
+					ToolCallID: call.ID,
+					ToolName:   call.Name,
+					ToolInput:  call.Input,
+				}) {
+					return
+				}
+			}
+			send(llm.ChatChunk{Done: true, Usage: usage})
+		}
+		scanner := bufio.NewScanner(resp.Body)
+		// A tool_use block's arguments arrive as one SSE frame per fragment but
+		// a single frame can still be large; match the OpenAI adapter's cap
+		// rather than aborting the stream on the 64KB default.
+		scanner.Buffer(make([]byte, 64*1024), 16<<20)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") {
@@ -144,36 +189,109 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 			}
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
-				if !sentDone {
-					send(llm.ChatChunk{Done: true})
-				}
+				finish(nil)
 				return
 			}
-			chunk, err := decodeStreamEvent([]byte(data))
+			event, err := decodeStreamEvent([]byte(data))
 			if err != nil {
-				send(llm.ChatChunk{Done: true, Error: err.Error(), Err: err})
+				finish(err)
 				return
 			}
-			if chunk.Error != "" {
-				// An in-stream error event (e.g. overloaded_error); the chunk
-				// carries the structured error for retry classification.
-				send(llm.ChatChunk{Done: true, Error: chunk.Error, Err: chunk.Err})
+			if event.Err != nil {
+				// An in-stream error event (e.g. overloaded_error); the
+				// structured error rides along for retry classification.
+				finish(event.Err)
 				return
 			}
-			if chunk.Content != "" || chunk.Done || chunk.Usage.TotalTokens > 0 || chunk.Usage.OutputTokens > 0 {
-				if !send(chunk) {
+			if tokenUsagePresent(event.Usage) {
+				usage = mergeTokenUsage(usage, event.Usage)
+			}
+			switch event.Type {
+			case "content_block_start":
+				if event.ToolUse {
+					blocks[event.Index] = &streamBlock{id: event.ToolID, name: event.ToolName}
+				}
+			case "content_block_delta":
+				if event.Text != "" {
+					if !send(llm.ChatChunk{Content: event.Text, Usage: usage}) {
+						return
+					}
+				}
+				if event.PartialJSON != "" {
+					if block, ok := blocks[event.Index]; ok {
+						block.input.WriteString(event.PartialJSON)
+					}
+				}
+			case "message_delta":
+				if event.StopReason != "" {
+					finish(nil)
 					return
 				}
-				if chunk.Done {
-					return
-				}
+			case "message_stop":
+				finish(nil)
+				return
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			send(llm.ChatChunk{Done: true, Error: err.Error(), Err: err})
+			finish(err)
+			return
 		}
+		// Clean EOF without message_stop: the peer went away mid-stream. The
+		// consumer still needs its terminal chunk.
+		finish(nil)
 	}()
 	return ch, nil
+}
+
+// streamBlock accumulates one tool_use content block across its
+// input_json_delta fragments.
+type streamBlock struct {
+	id    string
+	name  string
+	input strings.Builder
+}
+
+func finalizeStreamBlocks(blocks map[int]*streamBlock) []llm.ToolCall {
+	if len(blocks) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(blocks))
+	for index := range blocks {
+		indexes = append(indexes, index)
+	}
+	// Content block indexes define the order the model emitted the calls in.
+	sort.Ints(indexes)
+	calls := make([]llm.ToolCall, 0, len(indexes))
+	for _, index := range indexes {
+		block := blocks[index]
+		if block.name == "" {
+			continue
+		}
+		calls = append(calls, llm.ToolCall{
+			ID:    block.id,
+			Name:  block.name,
+			Input: normalizeToolInput(json.RawMessage(block.input.String())),
+		})
+	}
+	return calls
+}
+
+func tokenUsagePresent(usage llm.TokenUsage) bool {
+	return usage.InputTokens > 0 || usage.OutputTokens > 0 || usage.TotalTokens > 0
+}
+
+// mergeTokenUsage folds a usage update into the running total. Anthropic
+// reports input tokens on message_start and output tokens on message_delta, so
+// a later event carrying only output tokens must not erase the input count.
+func mergeTokenUsage(current, update llm.TokenUsage) llm.TokenUsage {
+	if update.InputTokens > 0 {
+		current.InputTokens = update.InputTokens
+	}
+	if update.OutputTokens > 0 {
+		current.OutputTokens = update.OutputTokens
+	}
+	current.TotalTokens = current.InputTokens + current.OutputTokens
+	return current
 }
 
 func (g *Gateway) chat(ctx context.Context, profileName string, req llm.ChatRequest, tools []llm.ToolSpec) (llm.ToolCallResponse, error) {
@@ -361,14 +479,44 @@ func decodeMessageResponse(raw []byte) (llm.ToolCallResponse, error) {
 	}, nil
 }
 
-func decodeStreamEvent(raw []byte) (llm.ChatChunk, error) {
+// streamEvent is one decoded Anthropic SSE frame. Anthropic describes a
+// response as indexed content blocks rather than a flat delta, so the decoder
+// has to preserve which block a fragment belongs to: text and tool arguments
+// interleave across blocks in a single turn.
+type streamEvent struct {
+	Type        string
+	Index       int
+	Text        string
+	PartialJSON string
+	ToolUse     bool
+	ToolID      string
+	ToolName    string
+	StopReason  string
+	Usage       llm.TokenUsage
+	Err         error
+}
+
+func decodeStreamEvent(raw []byte) (streamEvent, error) {
 	var decoded struct {
-		Type  string `json:"type"`
+		Type         string `json:"type"`
+		Index        int    `json:"index"`
+		ContentBlock struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"content_block"`
 		Delta struct {
-			Type       string `json:"type"`
-			Text       string `json:"text"`
-			StopReason string `json:"stop_reason"`
+			Type        string `json:"type"`
+			Text        string `json:"text"`
+			PartialJSON string `json:"partial_json"`
+			StopReason  string `json:"stop_reason"`
 		} `json:"delta"`
+		Message struct {
+			Usage struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		} `json:"message"`
 		Error *struct {
 			Type    string `json:"type"`
 			Message string `json:"message"`
@@ -379,32 +527,45 @@ func decodeStreamEvent(raw []byte) (llm.ChatChunk, error) {
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return llm.ChatChunk{}, err
+		return streamEvent{}, err
 	}
-	chunk := llm.ChatChunk{}
+	event := streamEvent{Type: decoded.Type, Index: decoded.Index}
 	switch decoded.Type {
+	case "content_block_start":
+		if decoded.ContentBlock.Type == "tool_use" {
+			event.ToolUse = true
+			event.ToolID = decoded.ContentBlock.ID
+			event.ToolName = decoded.ContentBlock.Name
+		}
 	case "content_block_delta":
-		if decoded.Delta.Type == "text_delta" {
-			chunk.Content = decoded.Delta.Text
+		switch decoded.Delta.Type {
+		case "text_delta":
+			event.Text = decoded.Delta.Text
+		case "input_json_delta":
+			event.PartialJSON = decoded.Delta.PartialJSON
 		}
 	case "message_delta":
-		chunk.Done = decoded.Delta.StopReason != ""
-	case "message_stop":
-		chunk.Done = true
+		event.StopReason = decoded.Delta.StopReason
 	case "error":
 		// Anthropic signals mid-stream failures as an error event; attach the
 		// structured APIError so retry classification works on the streaming
 		// path exactly like on the unary path.
-		apiErr := anthropicStreamError(decoded.Error)
-		chunk.Error = apiErr.Error()
-		chunk.Err = apiErr
+		event.Err = anthropicStreamError(decoded.Error)
 	}
-	chunk.Usage = llm.TokenUsage{
-		InputTokens:  decoded.Usage.InputTokens,
-		OutputTokens: decoded.Usage.OutputTokens,
-		TotalTokens:  decoded.Usage.InputTokens + decoded.Usage.OutputTokens,
+	inputTokens := decoded.Usage.InputTokens
+	if inputTokens == 0 {
+		inputTokens = decoded.Message.Usage.InputTokens
 	}
-	return chunk, nil
+	outputTokens := decoded.Usage.OutputTokens
+	if outputTokens == 0 {
+		outputTokens = decoded.Message.Usage.OutputTokens
+	}
+	event.Usage = llm.TokenUsage{
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  inputTokens + outputTokens,
+	}
+	return event, nil
 }
 
 func toolInputValue(raw json.RawMessage) any {
