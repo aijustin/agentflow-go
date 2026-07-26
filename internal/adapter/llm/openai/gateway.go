@@ -23,7 +23,7 @@ type Gateway struct {
 
 func NewGateway(profiles []llm.Profile, client *http.Client) *Gateway {
 	if client == nil {
-		client = httpclient.New()
+		client = httpclient.NewLongResponse()
 	}
 	index := make(map[string]llm.Profile, len(profiles))
 	for _, profile := range profiles {

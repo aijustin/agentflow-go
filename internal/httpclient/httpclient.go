@@ -25,20 +25,45 @@ const (
 	MaxIdleConnsPerHost = 32
 )
 
-// New returns a client tuned for streaming-capable provider calls.
+// New returns a client for request/response services that are expected to
+// start answering promptly, such as object storage.
 //
 // Client.Timeout is deliberately left unset. It bounds the whole exchange
 // including reading the response body, so any finite value would truncate a
-// long completion or a large object transfer mid-flight. The failure it is
-// usually reached for — a peer that connects and then stalls — is covered by
-// the transport timeouts above, and total duration belongs to the caller's
-// context.
+// large transfer mid-flight. The failure it is usually reached for — a peer
+// that connects and then stalls — is covered by the transport timeouts above,
+// and total duration belongs to the caller's context.
 func New() *http.Client {
 	return &http.Client{Transport: NewTransport()}
 }
 
 // NewTransport returns the transport used by New.
 func NewTransport() *http.Transport {
+	transport := baseTransport()
+	transport.ResponseHeaderTimeout = ResponseHeaderTimeout
+	return transport
+}
+
+// NewLongResponse returns a client for services whose time to first byte is
+// legitimately unbounded.
+//
+// An LLM answering a non-streaming request sends no response headers until the
+// completion is finished, so a response-header deadline cannot tell a model
+// that is still generating apart from a peer that has stalled. Bounding it
+// would silently cap how long a completion may take, which is the caller's
+// decision (llm.Profile.Timeout, or the context it passes) rather than the
+// transport's. Connection establishment is still bounded, since those
+// deadlines cannot be confused with generation time.
+func NewLongResponse() *http.Client {
+	return &http.Client{Transport: NewLongResponseTransport()}
+}
+
+// NewLongResponseTransport returns the transport used by NewLongResponse.
+func NewLongResponseTransport() *http.Transport {
+	return baseTransport()
+}
+
+func baseTransport() *http.Transport {
 	dialer := &net.Dialer{Timeout: DialTimeout, KeepAlive: 30 * time.Second}
 	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
@@ -48,7 +73,6 @@ func NewTransport() *http.Transport {
 		MaxIdleConnsPerHost:   MaxIdleConnsPerHost,
 		IdleConnTimeout:       IdleConnTimeout,
 		TLSHandshakeTimeout:   TLSHandshakeTimeout,
-		ResponseHeaderTimeout: ResponseHeaderTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 }

@@ -14,7 +14,7 @@ func TestNewLeavesClientTimeoutUnset(t *testing.T) {
 	}
 }
 
-func TestNewTransportBoundsStalledPeers(t *testing.T) {
+func TestNewTransportBoundsStalledPeersForRequestResponseServices(t *testing.T) {
 	transport := NewTransport()
 	if transport.ResponseHeaderTimeout != ResponseHeaderTimeout {
 		t.Fatalf("expected response header timeout %v, got %v", ResponseHeaderTimeout, transport.ResponseHeaderTimeout)

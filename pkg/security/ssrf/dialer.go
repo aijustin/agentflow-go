@@ -119,7 +119,11 @@ func (g Guard) ProtectClient(client *http.Client) (*http.Client, error) {
 	case *http.Transport:
 		guarded.Transport = g.ProtectTransport(transport)
 	default:
-		return nil, fmt.Errorf("ssrf: cannot guard client transport of type %T; supply an *http.Transport", client.Transport)
+		return nil, fmt.Errorf(
+			"ssrf: cannot guard client transport of type %T: the address policy is enforced by the dialer, "+
+				"which is unreachable behind a custom http.RoundTripper. Supply an *http.Transport, or keep the "+
+				"wrapper and build it on Guard.ProtectTransport(nil) so its inner transport stays guarded",
+			client.Transport)
 	}
 	return &guarded, nil
 }
