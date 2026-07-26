@@ -365,13 +365,18 @@ func (c *Client) notifyLocked(ctx context.Context, method string, params json.Ra
 var _ mcp.SessionClient = (*Client)(nil)
 
 // extractSSEResponse pulls JSON-RPC messages out of an SSE body and returns
-// the one matching the request id, falling back to the last message (some
-// servers stream progress notifications before the result).
+// the one whose id matches the request.
+//
+// Servers interleave progress notifications with the result, so the stream is
+// matched on id and nothing else. Falling back to the last message when no id
+// matched would let a notification, or a response to a different request, be
+// decoded as this call's result: the caller cannot tell the difference, and a
+// tool result is attacker-influenced data that goes straight into the model's
+// context. An unmatched stream is an error.
 func extractSSEResponse(body []byte, wantID int64) ([]byte, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	scanner.Buffer(make([]byte, sseScanBuf), sseScanBuf)
-	var last []byte
-	var matched []byte
+	seen := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -382,22 +387,19 @@ func extractSSEResponse(body []byte, wantID int64) ([]byte, error) {
 			continue
 		}
 		raw := []byte(payload)
-		last = raw
+		seen++
 		var probe struct {
-			ID int64 `json:"id"`
+			ID *int64 `json:"id"`
 		}
-		if json.Unmarshal(raw, &probe) == nil && probe.ID == wantID {
-			matched = raw
+		if json.Unmarshal(raw, &probe) == nil && probe.ID != nil && *probe.ID == wantID {
+			return raw, nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("mcp http: read SSE stream: %w", err)
 	}
-	if matched != nil {
-		return matched, nil
+	if seen == 0 {
+		return nil, fmt.Errorf("mcp http: empty SSE stream")
 	}
-	if last != nil {
-		return last, nil
-	}
-	return nil, fmt.Errorf("mcp http: empty SSE stream")
+	return nil, fmt.Errorf("mcp http: SSE stream carried no response for request id %d", wantID)
 }

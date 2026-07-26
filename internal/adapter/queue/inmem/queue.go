@@ -200,10 +200,26 @@ func (queue *Queue) Fail(ctx context.Context, lease asyncpkg.Lease, cause error)
 		job.State = asyncpkg.JobDeadLetter
 	} else {
 		job.State = asyncpkg.JobQueued
-		job.AvailableAt = job.UpdatedAt
+		job.AvailableAt = job.UpdatedAt.Add(retryBackoff(job.Attempts))
 	}
 	queue.jobs[job.ID] = job
 	return nil
+}
+
+// retryBackoff returns the delay before a failed job becomes available for its
+// next attempt: 1s doubling with the attempt number, capped at 1 minute. It
+// mirrors the PostgreSQL queue so a job that poisons a worker behaves the same
+// way in tests and single-process deployments as it does in production;
+// re-queueing immediately turns a permanently failing payload into a hot loop.
+func retryBackoff(attempt int) time.Duration {
+	delay := time.Second
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= time.Minute {
+			return time.Minute
+		}
+	}
+	return delay
 }
 
 // Release returns a leased job to the queued state without recording a

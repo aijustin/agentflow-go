@@ -172,6 +172,14 @@ func (c *Client) Close() error {
 	}
 }
 
+// terminateProcess kills the server and closes stdin. Callers hold c.mu.
+func (c *Client) terminateProcess() {
+	_ = c.stdin.Close()
+	if c.cmd.Process != nil {
+		_ = c.cmd.Process.Kill()
+	}
+}
+
 func (c *Client) call(ctx context.Context, method string, params json.RawMessage, out any) error {
 	if c.options.Mode == mcp.ProtocolModeLegacy && method != "initialize" {
 		if err := c.ensureInitialized(ctx); err != nil {
@@ -295,6 +303,11 @@ func (c *Client) readResponse(ctx context.Context, id int64) (rpcResponse, error
 	case res = <-resultCh:
 	case <-ctx.Done():
 		c.broken = fmt.Errorf("mcp stdio: client unusable after a call was cancelled while awaiting a response: %w", ctx.Err())
+		// The client is now permanently poisoned, so the subprocess can never
+		// serve another request. Kill it rather than leaving an orphan behind
+		// for every cancelled call; that also closes stdout, which is what
+		// releases the scan goroutine above from its blocking read.
+		c.terminateProcess()
 		return rpcResponse{}, ctx.Err()
 	}
 
