@@ -35,7 +35,7 @@ func TestLockPathForArgs(t *testing.T) {
 
 func TestPathLockSetSerializesSamePath(t *testing.T) {
 	t.Parallel()
-	locks := newPathLockSet()
+	locks := newKeyedLockSet()
 	var order []int
 	var mu sync.Mutex
 	var wg sync.WaitGroup

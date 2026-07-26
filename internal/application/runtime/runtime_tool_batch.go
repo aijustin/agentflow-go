@@ -83,7 +83,8 @@ func (e *Engine) executeToolBatch(
 		return items, nil
 	}
 	concurrency := e.toolBatchConcurrency(len(calls))
-	pathLocks := newPathLockSet()
+	pathLocks := newKeyedLockSet()
+	governanceLocks := newKeyedLockSet()
 	sem := semaphore.NewWeighted(int64(concurrency))
 	group, groupCtx := errgroup.WithContext(ctx)
 
@@ -97,6 +98,10 @@ func (e *Engine) executeToolBatch(
 			defer sem.Release(1)
 			unlock := pathLocks.acquire(lockPathForArgs(call.Input))
 			defer unlock()
+			// Always taken after the path lock so the two sets have one global
+			// order and cannot deadlock against each other.
+			unlockGovernance := governanceLocks.acquire(e.governanceLockKey(call))
+			defer unlockGovernance()
 
 			toolCtx := withToolProgressSink(groupCtx, emit)
 			// skipPersist: tool I/O runs in parallel, but every result is
