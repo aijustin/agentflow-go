@@ -277,18 +277,26 @@ func finalizeStreamBlocks(blocks map[int]*streamBlock) []llm.ToolCall {
 }
 
 func tokenUsagePresent(usage llm.TokenUsage) bool {
-	return usage.InputTokens > 0 || usage.OutputTokens > 0 || usage.TotalTokens > 0
+	return usage.InputTokens > 0 || usage.OutputTokens > 0 || usage.TotalTokens > 0 ||
+		usage.CachedInputTokens > 0 || usage.CacheWriteTokens > 0
 }
 
 // mergeTokenUsage folds a usage update into the running total. Anthropic
-// reports input tokens on message_start and output tokens on message_delta, so
-// a later event carrying only output tokens must not erase the input count.
+// reports input and cache tokens on message_start and output tokens on
+// message_delta, so a later event carrying only output tokens must not erase
+// the input side.
 func mergeTokenUsage(current, update llm.TokenUsage) llm.TokenUsage {
 	if update.InputTokens > 0 {
 		current.InputTokens = update.InputTokens
 	}
 	if update.OutputTokens > 0 {
 		current.OutputTokens = update.OutputTokens
+	}
+	if update.CachedInputTokens > 0 {
+		current.CachedInputTokens = update.CachedInputTokens
+	}
+	if update.CacheWriteTokens > 0 {
+		current.CacheWriteTokens = update.CacheWriteTokens
 	}
 	current.TotalTokens = current.InputTokens + current.OutputTokens
 	return current
@@ -448,11 +456,8 @@ func decodeMessageResponse(raw []byte) (llm.ToolCallResponse, error) {
 			Name  string          `json:"name"`
 			Input json.RawMessage `json:"input"`
 		} `json:"content"`
-		StopReason string `json:"stop_reason"`
-		Usage      struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		} `json:"usage"`
+		StopReason string       `json:"stop_reason"`
+		Usage      usagePayload `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return llm.ToolCallResponse{}, err
@@ -467,11 +472,7 @@ func decodeMessageResponse(raw []byte) (llm.ToolCallResponse, error) {
 			toolCalls = append(toolCalls, llm.ToolCall{ID: block.ID, Name: block.Name, Input: normalizeToolInput(block.Input)})
 		}
 	}
-	usage := llm.TokenUsage{
-		InputTokens:  decoded.Usage.InputTokens,
-		OutputTokens: decoded.Usage.OutputTokens,
-		TotalTokens:  decoded.Usage.InputTokens + decoded.Usage.OutputTokens,
-	}
+	usage := decoded.Usage.tokenUsage()
 	message := llm.Message{Role: llm.RoleAssistant, Content: text.String(), ToolCalls: toolCalls}
 	return llm.ToolCallResponse{
 		ChatResponse: llm.ChatResponse{Message: message, Usage: usage, FinishReason: decoded.StopReason, Raw: raw},
@@ -512,19 +513,13 @@ func decodeStreamEvent(raw []byte) (streamEvent, error) {
 			StopReason  string `json:"stop_reason"`
 		} `json:"delta"`
 		Message struct {
-			Usage struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-			} `json:"usage"`
+			Usage usagePayload `json:"usage"`
 		} `json:"message"`
 		Error *struct {
 			Type    string `json:"type"`
 			Message string `json:"message"`
 		} `json:"error"`
-		Usage struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		} `json:"usage"`
+		Usage usagePayload `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return streamEvent{}, err
@@ -552,20 +547,44 @@ func decodeStreamEvent(raw []byte) (streamEvent, error) {
 		// path exactly like on the unary path.
 		event.Err = anthropicStreamError(decoded.Error)
 	}
-	inputTokens := decoded.Usage.InputTokens
-	if inputTokens == 0 {
-		inputTokens = decoded.Message.Usage.InputTokens
+	// Usage rides on message_start under "message", and on message_delta at
+	// the top level.
+	payload := decoded.Usage
+	if payload.empty() {
+		payload = decoded.Message.Usage
 	}
-	outputTokens := decoded.Usage.OutputTokens
-	if outputTokens == 0 {
-		outputTokens = decoded.Message.Usage.OutputTokens
-	}
-	event.Usage = llm.TokenUsage{
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		TotalTokens:  inputTokens + outputTokens,
-	}
+	event.Usage = payload.tokenUsage()
 	return event, nil
+}
+
+// usagePayload is Anthropic's usage object. Cache reads and writes are
+// reported *alongside* input_tokens rather than inside it, so input_tokens
+// alone counts only the uncached remainder.
+type usagePayload struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+}
+
+func (u usagePayload) empty() bool {
+	return u.InputTokens == 0 && u.OutputTokens == 0 &&
+		u.CacheReadInputTokens == 0 && u.CacheCreationInputTokens == 0
+}
+
+// tokenUsage normalizes to the llm.TokenUsage contract, where InputTokens is
+// the whole prompt and CachedInputTokens is the part of it served from cache.
+// Anthropic splits those three counts apart, so the prompt total has to be
+// reassembled before a cache hit rate means anything.
+func (u usagePayload) tokenUsage() llm.TokenUsage {
+	inputTokens := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+	return llm.TokenUsage{
+		InputTokens:       inputTokens,
+		OutputTokens:      u.OutputTokens,
+		CachedInputTokens: u.CacheReadInputTokens,
+		CacheWriteTokens:  u.CacheCreationInputTokens,
+		TotalTokens:       inputTokens + u.OutputTokens,
+	}
 }
 
 func toolInputValue(raw json.RawMessage) any {

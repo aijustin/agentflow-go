@@ -136,11 +136,50 @@ func (c ChatChunk) IsAnswerContent() bool {
 	return c.Kind == ChunkKindContent
 }
 
+// TokenUsage reports one call's token accounting.
+//
+// Providers disagree on whether cached prompt tokens are part of the input
+// count: OpenAI reports cached_tokens as a subset of prompt_tokens, while
+// Anthropic reports cache reads and writes *alongside* input_tokens. Adapters
+// normalize to one meaning so a cache hit rate is comparable across providers:
+// InputTokens is always the full prompt, and CachedInputTokens is the part of
+// it the provider served from cache.
 type TokenUsage struct {
-	InputTokens     int `json:"input_tokens,omitempty"`
-	OutputTokens    int `json:"output_tokens,omitempty"`
-	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
-	TotalTokens     int `json:"total_tokens,omitempty"`
+	// InputTokens is the whole prompt, including any part served from cache.
+	InputTokens  int `json:"input_tokens,omitempty"`
+	OutputTokens int `json:"output_tokens,omitempty"`
+	// CachedInputTokens is the subset of InputTokens read from the provider's
+	// prompt cache and billed at a discount. CachedInputTokens/InputTokens is
+	// the cache hit rate, the highest-leverage cost number an agent runtime
+	// controls: an uncached prefix is re-billed on every turn of a tool loop.
+	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
+	// CacheWriteTokens is the subset of InputTokens written into the cache by
+	// this call. Providers bill writes at a premium over ordinary input, so a
+	// workload that only ever writes and never reads is paying for nothing.
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+}
+
+// UncachedInputTokens is the part of the prompt billed at full input price.
+func (u TokenUsage) UncachedInputTokens() int {
+	if u.CachedInputTokens >= u.InputTokens {
+		return 0
+	}
+	return u.InputTokens - u.CachedInputTokens
+}
+
+// CacheHitRate is the fraction of the prompt served from cache, in [0,1]. It
+// reports 0 when the prompt size is unknown.
+func (u TokenUsage) CacheHitRate() float64 {
+	if u.InputTokens <= 0 {
+		return 0
+	}
+	rate := float64(u.CachedInputTokens) / float64(u.InputTokens)
+	if rate > 1 {
+		return 1
+	}
+	return rate
 }
 
 type ToolSpec struct {
