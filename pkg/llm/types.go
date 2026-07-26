@@ -48,6 +48,7 @@ type Profile struct {
 	Timeout             time.Duration        `json:"timeout,omitempty"`
 	Thinking            ThinkingConfig       `json:"thinking,omitempty"`
 	ReasoningEffort     string               `json:"reasoning_effort,omitempty"`
+	PromptCache         PromptCacheConfig    `json:"prompt_cache,omitempty"`
 	Context             contextwindow.Policy `json:"context,omitempty"`
 	ExtraBody           map[string]any       `json:"extra_body,omitempty"`
 	Capabilities        []Capability         `json:"capabilities,omitempty"`
@@ -57,6 +58,22 @@ type Profile struct {
 type ThinkingConfig struct {
 	Enabled      bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 	BudgetTokens int  `json:"budget_tokens,omitempty" yaml:"budget_tokens,omitempty"`
+}
+
+// PromptCacheConfig asks providers that require explicit cache markers to
+// cache the stable head of the prompt.
+//
+// It is off by default because it is not free in every shape of workload:
+// providers bill a premium for writing the cache, so a profile that issues one
+// short single-turn call and never reuses the prefix pays more. It pays for
+// itself as soon as the prefix is re-sent, which is every iteration of a tool
+// loop, and that is the runtime's primary path.
+//
+// Providers that cache automatically by matching a stable prefix (the
+// OpenAI-compatible family) ignore this setting; for them what matters is that
+// the prefix does not churn between turns.
+type PromptCacheConfig struct {
+	Enabled bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 }
 
 type Role string

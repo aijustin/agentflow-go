@@ -340,11 +340,19 @@ func (g *Gateway) messageRequest(ctx context.Context, profile llm.Profile, req l
 	if body["max_tokens"] == 0 {
 		body["max_tokens"] = 1024
 	}
+	cache := profile.PromptCache.Enabled
 	if system != "" {
-		body["system"] = system
+		if cache {
+			body["system"] = cacheableSystem(system)
+		} else {
+			body["system"] = system
+		}
 	}
 	if len(tools) > 0 {
-		body["tools"] = anthropicTools(tools)
+		body["tools"] = anthropicTools(tools, cache)
+	}
+	if cache {
+		markLastMessageCacheable(messages)
 	}
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
@@ -431,7 +439,7 @@ func anthropicAssistantMessage(msg llm.Message) map[string]any {
 	return map[string]any{"role": "assistant", "content": content}
 }
 
-func anthropicTools(tools []llm.ToolSpec) []map[string]any {
+func anthropicTools(tools []llm.ToolSpec, cache bool) []map[string]any {
 	out := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
 		schema := json.RawMessage(`{"type":"object"}`)
@@ -444,7 +452,58 @@ func anthropicTools(tools []llm.ToolSpec) []map[string]any {
 			"input_schema": schema,
 		})
 	}
+	// A breakpoint covers everything before it, so one marker on the last
+	// tool caches the whole catalog. Tool schemas sit at the very front of
+	// the prompt and are re-sent verbatim on every turn of a tool loop, which
+	// makes them the single most valuable thing to cache.
+	if cache && len(out) > 0 {
+		out[len(out)-1]["cache_control"] = ephemeralCacheControl()
+	}
 	return out
+}
+
+// ephemeralCacheControl is Anthropic's cache breakpoint marker.
+func ephemeralCacheControl() map[string]any {
+	return map[string]any{"type": "ephemeral"}
+}
+
+// cacheableSystem rewrites the system prompt as a content block so it can
+// carry a breakpoint, extending the cached prefix past the tool catalog.
+func cacheableSystem(system string) []map[string]any {
+	return []map[string]any{{
+		"type":          "text",
+		"text":          system,
+		"cache_control": ephemeralCacheControl(),
+	}}
+}
+
+// markLastMessageCacheable puts a breakpoint at the end of the conversation so
+// the next turn, which appends to it, reads this turn's history from cache.
+//
+// Anthropic only accepts a breakpoint on a content block, so a message whose
+// content is still a plain string is rewritten as a single text block. Empty
+// content is skipped: a block with no text is rejected by the API.
+func markLastMessageCacheable(messages []map[string]any) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		switch content := messages[i]["content"].(type) {
+		case string:
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
+			messages[i]["content"] = []map[string]any{{
+				"type":          "text",
+				"text":          content,
+				"cache_control": ephemeralCacheControl(),
+			}}
+			return
+		case []map[string]any:
+			if len(content) == 0 {
+				continue
+			}
+			content[len(content)-1]["cache_control"] = ephemeralCacheControl()
+			return
+		}
+	}
 }
 
 func decodeMessageResponse(raw []byte) (llm.ToolCallResponse, error) {

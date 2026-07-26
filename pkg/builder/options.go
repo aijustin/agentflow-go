@@ -5,6 +5,7 @@ import (
 
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/llm"
 )
 
 // LLMOption configures an LLM profile reference.
@@ -50,6 +51,20 @@ func LLMAPIKeyEnv(name string) LLMOption {
 func LLMTemperature(v float32) LLMOption {
 	return func(p *core.LLMProfileRef) {
 		p.Temperature = &v
+	}
+}
+
+// LLMPromptCache asks providers that need explicit cache markers to cache the
+// stable head of the prompt: the tool catalog, the system prompt and the
+// conversation so far.
+//
+// A tool loop re-sends that prefix on every iteration, so caching it turns the
+// dominant cost term from linear in turns into roughly constant. It is off by
+// default because writing the cache carries a provider premium, which a
+// profile that never reuses its prefix would pay for nothing.
+func LLMPromptCache(enabled bool) LLMOption {
+	return func(p *core.LLMProfileRef) {
+		p.PromptCache = llm.PromptCacheConfig{Enabled: enabled}
 	}
 }
 

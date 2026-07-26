@@ -46,6 +46,7 @@ func Build(s core.Scenario) (RuntimePlan, error) {
 			Timeout:             profile.Timeout,
 			Thinking:            profile.Thinking,
 			ReasoningEffort:     profile.ReasoningEffort,
+			PromptCache:         profile.PromptCache,
 			Context:             profile.Context,
 			ExtraBody:           profile.ExtraBody,
 			Capabilities:        llm.CapabilitiesFromStrings(profile.Capabilities),
