@@ -60,18 +60,25 @@ type ThinkingConfig struct {
 	BudgetTokens int  `json:"budget_tokens,omitempty" yaml:"budget_tokens,omitempty"`
 }
 
-// PromptCacheConfig asks providers that require explicit cache markers to
-// cache the stable head of the prompt.
+// PromptCacheConfig declares that a profile's prompt prefix should be kept
+// stable and cacheable. It governs two things that only pay off together:
 //
-// It is off by default because it is not free in every shape of workload:
+//   - Adapters that need explicit markers (Anthropic) place cache breakpoints
+//     after the tool catalog, the system prompt and the conversation so far.
+//     Adapters that cache automatically by matching a stable prefix (the
+//     OpenAI-compatible family) need no markers and emit none.
+//   - The runtime stops rewriting that prefix between turns. Governance
+//     features that trade prefix stability for a smaller prompt, notably
+//     Context.ToolSchemaPruning, are suppressed for the profile: narrowing the
+//     tool catalog per turn saves a few schemas but invalidates the cache
+//     behind them, which re-bills the system prompt and the whole conversation
+//     at full price.
+//
+// It is off by default because caching is not free in every shape of workload:
 // providers bill a premium for writing the cache, so a profile that issues one
-// short single-turn call and never reuses the prefix pays more. It pays for
+// short single-turn call and never reuses its prefix pays more. It pays for
 // itself as soon as the prefix is re-sent, which is every iteration of a tool
 // loop, and that is the runtime's primary path.
-//
-// Providers that cache automatically by matching a stable prefix (the
-// OpenAI-compatible family) ignore this setting; for them what matters is that
-// the prefix does not churn between turns.
 type PromptCacheConfig struct {
 	Enabled bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 }

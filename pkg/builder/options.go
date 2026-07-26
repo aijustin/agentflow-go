@@ -54,14 +54,15 @@ func LLMTemperature(v float32) LLMOption {
 	}
 }
 
-// LLMPromptCache asks providers that need explicit cache markers to cache the
-// stable head of the prompt: the tool catalog, the system prompt and the
-// conversation so far.
+// LLMPromptCache keeps the prompt prefix stable and cacheable: the tool
+// catalog, the system prompt and the conversation so far.
 //
 // A tool loop re-sends that prefix on every iteration, so caching it turns the
-// dominant cost term from linear in turns into roughly constant. It is off by
-// default because writing the cache carries a provider premium, which a
-// profile that never reuses its prefix would pay for nothing.
+// dominant cost term from linear in turns into roughly constant. Enabling it
+// also suppresses governance that would rewrite the prefix per turn (see
+// llm.PromptCacheConfig). It is off by default because writing the cache
+// carries a provider premium, which a profile that never reuses its prefix
+// would pay for nothing.
 func LLMPromptCache(enabled bool) LLMOption {
 	return func(p *core.LLMProfileRef) {
 		p.PromptCache = llm.PromptCacheConfig{Enabled: enabled}

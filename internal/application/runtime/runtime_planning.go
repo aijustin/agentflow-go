@@ -19,6 +19,16 @@ func planAllowedTools(ctx context.Context, e *Engine, runID string, agent core.A
 	if !profile.Context.ToolSchemaPruning {
 		return nil
 	}
+	// Pruning and prompt caching are competing strategies for the same
+	// tokens, and caching wins by a wide margin. The tool catalog sits at the
+	// very front of the prompt, so narrowing it per plan step rewrites the
+	// prefix on every turn and invalidates the cache behind it: the run then
+	// re-pays full price for the system prompt and the whole conversation in
+	// order to save a few schemas. Leave the catalog stable and let the cache
+	// absorb it.
+	if profile.PromptCache.Enabled {
+		return nil
+	}
 	// Restrict the exposed schema to just the tool named by the next
 	// pending plan step (mirrors planningToolHint's own read of the
 	// persisted plan). Without this, pruning always fell back to "every
