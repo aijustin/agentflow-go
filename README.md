@@ -968,7 +968,7 @@ go test -race ./internal/adapter/memory/inmem ./internal/adapter/runstate/inmem 
 
 ## 当前状态
 
-**当前发布：v0.5.0** — 完成 Memory/RunState/Outbox 多租户隔离、生产 HTTP 默认失败关闭、全编排模式 Tool Schema 强校验、稳定工具幂等键，以及 React 19 / Router 8 Studio 安全升级。完整变更与迁移说明见 [CHANGELOG.md](CHANGELOG.md)。
+**当前发布：v0.5.1** — 在 v0.5.0 基础上修复 observation mask 被 governance denial 挤掉成功业务 tool 结果的问题；完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 核心模块已可用：
 

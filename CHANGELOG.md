@@ -29,6 +29,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-27
+
+### Fixed
+
+- `ObservationMaskAfterTurns` no longer lets governance denial / empty-only turns push successful business tool results out of the unmasked window; the latest successful observation per tool name is retained so models can still answer from real data after `run_tool_loop_guard`.
+
 ## [0.5.0] - 2026-07-25
 
 ### Added

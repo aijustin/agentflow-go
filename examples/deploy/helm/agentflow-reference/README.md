@@ -25,7 +25,7 @@ helm upgrade --install agentflow ./examples/deploy/helm/agentflow-reference
 | Key | Default | Description |
 |-----|---------|-------------|
 | `image.repository` | `your-registry/agentflow-tier-worker` | Worker image |
-| `image.tag` | `0.5.0` | Image tag (align with `agentflow.Version`) |
+| `image.tag` | `0.5.1` | Image tag (align with `agentflow.Version`) |
 | `postgres.secretName` | `agentflow-postgres` | DSN secret |
 | `hitl.secretName` | `agentflow-hitl` | HITL signing secret |
 | `tier.coldDir` | `/data/tier-cold` | Cold tier mount path |

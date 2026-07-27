@@ -970,7 +970,7 @@ On older local Darwin toolchains with `CGO_ENABLED=0`, `-ldflags="-w"` avoids a 
 
 ## Current status
 
-**Current release: v0.5.0** — completes multi-tenant isolation for memory/run state/outbox, fail-closed production HTTP, tool-schema validation across every orchestration mode, stable tool idempotency keys, and the React 19 / Router 8 Studio security upgrade. See [CHANGELOG.md](CHANGELOG.md) for migration notes.
+**Current release: v0.5.1** — on top of v0.5.0, keeps successful business tool observations visible when governance denials would otherwise advance the observation mask. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 Core modules are production-ready:
 
