@@ -203,54 +203,13 @@ type staleEvictionStats struct {
 }
 
 func classifyToolResultMessage(msg llm.Message) contextwindow.ToolResultClass {
-	if msg.Metadata != nil {
-		switch msg.Metadata["tool_result_class"] {
-		case string(contextwindow.ToolResultClassDenied):
-			return contextwindow.ToolResultClassDenied
-		case string(contextwindow.ToolResultClassEmpty):
-			return contextwindow.ToolResultClassEmpty
-		case string(contextwindow.ToolResultClassSuccess):
-			return contextwindow.ToolResultClassSuccess
-		}
-	}
-	content := strings.TrimSpace(msg.Content)
-	if content == "" || content == "{}" || content == "null" || content == `""` {
-		return contextwindow.ToolResultClassEmpty
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(content), &parsed); err == nil {
-		if errText, ok := parsed["error"].(string); ok && strings.TrimSpace(errText) != "" {
-			return contextwindow.ToolResultClassDenied
-		}
-		if output, ok := parsed["output"]; ok {
-			switch v := output.(type) {
-			case nil:
-				return contextwindow.ToolResultClassEmpty
-			case string:
-				if strings.TrimSpace(v) == "" {
-					return contextwindow.ToolResultClassEmpty
-				}
-			case map[string]any:
-				if len(v) == 0 {
-					return contextwindow.ToolResultClassEmpty
-				}
-			}
-		}
-		// Structured ToolResult JSON without an error is treated as success.
-		if _, hasTool := parsed["tool"]; hasTool {
-			return contextwindow.ToolResultClassSuccess
-		}
-		if _, hasOutput := parsed["output"]; hasOutput {
-			return contextwindow.ToolResultClassSuccess
-		}
-	}
-	lower := strings.ToLower(content)
-	if strings.Contains(lower, "run_tool_budget_exceeded") ||
-		strings.Contains(lower, "tool_denied") ||
-		strings.Contains(lower, "rate cap exceeded") {
-		return contextwindow.ToolResultClassDenied
-	}
-	return contextwindow.ToolResultClassSuccess
+	return contextwindow.ClassifyToolResult(contextwindow.Message{
+		Role:       contextwindow.RoleTool,
+		Content:    msg.Content,
+		Name:       msg.Name,
+		ToolCallID: msg.ToolCallID,
+		Metadata:   msg.Metadata,
+	})
 }
 
 func staleClassExcluded(class contextwindow.ToolResultClass, exclude []contextwindow.ToolResultClass) bool {
