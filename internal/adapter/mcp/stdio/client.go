@@ -146,15 +146,16 @@ func (c *Client) CallTool(ctx context.Context, req mcp.CallToolRequest) (mcp.Cal
 	if strings.TrimSpace(req.Name) == "" {
 		return mcp.CallToolResult{}, fmt.Errorf("mcp stdio: tool name is required")
 	}
-	params, err := json.Marshal(req)
-	if err != nil {
-		return mcp.CallToolResult{}, err
-	}
-	var result mcp.CallToolResult
-	if err := c.call(ctx, "tools/call", params, &result); err != nil {
-		return mcp.CallToolResult{}, err
-	}
-	return result, nil
+	// The result is decoded as raw JSON first: under protocol 2026-07-28 a
+	// tools/call may answer with a request for input instead of a result, and
+	// CallToolWithInput drives that round trip to completion.
+	return mcp.CallToolWithInput(ctx, req, c.options, func(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+		var raw json.RawMessage
+		if err := c.call(ctx, "tools/call", params, &raw); err != nil {
+			return nil, err
+		}
+		return raw, nil
+	})
 }
 
 func (c *Client) Close() error {
@@ -169,6 +170,14 @@ func (c *Client) Close() error {
 			_ = c.cmd.Process.Kill()
 		}
 		return <-done
+	}
+}
+
+// terminateProcess kills the server and closes stdin. Callers hold c.mu.
+func (c *Client) terminateProcess() {
+	_ = c.stdin.Close()
+	if c.cmd.Process != nil {
+		_ = c.cmd.Process.Kill()
 	}
 }
 
@@ -295,6 +304,11 @@ func (c *Client) readResponse(ctx context.Context, id int64) (rpcResponse, error
 	case res = <-resultCh:
 	case <-ctx.Done():
 		c.broken = fmt.Errorf("mcp stdio: client unusable after a call was cancelled while awaiting a response: %w", ctx.Err())
+		// The client is now permanently poisoned, so the subprocess can never
+		// serve another request. Kill it rather than leaving an orphan behind
+		// for every cancelled call; that also closes stdout, which is what
+		// releases the scan goroutine above from its blocking read.
+		c.terminateProcess()
 		return rpcResponse{}, ctx.Err()
 	}
 

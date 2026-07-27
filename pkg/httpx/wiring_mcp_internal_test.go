@@ -2,7 +2,6 @@ package httpx
 
 import (
 	"context"
-	"net/http"
 	"testing"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -53,13 +52,13 @@ func TestMCPWiringOptionsInfersToolFromPrefix(t *testing.T) {
 }
 
 func TestMCPClientForServerValidation(t *testing.T) {
-	if _, err := mcpClientForServer(context.Background(), core.MCPServer{Transport: "http"}, nil); err == nil {
+	if _, err := mcpClientForServer(context.Background(), core.MCPServer{Transport: "http"}, MCPRegistry{}); err == nil {
 		t.Fatal("expected missing url error")
 	}
-	if _, err := mcpClientForServer(context.Background(), core.MCPServer{Transport: "stdio"}, nil); err == nil {
+	if _, err := mcpClientForServer(context.Background(), core.MCPServer{Transport: "stdio"}, MCPRegistry{}); err == nil {
 		t.Fatal("expected missing command error")
 	}
-	if _, err := mcpClientForServer(context.Background(), core.MCPServer{Transport: "grpc"}, nil); err == nil {
+	if _, err := mcpClientForServer(context.Background(), core.MCPServer{Transport: "grpc"}, MCPRegistry{}); err == nil {
 		t.Fatal("expected unsupported transport error")
 	}
 }
@@ -108,7 +107,7 @@ func TestMCPWiringOptionsClosesOwnedClientsOnValidationError(t *testing.T) {
 		MCP:    core.MCPConfig{Servers: []core.MCPServer{{Name: "docs", Transport: "http", URL: "http://example.test/mcp"}}},
 		Tools:  map[string]core.Tool{"search": {Name: "search", Type: "mcp.tool"}},
 	}
-	_, err := mcpWiringOptions(context.Background(), scenario, MCPRegistry{}, func(context.Context, core.MCPServer, *http.Client) (mcp.Client, error) {
+	_, err := mcpWiringOptions(context.Background(), scenario, MCPRegistry{}, func(context.Context, core.MCPServer, MCPRegistry) (mcp.Client, error) {
 		return client, nil
 	})
 	if err == nil {

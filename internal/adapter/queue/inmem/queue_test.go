@@ -45,6 +45,8 @@ func TestQueueLeasesAndCompletesJobs(t *testing.T) {
 func TestQueueRetriesUntilDeadLetter(t *testing.T) {
 	ctx := context.Background()
 	queue := NewQueue()
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	queue.now = func() time.Time { return now }
 	if _, err := queue.Enqueue(ctx, asyncpkg.Job{ID: "job-1", Type: "run", MaxAttempts: 2}); err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +64,11 @@ func TestQueueRetriesUntilDeadLetter(t *testing.T) {
 	if loaded.State != asyncpkg.JobQueued || loaded.LastError != "boom" {
 		t.Fatalf("expected queued retry, got %+v", loaded)
 	}
+	// The retry is held back by the backoff, so it is not leasable yet.
+	if _, ok, err := queue.Lease(ctx, "worker-1", time.Minute); err != nil || ok {
+		t.Fatalf("expected the retry to wait for its backoff, ok=%v err=%v", ok, err)
+	}
+	now = now.Add(retryBackoff(1))
 	lease, ok, err = queue.Lease(ctx, "worker-1", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("expected second lease, ok=%v err=%v", ok, err)

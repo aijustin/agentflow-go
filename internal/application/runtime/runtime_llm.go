@@ -979,7 +979,8 @@ func normalizeEmittedUsage(usage llm.TokenUsage) *llm.TokenUsage {
 	if usage.TotalTokens == 0 && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	}
-	if usage.TotalTokens == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.ReasoningTokens == 0 {
+	if usage.TotalTokens == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 &&
+		usage.ReasoningTokens == 0 && usage.CachedInputTokens == 0 && usage.CacheWriteTokens == 0 {
 		return nil
 	}
 	return &usage
@@ -1135,12 +1136,18 @@ func (e *Engine) recordLLMUsage(ctx context.Context, profileName string, usage *
 	if usage == nil {
 		return
 	}
+	// cache_read and cache_write are subsets of prompt, not additions to it:
+	// summing every kind would double count. They are broken out so a
+	// dashboard can compute cache_read/prompt, the hit rate that decides what
+	// a long tool loop actually costs.
 	for _, bucket := range []struct {
 		kind   string
 		tokens int
 	}{
 		{"prompt", usage.InputTokens},
 		{"completion", usage.OutputTokens},
+		{"cache_read", usage.CachedInputTokens},
+		{"cache_write", usage.CacheWriteTokens},
 	} {
 		if bucket.tokens > 0 {
 			e.recorder.AddCounter(ctx, observability.MetricLLMTokensTotal, float64(bucket.tokens),

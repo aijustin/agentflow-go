@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/aijustin/agentflow-go/internal/httpclient"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 )
 
@@ -22,7 +23,7 @@ type Gateway struct {
 
 func NewGateway(profiles []llm.Profile, client *http.Client) *Gateway {
 	if client == nil {
-		client = http.DefaultClient
+		client = httpclient.NewLongResponse()
 	}
 	index := make(map[string]llm.Profile, len(profiles))
 	for _, profile := range profiles {
@@ -442,16 +443,7 @@ func decodeChatResponse(raw []byte) (llm.ToolCallResponse, error) {
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage struct {
-			PromptTokens            int `json:"prompt_tokens"`
-			CompletionTokens        int `json:"completion_tokens"`
-			TotalTokens             int `json:"total_tokens"`
-			InputTokens             int `json:"input_tokens"`
-			OutputTokens            int `json:"output_tokens"`
-			CompletionTokensDetails struct {
-				ReasoningTokens int `json:"reasoning_tokens"`
-			} `json:"completion_tokens_details"`
-		} `json:"usage"`
+		Usage usagePayload `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return llm.ToolCallResponse{}, err
@@ -460,12 +452,7 @@ func decodeChatResponse(raw []byte) (llm.ToolCallResponse, error) {
 		return llm.ToolCallResponse{}, fmt.Errorf("openai: response contained no choices")
 	}
 	choice := decoded.Choices[0]
-	usage := normalizeTokenUsage(llm.TokenUsage{
-		InputTokens:     firstNonZero(decoded.Usage.PromptTokens, decoded.Usage.InputTokens),
-		OutputTokens:    firstNonZero(decoded.Usage.CompletionTokens, decoded.Usage.OutputTokens),
-		ReasoningTokens: decoded.Usage.CompletionTokensDetails.ReasoningTokens,
-		TotalTokens:     decoded.Usage.TotalTokens,
-	})
+	usage := normalizeTokenUsage(decoded.Usage.tokenUsage())
 	message := llm.Message{
 		Role:             choice.Message.Role,
 		Content:          choice.Message.Content,
@@ -568,28 +555,12 @@ func decodeStreamDelta(raw []byte) (streamDelta, error) {
 			} `json:"delta"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage struct {
-			PromptTokens            int `json:"prompt_tokens"`
-			CompletionTokens        int `json:"completion_tokens"`
-			TotalTokens             int `json:"total_tokens"`
-			InputTokens             int `json:"input_tokens"`
-			OutputTokens            int `json:"output_tokens"`
-			CompletionTokensDetails struct {
-				ReasoningTokens int `json:"reasoning_tokens"`
-			} `json:"completion_tokens_details"`
-		} `json:"usage"`
+		Usage usagePayload `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return streamDelta{}, err
 	}
-	out := streamDelta{
-		Usage: normalizeTokenUsage(llm.TokenUsage{
-			InputTokens:     firstNonZero(decoded.Usage.PromptTokens, decoded.Usage.InputTokens),
-			OutputTokens:    firstNonZero(decoded.Usage.CompletionTokens, decoded.Usage.OutputTokens),
-			ReasoningTokens: decoded.Usage.CompletionTokensDetails.ReasoningTokens,
-			TotalTokens:     decoded.Usage.TotalTokens,
-		}),
-	}
+	out := streamDelta{Usage: normalizeTokenUsage(decoded.Usage.tokenUsage())}
 	if len(decoded.Choices) > 0 {
 		choice := decoded.Choices[0]
 		out.Content = choice.Delta.Content
@@ -728,6 +699,41 @@ func openAIToolCalls(calls []llm.ToolCall) []map[string]any {
 
 func normalizeToolArguments(raw json.RawMessage) json.RawMessage {
 	return llm.NormalizeToolArguments(raw)
+}
+
+// usagePayload is the usage object shared by the chat-completions response and
+// the streaming chunks. Providers in the OpenAI-compatible family disagree on
+// whether they emit the legacy prompt/completion names or the newer
+// input/output ones, so both are accepted.
+type usagePayload struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	InputTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+	CompletionTokensDetails struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+func (u usagePayload) tokenUsage() llm.TokenUsage {
+	return llm.TokenUsage{
+		InputTokens:  firstNonZero(u.PromptTokens, u.InputTokens),
+		OutputTokens: firstNonZero(u.CompletionTokens, u.OutputTokens),
+		// OpenAI already reports cached tokens as a subset of the prompt,
+		// which is the meaning llm.TokenUsage documents, so no adjustment is
+		// needed here. Caching itself is automatic: the provider matches on a
+		// stable prompt prefix rather than on any request field.
+		CachedInputTokens: firstNonZero(u.PromptTokensDetails.CachedTokens, u.InputTokensDetails.CachedTokens),
+		ReasoningTokens:   u.CompletionTokensDetails.ReasoningTokens,
+		TotalTokens:       u.TotalTokens,
+	}
 }
 
 func tokenUsagePresent(usage llm.TokenUsage) bool {

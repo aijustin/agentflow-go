@@ -29,6 +29,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **MCP multi round-trip requests (MRTR) and elicitation.** Protocol revision `2026-07-28` replaces server-initiated callbacks with a stateless flow: rather than completing, a server may answer `tools/call` with an `InputRequiredResult` carrying the requests it needs answered plus an opaque `requestState`, and the client re-issues the original call with `inputResponses` and the echoed state so any instance can resume it. Both transports now drive that loop. Hosts answer by supplying an `mcp.Elicitor` (`httpx.MCPRegistry.Elicitor`); the `elicitation` capability is derived from its presence, because the specification only lets a server ask for input the client declared. Requests arrive with their mode intact (`form`, or `url`, which servers must use for credentials). Fails closed: an unconfigured elicitation, or a request for the `sampling/createMessage` and `roots/list` methods deprecated in the same revision, is an error rather than a guess. Round trips are bounded by `MaxInputRounds` (default 8), and MRTR is only driven in `ProtocolModeModern`. See [mcp-tools.md](docs/mcp-tools.md#multi-round-trip-requests-与-elicitation).
+- **Prompt caching.** A tool loop re-sends its whole prefix — tool catalog, system prompt, conversation so far — on every iteration, so the share of it served from the provider's cache is the dominant cost term. `llm.PromptCacheConfig` (scenario `llms.<name>.prompt_cache.enabled`, builder `LLMPromptCache`) keeps that prefix stable and cacheable: the Anthropic adapter places cache breakpoints after the tool catalog, the system prompt and the conversation tail, and the runtime suppresses governance that would rewrite the prefix per turn (`context.tool_schema_pruning`). OpenAI-compatible providers cache automatically by matching a stable prefix and need no markers. Off by default, because writing the cache carries a provider premium that a profile with no prefix reuse would pay for nothing. Measured against Anthropic's published multipliers on the request shape the adapter emits: a 12-turn tool loop costs ~60% less in input tokens at a 74.7% hit rate, while a single call with no reuse costs ~27% more. See [configuration-reference.md](docs/configuration-reference.md#prompt-缓存).
+- **Cache-token accounting.** `llm.TokenUsage` gains `CachedInputTokens` and `CacheWriteTokens`, plus `CacheHitRate()` and `UncachedInputTokens()`. Providers disagree on the shape — OpenAI reports cached tokens as a subset of the prompt, Anthropic reports reads and writes alongside an input count that excludes them — so adapters normalize to one meaning: `InputTokens` is the whole prompt and `CachedInputTokens` the part read from cache. `agentflow_llm_tokens_total` gains `cache_read` and `cache_write` kinds; both are subsets of `prompt`, so summing every kind would double count.
+
+### Fixed
+
+- **Scenario validation no longer crashes the process.** A subgraph node referencing its own workflow (directly or mutually) recursed until the goroutine stack overflowed, and a loop node in a skill-only scenario dereferenced the nil `orchestration.workflow`. Both are reachable from the Studio `validate` / `import-yaml` endpoints.
+- **SSRF is enforced by the dialer instead of by inspecting URLs.** Checking a URL before the client resolves it leaves a window in which the name can resolve elsewhere, and the HTTP tool's redirect hook only re-checked literal IPs, so an allowlisted host could redirect into `169.254.169.254`. `ssrf.Guard` now validates the resolved address immediately before connect, covering every request and redirect hop.
+- **The Anthropic gateway implements `llm.ToolCallStreamer`.** It advertised `CapToolCall` and `CapStream` without implementing tool streaming, so behind `NewLLMRouter` a streaming tool-enabled call failed outright. The stream also emitted no terminal `Done` chunk on a clean EOF, hanging consumers that waited for one.
+- **Per-run tool budgets hold across a parallel tool batch.** `doom_loop_limit` and a tool's `rate_cap` were check-then-act on counters shared by the batch, so N identical calls could all pass a gate meant to admit one.
+- **A pause that wins the completion race keeps its checkpoint.** When a concurrent writer paused a run being resumed, the resume cleared the checkpoint variables that now belonged to the new pause, leaving it unresumable.
+- **MCP stdio kills its server process when a cancelled call poisons the client**, instead of orphaning one process and one goroutine per cancelled call.
+- **MCP HTTP matches SSE responses on request id only.** It previously fell back to the last frame in the stream, so a progress notification could be decoded as a tool result.
+- OpenAI, Anthropic, S3 and MCP HTTP adapters no longer fall back to `http.DefaultClient`, which has no dial, TLS-handshake or response-header deadline.
+
+### Changed
+
+- **BREAKING — `HTTPToolConfig.Client` and `HTTPKnowledgeLoaderConfig.Client` must expose an `*http.Transport`.** The address policy lives in the dialer, which is unreachable behind a custom `http.RoundTripper`, so a client carrying one is now rejected at construction rather than silently left unguarded. Migration: keep the wrapper and build it on a guarded transport.
+
+  ```go
+  // before: tracing wrapper over the default transport
+  client := &http.Client{Transport: tracing{base: http.DefaultTransport}}
+
+  // after: same wrapper, guarded inner transport
+  client := &http.Client{Transport: tracing{base: ssrf.Guard{}.ProtectTransport(nil)}}
+  ```
+
+- **BREAKING — JWT bearer tokens must carry an `exp` claim.** Expiry was only enforced when the claim happened to be present, so a token minted without one authenticated for the lifetime of the signing key. Issuers that omit `exp` must add it.
+- **BREAKING — scenario graphs are bounded.** A single workflow may declare at most 500 nodes and 2000 edges, and subgraphs may nest at most 32 deep. Reusing one subgraph from several branches is still valid; only recursion is rejected.
+- **BREAKING — a loop node's `body` ids resolve against the workflow that contains the loop**, not against `orchestration.workflow`. A loop inside a skill workflow or a named subgraph can only reference its own siblings. Loops that reached into the main workflow must move the referenced nodes into the enclosing workflow.
+- **BREAKING — S3 objects larger than 256 MiB are refused by `Get`.** Reads previously buffered whole objects with an uncapped `io.ReadAll`. Raise `S3BlobStoreConfig.MaxObjectBytes` if larger blobs are expected.
+- **BREAKING — the MCP HTTP client requires the server to echo the JSON-RPC request id** in its SSE response. Servers that reply without a matching id now produce an error instead of an arbitrary frame.
+- The in-memory job queue applies the same 1s exponential backoff (capped at 1 minute) as the PostgreSQL queue when a job fails, instead of re-queueing it immediately. Tests that asserted an immediate re-lease must advance their clock.
+- The HTTP tool and the HTTP knowledge loader default to a 30s and 60s request timeout respectively when no client is supplied; both were previously unbounded.
+- LLM gateways bound connection setup but deliberately leave time-to-first-byte unbounded, because a non-streaming completion sends no response headers until it finishes. Total call duration remains the caller's decision via `llm.Profile.Timeout`.
+- `HTTPToolConfig.BlockLoopback`, `HTTPKnowledgeLoaderConfig.BlockLoopback` and `S3BlobStoreConfig.MaxObjectBytes` are new optional fields. Loopback stays reachable by default so local development and in-process test servers keep working.
+
 ## [0.5.0] - 2026-07-25
 
 ### Added

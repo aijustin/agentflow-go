@@ -8,6 +8,17 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 )
 
+// Graph shape limits. Scenario YAML reaches Validate from untrusted-ish
+// surfaces (Studio import/validate, ComposeGraph drafts), so the traversal
+// must terminate on adversarial input instead of exhausting the goroutine
+// stack. MaxSubgraphDepth bounds nesting, MaxWorkflowNodes/Edges bound
+// breadth.
+const (
+	MaxSubgraphDepth = 32
+	MaxWorkflowNodes = 500
+	MaxWorkflowEdges = 2000
+)
+
 func Validate(s core.Scenario) error {
 	if s.Name == "" {
 		return fmt.Errorf("config: scenario.name is required")
@@ -182,7 +193,27 @@ func validateOrchestrationWorkflows(s core.Scenario) error {
 	return validateWorkflow(*s.Orchestration.Workflow, s)
 }
 
+// workflowScope carries the traversal state needed to validate nested
+// workflows: how deep the subgraph chain currently is, and which subgraph
+// refs are already on the path (a subgraph that reaches itself is a cycle,
+// not just a deep graph).
+type workflowScope struct {
+	scenario core.Scenario
+	depth    int
+	active   map[string]bool
+}
+
 func validateWorkflow(w core.Workflow, s core.Scenario) error {
+	return workflowScope{scenario: s, active: map[string]bool{}}.validateWorkflow(w)
+}
+
+func (sc workflowScope) validateWorkflow(w core.Workflow) error {
+	if len(w.Nodes) > MaxWorkflowNodes {
+		return fmt.Errorf("config: workflow has %d nodes, limit is %d", len(w.Nodes), MaxWorkflowNodes)
+	}
+	if len(w.Edges) > MaxWorkflowEdges {
+		return fmt.Errorf("config: workflow has %d edges, limit is %d", len(w.Edges), MaxWorkflowEdges)
+	}
 	nodes := make(map[string]core.WorkflowNode, len(w.Nodes))
 	for _, node := range w.Nodes {
 		if node.ID == "" {
@@ -191,7 +222,7 @@ func validateWorkflow(w core.Workflow, s core.Scenario) error {
 		if _, exists := nodes[node.ID]; exists {
 			return fmt.Errorf("config: duplicate workflow node %q", node.ID)
 		}
-		if err := validateWorkflowNode(node, s); err != nil {
+		if err := sc.validateWorkflowNode(node, w); err != nil {
 			return err
 		}
 		nodes[node.ID] = node
@@ -248,7 +279,8 @@ func validateWorkflow(w core.Workflow, s core.Scenario) error {
 	return nil
 }
 
-func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
+func (sc workflowScope) validateWorkflowNode(node core.WorkflowNode, w core.Workflow) error {
+	s := sc.scenario
 	if !containsString(supportedWorkflowNodeKinds, string(node.Kind)) {
 		return fmt.Errorf("config: workflow node %q kind %q is unsupported", node.ID, node.Kind)
 	}
@@ -279,7 +311,7 @@ func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
 	case core.NodeParallelGroup:
 		return validateParallelGroupNode(node, s)
 	case core.NodeLoop:
-		return validateLoopNode(node, s)
+		return validateLoopNode(node, w)
 	case core.NodeQueryRouter, core.NodeRAGGrade:
 		return nil
 	case core.NodeSupervisor:
@@ -295,7 +327,18 @@ func validateWorkflowNode(node core.WorkflowNode, s core.Scenario) error {
 		if !ok {
 			return fmt.Errorf("config: workflow node %q references unknown subgraph %q", node.ID, node.Ref)
 		}
-		return validateWorkflow(sub, s)
+		if sc.active[node.Ref] {
+			return fmt.Errorf("config: workflow node %q subgraph %q is recursive", node.ID, node.Ref)
+		}
+		if sc.depth+1 > MaxSubgraphDepth {
+			return fmt.Errorf("config: workflow node %q exceeds max subgraph depth %d", node.ID, MaxSubgraphDepth)
+		}
+		nested := workflowScope{scenario: s, depth: sc.depth + 1, active: make(map[string]bool, len(sc.active)+1)}
+		for ref := range sc.active {
+			nested.active[ref] = true
+		}
+		nested.active[node.Ref] = true
+		return nested.validateWorkflow(sub)
 	case core.NodeMap:
 		return validateMapNode(node, s)
 	}
@@ -387,7 +430,11 @@ func validateParallelGroupNode(node core.WorkflowNode, s core.Scenario) error {
 	return nil
 }
 
-func validateLoopNode(node core.WorkflowNode, s core.Scenario) error {
+// validateLoopNode resolves body ids against the workflow that contains the
+// loop node, not the scenario's main workflow: a loop inside a skill workflow
+// or a named subgraph can only reference its own siblings, and the main
+// workflow may not exist at all.
+func validateLoopNode(node core.WorkflowNode, w core.Workflow) error {
 	if len(node.Input) == 0 {
 		return fmt.Errorf("config: workflow node %q loop input is required", node.ID)
 	}
@@ -400,8 +447,8 @@ func validateLoopNode(node core.WorkflowNode, s core.Scenario) error {
 	if len(spec.Body) == 0 {
 		return fmt.Errorf("config: workflow node %q loop requires body node ids", node.ID)
 	}
-	nodeIDs := make(map[string]bool, len(s.Orchestration.Workflow.Nodes))
-	for _, workflowNode := range s.Orchestration.Workflow.Nodes {
+	nodeIDs := make(map[string]bool, len(w.Nodes))
+	for _, workflowNode := range w.Nodes {
 		nodeIDs[workflowNode.ID] = true
 	}
 	for _, bodyID := range spec.Body {

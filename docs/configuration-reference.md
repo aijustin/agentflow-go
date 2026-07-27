@@ -58,6 +58,7 @@ LLM 配置定义在 `scenario.llms.<name>` 下，可被 Agent 或工具引用。
 | `thinking.enabled` | 布尔值 | 否 | 启用 Provider 特定的 reasoning / thinking 模式。 |
 | `thinking.budget_tokens` | 整数 | 否 | reasoning-capable Provider 的思考 token 预算。 |
 | `reasoning_effort` | 字符串 | 否 | Provider 特定的推理强度提示，例如 `low`、`medium`、`high`。 |
+| `prompt_cache.enabled` | 布尔值 | 否 | 保持 prompt 前缀稳定且可缓存，见 [prompt 缓存](#prompt-缓存)。 |
 | `context` | 对象 | 否 | 上下文窗口治理策略。 |
 | `extra_body` | 对象 | 否 | Provider 特定的请求体扩展字段。 |
 | `capabilities` | 字符串数组 | 否 | 显式声明该配置支持的能力。 |
@@ -83,6 +84,27 @@ LLM 配置定义在 `scenario.llms.<name>` 下，可被 Agent 或工具引用。
 | `full_replace` | 将预算外历史压缩为一条摘要，并保留更紧的最近 tail（适合长编码会话）。 |
 
 Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`reserved_output_tokens`、`summary_tokens`、`tool_result_max_tokens`、`memory_recall_limit`、`system_prompt_protection`、`compression.trigger_ratio`、`inject_compact_reminder`。其中 `tool_result_max_tokens` 会限制工具结果回灌给下一轮 LLM 的上下文大小；完整工具输出仍会按运行状态/Blob 策略持久化。`inject_compact_reminder` 为 true 且发生裁剪/摘要时，运行时会注入当前 plan 进度的 system reminder。
+
+### Prompt 缓存
+
+自主工具循环每一轮都会把同一段前缀（工具目录 + system prompt + 既有对话）重新发一遍，因此**前缀是否命中缓存决定了一次 run 的主要成本**。`prompt_cache.enabled` 同时控制两件必须一起生效的事：
+
+- **需要显式标记的 Provider（Anthropic）**：适配器在工具目录之后、system prompt 之后、以及对话末尾各放一个 cache 断点（一个断点覆盖它之前的全部内容，共 3 个，未超过 Anthropic 的 4 个上限）。自动按稳定前缀匹配的 OpenAI 兼容 Provider 不需要标记，也不会发送标记。
+- **运行时停止改写该前缀**：为省 token 而牺牲前缀稳定性的治理项会被抑制，目前是 `context.tool_schema_pruning`。按 plan 进度收窄工具目录只省下几个 schema，却会让它后面的整段缓存失效，导致 system prompt 和全部对话按原价重新计费。
+
+默认关闭。写入缓存有 Provider 溢价，只发一次短请求、从不复用前缀的 profile 反而更贵；一旦前缀被重发就开始回本，而工具循环每一轮都在重发。
+
+用 Anthropic 公布的计费倍率（写入 1.25×、读取 0.1×）对适配器实际发出的请求形状做的量化（`internal/adapter/llm/anthropic/prompt_cache_savings_test.go`，非真实账单）：
+
+| 场景 | 输入成本 | 缓存命中率 |
+| --- | --- | --- |
+| 12 轮工具循环，关闭 | 37621 | 0.0% |
+| 12 轮工具循环，开启 | 14880 | 74.7% |
+| 单次调用，开启 | 比关闭高 26.9% | — |
+
+即 12 轮循环节省约 **60%** 输入成本，而单次无复用调用会多付写入溢价——这正是它默认关闭的原因。
+
+命中率可从 token 计数器观测：`agentflow_llm_tokens_total` 的 `kind` 维度新增 `cache_read` 与 `cache_write`，二者都是 `prompt` 的子集（相加会重复计数），命中率即 `cache_read / prompt`。
 
 ## 记忆
 

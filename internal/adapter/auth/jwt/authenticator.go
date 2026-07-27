@@ -174,7 +174,14 @@ func (auth *Authenticator) principalFromClaims(claims map[string]any) (identity.
 	if auth.audience != "" && !audienceContains(claims["aud"], auth.audience) {
 		return identity.Principal{}, fmt.Errorf("jwt auth: audience mismatch")
 	}
-	if exp, ok := numericDate(claims["exp"]); ok && !now.Before(exp.Add(auth.leeway)) {
+	// exp is mandatory. Accepting a token without it turns a bearer
+	// credential into a permanent one: it stays valid for the lifetime of the
+	// signing key, and revoking it means rotating that key for everyone.
+	exp, ok := numericDate(claims["exp"])
+	if !ok {
+		return identity.Principal{}, fmt.Errorf("jwt auth: token is missing the exp claim")
+	}
+	if !now.Before(exp.Add(auth.leeway)) {
 		return identity.Principal{}, fmt.Errorf("jwt auth: token expired")
 	}
 	if nbf, ok := numericDate(claims["nbf"]); ok && now.Add(auth.leeway).Before(nbf) {

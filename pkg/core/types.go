@@ -151,21 +151,22 @@ type Trigger struct {
 }
 
 type LLMProfileRef struct {
-	Provider            string               `json:"provider"`
-	Model               string               `json:"model"`
-	Endpoint            string               `json:"endpoint,omitempty"`
-	APIKeyEnv           string               `json:"api_key_env,omitempty"`
-	ContextWindowTokens int                  `json:"context_window_tokens,omitempty"`
-	MaxOutputTokens     int                  `json:"max_output_tokens,omitempty"`
-	Temperature         *float32             `json:"temperature,omitempty"`
-	TopP                *float32             `json:"top_p,omitempty"`
-	Timeout             time.Duration        `json:"timeout,omitempty"`
-	Thinking            llm.ThinkingConfig   `json:"thinking,omitempty"`
-	ReasoningEffort     string               `json:"reasoning_effort,omitempty"`
-	Context             contextwindow.Policy `json:"context,omitempty"`
-	ExtraBody           map[string]any       `json:"extra_body,omitempty"`
-	Capabilities        []string             `json:"capabilities,omitempty"`
-	Metadata            map[string]string    `json:"metadata,omitempty"`
+	Provider            string                `json:"provider"`
+	Model               string                `json:"model"`
+	Endpoint            string                `json:"endpoint,omitempty"`
+	APIKeyEnv           string                `json:"api_key_env,omitempty"`
+	ContextWindowTokens int                   `json:"context_window_tokens,omitempty"`
+	MaxOutputTokens     int                   `json:"max_output_tokens,omitempty"`
+	Temperature         *float32              `json:"temperature,omitempty"`
+	TopP                *float32              `json:"top_p,omitempty"`
+	Timeout             time.Duration         `json:"timeout,omitempty"`
+	Thinking            llm.ThinkingConfig    `json:"thinking,omitempty"`
+	ReasoningEffort     string                `json:"reasoning_effort,omitempty"`
+	PromptCache         llm.PromptCacheConfig `json:"prompt_cache,omitempty"`
+	Context             contextwindow.Policy  `json:"context,omitempty"`
+	ExtraBody           map[string]any        `json:"extra_body,omitempty"`
+	Capabilities        []string              `json:"capabilities,omitempty"`
+	Metadata            map[string]string     `json:"metadata,omitempty"`
 }
 
 type MemoryRef struct {

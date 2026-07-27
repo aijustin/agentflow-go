@@ -183,7 +183,7 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 				e.clearCheckpointOnCompletionConflict(ctx, &snapshot, err)
 				return RunResult{}, err
 			}
-			if err := e.clearCheckpointState(ctx, &snapshot, "before_final_answer"); err != nil {
+			if err := e.settleCheckpointAfterCompletion(ctx, &snapshot, result.Status, "before_final_answer"); err != nil {
 				return RunResult{}, err
 			}
 			return result, nil
@@ -212,7 +212,7 @@ func (e *Engine) continueBeforeFinalAnswer(ctx context.Context, snapshot runstat
 			e.clearCheckpointOnCompletionConflict(ctx, &snapshot, err)
 			return RunResult{}, err
 		}
-		if err := e.clearCheckpointState(ctx, &snapshot, "before_final_answer"); err != nil {
+		if err := e.settleCheckpointAfterCompletion(ctx, &snapshot, result.Status, "before_final_answer"); err != nil {
 			return RunResult{}, err
 		}
 		return result, nil
@@ -297,9 +297,10 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 	if completeRun {
 		result, err := e.completeRun(ctx, snapshot.RunID, output)
 		if err != nil {
+			e.clearCheckpointOnCompletionConflict(ctx, &snapshot, err)
 			return RunResult{}, err
 		}
-		if err := e.clearCheckpointState(ctx, &snapshot, "tool_approval"); err != nil {
+		if err := e.settleCheckpointAfterCompletion(ctx, &snapshot, result.Status, "tool_approval"); err != nil {
 			return RunResult{}, err
 		}
 		return result, nil
@@ -467,6 +468,23 @@ func clearHumanAmendment(snapshot *runstate.RunSnapshot) {
 		return
 	}
 	delete(snapshot.Variables, humanAmendmentVar)
+}
+
+// settleCheckpointAfterCompletion retires the checkpoint that this resume
+// consumed.
+//
+// A completion that discovers the run is no longer Running lost a race to a
+// concurrent writer, and reports the winner's status instead of an error. When
+// that winner is a pause, the checkpoint variables in the snapshot are no
+// longer the ones this resume consumed: the new pause wrote its own, and
+// clearing them leaves it unresumable with its messages, pending tool calls
+// and kind gone. A Cancelled or Failed winner has no claim on them, so the
+// consumed checkpoint is dropped as usual rather than left looking resumable.
+func (e *Engine) settleCheckpointAfterCompletion(ctx context.Context, snapshot *runstate.RunSnapshot, status runstate.RunStatus, kind string) error {
+	if status == runstate.RunStatusPaused {
+		return nil
+	}
+	return e.clearCheckpointState(ctx, snapshot, kind)
 }
 
 // clearCheckpointOnCompletionConflict drops leftover checkpoint variables
