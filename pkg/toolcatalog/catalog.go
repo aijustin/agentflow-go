@@ -108,6 +108,27 @@ func matchScore(query string, entry Entry) int {
 	if query == "" {
 		return 1
 	}
+	tokens := strings.Fields(query)
+	if len(tokens) == 0 {
+		return 1
+	}
+	// Single-token queries keep historical substring scoring.
+	if len(tokens) == 1 {
+		return tokenMatchScore(tokens[0], entry)
+	}
+	// Multi-word queries: score each whitespace token (OR via sum) and keep a
+	// whole-phrase bonus when the full query is an exact/contains hit.
+	score := tokenMatchScore(query, entry)
+	for _, token := range tokens {
+		score += tokenMatchScore(token, entry)
+	}
+	return score
+}
+
+func tokenMatchScore(query string, entry Entry) int {
+	if query == "" {
+		return 0
+	}
 	score := 0
 	name := strings.ToLower(entry.Name)
 	desc := strings.ToLower(entry.Description)

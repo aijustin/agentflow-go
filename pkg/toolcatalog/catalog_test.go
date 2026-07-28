@@ -33,6 +33,36 @@ func TestSnapshotSearchAndLoad(t *testing.T) {
 	}
 }
 
+func TestSnapshotSearchMultiWordTokens(t *testing.T) {
+	catalog := toolcatalog.NewSnapshot("v1", time.Hour, []toolcatalog.Entry{
+		{
+			Name:        "get_movie_box_office_ranking",
+			Description: "全国某日「影片」票房排行（单位：万，非元）。sort_by 可选 box_office（默认）。仅用于影片榜。",
+			Tags:        []string{"mcp", "bookoffice"},
+		},
+		{
+			Name:        "ho_items_list",
+			Description: "查询总部卖品列表",
+			Tags:        []string{"mcp", "vista"},
+		},
+	})
+
+	zhHits := catalog.Search("票房排名 影片 票房排行", 5)
+	if len(zhHits) == 0 || zhHits[0].Name != "get_movie_box_office_ranking" {
+		t.Fatalf("chinese multi-word search = %+v", zhHits)
+	}
+
+	enHits := catalog.Search("film box office ranking", 5)
+	if len(enHits) == 0 || enHits[0].Name != "get_movie_box_office_ranking" {
+		t.Fatalf("english multi-word search = %+v", enHits)
+	}
+
+	single := catalog.Search("票房", 5)
+	if len(single) == 0 || single[0].Name != "get_movie_box_office_ranking" {
+		t.Fatalf("single-token search = %+v", single)
+	}
+}
+
 func TestMetaToolSpecs(t *testing.T) {
 	specs := toolcatalog.MetaToolSpecs()
 	if len(specs) != 2 || specs[0].Name != toolcatalog.ToolSearchTools || specs[1].Name != toolcatalog.ToolLoadSchemas {
