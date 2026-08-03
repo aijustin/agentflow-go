@@ -538,6 +538,7 @@ func (e *Engine) answerWithToolsFrom(
 				messages,
 				profile.Context.StaleToolTurns,
 				profile.Context.ExcludeFromStaleWindowOrDefault(),
+				profile.Context.ExcludeToolNamesFromStaleWindow,
 			)
 		}
 		// Recompute on every turn (not just once before the loop) so

@@ -108,6 +108,30 @@ func TestMaskObservationsKeepsLatestSuccessPerToolName(t *testing.T) {
 	}
 }
 
+func TestMaskObservationsNeverMasksPinnedToolNames(t *testing.T) {
+	oldHITL := `{"title":"核心信息","values":{"Item_strItemDescription":"张亮专用01"}}`
+	newHITL := `{"title":"确认方案","values":{"vendorCode":"01000013"}}`
+	messages := []contextwindow.Message{
+		{Role: contextwindow.RoleAssistant, ToolCallIDs: []string{"rui-1"}},
+		{Role: contextwindow.RoleTool, Name: "request_user_interaction", ToolCallID: "rui-1", Content: oldHITL},
+		{Role: contextwindow.RoleAssistant, ToolCallIDs: []string{"v1"}},
+		{Role: contextwindow.RoleTool, Name: "ho_vendor_list", ToolCallID: "v1", Content: `{"ok":true}`},
+		{Role: contextwindow.RoleAssistant, ToolCallIDs: []string{"rui-2"}},
+		{Role: contextwindow.RoleTool, Name: "request_user_interaction", ToolCallID: "rui-2", Content: newHITL},
+		{Role: contextwindow.RoleAssistant, ToolCallIDs: []string{"c1"}},
+		{Role: contextwindow.RoleTool, Name: "ho_item_class_list", ToolCallID: "c1", Content: `{"ok":true}`},
+		{Role: contextwindow.RoleAssistant, ToolCallIDs: []string{"c2"}},
+		{Role: contextwindow.RoleTool, Name: "ho_tax_list", ToolCallID: "c2", Content: `{"ok":true}`},
+	}
+	masked := contextwindow.MaskObservations(messages, 2, "request_user_interaction")
+	if masked[1].Content != oldHITL {
+		t.Fatalf("pinned HITL result must stay unmasked even when superseded, got %q", masked[1].Content)
+	}
+	if masked[5].Content != newHITL {
+		t.Fatalf("latest HITL result must stay unmasked, got %q", masked[5].Content)
+	}
+}
+
 func TestClassifyToolResultDetectsLoopGuard(t *testing.T) {
 	msg := contextwindow.Message{
 		Role:    contextwindow.RoleTool,

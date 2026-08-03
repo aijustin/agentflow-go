@@ -217,7 +217,7 @@ func staleClassExcluded(class contextwindow.ToolResultClass, exclude []contextwi
 }
 
 func evictStaleToolMessages(messages []llm.Message, keepTurns int) []llm.Message {
-	out, _ := evictStaleToolMessagesWithPolicy(messages, keepTurns, nil)
+	out, _ := evictStaleToolMessagesWithPolicy(messages, keepTurns, nil, nil)
 	return out
 }
 
@@ -248,10 +248,43 @@ func denialContextSignature(msg llm.Message, callNames map[string]string) string
 	return tool + "|" + normalized
 }
 
+func toolNameExcludedFromStale(msg llm.Message, callNames map[string]string, excludeNames map[string]struct{}) bool {
+	if len(excludeNames) == 0 {
+		return false
+	}
+	tool := strings.TrimSpace(msg.Name)
+	if tool == "" {
+		tool = strings.TrimSpace(callNames[msg.ToolCallID])
+	}
+	if tool == "" {
+		return false
+	}
+	_, ok := excludeNames[tool]
+	return ok
+}
+
+func staleExcludeToolNameSet(names []string) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			out[name] = struct{}{}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func evictStaleToolMessagesWithPolicy(
 	messages []llm.Message,
 	keepTurns int,
 	exclude []contextwindow.ToolResultClass,
+	excludeToolNames []string,
 ) ([]llm.Message, staleEvictionStats) {
 	var stats staleEvictionStats
 	if keepTurns <= 0 || len(messages) == 0 {
@@ -260,6 +293,7 @@ func evictStaleToolMessagesWithPolicy(
 	if exclude == nil {
 		exclude = contextwindow.Policy{}.ExcludeFromStaleWindowOrDefault()
 	}
+	excludeNames := staleExcludeToolNameSet(excludeToolNames)
 
 	batches := make([]staleToolBatch, 0)
 	callBatches := make(map[string]int)
@@ -293,7 +327,8 @@ func evictStaleToolMessagesWithPolicy(
 		}
 
 		class := classifyToolResultMessage(msg)
-		counted := !staleClassExcluded(class, exclude)
+		nameExcluded := toolNameExcludedFromStale(msg, callNames, excludeNames)
+		counted := !staleClassExcluded(class, exclude) && !nameExcluded
 		if !counted {
 			stats.ExcludedTurns++
 			if class == contextwindow.ToolResultClassDenied {
@@ -331,10 +366,17 @@ func evictStaleToolMessagesWithPolicy(
 		if countedBatches <= keepTurns || batchIndex >= keepBatchFrom {
 			continue
 		}
+		droppedAny := false
 		for _, resultIndex := range batch.resultIndexes {
+			// Pinned tool names (e.g. request_user_interaction) are durable user
+			// facts — never hard-drop them even when their batch is stale.
+			if toolNameExcludedFromStale(messages[resultIndex], callNames, excludeNames) {
+				continue
+			}
 			dropIndex[resultIndex] = struct{}{}
+			droppedAny = true
 		}
-		if batch.counted {
+		if batch.counted && droppedAny {
 			stats.DroppedToolTurns++
 		}
 	}

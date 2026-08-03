@@ -65,7 +65,7 @@ func (e *Engine) applySelfCompactIfPending(ctx context.Context, runID string, pr
 		})
 	}
 	before := len(raw)
-	masked := contextwindow.MaskObservations(raw, maskAfterTurns)
+	masked := contextwindow.MaskObservations(raw, maskAfterTurns, profile.Context.ExcludeToolNamesFromStaleWindow...)
 	compacted := contextwindow.CompactContext(masked)
 	out := make([]llm.Message, 0, len(compacted))
 	for _, msg := range compacted {

@@ -15,9 +15,19 @@ const maskedToolResultPrefix = "[masked tool result:"
 // governance denial cannot push a prior successful business result out of the
 // unmasked window. Additionally, for each tool name the latest successful
 // observation is always kept unmasked (unless CompactContext later drops it).
-func MaskObservations(messages []Message, afterTurns int) []Message {
+//
+// keepToolNames (optional) lists tool names that are never masked, even when
+// older than afterTurns and superseded by a newer success of the same name.
+func MaskObservations(messages []Message, afterTurns int, keepToolNames ...string) []Message {
 	if afterTurns <= 0 || len(messages) == 0 {
 		return messages
+	}
+	keepNames := make(map[string]struct{}, len(keepToolNames))
+	for _, name := range keepToolNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			keepNames[name] = struct{}{}
+		}
 	}
 	out := cloneMessages(messages)
 	batchHasSuccess := assistantBatchHasSuccess(out)
@@ -62,6 +72,9 @@ func MaskObservations(messages []Message, afterTurns int) []Message {
 			continue
 		}
 		if _, ok := keep[i]; ok {
+			continue
+		}
+		if _, pinned := keepNames[strings.TrimSpace(out[i].Name)]; pinned {
 			continue
 		}
 		origLen := len(out[i].Content)

@@ -52,7 +52,13 @@ type Policy struct {
 	// ExcludeFromStaleWindow lists tool result classes that do not consume a
 	// StaleToolTurns slot. When nil, denied and empty are excluded by default.
 	ExcludeFromStaleWindow []ToolResultClass `json:"exclude_from_stale_window,omitempty" yaml:"exclude_from_stale_window,omitempty"`
-	PinUserMessages        *bool             `json:"pin_user_messages,omitempty" yaml:"pin_user_messages,omitempty"`
+	// ExcludeToolNamesFromStaleWindow lists tool names whose results must not be
+	// dropped by StaleToolTurns eviction and must not be masked by
+	// ObservationMaskAfterTurns (so CompactContext never drops them either).
+	// Use for HITL collect tools (e.g. request_user_interaction) whose payloads
+	// are durable user facts.
+	ExcludeToolNamesFromStaleWindow []string `json:"exclude_tool_names_from_stale_window,omitempty" yaml:"exclude_tool_names_from_stale_window,omitempty"`
+	PinUserMessages                 *bool    `json:"pin_user_messages,omitempty" yaml:"pin_user_messages,omitempty"`
 	// MemoryStoreLimit caps how many messages are retained in the persistent
 	// flat memory store. When exceeded, the oldest messages are dropped on
 	// write (keeping the most recent MemoryStoreLimit). Zero (the default)

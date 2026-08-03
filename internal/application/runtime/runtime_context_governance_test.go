@@ -21,7 +21,7 @@ func TestEvictStaleToolMessagesExcludesDeniedAndEmpty(t *testing.T) {
 		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "d1", Name: "knowledge_retrieve"}}},
 		{Role: llm.RoleTool, ToolCallID: "d1", Name: "knowledge_retrieve", Content: `{"tool":"knowledge_retrieve","error":"run_tool_budget_exceeded"}`, Metadata: map[string]string{"tool_result_class": "denied"}},
 	}
-	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil)
+	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil, nil)
 	foundSuccess := false
 	for _, msg := range evicted {
 		if msg.Role == llm.RoleTool && strings.Contains(msg.Content, "/dev-api/login") {
@@ -129,7 +129,7 @@ func TestEvictStaleToolMessagesCountsParallelResultsAsOneTurn(t *testing.T) {
 		})
 	}
 
-	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil)
+	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil, nil)
 	if len(evicted) != 18 {
 		t.Fatalf("expected assistant plus all 17 parallel results, got %d messages: %+v", len(evicted), evicted)
 	}
@@ -181,7 +181,7 @@ func TestEvictStaleToolMessagesCompactsRepeatedDenials(t *testing.T) {
 		},
 	)
 
-	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil)
+	evicted, stats := evictStaleToolMessagesWithPolicy(messages, 2, nil, nil)
 	denials := 0
 	for _, msg := range evicted {
 		if msg.Role == llm.RoleTool && classifyToolResultMessage(msg) == contextwindow.ToolResultClassDenied {
@@ -316,6 +316,47 @@ func TestEnforceToolCallPairingKeepsBalancedPairs(t *testing.T) {
 	out := enforceToolCallPairing(messages)
 	if len(out) != 2 {
 		t.Fatalf("expected balanced pair untouched, got %+v", out)
+	}
+}
+
+func TestEvictStaleToolMessagesKeepsExcludedToolNames(t *testing.T) {
+	// Mirrors multi-card HITL: early request_user_interaction values must survive
+	// after later dictionary/business tool turns push StaleToolTurns past keep=2.
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "rui-1", Name: "request_user_interaction"}}},
+		{Role: llm.RoleTool, ToolCallID: "rui-1", Name: "request_user_interaction", Content: `{"title":"核心信息","values":{"Item_strItemDescription":"张亮专用01","Item_curRetailPrice":"90"}}`},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "list-1", Name: "ho_vendor_list"}}},
+		{Role: llm.RoleTool, ToolCallID: "list-1", Name: "ho_vendor_list", Content: `{"vendors":[]}`},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "rui-2", Name: "request_user_interaction"}}},
+		{Role: llm.RoleTool, ToolCallID: "rui-2", Name: "request_user_interaction", Content: `{"title":"确认方案","values":{"vendorCode":"01000013","Item_strItemDescription":"张亮专用01"}}`},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "add-1", Name: "ho_item_add"}}},
+		{Role: llm.RoleTool, ToolCallID: "add-1", Name: "ho_item_add", Content: `{"error":"missing stakeGrpCode"}`, Metadata: map[string]string{"tool_result_class": "denied"}},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "list-2", Name: "ho_stocktake_group_list"}}},
+		{Role: llm.RoleTool, ToolCallID: "list-2", Name: "ho_stocktake_group_list", Content: `{"groups":[{"code":"0000000004"}]}`},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "list-3", Name: "ho_item_class_list"}}},
+		{Role: llm.RoleTool, ToolCallID: "list-3", Name: "ho_item_class_list", Content: `{"classes":[]}`},
+	}
+	evicted, stats := evictStaleToolMessagesWithPolicy(
+		messages, 2, nil, []string{"request_user_interaction"},
+	)
+	foundCore := false
+	foundConfirm := false
+	for _, msg := range evicted {
+		if msg.Role != llm.RoleTool {
+			continue
+		}
+		if msg.ToolCallID == "rui-1" && strings.Contains(msg.Content, "张亮专用01") {
+			foundCore = true
+		}
+		if msg.ToolCallID == "rui-2" && strings.Contains(msg.Content, "vendorCode") {
+			foundConfirm = true
+		}
+	}
+	if !foundCore || !foundConfirm {
+		t.Fatalf("expected both HITL form results retained, core=%v confirm=%v stats=%+v messages=%+v", foundCore, foundConfirm, stats, evicted)
+	}
+	if stats.ExcludedTurns < 2 {
+		t.Fatalf("expected HITL tools excluded from stale accounting, got %+v", stats)
 	}
 }
 
