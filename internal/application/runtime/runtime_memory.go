@@ -127,7 +127,7 @@ func (e *Engine) persistToolTurnFromStepOutputs(ctx context.Context, runID strin
 	profile, _ := e.llmProfile(agent.LLM)
 	tools := make([]memoryMessage, 0, len(assistant.ToolCalls))
 	for _, call := range assistant.ToolCalls {
-		raw, ok, err := e.stepOutputBytes(ctx, snapshot, "tool."+call.ID)
+		raw, ok, err := e.stepOutputBytes(ctx, snapshot, e.batchPersistKey(agent, call))
 		if err != nil {
 			return err
 		}
@@ -138,7 +138,7 @@ func (e *Engine) persistToolTurnFromStepOutputs(ctx context.Context, runID strin
 		if err := json.Unmarshal(raw, &result); err != nil {
 			return fmt.Errorf("runtime: decode tool output %q: %w", call.ID, err)
 		}
-		compacted, _ := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
+		compacted, _ := e.materializeToolResultForContext(call.Name, result, profile)
 		tools = append(tools, memoryMessageFromToolResult(call, compacted))
 	}
 	if len(tools) == 0 {

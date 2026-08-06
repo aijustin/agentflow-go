@@ -441,7 +441,7 @@ func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw js
 // on the framework facade): client disconnect must not cancel the run.
 type streamDetachedKey struct{}
 
-const detachedCancellationPollInterval = 100 * time.Millisecond
+const detachedCancellationPollInterval = 5 * time.Second
 
 // ContextWithStreamDetached marks the stream to keep executing to a terminal
 // state in the background when the caller's context is cancelled (e.g. client

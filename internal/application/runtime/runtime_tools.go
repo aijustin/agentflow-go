@@ -88,19 +88,6 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		})
 		return result, nil
 	}
-	if limit := e.scenario.Runtime.DoomLoopLimit; limit > 0 {
-		// sameInputCount is prior attempts; +1 is the attempt about to run.
-		if tracker.sameInputCount(call.Name, call.Input)+1 >= limit {
-			result := core.ToolResult{Tool: call.Name, Error: formatDoomLoopError(call.Name, limit)}
-			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{
-				"agent":  agent.Name,
-				"tool":   call.Name,
-				"reason": result.Error,
-				"kind":   "doom_loop",
-			})
-			return result, nil
-		}
-	}
 	if subAgentName, ok := e.delegateTarget(agent, call.Name); ok {
 		if delegationDepthFromContext(ctx) >= maxDelegationDepth {
 			result := core.ToolResult{Tool: call.Name, Error: fmt.Sprintf("delegation depth limit (%d) exceeded", maxDelegationDepth)}
@@ -114,14 +101,43 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 			return result, nil
 		}
 		delegateTool := core.Tool{Name: call.Name, SideEffect: core.SideEffectRead}
-		if err := e.authorizeGovernanceTool(ctx, runID, agent, delegateTool, call, tracker); err != nil {
-			tracker.recordAttempt(call.Name, call.Input)
+		reservation, callCount, sameInputCalls, denial := tracker.reserveToolCall(
+			call.Name,
+			call.Input,
+			e.scenario.Runtime.DoomLoopLimit,
+			0,
+		)
+		if denial != "" {
+			result := core.ToolResult{Tool: call.Name, Error: denial}
+			kind := "rate_cap"
+			if strings.HasPrefix(denial, "doom-loop") {
+				kind = "doom_loop"
+			}
+			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{
+				"agent":  agent.Name,
+				"tool":   call.Name,
+				"reason": result.Error,
+				"kind":   kind,
+			})
+			return result, nil
+		}
+		if err := e.authorizeGovernanceTool(ctx, runID, agent, delegateTool, call, callCount, sameInputCalls, tracker.totalSuccesses()); err != nil {
+			reservation.commitAttempt()
 			result := core.ToolResult{Tool: call.Name, Error: governanceBlockError(err)}
 			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
 			return result, nil
 		}
-		tracker.recordAttempt(call.Name, call.Input)
-		return e.dispatchSubAgent(ctx, runID, agent, subAgentName, call, options.skipPersist)
+		result, err := e.dispatchSubAgent(ctx, runID, agent, subAgentName, call, options.skipPersist)
+		if err != nil {
+			reservation.release()
+			return result, err
+		}
+		if result.Error == "" {
+			reservation.commitSuccess()
+		} else {
+			reservation.commitAttempt()
+		}
+		return result, nil
 	}
 	if !agentAllowsTool(agent, call.Name) && !e.isFrameworkMetaTool(call.Name) {
 		result := core.ToolResult{Tool: call.Name, Error: "tool is not in agent whitelist"}
@@ -170,11 +186,6 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		}
 		return result, nil
 	}
-	if tool.RateCap > 0 && tracker.nameCount(call.Name) >= tool.RateCap {
-		result := core.ToolResult{Tool: call.Name, Error: fmt.Sprintf("tool rate cap exceeded: %d call(s) per run", tool.RateCap)}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result, nil
-	}
 	if e.tools == nil {
 		result := core.ToolResult{Tool: call.Name, Error: "tool executor registry is not configured"}
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
@@ -183,13 +194,6 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	resource := toolResource(agent, call, &tool)
 	if err := e.authorizeTool(ctx, runID, resource); err != nil {
 		result := core.ToolResult{Tool: call.Name, Error: "tool invocation unauthorized"}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
-		return result, nil
-	}
-	if err := e.authorizeGovernanceTool(ctx, runID, agent, tool, call, tracker); err != nil {
-		tracker.recordAttempt(call.Name, call.Input)
-		result := core.ToolResult{Tool: call.Name, Error: governanceBlockError(err)}
-		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
 		return result, nil
 	}
@@ -204,8 +208,40 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
 		return result, nil
 	}
+	reservation, callCount, sameInputCalls, denial := tracker.reserveToolCall(
+		call.Name,
+		call.Input,
+		e.scenario.Runtime.DoomLoopLimit,
+		tool.RateCap,
+	)
+	if denial != "" {
+		result := core.ToolResult{Tool: call.Name, Error: denial}
+		kind := "rate_cap"
+		if strings.HasPrefix(denial, "doom-loop") {
+			kind = "doom_loop"
+		}
+		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{
+			"agent":  agent.Name,
+			"tool":   call.Name,
+			"reason": result.Error,
+			"kind":   kind,
+		})
+		return result, nil
+	}
+	if err := e.authorizeGovernanceTool(ctx, runID, agent, tool, call, callCount, sameInputCalls, tracker.totalSuccesses()); err != nil {
+		reservation.commitAttempt()
+		result := core.ToolResult{Tool: call.Name, Error: governanceBlockError(err)}
+		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})
+		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
+		return result, nil
+	}
 	result, err := e.executeToolWithRetry(ctx, runID, agent, tool, call, executor)
+	attemptReported := false
 	if err != nil {
+		if e.orchestrator != nil {
+			_ = e.orchestrator.AfterAttempt(ctx, runID, call.Name, call.Input, toolorch.AttemptResult{})
+			attemptReported = true
+		}
 		// A context cancellation/deadline is a runtime-level condition, not
 		// a tool failure: surfacing it as a ToolResult.Error would let the
 		// tool loop keep calling the LLM after the run should have already
@@ -213,19 +249,21 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		// propagate so the caller (and ultimately Run/RunHybrid) can
 		// classify it as a cancellation or a timeout failure instead.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			reservation.release()
 			return core.ToolResult{}, err
 		}
 		result = core.ToolResult{Tool: call.Name, Error: err.Error()}
 	}
-	if e.orchestrator != nil {
+	if e.orchestrator != nil && !attemptReported {
 		_ = e.orchestrator.AfterAttempt(ctx, runID, call.Name, call.Input, toolorch.AttemptResult{})
 	}
-	tracker.recordAttempt(call.Name, call.Input)
 	if result.Error == "" {
-		tracker.recordSuccess(call.Name)
+		reservation.commitSuccess()
 		if e.denyBreaker != nil {
 			e.denyBreaker.RecordAllow(runID)
 		}
+	} else {
+		reservation.commitAttempt()
 	}
 	if !options.skipPersist {
 		if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil {
@@ -266,20 +304,19 @@ func delegationDepthFromContext(ctx context.Context) int {
 	return depth
 }
 
-func (e *Engine) authorizeGovernanceTool(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, tracker *toolCallTracker) error {
+func (e *Engine) authorizeGovernanceTool(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, callCount, sameInputCalls, totalCalls int) error {
 	if e.toolGov == nil {
 		return nil
 	}
-	tracker = tracker.ensure()
 	return e.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
 		RunID:          runID,
 		Agent:          agent.Name,
 		Tool:           call.Name,
 		SideEffect:     tool.SideEffect,
 		Input:          call.Input,
-		CallCount:      tracker.nameCount(call.Name),
-		SameInputCalls: tracker.sameInputCount(call.Name, call.Input),
-		TotalCalls:     tracker.totalSuccesses(),
+		CallCount:      callCount,
+		SameInputCalls: sameInputCalls,
+		TotalCalls:     totalCalls,
 		Metadata:       cloneStringMap(tool.Metadata),
 	})
 }

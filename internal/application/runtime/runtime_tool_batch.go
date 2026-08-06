@@ -171,13 +171,7 @@ func (e *Engine) batchPersistKey(agent core.Agent, call llm.ToolCall) string {
 // persist error becomes visible to the model exactly like a tool error.
 func (e *Engine) materializeToolBatchItem(item *toolBatchItem, profile core.LLMProfileRef) error {
 	call := item.call
-	contextResult, transformMeta := e.compactToolResultForContext(item.result, profile.Context.ToolResultMaxTokens)
-	if maxBytes := profile.Context.ToolOutputMaxBytes; maxBytes > 0 && len(contextResult.Output) > maxBytes {
-		truncated, meta := contextwindow.ApplyToolOutputTransform(call.Name, contextResult.Output, maxBytes/3, e.toolTransformsCopy())
-		contextResult.Output = truncated
-		transformMeta = meta
-		transformMeta.Truncated = true
-	}
+	contextResult, transformMeta := e.materializeToolResultForContext(call.Name, item.result, profile)
 	toolMsg := memoryMessageFromToolResult(call, contextResult)
 	if transformMeta.Truncated || transformMeta.Strategy != contextwindow.TransformStrategyNone {
 		if toolMsg.Metadata == nil {
@@ -205,6 +199,19 @@ func (e *Engine) materializeToolBatchItem(item *toolBatchItem, profile core.LLMP
 		},
 	}
 	return nil
+}
+
+// materializeToolResultForContext applies every model-facing output limit while
+// leaving the full step output untouched for persistence and later inspection.
+func (e *Engine) materializeToolResultForContext(toolName string, result core.ToolResult, profile core.LLMProfileRef) (core.ToolResult, contextwindow.TransformMeta) {
+	contextResult, transformMeta := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
+	if maxBytes := profile.Context.ToolOutputMaxBytes; maxBytes > 0 && len(contextResult.Output) > maxBytes {
+		truncated, meta := contextwindow.ApplyToolOutputTransform(toolName, contextResult.Output, maxBytes/3, e.toolTransformsCopy())
+		contextResult.Output = truncated
+		transformMeta = meta
+		transformMeta.Truncated = true
+	}
+	return contextResult, transformMeta
 }
 
 // growExecutableToolPrefix returns the exclusive end index of consecutive

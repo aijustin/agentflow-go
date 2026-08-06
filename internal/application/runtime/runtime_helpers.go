@@ -296,7 +296,10 @@ func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core
 			return err
 		}
 	}
-	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
+	finalRaw, err := json.Marshal(map[string]string{"text": output})
+	if err != nil {
+		return fmt.Errorf("runtime: marshal streamed final output: %w", err)
+	}
 	if _, err := e.persistRunCompleted(ctx, runID, finalRaw); err != nil {
 		var conflict completionConflictError
 		if errors.As(err, &conflict) {
@@ -688,11 +691,34 @@ func (e *Engine) persistRunCompleted(ctx context.Context, runID string, finalRaw
 		saved = *snapshot
 		return nil
 	}); err != nil {
+		if finalRef.Blob != nil {
+			if blobs, ok := e.blobs.(runstate.BlobAdmin); ok {
+				if deleteErr := blobs.Delete(ctx, *finalRef.Blob); deleteErr != nil {
+					e.logWarn(ctx, "runtime: failed to delete orphaned final output blob", "run_id", runID, "error", deleteErr)
+				}
+			}
+		}
 		return runstate.RunSnapshot{}, err
 	}
 	e.clearRunScopedState(runID)
 	e.recordRunCompleted(ctx, saved)
-	e.emit(ctx, core.EventRunCompleted, runID, finalRef.Inline)
+	var eventFields map[string]json.RawMessage
+	if err := json.Unmarshal(finalRaw, &eventFields); err != nil {
+		return runstate.RunSnapshot{}, fmt.Errorf("runtime: decode final output for completion event: %w", err)
+	}
+	if eventFields == nil {
+		eventFields = make(map[string]json.RawMessage)
+	}
+	refRaw, err := json.Marshal(finalRef)
+	if err != nil {
+		return runstate.RunSnapshot{}, fmt.Errorf("runtime: marshal final output reference: %w", err)
+	}
+	eventFields["output_ref"] = refRaw
+	eventPayload, err := json.Marshal(eventFields)
+	if err != nil {
+		return runstate.RunSnapshot{}, fmt.Errorf("runtime: marshal completion event payload: %w", err)
+	}
+	e.emit(ctx, core.EventRunCompleted, runID, eventPayload)
 	return saved, nil
 }
 
@@ -747,19 +773,21 @@ func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause erro
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
 	defer e.clearRunScopedState(runID)
-	if snapshot, err := runstate.LoadAuthorized(persistCtx, e.runs, runID); err == nil {
+	var status runstate.RunStatus
+	if err := e.saveSnapshotWithRetry(persistCtx, runID, func(snapshot *runstate.RunSnapshot) error {
+		status = snapshot.Status
 		if snapshot.Status == runstate.RunStatusCancelled {
-			e.emit(persistCtx, core.EventRunCancelled, runID, nil)
-			return
+			return nil
 		}
-		if snapshot.Status == runstate.RunStatusPaused || (!force && snapshotHasToolApprovalCheckpoint(&snapshot)) {
-			return
+		if snapshot.Status == runstate.RunStatusPaused || (!force && snapshotHasToolApprovalCheckpoint(snapshot)) {
+			return nil
 		}
 		if snapshot.Status != runstate.RunStatusFailed && !snapshot.Status.CanTransitionTo(runstate.RunStatusFailed) {
 			e.logWarn(persistCtx, "runtime: refusing invalid failure status transition", "run_id", runID, "status", snapshot.Status)
-			return
+			return nil
 		}
 		snapshot.Status = runstate.RunStatusFailed
+		status = snapshot.Status
 		if snapshot.Variables == nil {
 			snapshot.Variables = make(map[string]json.RawMessage)
 		}
@@ -767,31 +795,48 @@ func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause erro
 		// the emitted event: reloading a failed run later (e.g. from a
 		// separate diagnostic tool, or after the event bus has rotated old
 		// events out) would otherwise give no indication of why it failed.
-		snapshot.Variables[runErrorMessageVar] = json.RawMessage(fmt.Sprintf("%q", cause.Error()))
-		if saveErr := e.saveRunSnapshot(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
-			e.logWarn(persistCtx, "runtime: failed to persist run failure status", "run_id", runID, "save_error", saveErr)
-			return
+		raw, err := json.Marshal(cause.Error())
+		if err != nil {
+			return fmt.Errorf("runtime: marshal run failure reason: %w", err)
 		}
+		snapshot.Variables[runErrorMessageVar] = raw
+		return nil
+	}); err != nil {
+		e.logWarn(persistCtx, "runtime: failed to persist run failure status", "run_id", runID, "save_error", err)
+		return
 	}
-	e.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))
+	if status == runstate.RunStatusCancelled {
+		e.emit(persistCtx, core.EventRunCancelled, runID, nil)
+		return
+	}
+	if status != runstate.RunStatusFailed {
+		return
+	}
+	e.emitJSON(persistCtx, core.EventRunFailed, runID, map[string]string{"error": cause.Error()})
 }
 
 func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
 	defer e.clearRunScopedState(runID)
-	if snapshot, err := runstate.LoadAuthorized(persistCtx, e.runs, runID); err == nil {
+	var status runstate.RunStatus
+	if err := e.saveSnapshotWithRetry(persistCtx, runID, func(snapshot *runstate.RunSnapshot) error {
+		status = snapshot.Status
 		if snapshot.Status != runstate.RunStatusCancelled {
 			if !snapshot.Status.CanTransitionTo(runstate.RunStatusCancelled) {
 				e.logWarn(persistCtx, "runtime: refusing invalid cancellation status transition", "run_id", runID, "status", snapshot.Status)
-				return
+				return nil
 			}
 			snapshot.Status = runstate.RunStatusCancelled
-			if saveErr := e.saveRunSnapshot(persistCtx, &snapshot, snapshot.Version); saveErr != nil {
-				e.logWarn(persistCtx, "runtime: failed to persist run cancellation status", "run_id", runID, "save_error", saveErr)
-				return
-			}
+			status = snapshot.Status
 		}
+		return nil
+	}); err != nil {
+		e.logWarn(persistCtx, "runtime: failed to persist run cancellation status", "run_id", runID, "save_error", err)
+		return
+	}
+	if status != runstate.RunStatusCancelled {
+		return
 	}
 	e.emit(persistCtx, core.EventRunCancelled, runID, nil)
 }

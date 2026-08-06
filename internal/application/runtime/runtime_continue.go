@@ -353,7 +353,7 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		if e.denyBreaker != nil {
 			e.denyBreaker.RecordAllow(runID)
 		}
-		contextResult, _ := e.compactToolResultForContext(result, profile.Context.ToolResultMaxTokens)
+		contextResult, _ := e.materializeToolResultForContext(approved.Name, result, profile)
 		raw, err := json.Marshal(contextResult)
 		if err != nil {
 			return "", err
@@ -411,7 +411,10 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 }
 
 func (e *Engine) completeRun(ctx context.Context, runID, output string) (RunResult, error) {
-	finalRaw := []byte(fmt.Sprintf(`{"text":%q}`, output))
+	finalRaw, err := json.Marshal(map[string]string{"text": output})
+	if err != nil {
+		return RunResult{}, fmt.Errorf("runtime: marshal final output: %w", err)
+	}
 	if _, err := e.persistRunCompleted(ctx, runID, finalRaw); err != nil {
 		var conflict completionConflictError
 		if errors.As(err, &conflict) {

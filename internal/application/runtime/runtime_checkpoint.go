@@ -62,7 +62,7 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 		return RunResult{}, err
 	}
 	if err := e.ensureRunPaused(ctx, req.RunID); err != nil {
-		e.logWarn(ctx, "runtime: failed to persist paused status", "run_id", req.RunID, "error", err)
+		return RunResult{}, fmt.Errorf("runtime: persist paused status for run %q: %w", req.RunID, err)
 	}
 	e.emitJSON(ctx, core.EventRunPaused, req.RunID, pausePayload)
 	return RunResult{RunID: req.RunID, Status: runstate.RunStatusPaused, Token: token}, nil

@@ -545,7 +545,7 @@ func (e *Engine) answerWithToolsFrom(
 		// plan-driven schema pruning reflects progress made by the tool
 		// calls dispatched in prior iterations of this same loop, not just
 		// the plan state as of the very first turn.
-		toolSpecs := e.toolSpecs(ctx, runID, agent)
+		toolSpecs = e.toolSpecs(ctx, runID, agent)
 		stepCtx := toolorch.FreezeSamplingStepContext(toolSpecs)
 		stepRunCtx := contextWithSamplingStep(ctx, stepCtx)
 		prepared, stats := e.prepareMessages(ctx, runID, agent, messages, profile)

@@ -10,15 +10,19 @@ import (
 // toolCallTracker tracks successful per-tool counts and per-(tool,input)
 // attempt counts for governance and rate caps within one autonomous tool loop.
 type toolCallTracker struct {
-	mu          sync.Mutex
-	ByName      map[string]int `json:"by_name"`
-	BySameInput map[string]int `json:"by_same_input"`
+	mu                  sync.Mutex
+	ByName              map[string]int `json:"by_name"`
+	BySameInput         map[string]int `json:"by_same_input"`
+	reservedByName      map[string]int
+	reservedBySameInput map[string]int
 }
 
 func newToolCallTracker() *toolCallTracker {
 	return &toolCallTracker{
-		ByName:      make(map[string]int),
-		BySameInput: make(map[string]int),
+		ByName:              make(map[string]int),
+		BySameInput:         make(map[string]int),
+		reservedByName:      make(map[string]int),
+		reservedBySameInput: make(map[string]int),
 	}
 }
 
@@ -39,6 +43,87 @@ func (t *toolCallTracker) initMapsLocked() {
 	if t.BySameInput == nil {
 		t.BySameInput = make(map[string]int)
 	}
+	if t.reservedByName == nil {
+		t.reservedByName = make(map[string]int)
+	}
+	if t.reservedBySameInput == nil {
+		t.reservedBySameInput = make(map[string]int)
+	}
+}
+
+type toolCallReservation struct {
+	tracker     *toolCallTracker
+	name        string
+	fingerprint string
+	active      bool
+}
+
+// reserveToolCall atomically checks and reserves the per-tool execution
+// budget. Reservations account for in-flight sibling calls in a parallel
+// batch, while committed maps preserve the checkpoint format and its
+// historical semantics (successful calls by name, all attempts by input).
+func (t *toolCallTracker) reserveToolCall(name string, input json.RawMessage, doomLoopLimit, rateCap int) (toolCallReservation, int, int, string) {
+	t = t.ensure()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initMapsLocked()
+
+	fingerprint := toolInputFingerprint(name, input)
+	priorCalls := t.ByName[name]
+	priorSameInputCalls := t.BySameInput[fingerprint]
+	if doomLoopLimit > 0 && priorSameInputCalls+t.reservedBySameInput[fingerprint]+1 >= doomLoopLimit {
+		return toolCallReservation{}, priorCalls, priorSameInputCalls, formatDoomLoopError(name, doomLoopLimit)
+	}
+	if rateCap > 0 && priorCalls+t.reservedByName[name] >= rateCap {
+		return toolCallReservation{}, priorCalls, priorSameInputCalls, fmt.Sprintf("tool rate cap exceeded: %d call(s) per run", rateCap)
+	}
+	t.reservedByName[name]++
+	t.reservedBySameInput[fingerprint]++
+	return toolCallReservation{
+		tracker:     t,
+		name:        name,
+		fingerprint: fingerprint,
+		active:      true,
+	}, priorCalls, priorSameInputCalls, ""
+}
+
+func (r *toolCallReservation) release() {
+	if r == nil || !r.active || r.tracker == nil {
+		return
+	}
+	r.tracker.mu.Lock()
+	defer r.tracker.mu.Unlock()
+	r.tracker.initMapsLocked()
+	r.tracker.reservedByName[r.name]--
+	r.tracker.reservedBySameInput[r.fingerprint]--
+	r.active = false
+}
+
+func (r *toolCallReservation) commitAttempt() {
+	if r == nil || !r.active || r.tracker == nil {
+		return
+	}
+	r.tracker.mu.Lock()
+	defer r.tracker.mu.Unlock()
+	r.tracker.initMapsLocked()
+	r.tracker.reservedByName[r.name]--
+	r.tracker.reservedBySameInput[r.fingerprint]--
+	r.tracker.BySameInput[r.fingerprint]++
+	r.active = false
+}
+
+func (r *toolCallReservation) commitSuccess() {
+	if r == nil || !r.active || r.tracker == nil {
+		return
+	}
+	r.tracker.mu.Lock()
+	defer r.tracker.mu.Unlock()
+	r.tracker.initMapsLocked()
+	r.tracker.reservedByName[r.name]--
+	r.tracker.reservedBySameInput[r.fingerprint]--
+	r.tracker.BySameInput[r.fingerprint]++
+	r.tracker.ByName[r.name]++
+	r.active = false
 }
 
 func (t *toolCallTracker) nameCount(name string) int {
