@@ -23,8 +23,12 @@ const contextSummaryTimeout = 10 * time.Second
 
 func (e *Engine) contextManager(ctx context.Context, runID string, agent core.Agent, policy contextwindow.Policy) *contextwindow.Manager {
 	normalized := policy.Normalize()
+	var opts []contextwindow.ManagerOption
+	if e.dualVisibility {
+		opts = append(opts, contextwindow.WithMarkInsteadOfDrop(true))
+	}
 	if normalized.SummaryMode != "llm" || e.llm == nil {
-		return contextwindow.New(normalized)
+		return contextwindow.New(normalized, opts...)
 	}
 	summarizerProfile := agent.LLM
 	if summarizerProfile == "" {
@@ -63,7 +67,7 @@ func (e *Engine) contextManager(ctx context.Context, runID string, agent core.Ag
 			return contextwindowSummaryFallback(messages, budget)
 		}
 		return strings.TrimSpace(resp.Message.Content)
-	})
+	}, opts...)
 }
 
 func (e *Engine) redactSummaryContent(ctx context.Context, runID string, msg contextwindow.Message) string {

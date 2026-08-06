@@ -45,6 +45,11 @@ type Stats struct {
 	DenialOccupiedSlots      int      `json:"denial_occupied_slots,omitempty"`
 	StaleExcludedTurns       int      `json:"stale_excluded_turns,omitempty"`
 	CompactedToolDenials     int      `json:"compacted_tool_denials,omitempty"`
+	// MarkedMessages counts messages retained with a visibility=user mark
+	// instead of being physically dropped (Manager mark-instead-of-drop mode).
+	// It equals DroppedMessages in that mode: the messages are dropped from
+	// the model-visible projection but kept for user-side projections.
+	MarkedMessages int `json:"marked_messages,omitempty"`
 	// NeedsReminder is true when compaction dropped or summarized history and
 	// hosts should re-inject active plan/TODO state.
 	NeedsReminder bool `json:"needs_reminder,omitempty"`
@@ -56,32 +61,74 @@ type Result struct {
 }
 
 type Manager struct {
-	policy       Policy
-	summarizer   Summarizer
-	policySource string
-	fallback8192 bool
+	policy            Policy
+	summarizer        Summarizer
+	policySource      string
+	fallback8192      bool
+	markInsteadOfDrop bool
 }
 
 type Summarizer func(messages []Message, budget int) string
 
-func New(policy Policy) *Manager {
-	detailed := policy.NormalizeDetailed()
-	return &Manager{policy: detailed.Policy, policySource: detailed.PolicySource, fallback8192: detailed.Fallback8192}
+// ManagerOption customizes a Manager at construction.
+type ManagerOption func(*Manager)
+
+// WithMarkInsteadOfDrop makes trimming strategies retain trimmed messages in
+// the returned sequence with a visibility=user metadata mark instead of
+// physically dropping them. Summary messages stay visible to both audiences.
+// The default (false) keeps the historic drop behavior byte-for-byte.
+func WithMarkInsteadOfDrop(enabled bool) ManagerOption {
+	return func(m *Manager) {
+		m.markInsteadOfDrop = enabled
+	}
 }
 
-func NewWithSummarizer(policy Policy, summarizer Summarizer) *Manager {
-	manager := New(policy)
+func New(policy Policy, opts ...ManagerOption) *Manager {
+	detailed := policy.NormalizeDetailed()
+	manager := &Manager{policy: detailed.Policy, policySource: detailed.PolicySource, fallback8192: detailed.Fallback8192}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(manager)
+		}
+	}
+	return manager
+}
+
+func NewWithSummarizer(policy Policy, summarizer Summarizer, opts ...ManagerOption) *Manager {
+	manager := New(policy, opts...)
 	manager.summarizer = summarizer
 	return manager
 }
 
+// PrepareOptions carries optional advisory inputs to Prepare.
+type PrepareOptions struct {
+	// KnownInputTokens, when > 0, is the provider-reported token count of the
+	// previous LLM call (input + output). It takes precedence over the
+	// EstimateTokens heuristic for the trigger/over-budget decisions, because
+	// the heuristic can badly undercount tool-heavy or multilingual
+	// transcripts and let a request sail past the provider's real window.
+	// Trimming budgets still use the heuristic: it is the only per-message
+	// breakdown available.
+	KnownInputTokens int
+}
+
 func (m *Manager) Prepare(messages []Message) Result {
+	return m.PrepareWithOptions(messages, PrepareOptions{})
+}
+
+func (m *Manager) PrepareWithOptions(messages []Message, opts PrepareOptions) Result {
 	messages = cloneMessages(messages)
 	if m.policy.ObservationMaskAfterTurns > 0 {
 		messages = MaskObservations(messages, m.policy.ObservationMaskAfterTurns, m.policy.ExcludeToolNamesFromStaleWindow...)
 	}
 	messages = applyRoleBudgets(messages, m.policy.RoleBudgets)
 	before := CountMessages(messages)
+	// measured is what trigger decisions compare against the budget: the
+	// provider-reported count when known, else the heuristic estimate.
+	measured := before
+	if opts.KnownInputTokens > 0 {
+		measured = opts.KnownInputTokens
+	}
 	stats := Stats{
 		Strategy:        m.policy.Strategy,
 		BeforeTokens:    before,
@@ -91,13 +138,16 @@ func (m *Manager) Prepare(messages []Message) Result {
 	}
 	if m.policy.Compression.Enabled && m.policy.MaxInputTokens > 0 {
 		trigger := int(float64(m.policy.MaxInputTokens) * m.policy.Compression.TriggerRatio)
-		if before > trigger {
+		if measured > trigger {
 			messages = compressToolMessages(messages, m.policy.ToolResultMaxTokens)
 			before = CountMessages(messages)
 			stats.BeforeTokens = before
+			// Compression changed the messages, so the stale provider count no
+			// longer reflects them; fall back to the fresh heuristic estimate.
+			measured = before
 		}
 	}
-	if before <= m.policy.MaxInputTokens {
+	if measured <= m.policy.MaxInputTokens {
 		stats.AfterTokens = before
 		return Result{Messages: cloneMessages(messages), Stats: stats}
 	}
@@ -110,9 +160,7 @@ func (m *Manager) Prepare(messages []Message) Result {
 		// window trim rather than letting the context grow unbounded.
 		protected, candidates := splitProtected(messages, m.policy.SystemPromptProtection)
 		kept, dropped := m.trimCandidates(candidates, m.policy.MaxInputTokens-CountMessages(protected))
-		out := append(cloneMessages(protected), kept...)
-		dropped.applyTo(&stats)
-		stats.AfterTokens = CountMessages(out)
+		out := m.assembleWindow(protected, Message{}, false, candidates, kept, dropped, &stats)
 		return Result{Messages: out, Stats: stats}
 	}
 
@@ -120,22 +168,11 @@ func (m *Manager) Prepare(messages []Message) Result {
 	switch m.policy.Strategy {
 	case StrategySlidingWindow:
 		kept, dropped := m.trimCandidates(candidates, m.policy.MaxInputTokens-CountMessages(protected))
-		out := append(cloneMessages(protected), kept...)
-		dropped.applyTo(&stats)
-		stats.AfterTokens = CountMessages(out)
+		out := m.assembleWindow(protected, Message{}, false, candidates, kept, dropped, &stats)
 		return Result{Messages: out, Stats: stats}
 	case StrategySlidingWindowWithSummary:
 		summary, remaining, dropped := m.summarizeAndKeep(candidates, m.policy.MaxInputTokens-CountMessages(protected), m.policy.SummaryTokens)
-		out := cloneMessages(protected)
-		if summary.Content != "" {
-			out = append(out, summary)
-			stats.Summarized = true
-			stats.NeedsReminder = true
-			stats.SummaryTokens = EstimateTokens(summary.Content)
-		}
-		out = append(out, remaining...)
-		dropped.applyTo(&stats)
-		stats.AfterTokens = CountMessages(out)
+		out := m.assembleWindow(protected, summary, summary.Content != "", candidates, remaining, dropped, &stats)
 		return Result{Messages: out, Stats: stats}
 	case StrategyFullReplace:
 		budget := m.policy.MaxInputTokens - CountMessages(protected)
@@ -155,24 +192,67 @@ func (m *Manager) Prepare(messages []Message) Result {
 			dropped.Tool += extra.Tool
 			dropped.System += extra.System
 		}
-		out := cloneMessages(protected)
-		if summary.Content != "" {
-			out = append(out, summary)
-			stats.Summarized = true
-			stats.NeedsReminder = true
-			stats.SummaryTokens = EstimateTokens(summary.Content)
-		}
-		out = append(out, remaining...)
-		dropped.applyTo(&stats)
-		stats.AfterTokens = CountMessages(out)
+		out := m.assembleWindow(protected, summary, summary.Content != "", candidates, remaining, dropped, &stats)
 		return Result{Messages: out, Stats: stats}
 	default:
 		kept, dropped := m.trimCandidates(candidates, m.policy.MaxInputTokens-CountMessages(protected))
-		out := append(cloneMessages(protected), kept...)
-		dropped.applyTo(&stats)
-		stats.AfterTokens = CountMessages(out)
+		out := m.assembleWindow(protected, Message{}, false, candidates, kept, dropped, &stats)
 		return Result{Messages: out, Stats: stats}
 	}
+}
+
+// assembleWindow builds the result sequence for a trimmed window. With the
+// default drop behavior it is exactly protected + [summary] + kept. With
+// mark-instead-of-drop enabled, dropped candidates stay in the sequence in
+// their original positions carrying a visibility=user mark, so user-side
+// projections (events, memory, checkpoints) keep the full transcript while
+// provider gateways project the marked messages out. Dropped counts are
+// recorded on stats either way; in mark mode MarkedMessages mirrors the
+// total and AfterTokens reflects only the model-visible projection.
+func (m *Manager) assembleWindow(protected []Message, summary Message, hasSummary bool, candidates, kept []Message, dropped roleDropStats, stats *Stats) []Message {
+	out := cloneMessages(protected)
+	visibleTokens := CountMessages(protected)
+	if hasSummary {
+		out = append(out, summary)
+		stats.Summarized = true
+		stats.NeedsReminder = true
+		stats.SummaryTokens = EstimateTokens(summary.Content)
+		visibleTokens += EstimateTokens(summary.Content)
+	}
+	if m.markInsteadOfDrop {
+		out = append(out, markDroppedCandidates(candidates, kept)...)
+		dropped.applyTo(stats)
+		stats.MarkedMessages = dropped.Total
+		stats.AfterTokens = visibleTokens + CountMessages(kept)
+		return out
+	}
+	out = append(out, kept...)
+	dropped.applyTo(stats)
+	stats.AfterTokens = CountMessages(out)
+	return out
+}
+
+// markDroppedCandidates returns the full candidates sequence with every
+// message absent from kept tagged visibility=user instead of removed. kept
+// alignment mirrors the two-pointer walk of droppedStatsByRole. candidates
+// must be owned by the Manager (Prepare clones on entry), because the marks
+// mutate message Metadata in place.
+func markDroppedCandidates(candidates, kept []Message) []Message {
+	out := make([]Message, 0, len(candidates))
+	ki := 0
+	for _, msg := range candidates {
+		if ki < len(kept) && messagesEquivalent(msg, kept[ki]) {
+			ki++
+			out = append(out, msg)
+			continue
+		}
+		if msg.Metadata == nil {
+			msg.Metadata = map[string]string{}
+		}
+		msg.Metadata[MetadataKeyVisibility] = VisibilityUserOnly
+		out = append(out, msg)
+	}
+	return out
 }
 
 func (m *Manager) trimCandidates(candidates []Message, budget int) ([]Message, roleDropStats) {

@@ -199,3 +199,22 @@ func TestGatewayChatErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestAnthropicErrorTypeAndStreamErrorCode(t *testing.T) {
+	if got := anthropicErrorType(`{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 213000 tokens > 200000 maximum"}}`); got != "invalid_request_error" {
+		t.Fatalf("got %q", got)
+	}
+	if got := anthropicErrorType("not json"); got != "" {
+		t.Fatalf("non-JSON body must yield empty code, got %q", got)
+	}
+	err := anthropicStreamError(&struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	}{Type: "invalid_request_error", Message: "prompt is too long: 213000 tokens > 200000 maximum"})
+	if err.Code != "invalid_request_error" {
+		t.Fatalf("stream error code=%q", err.Code)
+	}
+	if !llm.IsContextLengthExceeded(err) {
+		t.Fatal("anthropic prompt-too-long stream error must classify as context length exceeded")
+	}
+}

@@ -266,6 +266,10 @@ type RuntimePolicy struct {
 	// approval denials (soft deny or cached deny). Orthogonal to DoomLoopLimit.
 	HITLDenyLimit int               `json:"hitl_deny_limit,omitempty"`
 	Secrets       map[string]string `json:"secrets,omitempty"`
+	// DetachedCancellationPollInterval controls how often a detached
+	// stream's cancellation watcher reloads the run snapshot. Zero or
+	// negative falls back to the runtime default (250ms).
+	DetachedCancellationPollInterval time.Duration `json:"detached_cancellation_poll_interval,omitempty"`
 }
 
 type ToolCall struct {

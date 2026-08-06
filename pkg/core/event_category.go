@@ -8,6 +8,9 @@ func EventCategory(typ EventType) string {
 	switch typ {
 	case EventToolCalled, EventToolReturned, EventToolDenied, EventCompletionRecovery, EventCompletionRequirementFail:
 		return "tool"
+	case EventToolArgsNormalized:
+		// Argument repair is tool-call plumbing, not a run-lifecycle signal.
+		return "tool"
 	case EventInterjectionDrained, EventHITLDenyBreakerTripped, EventTurnStopContinued:
 		return "run"
 	case EventSkillApplied:
@@ -93,6 +96,8 @@ func DisplayLabel(typ EventType) string {
 		return "HITL deny breaker tripped"
 	case EventTurnStopContinued:
 		return "Turn stop continued"
+	case EventToolArgsNormalized:
+		return "Tool arguments normalized"
 	default:
 		return string(typ)
 	}

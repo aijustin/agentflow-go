@@ -42,3 +42,33 @@ func TestIsLifecycleEvent(t *testing.T) {
 		t.Fatal("ToolCalled should not be lifecycle")
 	}
 }
+
+func TestBuildLifecyclePayloadTerminationReason(t *testing.T) {
+	corr := core.EpisodeCorrelation{EpisodeID: "ep-1"}
+	cases := []struct {
+		name    string
+		typ     core.EventType
+		payload json.RawMessage
+		want    string
+	}{
+		{name: "completed defaults to completed", typ: core.EventRunCompleted, payload: json.RawMessage(`{"text":"ok"}`), want: core.TerminationReasonCompleted},
+		{name: "failed without reason defaults to error", typ: core.EventRunFailed, payload: json.RawMessage(`{"error":"boom"}`), want: core.TerminationReasonError},
+		{name: "failed carries emitter reason", typ: core.EventRunFailed, payload: json.RawMessage(`{"error":"boom","termination_reason":"max_steps_exceeded"}`), want: core.TerminationReasonMaxStepsExceeded},
+		{name: "failed llm error reason", typ: core.EventRunFailed, payload: json.RawMessage(`{"error":"boom","termination_reason":"llm_error"}`), want: core.TerminationReasonLLMError},
+		{name: "cancelled nil payload defaults to cancelled", typ: core.EventRunCancelled, payload: nil, want: core.TerminationReasonCancelled},
+		{name: "cancelled carries emitter reason", typ: core.EventRunCancelled, payload: json.RawMessage(`{"termination_reason":"cancelled"}`), want: core.TerminationReasonCancelled},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			raw := core.BuildLifecyclePayload(tc.typ, tc.payload, corr)
+			var payload core.RunTerminalPayload
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.TerminationReason != tc.want {
+				t.Fatalf("TerminationReason=%q want %q", payload.TerminationReason, tc.want)
+			}
+		})
+	}
+}

@@ -42,6 +42,7 @@ const (
 	EventInterjectionDrained       EventType = "InterjectionDrained"
 	EventHITLDenyBreakerTripped    EventType = "HITLDenyBreakerTripped"
 	EventTurnStopContinued         EventType = "TurnStopContinued"
+	EventToolArgsNormalized        EventType = "ToolArgsNormalized"
 )
 
 type Event struct {

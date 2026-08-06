@@ -14,20 +14,22 @@ func BuildLifecyclePayload(typ EventType, payload json.RawMessage, corr EpisodeC
 		return mustJSON(buildRunCompletedPayload(payload, corr, nil))
 	case EventRunFailed:
 		return mustJSON(RunTerminalPayload{
-			Status:      "failed",
-			OutcomeKind: "error_only",
-			Error:       extractLifecycleError(payload),
-			EpisodeID:   corr.EpisodeID,
-			TriggerKind: corr.TriggerKind,
-			SessionID:   corr.SessionID,
+			Status:            "failed",
+			OutcomeKind:       "error_only",
+			Error:             extractLifecycleError(payload),
+			TerminationReason: extractLifecycleTerminationReason(payload, TerminationReasonError),
+			EpisodeID:         corr.EpisodeID,
+			TriggerKind:       corr.TriggerKind,
+			SessionID:         corr.SessionID,
 		})
 	case EventRunCancelled:
 		return mustJSON(RunTerminalPayload{
-			Status:      "cancelled",
-			OutcomeKind: "error_only",
-			EpisodeID:   corr.EpisodeID,
-			TriggerKind: corr.TriggerKind,
-			SessionID:   corr.SessionID,
+			Status:            "cancelled",
+			OutcomeKind:       "error_only",
+			TerminationReason: extractLifecycleTerminationReason(payload, TerminationReasonCancelled),
+			EpisodeID:         corr.EpisodeID,
+			TriggerKind:       corr.TriggerKind,
+			SessionID:         corr.SessionID,
 		})
 	default:
 		return mergeLifecycleCorrelation(payload, corr)
@@ -43,14 +45,15 @@ func buildRunCompletedPayload(output json.RawMessage, corr EpisodeCorrelation, u
 	finalText := FinalTextFromOutput(output)
 	ext := ExtractStructuredOutput(finalText)
 	payload := RunTerminalPayload{
-		Status:      "completed",
-		OutcomeKind: ext.OutcomeKind,
-		FinalText:   finalText,
-		Output:      cloneRaw(output),
-		Usage:       usage,
-		EpisodeID:   corr.EpisodeID,
-		TriggerKind: corr.TriggerKind,
-		SessionID:   corr.SessionID,
+		Status:            "completed",
+		OutcomeKind:       ext.OutcomeKind,
+		FinalText:         finalText,
+		Output:            cloneRaw(output),
+		TerminationReason: TerminationReasonCompleted,
+		Usage:             usage,
+		EpisodeID:         corr.EpisodeID,
+		TriggerKind:       corr.TriggerKind,
+		SessionID:         corr.SessionID,
 	}
 	if ext.Block != nil {
 		payload.StructuredOutput = mustJSON(ext.Block)
@@ -59,6 +62,7 @@ func buildRunCompletedPayload(output json.RawMessage, corr EpisodeCorrelation, u
 		payload.StructuredOutputError = ext.Error
 		if payload.OutcomeKind == "error_only" {
 			payload.Status = "failed"
+			payload.TerminationReason = TerminationReasonError
 		}
 	}
 	return payload
@@ -114,6 +118,21 @@ func extractLifecycleError(payload json.RawMessage) string {
 		return asString
 	}
 	return string(payload)
+}
+
+// extractLifecycleTerminationReason pulls the emitter-supplied
+// termination_reason out of a terminal payload, falling back to the
+// event-type default when older emitters did not classify the cause.
+func extractLifecycleTerminationReason(payload json.RawMessage, fallback string) string {
+	if len(payload) > 0 {
+		var envelope struct {
+			TerminationReason string `json:"termination_reason"`
+		}
+		if err := json.Unmarshal(payload, &envelope); err == nil && envelope.TerminationReason != "" {
+			return envelope.TerminationReason
+		}
+	}
+	return fallback
 }
 
 func mustJSON(value any) json.RawMessage {

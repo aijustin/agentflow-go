@@ -99,6 +99,15 @@ func (r *toolCallReservation) release() {
 	r.active = false
 }
 
+// Release implements toolinspect.Reservation for the inspector pipeline.
+func (r *toolCallReservation) Release() { r.release() }
+
+// CommitAttempt implements toolinspect.Reservation for the inspector pipeline.
+func (r *toolCallReservation) CommitAttempt() { r.commitAttempt() }
+
+// CommitSuccess implements toolinspect.Reservation for the inspector pipeline.
+func (r *toolCallReservation) CommitSuccess() { r.commitSuccess() }
+
 func (r *toolCallReservation) commitAttempt() {
 	if r == nil || !r.active || r.tracker == nil {
 		return

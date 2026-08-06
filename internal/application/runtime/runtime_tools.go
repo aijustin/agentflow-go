@@ -18,6 +18,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/security"
+	"github.com/aijustin/agentflow-go/pkg/toolinspect"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
@@ -139,102 +140,59 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		}
 		return result, nil
 	}
-	if !agentAllowsTool(agent, call.Name) && !e.isFrameworkMetaTool(call.Name) {
-		result := core.ToolResult{Tool: call.Name, Error: "tool is not in agent whitelist"}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result, nil
+	// Every decision gate (agent whitelist, scenario declaration, input schema,
+	// approval cache, approval-without-gate denial, registry/security/executor
+	// resolution, doom-loop/rate-cap budget, governance) lives in the
+	// inspector chain; verdict, ToolDenied payload, and audit semantics match
+	// the historical inline gates one to one.
+	req := &toolinspect.Request{
+		RunID: runID,
+		Agent: agent,
+		Call:  call,
+		// Approved mirrors the historical DenialWithoutGate argument: an
+		// approved resume dispatch or a full-trust run bypasses the static
+		// approval policies. The approval-cache inspector receives the raw
+		// options.approved flag separately, as before.
+		Approved: options.approved || TrustModeFromContext(ctx) == TrustModeFullTrust,
 	}
-	tool, ok := e.scenario.Tools[call.Name]
-	if !ok {
-		result := core.ToolResult{Tool: call.Name, Error: "tool is not declared in scenario"}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result, nil
+	finding, err := e.toolInspectorChain(runID, tracker, options.approved).Inspect(ctx, req)
+	if err != nil {
+		return core.ToolResult{}, err
 	}
-	if tool.Name == "" {
-		tool.Name = call.Name
-	}
-	validateToolInput := e.scenario.Runtime.ValidateToolInput || !e.scenario.Runtime.DisableToolInputValidation
-	if err := toolinvoke.ValidateInput(validateToolInput, tool, call.Input); err != nil {
-		result := core.ToolResult{Tool: call.Name, Error: err.Error()}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result, nil
-	}
-	if !options.approved && e.orchestrator != nil {
-		decision, orchErr := e.orchestrator.DecideApproval(ctx, toolorch.ApprovalRequest{
-			RunID:         runID,
-			Tool:          call.Name,
-			Input:         call.Input,
-			PauseRequired: false,
-		})
-		if orchErr != nil {
-			return core.ToolResult{}, orchErr
+	if finding.Verdict != toolinspect.VerdictAllow {
+		// A denial after the budget gate still counts as an attempt (the
+		// reservation is settle-once, so the governance inspector's own
+		// commitAttempt is not doubled).
+		if req.Reservation != nil {
+			req.Reservation.CommitAttempt()
 		}
-		if decision == toolorch.DecisionDeny {
-			result := core.ToolResult{Tool: call.Name, Error: "tool approval denied (cached)"}
-			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error, "kind": "approval_cache"})
+		if finding.Verdict == toolinspect.VerdictRequireApproval {
+			// Pause decisions happen before dispatch (maybePauseToolCall /
+			// ToolApprovalEvaluator); inside the dispatch chain an approval
+			// verdict settles as an approval-accounted soft denial.
+			if finding.Reason == "" {
+				finding.Reason = "tool requires approval"
+			}
+			if finding.Kind == "" {
+				finding.Kind = "approval"
+			}
+			finding.NoteApprovalDeny = true
+		}
+		if finding.Reason == "" {
+			finding.Reason = "tool call denied"
+		}
+		result := core.ToolResult{Tool: call.Name, Error: finding.Reason}
+		e.emitToolDenied(ctx, runID, agent.Name, call.Name, finding)
+		if finding.NoteApprovalDeny {
 			if err := e.noteApprovalDeny(ctx, runID, call.Name); err != nil {
 				return core.ToolResult{}, err
 			}
-			return result, nil
-		}
-	}
-	if reason := toolinvoke.DenialWithoutGate(tool, e.gate != nil, options.approved || TrustModeFromContext(ctx) == TrustModeFullTrust); reason != "" {
-		result := core.ToolResult{Tool: call.Name, Error: reason}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": reason})
-		if err := e.noteApprovalDeny(ctx, runID, call.Name); err != nil {
-			return core.ToolResult{}, err
 		}
 		return result, nil
 	}
-	if e.tools == nil {
-		result := core.ToolResult{Tool: call.Name, Error: "tool executor registry is not configured"}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result, nil
-	}
+	tool := req.Tool
+	executor := req.Executor
 	resource := toolResource(agent, call, &tool)
-	if err := e.authorizeTool(ctx, runID, resource); err != nil {
-		result := core.ToolResult{Tool: call.Name, Error: "tool invocation unauthorized"}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
-		return result, nil
-	}
-	executor, ok, err := e.tools.ResolveTool(ctx, tool)
-	if err != nil {
-		result := core.ToolResult{Tool: call.Name, Error: "resolve tool executor: " + err.Error()}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result, nil
-	}
-	if !ok {
-		result := core.ToolResult{Tool: call.Name, Error: "tool executor is not registered"}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": result.Error})
-		return result, nil
-	}
-	reservation, callCount, sameInputCalls, denial := tracker.reserveToolCall(
-		call.Name,
-		call.Input,
-		e.scenario.Runtime.DoomLoopLimit,
-		tool.RateCap,
-	)
-	if denial != "" {
-		result := core.ToolResult{Tool: call.Name, Error: denial}
-		kind := "rate_cap"
-		if strings.HasPrefix(denial, "doom-loop") {
-			kind = "doom_loop"
-		}
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{
-			"agent":  agent.Name,
-			"tool":   call.Name,
-			"reason": result.Error,
-			"kind":   kind,
-		})
-		return result, nil
-	}
-	if err := e.authorizeGovernanceTool(ctx, runID, agent, tool, call, callCount, sameInputCalls, tracker.totalSuccesses()); err != nil {
-		reservation.commitAttempt()
-		result := core.ToolResult{Tool: call.Name, Error: governanceBlockError(err)}
-		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principalFromContext(ctx), Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})
-		e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})
-		return result, nil
-	}
 	result, err := e.executeToolWithRetry(ctx, runID, agent, tool, call, executor)
 	attemptReported := false
 	if err != nil {
@@ -249,7 +207,9 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		// propagate so the caller (and ultimately Run/RunHybrid) can
 		// classify it as a cancellation or a timeout failure instead.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			reservation.release()
+			if req.Reservation != nil {
+				req.Reservation.Release()
+			}
 			return core.ToolResult{}, err
 		}
 		result = core.ToolResult{Tool: call.Name, Error: err.Error()}
@@ -258,12 +218,14 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		_ = e.orchestrator.AfterAttempt(ctx, runID, call.Name, call.Input, toolorch.AttemptResult{})
 	}
 	if result.Error == "" {
-		reservation.commitSuccess()
+		if req.Reservation != nil {
+			req.Reservation.CommitSuccess()
+		}
 		if e.denyBreaker != nil {
 			e.denyBreaker.RecordAllow(runID)
 		}
-	} else {
-		reservation.commitAttempt()
+	} else if req.Reservation != nil {
+		req.Reservation.CommitAttempt()
 	}
 	if !options.skipPersist {
 		if err := e.saveStepOutput(ctx, runID, "tool."+call.ID, result); err != nil {

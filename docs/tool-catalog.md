@@ -45,3 +45,26 @@ fw, err := agentflow.New(scenario,
 
 Use `WithDeferredTools(false)` to attach a catalog for search/load helpers
 without deferring non-pinned tool schemas.
+
+## Deferral economics
+
+By default (a catalog built with `NewSnapshot`), deferral is unconditional:
+every unpinned catalog tool stays hidden until loaded. A snapshot built with
+`NewSnapshotWithDeferral` carries a `DeferralPolicy` that gates the economics:
+
+- `MinTools` (default 8): catalogs with fewer entries are advertised in
+  full — below this size the `search_tools` / `load_tool_schemas` round-trips
+  cost more turns than the schema tokens they save.
+- `MaxOverheadTokens` (0 = disabled): even a small catalog stays deferred
+  when the estimated token overhead of advertising every entry (description +
+  input schema, ~4 chars/token) exceeds this budget.
+
+Independently of the policy, approval-gated tools (`Approval` = `risky`,
+`always`, or `pause` — from the scenario declaration or the catalog entry) are
+**never deferred**: the model must see the approval requirement together with
+the schema (cherry-studio's `defer: 'never'` equivalent). Tools loaded via
+`load_tool_schemas` still pass the regular dispatch-time approval gates
+(approval cache, deny-without-gate, pause evaluation) when invoked.
+
+`MutableSnapshot` created with `NewMutableSnapshotWithDeferral` keeps its
+policy across `Replace` refreshes.

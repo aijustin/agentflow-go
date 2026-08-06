@@ -790,3 +790,42 @@ func TestGatewayStreamChatReadsOversizedSSELine(t *testing.T) {
 		t.Fatalf("unexpected stream: len(got)=%d done=%v", len(got), done)
 	}
 }
+
+func TestDecodeStreamErrorPayloadFillsCode(t *testing.T) {
+	cases := []struct {
+		name       string
+		raw        string
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "context length exceeded", raw: `{"error":{"message":"too long","type":"invalid_request_error","code":"context_length_exceeded"}}`, wantStatus: 400, wantCode: "context_length_exceeded"},
+		{name: "rate limit", raw: `{"error":{"message":"slow down","code":"rate_limit_exceeded"}}`, wantStatus: 429, wantCode: "rate_limit_exceeded"},
+		{name: "numeric code", raw: `{"error":{"message":"broken","code":503}}`, wantStatus: 503, wantCode: "503"},
+		{name: "missing code keeps empty", raw: `{"error":{"message":"broken"}}`, wantStatus: 500, wantCode: ""},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			err := decodeStreamErrorPayload([]byte(tc.raw))
+			apiErr, ok := err.(llm.APIError)
+			if !ok {
+				t.Fatalf("expected llm.APIError, got %T", err)
+			}
+			if apiErr.StatusCode != tc.wantStatus || apiErr.Code != tc.wantCode {
+				t.Fatalf("got status=%d code=%q, want status=%d code=%q", apiErr.StatusCode, apiErr.Code, tc.wantStatus, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestOpenAIErrorCode(t *testing.T) {
+	if got := openAIErrorCode(`{"error":{"code":"context_length_exceeded","message":"too long"}}`); got != "context_length_exceeded" {
+		t.Fatalf("got %q", got)
+	}
+	if got := openAIErrorCode("not json"); got != "" {
+		t.Fatalf("non-JSON body must yield empty code, got %q", got)
+	}
+	if got := openAIErrorCode(`{"error":{"message":"no code"}}`); got != "" {
+		t.Fatalf("missing code must yield empty, got %q", got)
+	}
+}

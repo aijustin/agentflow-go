@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -124,13 +125,13 @@ func (g *Gateway) streamChat(ctx context.Context, profileName string, req llm.Ch
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		return nil, openAIAPIError(resp)
 	}
 	ch := make(chan llm.ChatChunk)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		// send blocks until the consumer reads or the context is cancelled, so
 		// an abandoned stream cannot leak this goroutine or the response body.
 		send := func(c llm.ChatChunk) bool {
@@ -296,7 +297,7 @@ func (g *Gateway) Embed(ctx context.Context, profileName string, input []string)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, openAIAPIError(resp)
 	}
@@ -335,7 +336,7 @@ func (g *Gateway) chat(ctx context.Context, profileName string, req llm.ChatRequ
 	if err != nil {
 		return llm.ToolCallResponse{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return llm.ToolCallResponse{}, openAIAPIError(resp)
 	}
@@ -404,7 +405,31 @@ func authorizeRequest(httpReq *http.Request, profile llm.Profile) {
 
 func openAIAPIError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	return llm.APIError{Provider: "openai", StatusCode: resp.StatusCode, Status: resp.Status, Body: strings.TrimSpace(string(body))}
+	trimmed := strings.TrimSpace(string(body))
+	return llm.APIError{Provider: "openai", StatusCode: resp.StatusCode, Status: resp.Status, Body: trimmed, Code: openAIErrorCode(trimmed)}
+}
+
+// openAIErrorCode extracts the machine-readable code from an OpenAI-style
+// error body ({"error":{"code":...}}) so upstream recovery logic can
+// classify failures (e.g. context_length_exceeded) without re-parsing the
+// body. Non-JSON bodies yield an empty code.
+func openAIErrorCode(body string) string {
+	var decoded struct {
+		Error *struct {
+			Code any `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil || decoded.Error == nil {
+		return ""
+	}
+	switch code := decoded.Error.Code.(type) {
+	case string:
+		return code
+	case float64:
+		return strconv.Itoa(int(code))
+	default:
+		return ""
+	}
 }
 
 // embedNonJSONError wraps json.Unmarshal failures for 2xx embedding responses that are
@@ -532,10 +557,13 @@ func decodeStreamErrorPayload(raw []byte) error {
 		return nil
 	}
 	status := 500
+	codeText := ""
 	switch code := decoded.Error.Code.(type) {
 	case float64:
 		status = int(code)
+		codeText = strconv.Itoa(status)
 	case string:
+		codeText = code
 		switch code {
 		case "rate_limit_exceeded", "rate_limit_error":
 			status = 429
@@ -548,6 +576,7 @@ func decodeStreamErrorPayload(raw []byte) error {
 		StatusCode: status,
 		Status:     fmt.Sprintf("%d", status),
 		Body:       decoded.Error.Message,
+		Code:       codeText,
 	}
 }
 
@@ -665,6 +694,9 @@ func cloneExtraBody(in map[string]any) map[string]any {
 }
 
 func openAIMessages(messages []llm.Message) []map[string]any {
+	// Dual-visibility projection: the model only ever sees agent-visible
+	// messages; user-only messages stay in events/memory/checkpoints.
+	messages = llm.AgentVisibleMessages(messages)
 	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
 		item := map[string]any{

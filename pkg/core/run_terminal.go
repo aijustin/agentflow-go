@@ -9,6 +9,18 @@ type RunUsage struct {
 	TotalTokens  int `json:"total_tokens,omitempty"`
 }
 
+// Termination reasons recorded on terminal run payloads, so operators can
+// attribute why a run ended without re-parsing free-form error text.
+const (
+	TerminationReasonCompleted        = "completed"
+	TerminationReasonMaxStepsExceeded = "max_steps_exceeded"
+	TerminationReasonTimeout          = "timeout"
+	TerminationReasonCancelled        = "cancelled"
+	TerminationReasonLeaseLost        = "lease_lost"
+	TerminationReasonLLMError         = "llm_error"
+	TerminationReasonError            = "error"
+)
+
 // RunTerminalPayload is the structured lifecycle payload for terminal run
 // events (RunCompleted / RunFailed / RunCancelled). Output holds the prior
 // raw final-answer bytes when present.
@@ -20,6 +32,7 @@ type RunTerminalPayload struct {
 	StructuredOutputError string          `json:"structured_output_error,omitempty"`
 	Output                json.RawMessage `json:"output,omitempty"`
 	Error                 string          `json:"error,omitempty"`
+	TerminationReason     string          `json:"termination_reason,omitempty"`
 	Usage                 *RunUsage       `json:"usage,omitempty"`
 	EpisodeID             string          `json:"episode_id,omitempty"`
 	TriggerKind           string          `json:"trigger_kind,omitempty"`

@@ -13,6 +13,7 @@ import (
 
 	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/feature"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/memory"
@@ -71,7 +72,7 @@ func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.
 			// never calls any tools".
 			return "", fmt.Errorf("runtime: agent %q has tools/sub-agents configured but llm profile %q does not support tool calling", agent.Name, agent.LLM)
 		}
-		return e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt, nil)
+		return e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, e.wrapToolCaller(caller), req.Prompt, nil)
 	}
 	e.emitContextPrepared(ctx, req.RunID, stats)
 	resp, err := e.chatWithRetry(ctx, req.RunID, agent, profile, baseReq)
@@ -80,7 +81,7 @@ func (e *Engine) answerForAgent(ctx context.Context, req RunRequest, agent core.
 	}
 	if emitUsage := normalizeEmittedUsage(resp.Usage); emitUsage != nil {
 		e.emitJSON(ctx, core.EventLLMTokenUsage, req.RunID, *emitUsage)
-		e.recordLLMUsage(ctx, agent.LLM, emitUsage)
+		e.recordLLMUsage(ctx, req.RunID, agent.LLM, emitUsage)
 	}
 	if strings.TrimSpace(resp.Message.Content) == "" && resp.FinishReason == "length" {
 		return "", fmt.Errorf("runtime: llm response was empty after reaching max tokens; increase max_output_tokens or disable reasoning output for profile %q", agent.LLM)
@@ -352,7 +353,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 				case <-ctx.Done():
 				}
 			}
-			output, err := e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, caller, req.Prompt, emit)
+			output, err := e.answerWithTools(ctx, req.RunID, agent, profile, baseReq, e.wrapToolCaller(caller), req.Prompt, emit)
 			if err != nil {
 				var paused RunPausedError
 				if errorsAsRunPaused(err, &paused) {
@@ -394,14 +395,14 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		cancel()
 		return nil, core.Agent{}, nil, err
 	}
-	return e.wrapLLMStream(ctx, ch, llmSpan, agent.LLM, streamStart), agent, cancel, nil
+	return e.wrapLLMStream(ctx, req.RunID, ch, llmSpan, agent.LLM, streamStart), agent, cancel, nil
 }
 
 // wrapLLMStream forwards provider chunks while keeping the LLM call span open
 // for the whole stream. The span closes when the stream terminates - on a
 // clean done, on an error chunk, or on context cancellation - mirroring the
 // two-path End handling of tool spans.
-func (e *Engine) wrapLLMStream(ctx context.Context, source <-chan llm.ChatChunk, span observability.Span, profileName string, start time.Time) <-chan llm.ChatChunk {
+func (e *Engine) wrapLLMStream(ctx context.Context, runID string, source <-chan llm.ChatChunk, span observability.Span, profileName string, start time.Time) <-chan llm.ChatChunk {
 	out := make(chan llm.ChatChunk, 16)
 	safecall.GoSafe("runtime: llm stream span", nil, func() {
 		defer close(out)
@@ -414,7 +415,7 @@ func (e *Engine) wrapLLMStream(ctx context.Context, source <-chan llm.ChatChunk,
 				return
 			}
 			finished = true
-			e.recordLLMUsage(ctx, profileName, normalizeEmittedUsage(usage))
+			e.recordLLMUsage(ctx, runID, profileName, normalizeEmittedUsage(usage))
 			e.finishLLMCall(ctx, span, profileName, start, streamErr)
 		}
 		defer finish()
@@ -466,6 +467,13 @@ func (e *Engine) wrapLLMStream(ctx context.Context, source <-chan llm.ChatChunk,
 // after exhausting its step budget, so an incomplete plan cannot drive
 // unbounded recursion and runaway cost.
 const maxReplanAttempts = 3
+
+// maxEmptyTurnRetries bounds how many times a single step re-samples after
+// the provider returns a turn with neither content nor tool calls (and no
+// length cutoff). Accepting such a turn would silently end the run with an
+// empty answer; retrying absorbs transient provider glitches, and exhausting
+// the budget surfaces a diagnostic error instead.
+const maxEmptyTurnRetries = 3
 
 // streamChunkSink receives incremental Stream progress (tool_call / tool_result /
 // tool_denied) while the governed tool loop runs. Nil means non-streaming callers.
@@ -585,14 +593,55 @@ func (e *Engine) answerWithToolsFrom(
 		if err != nil {
 			return "", err
 		}
+		// A turn with no content and no tool calls (and no length cutoff) is
+		// a protocol violation, not an answer: accepting it would silently
+		// end the run with an empty final output. Re-sample the same step a
+		// bounded number of times; the empty assistant message is never
+		// appended to the conversation, so it cannot poison later turns.
+		emptyRetries := 0
+		for isEmptyLLMTurn(resp) && emptyRetries < maxEmptyTurnRetries {
+			emptyRetries++
+			e.logWarn(ctx, "runtime: llm returned an empty turn; re-sampling",
+				"run_id", runID, "agent", agent.Name, "step", step+1, "attempt", emptyRetries)
+			resp, err = e.chatWithToolsWithRetry(stepRunCtx, runID, agent, profile, toolReq, caller, step+1, emit)
+			if err != nil {
+				return "", err
+			}
+		}
+		if isEmptyLLMTurn(resp) {
+			return "", fmt.Errorf("runtime: llm profile %q returned an empty response (no content, no tool calls, finish_reason=%q) on step %d after %d retries", agent.LLM, resp.FinishReason, step+1, emptyRetries)
+		}
 		if emitUsage := normalizeEmittedUsage(resp.Usage); emitUsage != nil {
 			e.emitJSON(ctx, core.EventLLMTokenUsage, runID, *emitUsage)
-			e.recordLLMUsage(ctx, agent.LLM, emitUsage)
+			e.recordLLMUsage(ctx, runID, agent.LLM, emitUsage)
 		}
 		assistant := resp.Message
 		assistant.Role = llm.RoleAssistant
 		logicalStep := stepsConsumedBase + step + 1
 		assistant.ToolCalls = ensureToolCallIDs(runID, logicalStep, llm.NormalizeToolCallInputs(resp.ToolCalls))
+		for index, call := range assistant.ToolCalls {
+			diag, repaired := toolArgsRepairDiagnostic(resp.ToolCalls[index].Input)
+			if !repaired {
+				continue
+			}
+			// The repair collapsed malformed arguments to {}. Make that
+			// visible instead of silent: the message metadata travels with
+			// checkpoints/memory, the event feeds diagnostic drawers, and the
+			// recorded diagnostic is appended to a later ValidateInput
+			// failure so the model learns this was a format problem.
+			if assistant.Metadata == nil {
+				assistant.Metadata = map[string]string{}
+			}
+			assistant.Metadata["tool_args_normalized"] = "true"
+			e.emitJSON(ctx, core.EventToolArgsNormalized, runID, map[string]any{
+				"agent":     agent.Name,
+				"tool":      call.Name,
+				"tool_call": call.ID,
+				"step":      logicalStep,
+				"reason":    diag,
+			})
+			e.recordToolArgsRepair(runID, call.ID, diag)
+		}
 		resp.ToolCalls = assistant.ToolCalls
 		messages = append(messages, assistant)
 		if len(resp.ToolCalls) == 0 {
@@ -638,6 +687,7 @@ func (e *Engine) answerWithToolsFrom(
 			if err := e.writeMemory(ctx, runID, agent, mem); err != nil {
 				return "", err
 			}
+			e.runStepFinishHooks(ctx, feature.StepInfo{RunID: runID, Agent: agent.Name, Step: logicalStep, Usage: resp.Usage})
 			return resp.Message.Content, nil
 		}
 		var dispatchErr error
@@ -662,6 +712,14 @@ func (e *Engine) answerWithToolsFrom(
 			if err := e.persistAutonomousIteration(ctx, runID, logicalStep, messages); err != nil {
 				return "", err
 			}
+		}
+		// Feature extension points for the completed step: loop hooks observe
+		// the persisted state; stop conditions may halt the run with an
+		// attributable termination reason before the next LLM call.
+		stepInfo := feature.StepInfo{RunID: runID, Agent: agent.Name, Step: logicalStep, ToolCalls: len(resp.ToolCalls), Usage: resp.Usage}
+		e.runStepFinishHooks(ctx, stepInfo)
+		if err := e.evaluateStopConditions(ctx, stepInfo); err != nil {
+			return "", err
 		}
 	}
 	return e.replanOrFail(
@@ -713,7 +771,9 @@ func (e *Engine) replanOrFail(
 			}
 		}
 	}
-	return "", fmt.Errorf("runtime: autonomous tool loop exceeded max_steps=%d", stepsConsumedBase+maxSteps)
+	// Keep the historic message verbatim; the sentinel wrapper is what lets
+	// terminal handling classify this as max_steps_exceeded via errors.Is.
+	return "", fmt.Errorf("%w=%d", ErrMaxStepsExceeded, stepsConsumedBase+maxSteps)
 }
 
 // dispatchToolCalls executes an assistant turn's tool calls. Before each
@@ -896,6 +956,16 @@ func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent
 			return resp, nil
 		}
 		lastErr = err
+		// A provider context-window overflow is classified non-retryable, but
+		// it is recoverable: compact the conversation once per run and retry
+		// before giving up. The recovery retry must not consume the provider
+		// retry budget - the per-run recovery counter already bounds it to a
+		// single extra call, and with maxAttempts=1 this would otherwise
+		// never fire.
+		if llm.IsContextLengthExceeded(err) && e.tryContextLengthRecovery(ctx, runID, agent, profile, &req) {
+			attempt--
+			continue
+		}
 		if !shouldRetry(ctx, err) || attempt == attempts {
 			e.finishLLMCall(ctx, span, agent.LLM, start, err)
 			return llm.ToolCallResponse{}, err
@@ -1132,10 +1202,15 @@ func (e *Engine) finishLLMCall(ctx context.Context, span observability.Span, pro
 
 // recordLLMUsage accumulates token counters wherever an LLMTokenUsage event is
 // emitted, so metrics consumers get usage without scanning the event store.
-func (e *Engine) recordLLMUsage(ctx context.Context, profileName string, usage *llm.TokenUsage) {
+// It also folds the call into the run-level usage tracker: the last call's
+// real token count is what lets context preparation override the heuristic
+// EstimateTokens trigger, and the accumulated totals survive pause/resume via
+// the checkpoint_usage variable.
+func (e *Engine) recordLLMUsage(ctx context.Context, runID string, profileName string, usage *llm.TokenUsage) {
 	if usage == nil {
 		return
 	}
+	e.usageTrackerFor(runID).record(*usage)
 	for _, bucket := range []struct {
 		kind   string
 		tokens int

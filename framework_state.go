@@ -9,9 +9,11 @@ import (
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/feature"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/memory"
 	"github.com/aijustin/agentflow-go/pkg/memory/tier"
+	"github.com/aijustin/agentflow-go/pkg/toolinspect"
 )
 
 // currentScenario returns a snapshot of the live scenario under read lock.
@@ -77,6 +79,11 @@ func wireTierMemory(scenario core.Scenario, cfg *options) error {
 }
 
 func (f *Framework) engineDependencies(transforms map[string]contextwindow.ToolOutputTransform, drain interjection.DrainPolicy) appexec.Dependencies {
+	contributions := feature.Collect(f.features, f.logger)
+	// Feature-contributed inspectors run after the built-in gates and before
+	// explicit WithToolInspectors append entries, keeping the explicit option
+	// last in the chain.
+	toolInspectorAppend := append(append([]toolinspect.Inspector(nil), contributions.Inspectors...), f.toolInspectorAppend...)
 	return appexec.Dependencies{
 		LLM:                    f.llm,
 		Runs:                   f.runs,
@@ -104,6 +111,12 @@ func (f *Framework) engineDependencies(transforms map[string]contextwindow.ToolO
 		TurnStopHook:           f.turnStopHook,
 		ToolCatalog:            f.toolCatalog,
 		DeferredTools:          f.deferredTools,
+		ToolInspectorPrepend:   f.toolInspectorPrepend,
+		ToolInspectorAppend:    toolInspectorAppend,
+		LLMToolCallerWrappers:  contributions.LLMWrappers,
+		LoopHooks:              contributions.Hooks,
+		StopConditions:         contributions.StopConditions,
+		DualVisibilityMessages: f.dualVisibilityMessages,
 	}
 }
 

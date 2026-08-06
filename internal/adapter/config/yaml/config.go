@@ -254,6 +254,10 @@ type Runtime struct {
 	DoomLoopLimit              int               `yaml:"doom_loop_limit"`
 	HITLDenyLimit              int               `yaml:"hitl_deny_limit"`
 	Secrets                    map[string]string `yaml:"secrets"`
+	// DetachedCancellationPollInterval overrides how often a detached
+	// stream's cancellation watcher reloads the run snapshot. Zero or
+	// negative falls back to the runtime default (250ms).
+	DetachedCancellationPollInterval time.Duration `yaml:"detached_cancellation_poll_interval"`
 }
 
 func LoadFile(path string) (core.Scenario, error) {
@@ -304,16 +308,17 @@ func (d Document) ToCore() (core.Scenario, error) {
 			},
 		},
 		Runtime: core.RuntimePolicy{
-			Timeout:                    d.Scenario.Runtime.Timeout,
-			MaxSteps:                   d.Scenario.Runtime.MaxSteps,
-			MaxRetries:                 d.Scenario.Runtime.MaxRetries,
-			MaxParallel:                d.Scenario.Runtime.MaxParallel,
-			StepOutputThreshold:        d.Scenario.Runtime.StepOutputThreshold,
-			ValidateToolInput:          d.Scenario.Runtime.ValidateToolInput,
-			DisableToolInputValidation: d.Scenario.Runtime.DisableToolInputValidation,
-			DoomLoopLimit:              d.Scenario.Runtime.DoomLoopLimit,
-			HITLDenyLimit:              d.Scenario.Runtime.HITLDenyLimit,
-			Secrets:                    d.Scenario.Runtime.Secrets,
+			Timeout:                          d.Scenario.Runtime.Timeout,
+			MaxSteps:                         d.Scenario.Runtime.MaxSteps,
+			MaxRetries:                       d.Scenario.Runtime.MaxRetries,
+			MaxParallel:                      d.Scenario.Runtime.MaxParallel,
+			StepOutputThreshold:              d.Scenario.Runtime.StepOutputThreshold,
+			ValidateToolInput:                d.Scenario.Runtime.ValidateToolInput,
+			DisableToolInputValidation:       d.Scenario.Runtime.DisableToolInputValidation,
+			DoomLoopLimit:                    d.Scenario.Runtime.DoomLoopLimit,
+			HITLDenyLimit:                    d.Scenario.Runtime.HITLDenyLimit,
+			Secrets:                          d.Scenario.Runtime.Secrets,
+			DetachedCancellationPollInterval: d.Scenario.Runtime.DetachedCancellationPollInterval,
 		},
 	}
 	for name, profile := range d.Scenario.LLMs {

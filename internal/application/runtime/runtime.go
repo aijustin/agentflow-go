@@ -16,6 +16,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/feature"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
 	"github.com/aijustin/agentflow-go/pkg/llm"
@@ -26,6 +27,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 	"github.com/aijustin/agentflow-go/pkg/toolcatalog"
+	"github.com/aijustin/agentflow-go/pkg/toolinspect"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
@@ -62,6 +64,14 @@ type Engine struct {
 	deferredTools          bool
 	loadedTools            sync.Map // runID -> *loadedToolSet
 	pendingSelfCompact     sync.Map // runID -> struct{}
+	usageTrackers          sync.Map // runID -> *usageTracker
+	toolArgsRepairs        sync.Map // runID -> *toolArgsRepairSet
+	toolInspectorPrepend   []toolinspect.Inspector
+	toolInspectorAppend    []toolinspect.Inspector
+	llmToolCallerWrappers  []func(llm.ToolCaller) llm.ToolCaller
+	loopHooks              []feature.LoopHooks
+	stopConditions         []feature.StopCondition
+	dualVisibility         bool
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -115,6 +125,22 @@ type Dependencies struct {
 	ToolCatalog toolcatalog.Catalog
 	// DeferredTools enables catalog deferral (default true when ToolCatalog set).
 	DeferredTools bool
+	// ToolInspectorPrepend / ToolInspectorAppend are host tool inspectors
+	// running before / after the built-in dispatch gates (see pkg/toolinspect).
+	ToolInspectorPrepend []toolinspect.Inspector
+	ToolInspectorAppend  []toolinspect.Inspector
+	// LLMToolCallerWrappers wrap the tool-calling gateway of the autonomous
+	// tool loop, in order (first wrapper innermost). Collected from features.
+	LLMToolCallerWrappers []func(llm.ToolCaller) llm.ToolCaller
+	// LoopHooks fire after every completed tool-loop step (post persistence).
+	LoopHooks []feature.LoopHooks
+	// StopConditions may halt the run after a tool-executing step.
+	StopConditions []feature.StopCondition
+	// DualVisibilityMessages enables the dual-visibility projection: context
+	// trimming marks messages visibility=user instead of dropping them, so
+	// events/memory/checkpoints keep the full transcript while provider
+	// gateways send only the model-visible projection. Default false.
+	DualVisibilityMessages bool
 }
 
 func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
@@ -181,6 +207,12 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		turnStopHook:           deps.TurnStopHook,
 		toolCatalog:            deps.ToolCatalog,
 		deferredTools:          deps.DeferredTools,
+		toolInspectorPrepend:   deps.ToolInspectorPrepend,
+		toolInspectorAppend:    deps.ToolInspectorAppend,
+		llmToolCallerWrappers:  deps.LLMToolCallerWrappers,
+		loopHooks:              deps.LoopHooks,
+		stopConditions:         deps.StopConditions,
+		dualVisibility:         deps.DualVisibilityMessages,
 	}
 	engine.interjectDrain.Store(deps.InterjectDrain.Normalize())
 	return engine, nil
@@ -441,7 +473,27 @@ func (e *Engine) completeStructuredRun(ctx context.Context, runID string, raw js
 // on the framework facade): client disconnect must not cancel the run.
 type streamDetachedKey struct{}
 
-const detachedCancellationPollInterval = 5 * time.Second
+// defaultDetachedCancellationPollInterval is how often the detached-stream
+// cancellation watcher reloads the run snapshot when the scenario does not
+// override it (see core.RuntimePolicy.DetachedCancellationPollInterval).
+// Each detached run costs one ticker goroutine plus one snapshot load per
+// tick; detached runs are the exception (caller disconnected mid-stream), so
+// a sub-second cadence is affordable, while a multi-second cadence would
+// leave blocking LLM calls running long after an operator persisted a
+// cancellation. Polling (rather than in-process notification) is required
+// because the cancellation may be written by another process via the
+// repository.
+const defaultDetachedCancellationPollInterval = 250 * time.Millisecond
+
+// detachedCancellationPollInterval returns the configured detached-stream
+// cancellation poll interval, falling back to the default when the scenario
+// leaves it zero or negative.
+func (e *Engine) detachedCancellationPollInterval() time.Duration {
+	if interval := e.scenario.Runtime.DetachedCancellationPollInterval; interval > 0 {
+		return interval
+	}
+	return defaultDetachedCancellationPollInterval
+}
 
 // ContextWithStreamDetached marks the stream to keep executing to a terminal
 // state in the background when the caller's context is cancelled (e.g. client
@@ -522,7 +574,7 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 	if detached {
 		observerCtx := execCtx
 		safecall.GoSafe("runtime: detached cancellation watcher", nil, func() {
-			ticker := time.NewTicker(detachedCancellationPollInterval)
+			ticker := time.NewTicker(e.detachedCancellationPollInterval())
 			defer ticker.Stop()
 			for {
 				select {

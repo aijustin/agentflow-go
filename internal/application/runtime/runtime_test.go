@@ -641,6 +641,31 @@ func TestEngineRunAppliesRuntimeTimeoutAndMarksFailed(t *testing.T) {
 	}
 }
 
+func TestEngineDetachedCancellationPollInterval(t *testing.T) {
+	cases := []struct {
+		name       string
+		configured time.Duration
+		want       time.Duration
+	}{
+		{name: "zero falls back to default", configured: 0, want: defaultDetachedCancellationPollInterval},
+		{name: "negative falls back to default", configured: -time.Second, want: defaultDetachedCancellationPollInterval},
+		{name: "configured interval is used", configured: 2 * time.Second, want: 2 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scenario := baseScenario(false)
+			scenario.Runtime.DetachedCancellationPollInterval = tc.configured
+			engine, err := NewEngine(scenario, Dependencies{Runs: runstateinmem.NewRepository(), LLM: blockingGateway{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := engine.detachedCancellationPollInterval(); got != tc.want {
+				t.Fatalf("detachedCancellationPollInterval() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEngineRunRetriesLLMChat(t *testing.T) {
 	gateway := &retryGateway{failures: 1}
 	scenario := baseScenario(false)

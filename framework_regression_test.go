@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 
 	"github.com/aijustin/agentflow-go"
 	asyncpkg "github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/builder"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/llm"
+	llmmock "github.com/aijustin/agentflow-go/pkg/llm/mock"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
 
@@ -179,4 +182,121 @@ func (g *frameworkTestGate) Pause(ctx context.Context, state core.CheckpointStat
 
 func (g *frameworkTestGate) Resume(ctx context.Context, token string, decision core.Decision, amendment json.RawMessage) error {
 	return nil
+}
+
+// TestFrameworkMaxStepsTerminalPayloadReason pins the C1 contract at the
+// facade level: a run that exhausts its step budget fails with a terminal
+// payload whose termination_reason is max_steps_exceeded.
+func TestFrameworkMaxStepsTerminalPayloadReason(t *testing.T) {
+	scenario := core.Scenario{
+		Name: "maxsteps-reason",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {
+				Name:   "assistant",
+				LLM:    "default",
+				Tools:  []string{"echo"},
+				Policy: core.AgentPolicy{MaxSteps: 1},
+			},
+		},
+		Tools: map[string]core.Tool{
+			"echo": {Name: "echo", Type: "builtin.echo", Approval: core.ApprovalNever},
+		},
+	}
+	gateway := llmmock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "c1", Name: "echo", Input: json.RawMessage(`{}`)}},
+	})
+	sink := &terminalEventSink{}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(gateway),
+		agentflow.WithToolExecutor("echo", noopTool{}),
+		agentflow.WithEventSink(sink),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.Run(context.Background(), agentflow.RunRequest{RunID: "run-maxsteps", Agent: "assistant", Prompt: "loop"})
+	if err == nil || !strings.Contains(err.Error(), "max_steps=1") {
+		t.Fatalf("expected max_steps error, got %v", err)
+	}
+	payload := sink.terminalPayload(t, core.EventRunFailed)
+	if payload.TerminationReason != core.TerminationReasonMaxStepsExceeded {
+		t.Fatalf("TerminationReason=%q want %q", payload.TerminationReason, core.TerminationReasonMaxStepsExceeded)
+	}
+}
+
+// TestFrameworkCancelTerminalPayloadReason pins the C1 contract for
+// cancellation: the RunCancelled event carries a structured payload with
+// termination_reason=cancelled instead of a nil payload.
+func TestFrameworkCancelTerminalPayloadReason(t *testing.T) {
+	scenario := core.Scenario{
+		Name:   "cancel-reason",
+		LLMs:   map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{"assistant": {Name: "assistant", LLM: "default"}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	sink := &terminalEventSink{}
+	fw, err := agentflow.New(
+		scenario,
+		agentflow.WithLLMGateway(&cancelOnChatGateway{cancel: cancel}),
+		agentflow.WithEventSink(sink),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.Run(ctx, agentflow.RunRequest{RunID: "run-cancel-reason", Agent: "assistant", Prompt: "hi"})
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	payload := sink.terminalPayload(t, core.EventRunCancelled)
+	if payload.Status != "cancelled" || payload.TerminationReason != core.TerminationReasonCancelled {
+		t.Fatalf("unexpected cancelled payload: %+v", payload)
+	}
+}
+
+// terminalEventSink records events for terminal payload assertions.
+type terminalEventSink struct {
+	mu     sync.Mutex
+	events []core.Event
+}
+
+func (s *terminalEventSink) Emit(_ context.Context, event core.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *terminalEventSink) terminalPayload(t *testing.T, typ core.EventType) core.RunTerminalPayload {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, event := range s.events {
+		if event.Type != typ {
+			continue
+		}
+		var payload core.RunTerminalPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("decode %s payload: %v (raw=%s)", typ, err, event.Payload)
+		}
+		return payload
+	}
+	t.Fatalf("expected %s event", typ)
+	return core.RunTerminalPayload{}
+}
+
+// cancelOnChatGateway cancels the caller's context mid-call, simulating a
+// user abort arriving while the provider request is in flight.
+type cancelOnChatGateway struct {
+	cancel context.CancelFunc
+}
+
+func (g *cancelOnChatGateway) Supports(string, llm.Capability) bool { return true }
+
+func (g *cancelOnChatGateway) Chat(ctx context.Context, _ string, _ llm.ChatRequest) (llm.ChatResponse, error) {
+	g.cancel()
+	return llm.ChatResponse{}, ctx.Err()
 }

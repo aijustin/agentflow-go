@@ -28,6 +28,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/contextwindow"
 	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
+	"github.com/aijustin/agentflow-go/pkg/feature"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/interjection"
@@ -39,6 +40,7 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
 	"github.com/aijustin/agentflow-go/pkg/toolcatalog"
+	"github.com/aijustin/agentflow-go/pkg/toolinspect"
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
@@ -117,6 +119,10 @@ type Framework struct {
 	logger                 log.Logger
 	toolCatalog            toolcatalog.Catalog
 	deferredTools          bool
+	toolInspectorPrepend   []toolinspect.Inspector
+	toolInspectorAppend    []toolinspect.Inspector
+	features               []feature.Feature
+	dualVisibilityMessages bool
 	runLocker              coordination.Locker
 	runLeaseOwner          string
 	runLeaseTTL            time.Duration
@@ -138,6 +144,10 @@ type Framework struct {
 	// eventStore is the durable runtime event store wired with
 	// WithEventStore; used by the retention cascade and the outbox relay.
 	eventStore observability.EventStore
+
+	// streamHub fans StreamRun frames out to AttachRunStream subscribers and
+	// keeps a per-run replay ring (see stream_hub.go).
+	streamHub *streamHub
 }
 
 type options struct {
@@ -183,6 +193,10 @@ type options struct {
 	toolCatalog            toolcatalog.Catalog
 	deferredTools          bool
 	deferredToolsSet       bool
+	toolInspectorPrepend   []toolinspect.Inspector
+	toolInspectorAppend    []toolinspect.Inspector
+	features               []feature.Feature
+	dualVisibilityMessages bool
 	interjectDrain         interjection.DrainPolicy
 	toolOrchestrator       toolorch.ToolOrchestrator
 	approvalStore          toolorch.ApprovalStore
@@ -461,6 +475,10 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		logger:                 cfg.logger,
 		toolCatalog:            cfg.toolCatalog,
 		deferredTools:          deferredToolsEnabled(cfg),
+		toolInspectorPrepend:   append([]toolinspect.Inspector(nil), cfg.toolInspectorPrepend...),
+		toolInspectorAppend:    append([]toolinspect.Inspector(nil), cfg.toolInspectorAppend...),
+		features:               append([]feature.Feature(nil), cfg.features...),
+		dualVisibilityMessages: cfg.dualVisibilityMessages,
 		runLocker:              cfg.runLocker,
 		runLeaseOwner:          cfg.runLeaseOwner,
 		runLeaseTTL:            cfg.runLeaseTTL,
@@ -473,6 +491,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 	fw.scenario = scenario
 	fw.engine = engine
 	fw.eventStore = cfg.eventStore
+	fw.streamHub = newStreamHub()
 	if cfg.outboxRelay {
 		store, ok := cfg.eventStore.(observability.SequencedEventStore)
 		if !ok || store == nil {
@@ -671,6 +690,27 @@ func WithDeferredTools(enabled bool) Option {
 	}
 }
 
+// WithToolInspectors registers host tool inspectors around the runtime's
+// built-in dispatch gates (see pkg/toolinspect). prepend inspectors run before
+// the built-in chain (they see calls the built-in gates would later deny),
+// append inspectors run after every built-in gate allowed the call. Nil
+// entries are ignored.
+func WithToolInspectors(prepend []toolinspect.Inspector, appendInspectors ...toolinspect.Inspector) Option {
+	return func(o *options) error {
+		for _, inspector := range prepend {
+			if inspector != nil {
+				o.toolInspectorPrepend = append(o.toolInspectorPrepend, inspector)
+			}
+		}
+		for _, inspector := range appendInspectors {
+			if inspector != nil {
+				o.toolInspectorAppend = append(o.toolInspectorAppend, inspector)
+			}
+		}
+		return nil
+	}
+}
+
 func deferredToolsEnabled(cfg options) bool {
 	if cfg.toolCatalog == nil {
 		return false
@@ -679,6 +719,36 @@ func deferredToolsEnabled(cfg options) bool {
 		return cfg.deferredTools
 	}
 	return true
+}
+
+// WithFeatures registers host features (see pkg/feature). Feature
+// contributions are collected per engine build with error isolation: LLM
+// middleware wraps the tool loop's gateway, tool inspectors append after the
+// built-in gates (before any WithToolInspectors append entries), loop hooks
+// fire after every persisted tool-loop step, and stop conditions may halt the
+// run with an attributable termination_reason. Nil features are ignored.
+func WithFeatures(features ...feature.Feature) Option {
+	return func(o *options) error {
+		for _, f := range features {
+			if f != nil {
+				o.features = append(o.features, f)
+			}
+		}
+		return nil
+	}
+}
+
+// WithDualVisibilityMessages enables the dual-visibility message projection.
+// When enabled, context-window trimming marks trimmed messages
+// visibility=user instead of physically dropping them: events, memory, and
+// checkpoints keep the full transcript, while provider gateways send the
+// model only the agent-visible projection (see llm.AgentVisibleMessages).
+// Default false (historic drop behavior).
+func WithDualVisibilityMessages(enabled bool) Option {
+	return func(o *options) error {
+		o.dualVisibilityMessages = enabled
+		return nil
+	}
 }
 
 // WithHumanGate wires a custom human-in-the-loop gate.

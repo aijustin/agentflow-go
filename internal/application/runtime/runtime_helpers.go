@@ -47,7 +47,42 @@ var (
 	// permanent (run marked Failed) instead of keeping the run Running for a
 	// transient retry.
 	ErrLLMGatewayRequired = errors.New("runtime: llm gateway is required")
+	// ErrMaxStepsExceeded marks exhaustion of the autonomous tool loop step
+	// budget (including replan attempts). It is a sentinel so terminal
+	// handling can attribute the failure (termination_reason
+	// max_steps_exceeded) instead of re-parsing the error text.
+	ErrMaxStepsExceeded = errors.New("runtime: autonomous tool loop exceeded max_steps")
 )
+
+// terminationReasonForError classifies a terminal failure cause into the
+// core.TerminationReason* vocabulary written to the RunFailed payload.
+// Order matters: lease-ownership failures outrank everything (a cancelled
+// context may wrap them), and a provider APIError outranks the generic
+// bucket so model/API failures stay distinguishable from runtime bugs.
+func terminationReasonForError(err error) string {
+	switch {
+	case errors.Is(err, ErrMaxStepsExceeded):
+		return core.TerminationReasonMaxStepsExceeded
+	case errors.Is(err, context.DeadlineExceeded):
+		return core.TerminationReasonTimeout
+	case errors.Is(err, runstate.ErrStaleFence), errors.Is(err, coordination.ErrRunLeaseLost):
+		return core.TerminationReasonLeaseLost
+	default:
+		// A failure that carries its own attribution (e.g. a feature stop
+		// condition) wins over the generic buckets.
+		var reasoned interface{ TerminationReason() string }
+		if errors.As(err, &reasoned) {
+			if reason := reasoned.TerminationReason(); reason != "" {
+				return reason
+			}
+		}
+		var apiErr llm.APIError
+		if errors.As(err, &apiErr) {
+			return core.TerminationReasonLLMError
+		}
+		return core.TerminationReasonError
+	}
+}
 
 func (e *Engine) maxAttempts(agent core.Agent) int {
 	retries := firstPositive(agent.Policy.RetryLimit, e.scenario.Runtime.MaxRetries)
@@ -806,13 +841,16 @@ func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause erro
 		return
 	}
 	if status == runstate.RunStatusCancelled {
-		e.emit(persistCtx, core.EventRunCancelled, runID, nil)
+		e.emitJSON(persistCtx, core.EventRunCancelled, runID, map[string]string{"termination_reason": core.TerminationReasonCancelled})
 		return
 	}
 	if status != runstate.RunStatusFailed {
 		return
 	}
-	e.emitJSON(persistCtx, core.EventRunFailed, runID, map[string]string{"error": cause.Error()})
+	e.emitJSON(persistCtx, core.EventRunFailed, runID, map[string]string{
+		"error":              cause.Error(),
+		"termination_reason": terminationReasonForError(cause),
+	})
 }
 
 func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
@@ -838,7 +876,10 @@ func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 	if status != runstate.RunStatusCancelled {
 		return
 	}
-	e.emit(persistCtx, core.EventRunCancelled, runID, nil)
+	// A cancelled run still gets a structured terminal payload (never nil):
+	// downstream consumers key off termination_reason=cancelled without
+	// having to nil-check the payload first.
+	e.emitJSON(persistCtx, core.EventRunCancelled, runID, map[string]string{"termination_reason": core.TerminationReasonCancelled})
 }
 
 // clearRunScopedState drops every run-keyed in-memory bookkeeping entry
@@ -855,6 +896,8 @@ func (e *Engine) clearRunScopedState(runID string) {
 	e.clearInterjections(runID)
 	e.loadedTools.Delete(runID)
 	e.pendingSelfCompact.Delete(runID)
+	e.usageTrackers.Delete(runID)
+	e.toolArgsRepairs.Delete(runID)
 }
 
 // ClearRunScopedState exposes clearRunScopedState for the framework facade,

@@ -107,6 +107,9 @@ func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile c
 		raw = append(raw, contextwindow.Message{Role: contextwindow.RoleUser, Content: req.Prompt})
 	}
 	prepared, stats := e.prepareRawMessages(ctx, req.RunID, agent, raw, profile)
+	if e.dualVisibility {
+		backfillVisibilityMarks(prepared, history)
+	}
 	paired, drops := enforceToolCallPairingWithStats(restorePreparedToolCalls(prepared, history))
 	e.emitPairingIncomplete(ctx, req.RunID, drops)
 	return paired, stats
@@ -127,9 +130,40 @@ func (e *Engine) prepareMessages(ctx context.Context, runID string, agent core.A
 		})
 	}
 	prepared, stats := e.prepareRawMessages(ctx, runID, agent, raw, profile)
+	if e.dualVisibility {
+		backfillVisibilityMarks(prepared, messages)
+	}
 	paired, drops := enforceToolCallPairingWithStats(restorePreparedToolCalls(prepared, messages))
 	e.emitPairingIncomplete(ctx, runID, drops)
 	return paired, stats
+}
+
+// backfillVisibilityMarks propagates dual-visibility marks from the prepared
+// projection back onto the source history via the source_index metadata
+// (still present until restorePreparedToolCalls strips it), so the marks
+// persist with checkpoints and memory and survive pause/resume. Prepared
+// messages without a source_index (summary, compact reminder, runtime
+// context, the current prompt) are not part of the persisted history and
+// need no backfill.
+func backfillVisibilityMarks(prepared []llm.Message, source []llm.Message) {
+	for i := range prepared {
+		value := prepared[i].Metadata[llm.MetadataKeyVisibility]
+		if value == "" {
+			continue
+		}
+		sourceIndex, ok := prepared[i].Metadata["source_index"]
+		if !ok {
+			continue
+		}
+		index, err := strconv.Atoi(sourceIndex)
+		if err != nil || index < 0 || index >= len(source) {
+			continue
+		}
+		if source[index].Metadata == nil {
+			source[index].Metadata = map[string]string{}
+		}
+		source[index].Metadata[llm.MetadataKeyVisibility] = value
+	}
 }
 
 func restorePreparedToolCalls(prepared []llm.Message, source []llm.Message) []llm.Message {
@@ -161,7 +195,12 @@ func (e *Engine) prepareRawMessages(ctx context.Context, runID string, agent cor
 	if policy.ReservedOutputTokens == 0 {
 		policy.ReservedOutputTokens = profile.MaxOutputTokens
 	}
-	result := e.contextManager(ctx, runID, agent, policy).Prepare(raw)
+	// The previous call's provider-reported usage is a far better size signal
+	// than the EstimateTokens heuristic for tool-heavy transcripts; when the
+	// run has no recorded usage yet (first turn, or a gateway that does not
+	// report usage) this is 0 and Prepare falls back to the heuristic.
+	knownTokens := e.usageTrackerFor(runID).lastCallTokens()
+	result := e.contextManager(ctx, runID, agent, policy).PrepareWithOptions(raw, contextwindow.PrepareOptions{KnownInputTokens: knownTokens})
 	if policy.InjectCompactReminder && result.Stats.NeedsReminder {
 		if reminder := e.compactReminder(ctx, runID); reminder != "" {
 			// Codex-aligned contract: reinject above the last user message so
@@ -264,6 +303,7 @@ func (e *Engine) emitContextPrepared(ctx context.Context, runID string, stats co
 		"denial_occupied_slots":      stats.DenialOccupiedSlots,
 		"stale_excluded_turns":       stats.StaleExcludedTurns,
 		"compacted_tool_denials":     stats.CompactedToolDenials,
+		"marked_messages":            stats.MarkedMessages,
 	}
 	if stats.FallbackApplied {
 		payload["warning"] = "context max_input_tokens fell back to 8192; set LLMProfileRef.ContextWindowTokens or Context.MaxInputTokens"

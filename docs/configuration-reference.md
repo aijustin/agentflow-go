@@ -84,6 +84,10 @@ LLM 配置定义在 `scenario.llms.<name>` 下，可被 Agent 或工具引用。
 
 Context policy 字段包括：`context_window_tokens`、`max_input_tokens`、`reserved_output_tokens`、`summary_tokens`、`tool_result_max_tokens`、`memory_recall_limit`、`system_prompt_protection`、`compression.trigger_ratio`、`inject_compact_reminder`。其中 `tool_result_max_tokens` 会限制工具结果回灌给下一轮 LLM 的上下文大小；完整工具输出仍会按运行状态/Blob 策略持久化。`inject_compact_reminder` 为 true 且发生裁剪/摘要时，运行时会注入当前 plan 进度的 system reminder。
 
+### 消息双可见性投影（可选）
+
+默认情况下裁剪策略会物理删除超出预算的历史消息。开启根包 Option `WithDualVisibilityMessages(true)` 后，裁剪改为在消息 `metadata["visibility"]` 上打 `user` 标记并保留在序列中（摘要消息本身对两侧可见）：事件、memory、检查点始终保留完整对话，provider 网关（OpenAI / Anthropic）只把 agent 可见投影发给模型。`pkg/llm` 提供 `MarkUserVisibleOnly` / `IsAgentVisible` / `AgentVisibleMessages` 等 helper；标记经 `checkpoint_messages` 序列化随暂停/恢复保留。`ContextPrepared` 事件 payload 新增 `marked_messages` 计数。
+
 ## 记忆
 
 记忆定义在 `scenario.memories.<name>` 下，可被 Agent 引用。
@@ -460,8 +464,24 @@ go run ./examples/go/event-trigger/main.go
 | `hitl_deny_limit` | 整数 | 否 | 连续审批拒绝（soft deny / cached deny）达到该次数时失败结束 run；`0` 关闭。与 `doom_loop_limit` 正交。 |
 | `step_output_threshold` | 整数 | 否 | 单步输出超过该字节阈值时外置到已配置的 BlobStore；未配置 BlobStore 或未超过阈值时继续内联保存。 |
 | `secrets` | 字符串映射 | 否 | Secret 引用。敏感值建议优先使用环境变量。 |
+| `detached_cancellation_poll_interval` | duration | 否 | detached 流式运行的取消轮询间隔（watcher 周期性重载 run 快照以感知跨进程取消）；`0` 或负值回落默认 `250ms`。 |
 
 大输出外置适合 SQL/RAG/长文档生成等大载荷场景，用来控制 RunState 的数据库行大小和 Redis 内存占用。生产环境可以通过 `WithBlobStore` 接入文件、内存或 S3-compatible BlobStore；S3 兼容实现面向 MinIO、AWS S3 path-style endpoint，以及通过 path-style SigV4 `PUT`/`GET` 验证的腾讯云 COS/阿里云 OSS 兼容接口。原生 COS/OSS API 需要独立适配器实现同一个 `runstate.BlobStore` 契约。
+
+### 运行时行为保证
+
+以下行为由运行时自动提供，无需配置：
+
+- **终止原因可归因**：`RunCompleted` / `RunFailed` / `RunCancelled` 事件的终态 payload 带 `termination_reason` 字段，取值为 `completed` / `max_steps_exceeded` / `timeout` / `cancelled` / `lease_lost` / `llm_error` / `error`（`core.TerminationReason*` 常量），调用方无需解析错误文案即可归类。
+- **真实 token 用量驱动压缩**：上下文压缩触发判断优先使用上一轮 LLM 调用的 provider 实测 token 数（经 `checkpoint_usage` 检查点变量跨 pause/resume 保留），实测缺失时回退到内置启发式估算；裁剪预算仍按启发式逐条估算。
+- **上下文溢出恢复**：provider 返回 context_length_exceeded（或等价错误）时，运行时自动做一次恢复性压缩（观测遮蔽 + 强制滑窗摘要）并重试，每个 run 最多一次；第二次溢出直接失败。
+- **会话格式不变量**：空响应（无内容、无工具调用且非 max-tokens 截断）会重采样至多 3 次，仍为空则报错而非静默返回空答案；非法 JSON 工具参数被规整为 `{}` 时会打 `tool_args_normalized` 消息标记、发 `ToolArgsNormalized` 诊断事件，后续参数校验失败的反馈文案会带上原始解析错误。
+
+### 工具检查管线与 Feature 模型
+
+工具调用的判定闸门（agent 白名单 → 场景声明 → 参数 schema 校验 → 审批缓存 → 无门禁审批拒绝 → 执行器注册表 → security 授权 → 执行器解析 → doom-loop/rate-cap 预算 → governance）是 `pkg/toolinspect` 定义的 Inspector 链，按序短路执行；catalog 元工具短路、sampling 冻结与委托分支属于分派路由，不在链内。宿主可用 `WithToolInspectors(prepend, append...)` 在内置链前/后插入自定义 Inspector：前置 inspector 会先看到所有调用，后置 inspector 只在全部内置闸门放行后运行（其在预算闸门之后的拒绝会计为一次尝试，与 governance 拒绝同语义）。Inspector 返回 `Deny`（带可选 `kind` 分类，随 `ToolDenied` 事件发出）或 `RequireApproval`（暂停决策发生在分派前的审批评估路径，链内该判定按已记账的软拒绝处理，`kind=approval`）。
+
+`WithFeatures(...)` 注册 `pkg/feature` 的宿主 Feature，按需实现小接口贡献扩展：`LLMMiddlewareContributor`（包装工具循环的 LLM gateway，按 feature 顺序嵌套）、`ToolInspectorContributor`（Inspector 追加在内置闸门之后、`WithToolInspectors` 追加项之前）、`LoopHookContributor`（`OnStepFinish` 在工具循环每步持久化后触发，panic 被隔离并记日志）、`StopConditionContributor`（每个工具步之后评估，命中即以带归因的错误终止 run，reason 写入终态 payload 的 `termination_reason`）。收集逐 feature 隔离：单个 feature panic 只丢该贡献。`feature.UsageAccounting` 是可选内置 feature，把每步 provider 实测 token 用量累计推送给宿主记账回调。
 
 ## 扩展点
 

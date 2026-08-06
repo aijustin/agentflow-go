@@ -29,11 +29,13 @@ func WithDatabase(db *sql.DB) Option {
 	})
 }
 
-// Close releases resources registered through WithCloser or WithDatabase.
+// Close releases resources registered through WithCloser or WithDatabase and
+// detaches every AttachRunStream subscriber of the stream hub.
 func (f *Framework) Close(ctx context.Context) error {
 	if f == nil {
 		return nil
 	}
+	f.streamHub.close()
 	var errs []error
 	for i := len(f.closers) - 1; i >= 0; i-- {
 		closerCtx := ctx

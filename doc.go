@@ -15,6 +15,8 @@
 //     because they return []agentflow.Option)
 //   - retention: retention.go (purge policies, orphan blob GC)
 //   - run lease: lease.go
+//   - stream hub: stream_hub.go (multi-subscriber fan-out, ring-buffer
+//     replay, and pause-aware reattach for StreamRun via AttachRunStream)
 //   - metadata: meta.go (version, JSON schema, JSON helpers)
 //
 // Convenience constructors that used to live here moved in v0.3:
@@ -26,4 +28,12 @@
 //     webhook/human-gate, async jobs, production composition, observability
 //     dashboard) and the knowledge/MCP wiring options.
 //   - pkg/testutil: the mock LLM gateway and test wiring helpers.
+//
+// Extension-point packages hosts can implement without forking the runtime:
+//   - pkg/toolinspect: the tool-call inspector pipeline (Verdict / Finding /
+//     Chain); every built-in dispatch gate is an Inspector, and
+//     WithToolInspectors prepends/appends host inspectors around them.
+//   - pkg/feature: the feature contribution model (LLM middleware, tool
+//     inspectors, loop hooks, stop conditions) wired via WithFeatures, with
+//     per-feature error isolation during collection.
 package agentflow

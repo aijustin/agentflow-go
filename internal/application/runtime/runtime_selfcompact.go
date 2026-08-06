@@ -98,3 +98,84 @@ func (e *Engine) appendSelfCompactMetaToolSpecs(agent core.Agent, specs []llm.To
 		Schema:      meta.Schema,
 	})
 }
+
+// maxContextLengthRecoveryAttempts caps provider context-overflow recovery to
+// one compaction+retry per run. The counter lives in the checkpointed usage
+// tracker, so a pause/resume cycle cannot farm extra recovery attempts.
+const maxContextLengthRecoveryAttempts = 1
+
+// tryContextLengthRecovery reacts to a provider context_length_exceeded
+// rejection: it compacts the outgoing request messages (observation masking
+// plus a forced sliding_window_with_summary pass, reusing the self-compact
+// conversion path) and reports whether the call should be retried. At most
+// one recovery happens per run; a second overflow fails the run. The
+// authoritative conversation in the tool loop is left untouched here, but a
+// self-compact is scheduled so the next loop iteration compacts it too -
+// otherwise every subsequent call would overflow again.
+func (e *Engine) tryContextLengthRecovery(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req *llm.ToolCallRequest) bool {
+	tracker := e.usageTrackerFor(runID)
+	if tracker.contextRecoveryAttempts() >= maxContextLengthRecoveryAttempts {
+		return false
+	}
+	tracker.markContextRecovery()
+	maskAfterTurns := profile.Context.ObservationMaskAfterTurns
+	if maskAfterTurns <= 0 {
+		maskAfterTurns = 1
+	}
+	raw := make([]contextwindow.Message, 0, len(req.Messages))
+	for i, msg := range req.Messages {
+		metadata := cloneMetadata(msg.Metadata)
+		metadata["source_index"] = strconv.Itoa(i)
+		raw = append(raw, contextwindow.Message{
+			Role:        contextwindow.Role(msg.Role),
+			Content:     msg.Content,
+			Name:        msg.Name,
+			ToolCallID:  msg.ToolCallID,
+			ToolCallIDs: toolCallIDs(msg),
+			Metadata:    metadata,
+		})
+	}
+	masked := contextwindow.MaskObservations(raw, maskAfterTurns, profile.Context.ExcludeToolNamesFromStaleWindow...)
+	policy := profile.Context
+	if policy.ContextWindowTokens == 0 {
+		policy.ContextWindowTokens = profile.ContextWindowTokens
+	}
+	if policy.ReservedOutputTokens == 0 {
+		policy.ReservedOutputTokens = profile.MaxOutputTokens
+	}
+	policy = policy.Normalize()
+	// Force the summary strategy and disable the optional tool-message
+	// compression stage: the provider already told us the real count exceeds
+	// the window, so the recovery must deterministically trim to budget even
+	// when the heuristic estimate says the messages would fit.
+	policy.Strategy = contextwindow.StrategySlidingWindowWithSummary
+	policy.Compression.Enabled = false
+	result := e.contextManager(ctx, runID, agent, policy).PrepareWithOptions(masked, contextwindow.PrepareOptions{
+		KnownInputTokens: policy.MaxInputTokens + 1,
+	})
+	out := make([]llm.Message, 0, len(result.Messages))
+	for _, msg := range result.Messages {
+		out = append(out, llm.Message{
+			Role:       llm.Role(msg.Role),
+			Content:    msg.Content,
+			Name:       msg.Name,
+			ToolCallID: msg.ToolCallID,
+			Metadata:   msg.Metadata,
+		})
+	}
+	out = restorePreparedToolCalls(out, req.Messages)
+	paired, drops := enforceToolCallPairingWithStats(out)
+	e.emitPairingIncomplete(ctx, runID, drops)
+	messagesBefore := len(req.Messages)
+	req.Messages = paired
+	e.markSelfCompactPending(runID)
+	e.emitJSON(ctx, core.EventContextPrepared, runID, map[string]any{
+		"context_recovery":  true,
+		"messages_before":   messagesBefore,
+		"messages_after":    len(paired),
+		"summarized":        result.Stats.Summarized,
+		"dropped_messages":  result.Stats.DroppedMessages,
+		"recovery_attempts": tracker.contextRecoveryAttempts(),
+	})
+	return true
+}

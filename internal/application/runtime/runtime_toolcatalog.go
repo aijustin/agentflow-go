@@ -93,6 +93,10 @@ func (e *Engine) dispatchCatalogMetaTool(ctx context.Context, runID string, agen
 		if err != nil {
 			return core.ToolResult{Tool: call.Name, Error: err.Error()}, true, nil
 		}
+		// Approval-gated tools loaded here still pass the regular dispatch-time
+		// approval gates (approval cache, deny-without-gate, pause evaluation),
+		// so no extra check is needed on this path; on the advertise side they
+		// are never deferred at all (see shouldAdvertiseCatalogTool).
 		names := make([]string, len(entries))
 		for i, entry := range entries {
 			names[i] = entry.Name
@@ -136,8 +140,9 @@ func (e *Engine) catalogToolSpecs(ctx context.Context, runID string, agent core.
 	}
 	specs = e.appendSelfCompactMetaToolSpecs(agent, specs)
 	loaded := e.loadedToolsForRun(runID)
+	deferral := e.catalogDeferralActive()
 	for _, name := range agent.Tools {
-		if !e.shouldAdvertiseCatalogTool(agent, name, loaded) {
+		if !e.shouldAdvertiseCatalogTool(agent, name, loaded, deferral) {
 			continue
 		}
 		spec, ok := e.catalogAdvertisedSpec(name)
@@ -164,11 +169,70 @@ func (e *Engine) catalogToolSpecs(ctx context.Context, runID string, agent core.
 	return specs
 }
 
-func (e *Engine) shouldAdvertiseCatalogTool(agent core.Agent, name string, loaded *loadedToolSet) bool {
-	if !e.deferredTools {
+// catalogDeferralActive reports whether unpinned, unloaded catalog tools stay
+// deferred for this engine. Without a configured DeferralPolicy the legacy
+// behavior holds: deferral is unconditional once enabled. With a policy, small
+// catalogs (below MinTools, default 8) are advertised in full unless their
+// estimated schema overhead exceeds MaxOverheadTokens.
+func (e *Engine) catalogDeferralActive() bool {
+	if !e.deferredTools || e.toolCatalog == nil {
+		return false
+	}
+	configured, ok := e.toolCatalog.(interface {
+		DeferralConfig() (toolcatalog.DeferralPolicy, bool)
+	})
+	if !ok {
+		return true
+	}
+	policy, ok := configured.DeferralConfig()
+	if !ok {
+		return true
+	}
+	sizer, ok := e.toolCatalog.(interface{ Size() int })
+	if !ok {
+		// Unknown catalog size: keep deferring (legacy behavior).
+		return true
+	}
+	overhead := 0
+	if estimator, ok := e.toolCatalog.(interface{ OverheadTokens() int }); ok {
+		overhead = estimator.OverheadTokens()
+	}
+	return policy.ShouldDefer(sizer.Size(), overhead)
+}
+
+// approvalNeverDeferred reports whether a tool approval policy must always be
+// advertised alongside its schema (cherry's defer:'never' equivalent): hiding
+// an approval-gated tool behind load_tool_schemas would let the model invoke
+// it without ever seeing that human approval is required.
+func approvalNeverDeferred(policy core.ApprovalPolicy) bool {
+	switch policy {
+	case core.ApprovalRisky, core.ApprovalAlways, core.ApprovalPause:
+		return true
+	default:
+		return false
+	}
+}
+
+// catalogToolApproval resolves the effective approval policy for an agent
+// tool: the scenario declaration wins, then the catalog entry.
+func (e *Engine) catalogToolApproval(name string) core.ApprovalPolicy {
+	if tool, ok := e.scenario.Tools[name]; ok && tool.Approval != "" {
+		return tool.Approval
+	}
+	if entries, err := e.toolCatalog.Load([]string{name}); err == nil && len(entries) == 1 {
+		return entries[0].Approval
+	}
+	return ""
+}
+
+func (e *Engine) shouldAdvertiseCatalogTool(agent core.Agent, name string, loaded *loadedToolSet, deferral bool) bool {
+	if !deferral {
 		return true
 	}
 	if e.isCatalogPinnedTool(agent, name) {
+		return true
+	}
+	if approvalNeverDeferred(e.catalogToolApproval(name)) {
 		return true
 	}
 	return loaded.contains(name)

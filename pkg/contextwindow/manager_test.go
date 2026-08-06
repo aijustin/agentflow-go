@@ -180,3 +180,82 @@ func TestManagerUnknownStrategyFallsBackToTrim(t *testing.T) {
 		t.Fatalf("expected latest message retained: %+v", result.Messages)
 	}
 }
+
+func TestManagerPrepareWithKnownInputTokens(t *testing.T) {
+	messages := []Message{
+		{Role: RoleSystem, Content: "system"},
+		{Role: RoleUser, Content: "hello"},
+		{Role: RoleAssistant, Content: "hi there"},
+		{Role: RoleUser, Content: "latest question"},
+	}
+	policy := Policy{
+		Strategy:               StrategySlidingWindow,
+		MaxInputTokens:         40,
+		SystemPromptProtection: true,
+	}
+	// The heuristic estimate of these tiny messages sits far below the
+	// budget, so Prepare alone trims nothing...
+	baseline := New(policy).Prepare(messages)
+	if baseline.Stats.DroppedMessages != 0 {
+		t.Fatalf("heuristic run should not trim, got %+v", baseline.Stats)
+	}
+	cases := []struct {
+		name  string
+		known int
+	}{
+		{name: "zero known falls back to heuristic", known: 0},
+		{name: "known under budget keeps heuristic behavior", known: 10},
+		// Known usage only drives the trigger decision; trimming budgets stay
+		// heuristic (PrepareOptions doc), so when the estimate says every
+		// message fits, an over-budget known count enters the trim path but
+		// drops nothing. The provider-rejected overflow that this cannot fix
+		// is the recovery path's job.
+		{name: "known over budget with fitting estimates trims nothing", known: 400},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			result := New(policy).PrepareWithOptions(messages, PrepareOptions{KnownInputTokens: tc.known})
+			if result.Stats.DroppedMessages != 0 {
+				t.Fatalf("unexpected trimming, got %+v", result.Stats)
+			}
+			// The reported estimate stays heuristic-based: the known count is
+			// a trigger signal, not a per-message measurement.
+			if result.Stats.BeforeTokens != baseline.Stats.BeforeTokens {
+				t.Fatalf("BeforeTokens should stay heuristic: got %d want %d", result.Stats.BeforeTokens, baseline.Stats.BeforeTokens)
+			}
+		})
+	}
+}
+
+func TestManagerPrepareWithKnownInputTokensTriggersCompression(t *testing.T) {
+	messages := []Message{
+		{Role: RoleSystem, Content: "system"},
+		{Role: RoleTool, Name: "search", Content: strings.Repeat("row ", 200)},
+		{Role: RoleUser, Content: "latest question"},
+	}
+	policy := Policy{
+		Strategy:            StrategySlidingWindow,
+		MaxInputTokens:      1000,
+		ToolResultMaxTokens: 16,
+		Compression:         CompressionPolicy{Enabled: true, TriggerRatio: 0.5},
+	}
+	baseline := New(policy).Prepare(messages)
+	if baseline.Stats.BeforeTokens <= 0 {
+		t.Fatalf("unexpected baseline stats %+v", baseline.Stats)
+	}
+	tool := baseline.Messages[1]
+	if tool.Metadata["context_window"] == "compressed" {
+		t.Fatal("heuristic run should not compress tool output")
+	}
+	// The provider-reported count crosses the trigger ratio even though the
+	// heuristic estimate does not, so compression fires.
+	result := New(policy).PrepareWithOptions(messages, PrepareOptions{KnownInputTokens: 900})
+	compressed := result.Messages[1]
+	if compressed.Metadata["context_window"] != "compressed" {
+		t.Fatalf("expected known usage to trigger compression, got %+v", compressed.Metadata)
+	}
+	if len(compressed.Content) >= len(messages[1].Content) {
+		t.Fatal("expected tool output to shrink")
+	}
+}

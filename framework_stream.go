@@ -145,8 +145,14 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 		ctx = runtime.ContextWithStreamDetached(ctx)
 	}
 
+	// Register the run's hub session up front so AttachRunStream subscribers
+	// can follow from the first frame (and across a HITL pause/resume). The
+	// primary out channel keeps its historic blocking delivery; the hub only
+	// observes frames after they are sent there.
+	session := f.streamHub.register(req.RunID)
 	chunks, err := f.Stream(ctx, req)
 	if err != nil {
+		f.streamHub.unregister(req.RunID, session)
 		return nil, err
 	}
 
@@ -170,6 +176,10 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 		send := func(frame StreamFrame) bool {
 			select {
 			case out <- frame:
+				// Fan the frame out to hub subscribers only after the primary
+				// consumer received it, so attach/replay can never starve or
+				// reorder the historic stream.
+				f.streamHub.publish(req.RunID, frame)
 				return true
 			case <-ctx.Done():
 				return false

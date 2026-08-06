@@ -338,6 +338,27 @@ func hasPendingCheckpointMetadata(snapshot runstate.RunSnapshot) bool {
 }
 
 func (f *Framework) continueRun(ctx context.Context, runID string) (RunResult, error) {
+	// A paused run is not the end of its stream: when a StreamRun session is
+	// live for this run, continue publishing into it so AttachRunStream
+	// subscribers observe the post-approval execution. Events emitted during
+	// the continue fan out through a hub tee on the context (the original
+	// StreamRun tee is gone by then), and the continue's outcome becomes the
+	// session's next Done/Error frame.
+	if f.streamHub.sessionActive(runID) {
+		ctx = appexec.ContextWithEventTee(ctx, streamHubTee{hub: f.streamHub, runID: runID})
+		result, err := f.continueRunInner(ctx, runID)
+		if err != nil {
+			f.streamHub.publish(runID, StreamFrame{Kind: StreamFrameError, Err: err})
+		} else {
+			result := result
+			f.streamHub.publish(runID, StreamFrame{Kind: StreamFrameDone, Result: &result})
+		}
+		return result, err
+	}
+	return f.continueRunInner(ctx, runID)
+}
+
+func (f *Framework) continueRunInner(ctx context.Context, runID string) (RunResult, error) {
 	snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
 	if err != nil {
 		return RunResult{}, err

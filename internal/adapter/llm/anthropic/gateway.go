@@ -113,13 +113,13 @@ func (g *Gateway) StreamChat(ctx context.Context, profileName string, req llm.Ch
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		return nil, anthropicAPIError(resp)
 	}
 	ch := make(chan llm.ChatChunk)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		// send blocks until the consumer reads or the context is cancelled, so
 		// an abandoned stream cannot leak this goroutine or the response body.
 		send := func(c llm.ChatChunk) bool {
@@ -188,7 +188,7 @@ func (g *Gateway) chat(ctx context.Context, profileName string, req llm.ChatRequ
 	if err != nil {
 		return llm.ToolCallResponse{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return llm.ToolCallResponse{}, anthropicAPIError(resp)
 	}
@@ -259,6 +259,9 @@ func authorizeRequest(httpReq *http.Request, profile llm.Profile) {
 }
 
 func anthropicMessages(messages []llm.Message) (string, []map[string]any) {
+	// Dual-visibility projection: the model only ever sees agent-visible
+	// messages; user-only messages stay in events/memory/checkpoints.
+	messages = llm.AgentVisibleMessages(messages)
 	system := make([]string, 0)
 	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
@@ -437,7 +440,24 @@ func cloneExtraBody(in map[string]any) map[string]any {
 
 func anthropicAPIError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	return llm.APIError{Provider: "anthropic", StatusCode: resp.StatusCode, Status: resp.Status, Body: strings.TrimSpace(string(body))}
+	trimmed := strings.TrimSpace(string(body))
+	return llm.APIError{Provider: "anthropic", StatusCode: resp.StatusCode, Status: resp.Status, Body: trimmed, Code: anthropicErrorType(trimmed)}
+}
+
+// anthropicErrorType extracts the error type from an Anthropic error body
+// ({"error":{"type":...,"message":...}}) into APIError.Code, matching how the
+// streaming path classifies in-stream error events. Non-JSON bodies yield an
+// empty code.
+func anthropicErrorType(body string) string {
+	var decoded struct {
+		Error *struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil || decoded.Error == nil {
+		return ""
+	}
+	return decoded.Error.Type
 }
 
 // anthropicStreamError maps an in-stream error event to the equivalent
@@ -464,5 +484,5 @@ func anthropicStreamError(errPayload *struct {
 	if errPayload != nil && errPayload.Message != "" {
 		body = errPayload.Message
 	}
-	return llm.APIError{Provider: "anthropic", StatusCode: status, Status: fmt.Sprintf("%d", status), Body: body}
+	return llm.APIError{Provider: "anthropic", StatusCode: status, Status: fmt.Sprintf("%d", status), Body: body, Code: typ}
 }

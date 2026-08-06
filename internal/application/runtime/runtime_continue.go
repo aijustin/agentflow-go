@@ -23,10 +23,16 @@ const (
 	checkpointContextVar       = "checkpoint_context"
 	beforeFinalResumedVar      = "before_final_resumed"
 	// checkpointResumedVar is deprecated; reads accept it for backward compatibility.
-	checkpointResumedVar        = "checkpoint_resumed"
-	checkpointToolCallsVar      = "checkpoint_tool_calls"
-	checkpointMessagesVar       = "checkpoint_messages"
-	checkpointToolCountsVar     = "checkpoint_tool_counts"
+	checkpointResumedVar    = "checkpoint_resumed"
+	checkpointToolCallsVar  = "checkpoint_tool_calls"
+	checkpointMessagesVar   = "checkpoint_messages"
+	checkpointToolCountsVar = "checkpoint_tool_counts"
+	// checkpointUsageVar persists the run-level usage tracker next to
+	// checkpoint_tool_counts so a pause/resume cycle keeps both the
+	// accumulated token totals and the context-length recovery budget.
+	// Snapshots written before this variable existed decode to a zero
+	// tracker.
+	checkpointUsageVar          = "checkpoint_usage"
 	checkpointOutputModeVar     = "checkpoint_output_mode"
 	checkpointStepsConsumedVar  = "checkpoint_steps_consumed"
 	checkpointReplanAttemptsVar = "checkpoint_replan_attempts"
@@ -255,6 +261,14 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		}
 		tracker = decoded
 	}
+	// Restore the usage tracker so the run's token accounting and its
+	// context-length recovery budget continue across the pause; a snapshot
+	// written before checkpoint_usage existed decodes to a zero tracker.
+	usage, err := decodeUsageTracker(snapshot.Variables[checkpointUsageVar])
+	if err != nil {
+		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: decode checkpoint usage: %w", err))
+	}
+	e.restoreUsageTracker(snapshot.RunID, usage)
 	if len(messages) == 0 {
 		// A tool_approval checkpoint always persists the conversation up to
 		// and including the paused assistant turn. Missing messages mean the
@@ -737,6 +751,10 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if err != nil {
 		return nil, err
 	}
+	usageRaw, err := json.Marshal(e.usageTrackerFor(runID))
+	if err != nil {
+		return nil, err
+	}
 	vars := map[string]json.RawMessage{
 		checkpointKindVar:           json.RawMessage(fmt.Sprintf("%q", checkpointKindToolApproval)),
 		checkpointAgentVar:          json.RawMessage(fmt.Sprintf("%q", agent.Name)),
@@ -744,6 +762,7 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		checkpointToolCallsVar:      toolCallsRaw,
 		checkpointMessagesVar:       messagesRaw,
 		checkpointToolCountsVar:     countsRaw,
+		checkpointUsageVar:          usageRaw,
 		checkpointStepsConsumedVar:  json.RawMessage(fmt.Sprintf("%d", stepsConsumed)),
 		checkpointReplanAttemptsVar: json.RawMessage(fmt.Sprintf("%d", replanAttempts)),
 	}
