@@ -97,12 +97,12 @@ func (executor *Executor) readCandidate(ctx context.Context, candidate candidate
 	if err != nil {
 		return Response{}, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	file, err := root.Open(candidate.relativePath)
 	if err != nil {
 		return Response{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return Response{}, err

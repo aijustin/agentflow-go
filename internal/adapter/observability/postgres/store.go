@@ -256,7 +256,7 @@ LIMIT $3 OFFSET $4`, store.table)
 	if err != nil {
 		return nil, fmt.Errorf("postgres observability: list runs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	runs := make([]obspkg.RunSummary, 0)
 	for rows.Next() {
 		var summary obspkg.RunSummary
@@ -321,7 +321,7 @@ LIMIT $4`, store.table)
 	if err != nil {
 		return nil, fmt.Errorf("postgres observability: list events for run %q: %w", runID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	records := make([]obspkg.EventRecord, 0)
 	for rows.Next() {
 		record, err := scanRecord(rows)
@@ -393,7 +393,7 @@ LIMIT $4`, store.table, scopeColumn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres observability: list scoped events: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	records := make([]obspkg.EventRecord, 0)
 	for rows.Next() {
 		record, err := scanRecord(rows)

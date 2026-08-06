@@ -488,7 +488,7 @@ func (handler *Handler) recordAudit(ctx context.Context, event audit.Event) {
 }
 
 func decodeJSON(w nethttp.ResponseWriter, r *nethttp.Request, maxBodyBytes int64, out any) error {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	decoder := json.NewDecoder(nethttp.MaxBytesReader(w, r.Body, maxBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(out); err != nil {

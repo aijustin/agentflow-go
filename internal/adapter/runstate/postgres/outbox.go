@@ -192,7 +192,7 @@ LIMIT $1`, r.outboxTable)
 	if err != nil {
 		return nil, fmt.Errorf("postgres runstate: fetch unpublished outbox: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]runstate.OutboxEvent, 0)
 	for rows.Next() {
 		var row runstate.OutboxEvent

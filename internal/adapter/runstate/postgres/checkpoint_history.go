@@ -91,7 +91,7 @@ ORDER BY version ASC%s`, h.table, limitSQL)
 	if err != nil {
 		return nil, fmt.Errorf("postgres checkpoint history: list: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]runstate.CheckpointSummary, 0)
 	for rows.Next() {
 		var summary runstate.CheckpointSummary

@@ -22,7 +22,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer fw.Close(context.Background())
+	defer func() { _ = fw.Close(context.Background()) }()
 
 	result, err := fw.HandleEvent(context.Background(), agentflow.IncomingEvent{
 		Type: "ticket.created",

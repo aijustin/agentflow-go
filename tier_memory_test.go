@@ -2,9 +2,10 @@ package agentflow
 
 import (
 	"context"
-	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"testing"
 	"time"
+
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 
 	tierinmem "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/inmem"
 	"github.com/aijustin/agentflow-go/pkg/llm"

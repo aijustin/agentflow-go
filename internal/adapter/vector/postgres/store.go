@@ -207,7 +207,7 @@ LIMIT $%d`, s.table, where, len(args))
 	if err != nil {
 		return nil, fmt.Errorf("postgres vector store: query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	results := make([]knowledge.SearchResult, 0)
 	for rows.Next() {
 		var id string
@@ -276,7 +276,7 @@ LIMIT $%d`, s.table, where, len(args))
 	if err != nil {
 		return nil, fmt.Errorf("postgres vector store: text search: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	results := make([]knowledge.SearchResult, 0)
 	for rows.Next() {
 		var id, content string

@@ -43,7 +43,7 @@ func (sink *Sink) Record(ctx context.Context, event audit.Event) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		return err
 	}

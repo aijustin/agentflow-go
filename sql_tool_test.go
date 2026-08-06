@@ -5,10 +5,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 )
 
 const sqlToolRootTestDriverName = "agentflow_sql_tool_root_test"

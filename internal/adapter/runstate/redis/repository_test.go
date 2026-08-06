@@ -205,7 +205,7 @@ func (server *fakeRedis) serve() {
 }
 
 func (server *fakeRedis) handle(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	reader := bufio.NewReader(conn)
 	for {
 		args, err := readCommand(reader)

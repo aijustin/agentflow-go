@@ -406,7 +406,7 @@ func (q *Queue) ListJobs(ctx context.Context, filter asyncpkg.JobFilter) ([]asyn
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	capHint := 0
 	if filter.Limit > 0 {
 		capHint = filter.Limit

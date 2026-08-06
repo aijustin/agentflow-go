@@ -67,7 +67,7 @@ func (s *handshakeServer) handler() nethttp.Handler {
 			raw, _ := json.Marshal(map[string]any{"tools": s.tools})
 			if s.sse {
 				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":%s}\n\n", req.ID, raw)
+				_, _ = fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":%s}\n\n", req.ID, raw)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -326,7 +326,7 @@ func TestClientRehandshakesWhenServerForgetsSession(t *testing.T) {
 
 func TestClientRejectsOversizedResponse(t *testing.T) {
 	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		w.Write(make([]byte, DefaultMaxResponseBytes+1))
+		_, _ = w.Write(make([]byte, DefaultMaxResponseBytes+1))
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, server.Client())

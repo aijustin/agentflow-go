@@ -52,7 +52,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer fw.Close(context.Background())
+	defer func() { _ = fw.Close(context.Background()) }()
 
 	catalog, err := fw.ComposeGraph(context.Background(), agentflow.ComposeGraphRequest{
 		Prompt: "Prepare a topic and write about it.",

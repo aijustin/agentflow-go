@@ -23,7 +23,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer fw.Close(context.Background())
+	defer func() { _ = fw.Close(context.Background()) }()
 
 	result, err := fw.Run(context.Background(), agentflow.RunRequest{
 		RunID:  "run-builder-1",

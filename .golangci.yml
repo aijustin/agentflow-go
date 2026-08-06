@@ -6,6 +6,7 @@ run:
 linters:
   default: none
   enable:
+    - errcheck
     - govet
     - staticcheck
     - ineffassign
@@ -15,6 +16,7 @@ linters:
 formatters:
   enable:
     - gofmt
+    - goimports
 
 issues:
   max-issues-per-linter: 0

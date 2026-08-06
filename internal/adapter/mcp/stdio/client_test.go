@@ -24,7 +24,7 @@ func TestClientListsAndCallsToolsOverStdio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	tools, err := client.ListTools(ctx)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestClientCallCancelledMidReadPoisonsClientInsteadOfHanging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// "hang" never gets a reply from the helper process, so the call must
 	// return once its own context expires rather than blocking forever.
@@ -89,7 +89,7 @@ func TestClientHandlesLargeResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	tools, err := client.ListTools(ctx)
 	if err != nil {
@@ -111,7 +111,7 @@ func TestClientListToolsPagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	tools, err := client.ListTools(ctx)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestClientModernStdioSkipsHandshakeAndAddsMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	tools, err := client.ListTools(ctx)
 	if err != nil {
 		t.Fatal(err)

@@ -309,7 +309,7 @@ func gunzip(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	out, err := io.ReadAll(io.LimitReader(reader, maxDecompressedRecordBytes+1))
 	if err != nil {
 		return nil, err

@@ -30,7 +30,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer fw.Close(context.Background())
+	defer func() { _ = fw.Close(context.Background()) }()
 
 	ctx := context.Background()
 	result, err := fw.Run(ctx, agentflow.RunRequest{

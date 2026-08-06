@@ -90,7 +90,7 @@ func (l *Loader) loadURL(ctx context.Context, rawURL string) (knowledge.Document
 	if err != nil {
 		return knowledge.Document{}, fmt.Errorf("http knowledge loader: fetch %q: %w", rawURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return knowledge.Document{}, fmt.Errorf("http knowledge loader: fetch %q: unexpected status %s", rawURL, resp.Status)
 	}

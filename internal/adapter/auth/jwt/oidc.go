@@ -206,7 +206,7 @@ func (auth *OIDCAuthenticator) discoverLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("oidc auth: discovery: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("oidc auth: discovery status %d", resp.StatusCode)
 	}
@@ -237,7 +237,7 @@ func (auth *OIDCAuthenticator) fetchJWKS(ctx context.Context) (map[string]Key, e
 	if err != nil {
 		return nil, fmt.Errorf("oidc auth: jwks: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("oidc auth: jwks status %d", resp.StatusCode)
 	}

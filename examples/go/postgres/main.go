@@ -29,7 +29,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		if err := db.Ping(); err != nil {
 			log.Fatal(err)
 		}
@@ -44,7 +44,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer os.RemoveAll(stateDir)
+		defer func() { _ = os.RemoveAll(stateDir) }()
 		repo, err := adapters.NewFileRunStateRepository(filepath.Join(stateDir, "runs"))
 		if err != nil {
 			log.Fatal(err)
@@ -61,7 +61,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer fw.Close(context.Background())
+	defer func() { _ = fw.Close(context.Background()) }()
 
 	result, err := fw.Run(context.Background(), agentflow.RunRequest{
 		RunID:  "postgres-example-run",

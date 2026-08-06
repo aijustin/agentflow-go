@@ -103,7 +103,7 @@ func (executor *Executor) Execute(ctx context.Context, call core.ToolCall) (core
 	if err != nil {
 		return core.ToolResult{}, fmt.Errorf("sql tool: query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	columns, err := rows.Columns()
 	if err != nil {
 		return core.ToolResult{}, fmt.Errorf("sql tool: columns: %w", err)

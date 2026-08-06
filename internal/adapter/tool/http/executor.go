@@ -139,7 +139,7 @@ func (e *Executor) Execute(ctx context.Context, call core.ToolCall) (core.ToolRe
 	if err != nil {
 		return core.ToolResult{}, fmt.Errorf("http tool: request %q: %w", parsed.String(), err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	content, err := readLimited(resp.Body, e.maxResponseBytes)
 	if err != nil {
 		return core.ToolResult{}, fmt.Errorf("http tool: read response: %w", err)

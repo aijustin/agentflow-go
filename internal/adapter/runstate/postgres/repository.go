@@ -366,7 +366,7 @@ func (r *Repository) querySnapshots(ctx context.Context, query string, args []an
 	if err != nil {
 		return nil, fmt.Errorf("postgres runstate: list snapshots: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []runstate.RunSnapshot
 	for rows.Next() {
 		var data []byte

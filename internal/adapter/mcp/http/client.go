@@ -162,7 +162,7 @@ func (c *Client) Terminate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	c.sessionID = ""
 	c.ready = false
@@ -291,7 +291,7 @@ func (c *Client) roundTrip(ctx context.Context, method string, params json.RawMe
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == nethttp.StatusNotFound && sessionID != "" {
 		return "", errSessionGone
 	}
@@ -348,7 +348,7 @@ func (c *Client) notifyLocked(ctx context.Context, method string, params json.Ra
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 400 && resp.StatusCode != nethttp.StatusAccepted {
 		return fmt.Errorf("mcp http: notification: unexpected status %s", resp.Status)

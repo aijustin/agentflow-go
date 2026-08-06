@@ -104,7 +104,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer fw.Close(context.Background())
+	defer func() { _ = fw.Close(context.Background()) }()
 
 	studioSavePath := envOr("AGENT_STUDIO_SCENARIO_PATH", filepath.Join(".studio", "scenario.yaml"))
 	if err := os.MkdirAll(filepath.Dir(studioSavePath), 0o700); err != nil {

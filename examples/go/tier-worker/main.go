@@ -62,7 +62,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		if err := db.PingContext(ctx); err != nil {
 			log.Fatal(err)
 		}
@@ -104,7 +104,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer fw.Close(context.Background())
+	defer func() { _ = fw.Close(context.Background()) }()
 
 	handler, err := httpx.NewProductionHTTPHandler(httpx.ProductionHTTPHandlerConfig{
 		Queue:          queue,

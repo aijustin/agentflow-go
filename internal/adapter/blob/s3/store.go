@@ -112,7 +112,7 @@ func (s *Store) Put(ctx context.Context, data []byte) (runstate.BlobRef, error) 
 	if err != nil {
 		return runstate.BlobRef{}, fmt.Errorf("s3 blob: put %s: %w", ref.ID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		return runstate.BlobRef{}, responseError("put", ref.ID, resp)
 	}
@@ -142,7 +142,7 @@ func (s *Store) Get(ctx context.Context, ref runstate.BlobRef) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("s3 blob: get %s: %w", ref.ID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, runstate.ErrNotFound
 	}
@@ -188,11 +188,11 @@ func (s *Store) List(ctx context.Context) ([]runstate.BlobRef, error) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			err := responseError("list", "", resp)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, err
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("s3 blob: read list response: %w", err)
 		}
@@ -242,7 +242,7 @@ func (s *Store) Delete(ctx context.Context, ref runstate.BlobRef) error {
 	if err != nil {
 		return fmt.Errorf("s3 blob: delete %s: %w", ref.ID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil
 	}

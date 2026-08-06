@@ -126,7 +126,7 @@ ORDER BY last_access_at DESC`, s.table)
 	if err != nil {
 		return nil, fmt.Errorf("postgres tier store: list: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]tier.Record, 0)
 	for rows.Next() {
 		var raw []byte

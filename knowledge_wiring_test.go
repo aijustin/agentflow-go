@@ -2,8 +2,9 @@ package agentflow_test
 
 import (
 	"context"
-	"github.com/aijustin/agentflow-go/pkg/httpx"
 	"testing"
+
+	"github.com/aijustin/agentflow-go/pkg/httpx"
 
 	"github.com/aijustin/agentflow-go"
 	"github.com/aijustin/agentflow-go/pkg/core"

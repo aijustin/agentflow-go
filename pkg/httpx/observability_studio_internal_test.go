@@ -3,11 +3,12 @@ package httpx
 import (
 	"context"
 	"encoding/json"
-	agentflow "github.com/aijustin/agentflow-go"
-	"github.com/aijustin/agentflow-go/pkg/adapters"
 	"os"
 	"path/filepath"
 	"testing"
+
+	agentflow "github.com/aijustin/agentflow-go"
+	"github.com/aijustin/agentflow-go/pkg/adapters"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/graph"
