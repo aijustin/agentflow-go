@@ -120,11 +120,16 @@ type Request struct {
 	// Reservation holds the execution-budget reservation once the budget
 	// inspector reserved the call; the dispatcher settles it exactly once.
 	Reservation Reservation
-	// CallCount and SameInputCalls are the committed per-tool / per-input
-	// counts observed when the budget inspector reserved the call; downstream
-	// inspectors (e.g. governance) use them for rate decisions.
+	// CallCount and SameInputCalls are the per-tool / per-input counts observed
+	// under the tracker lock when the budget inspector reserved the call:
+	// committed counts plus other in-flight reservations in the same parallel
+	// batch (excluding this call). Downstream inspectors (e.g. governance) use
+	// them for rate decisions that must hold under concurrent batches.
 	CallCount      int
 	SameInputCalls int
+	// TotalCalls is the run-wide counterpart of CallCount (committed plus
+	// other in-flight reservations across all tool names).
+	TotalCalls int
 }
 
 // Inspector evaluates one tool call and returns a verdict. Implementations

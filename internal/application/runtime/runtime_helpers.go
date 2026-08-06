@@ -837,6 +837,15 @@ func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause erro
 		snapshot.Variables[runErrorMessageVar] = raw
 		return nil
 	}); err != nil {
+		// Retry exhaustion is logged, not force-overwritten: a writer that
+		// keeps winning the CAS race for all jittered attempts is actively
+		// advancing this run (step outputs, pause, cancellation), and a blind
+		// terminal write could clobber a legitimate Paused/Cancelled state —
+		// a worse outcome than a Running run that a reaper (or, for leased
+		// runs, the fence) can still recover. ErrStaleFence already passed
+		// through unretried inside saveSnapshotWithRetry, so reaching this
+		// branch means either persistent storage failure or an unmanaged
+		// concurrent writer, never a superseded lease we should fight.
 		e.logWarn(persistCtx, "runtime: failed to persist run failure status", "run_id", runID, "save_error", err)
 		return
 	}
@@ -870,6 +879,8 @@ func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 		}
 		return nil
 	}); err != nil {
+		// Same trade-off as markRunFailedMode above: log, never force-write
+		// over an actively advancing concurrent writer.
 		e.logWarn(persistCtx, "runtime: failed to persist run cancellation status", "run_id", runID, "save_error", err)
 		return
 	}

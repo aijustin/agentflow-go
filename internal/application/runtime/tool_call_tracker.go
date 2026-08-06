@@ -58,24 +58,34 @@ type toolCallReservation struct {
 	active      bool
 }
 
+// toolCallCounts is the governance-facing budget view captured under the
+// tracker lock at reservation time: committed counts plus the in-flight
+// reservations of sibling calls in a parallel batch (excluding the reserving
+// call itself). A committed-only reading would let N concurrent calls each
+// observe the same pre-batch counts and collectively overrun a governance
+// budget; this view makes the budget check as atomic as the reservation.
+type toolCallCounts struct {
+	byName      int
+	bySameInput int
+	total       int
+}
+
 // reserveToolCall atomically checks and reserves the per-tool execution
 // budget. Reservations account for in-flight sibling calls in a parallel
 // batch, while committed maps preserve the checkpoint format and its
 // historical semantics (successful calls by name, all attempts by input).
-func (t *toolCallTracker) reserveToolCall(name string, input json.RawMessage, doomLoopLimit, rateCap int) (toolCallReservation, int, int, string) {
+func (t *toolCallTracker) reserveToolCall(name string, input json.RawMessage, doomLoopLimit, rateCap int) (toolCallReservation, toolCallCounts, string) {
 	t = t.ensure()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.initMapsLocked()
 
 	fingerprint := toolInputFingerprint(name, input)
-	priorCalls := t.ByName[name]
-	priorSameInputCalls := t.BySameInput[fingerprint]
-	if doomLoopLimit > 0 && priorSameInputCalls+t.reservedBySameInput[fingerprint]+1 >= doomLoopLimit {
-		return toolCallReservation{}, priorCalls, priorSameInputCalls, formatDoomLoopError(name, doomLoopLimit)
+	if doomLoopLimit > 0 && t.BySameInput[fingerprint]+t.reservedBySameInput[fingerprint]+1 >= doomLoopLimit {
+		return toolCallReservation{}, toolCallCounts{}, formatDoomLoopError(name, doomLoopLimit)
 	}
-	if rateCap > 0 && priorCalls+t.reservedByName[name] >= rateCap {
-		return toolCallReservation{}, priorCalls, priorSameInputCalls, fmt.Sprintf("tool rate cap exceeded: %d call(s) per run", rateCap)
+	if rateCap > 0 && t.ByName[name]+t.reservedByName[name] >= rateCap {
+		return toolCallReservation{}, toolCallCounts{}, fmt.Sprintf("tool rate cap exceeded: %d call(s) per run", rateCap)
 	}
 	t.reservedByName[name]++
 	t.reservedBySameInput[fingerprint]++
@@ -84,7 +94,27 @@ func (t *toolCallTracker) reserveToolCall(name string, input json.RawMessage, do
 		name:        name,
 		fingerprint: fingerprint,
 		active:      true,
-	}, priorCalls, priorSameInputCalls, ""
+	}, t.countsLocked(name, fingerprint), ""
+}
+
+// countsLocked computes the governance budget view for a call that has just
+// been reserved (its own reservation is already in the maps, hence the -1:
+// the view reports prior committed plus *other* in-flight calls). Must be
+// called with t.mu held.
+func (t *toolCallTracker) countsLocked(name, fingerprint string) toolCallCounts {
+	totalCommitted := 0
+	for _, count := range t.ByName {
+		totalCommitted += count
+	}
+	totalReserved := 0
+	for _, count := range t.reservedByName {
+		totalReserved += count
+	}
+	return toolCallCounts{
+		byName:      t.ByName[name] + t.reservedByName[name] - 1,
+		bySameInput: t.BySameInput[fingerprint] + t.reservedBySameInput[fingerprint] - 1,
+		total:       totalCommitted + totalReserved - 1,
+	}
 }
 
 func (r *toolCallReservation) release() {

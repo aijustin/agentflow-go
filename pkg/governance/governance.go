@@ -18,15 +18,20 @@ type ToolInvocation struct {
 	Tool       string
 	SideEffect core.SideEffectLevel
 	Input      json.RawMessage
-	// CallCount is the number of prior successful invocations of this tool
-	// name in the current autonomous tool loop (used by RateCap and per-tool budgets).
+	// CallCount is the number of prior invocations of this tool name in the
+	// current autonomous tool loop: committed successes plus calls still
+	// in flight in the same parallel batch (used by RateCap and per-tool
+	// budgets). Counting in-flight calls keeps the budget exact when a batch
+	// of sibling calls is checked concurrently.
 	CallCount int
 	// SameInputCalls is the number of prior attempts (success, failure, or
 	// governance denial) with the same tool name and canonical input in the
-	// current autonomous tool loop. Loop-guard policies should use this field.
+	// current autonomous tool loop, again including in-flight batch siblings.
+	// Loop-guard policies should use this field.
 	SameInputCalls int
-	TotalCalls     int
-	Metadata       map[string]string
+	// TotalCalls is the run-wide counterpart of CallCount across all tools.
+	TotalCalls int
+	Metadata   map[string]string
 }
 
 type ToolPolicy interface {

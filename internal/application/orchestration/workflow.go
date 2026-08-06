@@ -551,14 +551,21 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if err := toolinvoke.ValidateInput(validateToolInput, tool, input); err != nil {
 		return fmt.Errorf("orchestration: tool %q: %w", node.Ref, err)
 	}
+	rateCapReserved := false
 	if tool.RateCap > 0 {
-		count, err := r.toolCallCount(ctx, runID, node.Ref)
-		if err != nil {
+		// Check-and-reserve is one atomic CAS pass: parallel sibling nodes
+		// cannot both observe count < RateCap and both execute.
+		if err := r.reserveWorkflowToolCall(ctx, runID, node.Ref, tool.RateCap); err != nil {
 			return err
 		}
-		if count >= tool.RateCap {
-			return fmt.Errorf("orchestration: tool %q rate cap exceeded: %d call(s) per run", node.Ref, tool.RateCap)
-		}
+		rateCapReserved = true
+		// Any exit before a successful execution returns the reservation so
+		// the cap keeps counting successful executions only.
+		defer func() {
+			if rateCapReserved {
+				r.releaseWorkflowToolCall(ctx, runID, node.Ref)
+			}
+		}()
 	}
 	resource := toolinvoke.SecurityResource(node.Ref, tool, map[string]string{"node_id": node.ID})
 	if err := r.authorizeTool(ctx, runID, resource); err != nil {
@@ -598,11 +605,11 @@ func (r *WorkflowRunner) runToolNode(ctx context.Context, scenario core.Scenario
 	if result.Error != "" {
 		return fmt.Errorf("orchestration: tool %q failed: %s", node.Ref, result.Error)
 	}
-	if tool.RateCap > 0 {
-		if err := r.incrementToolCallCount(ctx, runID, node.Ref); err != nil {
-			return err
-		}
-	}
+	// The execution succeeded: the rate-cap reservation becomes the recorded
+	// successful execution, so the deferred release must not run. This holds
+	// even if the step-output save below fails, matching the historical
+	// increment-then-persist ordering.
+	rateCapReserved = false
 	return r.saveStepOutput(ctx, scenario, runID, node.ID, result)
 }
 

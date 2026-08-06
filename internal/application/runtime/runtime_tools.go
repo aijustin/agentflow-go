@@ -102,7 +102,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 			return result, nil
 		}
 		delegateTool := core.Tool{Name: call.Name, SideEffect: core.SideEffectRead}
-		reservation, callCount, sameInputCalls, denial := tracker.reserveToolCall(
+		reservation, counts, denial := tracker.reserveToolCall(
 			call.Name,
 			call.Input,
 			e.scenario.Runtime.DoomLoopLimit,
@@ -122,7 +122,7 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 			})
 			return result, nil
 		}
-		if err := e.authorizeGovernanceTool(ctx, runID, agent, delegateTool, call, callCount, sameInputCalls, tracker.totalSuccesses()); err != nil {
+		if err := e.authorizeGovernanceTool(ctx, runID, agent, delegateTool, call, counts.byName, counts.bySameInput, counts.total); err != nil {
 			reservation.commitAttempt()
 			result := core.ToolResult{Tool: call.Name, Error: governanceBlockError(err)}
 			e.emitJSON(ctx, core.EventToolDenied, runID, map[string]any{"agent": agent.Name, "tool": call.Name, "reason": err.Error()})

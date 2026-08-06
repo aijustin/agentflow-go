@@ -62,7 +62,7 @@ func (e *Engine) builtinToolInspectors(runID string, tracker *toolCallTracker, a
 			return e.inspectExecutionBudget(tracker, req)
 		}},
 		toolinspect.InspectorFunc{InspectorName: "governance", Fn: func(ctx context.Context, req *toolinspect.Request) (toolinspect.Finding, error) {
-			return e.inspectGovernance(ctx, runID, tracker, req)
+			return e.inspectGovernance(ctx, runID, req)
 		}},
 	}
 }
@@ -168,7 +168,7 @@ func (e *Engine) inspectExecutorResolve(ctx context.Context, req *toolinspect.Re
 }
 
 func (e *Engine) inspectExecutionBudget(tracker *toolCallTracker, req *toolinspect.Request) (toolinspect.Finding, error) {
-	reservation, callCount, sameInputCalls, denial := tracker.reserveToolCall(
+	reservation, counts, denial := tracker.reserveToolCall(
 		req.Call.Name,
 		req.Call.Input,
 		e.scenario.Runtime.DoomLoopLimit,
@@ -182,13 +182,18 @@ func (e *Engine) inspectExecutionBudget(tracker *toolCallTracker, req *toolinspe
 		return toolinspect.Deny(kind, denial), nil
 	}
 	req.Reservation = &reservation
-	req.CallCount = callCount
-	req.SameInputCalls = sameInputCalls
+	req.CallCount = counts.byName
+	req.SameInputCalls = counts.bySameInput
+	req.TotalCalls = counts.total
 	return toolinspect.AllowFinding, nil
 }
 
-func (e *Engine) inspectGovernance(ctx context.Context, runID string, tracker *toolCallTracker, req *toolinspect.Request) (toolinspect.Finding, error) {
-	if err := e.authorizeGovernanceTool(ctx, runID, req.Agent, req.Tool, req.Call, req.CallCount, req.SameInputCalls, tracker.totalSuccesses()); err != nil {
+func (e *Engine) inspectGovernance(ctx context.Context, runID string, req *toolinspect.Request) (toolinspect.Finding, error) {
+	// req.CallCount/SameInputCalls/TotalCalls come from the budget inspector's
+	// reservation-time view, which already includes in-flight sibling calls,
+	// so governance budgets hold under parallel batches. A tracker re-read
+	// here would observe committed counts only and reopen the race.
+	if err := e.authorizeGovernanceTool(ctx, runID, req.Agent, req.Tool, req.Call, req.CallCount, req.SameInputCalls, req.TotalCalls); err != nil {
 		if req.Reservation != nil {
 			req.Reservation.CommitAttempt()
 		}

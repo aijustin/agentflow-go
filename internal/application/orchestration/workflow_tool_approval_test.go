@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -313,6 +314,97 @@ func TestWorkflowRunnerEnforcesRateCap(t *testing.T) {
 	err := runner.Run(context.Background(), scenario, "run-rate")
 	if err == nil || !strings.Contains(err.Error(), "rate cap exceeded") {
 		t.Fatalf("expected rate cap denial, got %v", err)
+	}
+}
+
+// DEFECT_REPORT D1: the workflow tool-call counter lives in the run snapshot
+// and is independent of the runtime's toolCallTracker. Two parallel sibling
+// nodes sharing one RateCapped tool must not both pass the check: the
+// reserve is one atomic compare-and-swap, so exactly one of them executes.
+func TestWorkflowRunnerEnforcesRateCapAcrossParallelNodes(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	reg := registry.New()
+	var executed atomic.Int32
+	if err := reg.RegisterTool("risky", toolFunc(func(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
+		executed.Add(1)
+		select {
+		case <-ctx.Done():
+			return core.ToolResult{}, ctx.Err()
+		case <-time.After(80 * time.Millisecond):
+		}
+		return core.ToolResult{Tool: call.Tool, Output: json.RawMessage(`{"ok":true}`)}, nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewWorkflowRunner(reg, repo, nil)
+	scenario := core.Scenario{
+		Name: "wf-rate-race",
+		Tools: map[string]core.Tool{
+			"risky": {Name: "risky", Type: "builtin.static", Approval: core.ApprovalNever, RateCap: 1},
+		},
+		Orchestration: core.Orchestration{
+			Mode:        core.OrchestrationFixedWorkflow,
+			MaxParallel: 2,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "first", Kind: core.NodeTool, Ref: "risky"},
+				{ID: "second", Kind: core.NodeTool, Ref: "risky"},
+			}},
+		},
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-rate-race", ScenarioName: "wf-rate-race", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	err := runner.Run(context.Background(), scenario, "run-rate-race")
+	if err == nil || !strings.Contains(err.Error(), "rate cap exceeded") {
+		t.Fatalf("expected rate cap denial, got %v", err)
+	}
+	if got := executed.Load(); got != 1 {
+		t.Fatalf("executor ran %d times, want exactly 1 (cap=1 must hold under parallelism)", got)
+	}
+}
+
+// A reserved-then-failed attempt must return its budget: the counter keeps
+// its "successful executions only" semantics, so a transient failure does
+// not permanently consume the per-run cap.
+func TestWorkflowRunnerRateCapReservationReleasedOnFailure(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	reg := registry.New()
+	var calls atomic.Int32
+	if err := reg.RegisterTool("risky", toolFunc(func(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
+		if calls.Add(1) == 1 {
+			return core.ToolResult{}, transientWorkflowError{message: "transient failure"}
+		}
+		return core.ToolResult{Tool: call.Tool, Output: json.RawMessage(`{"ok":true}`)}, nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewWorkflowRunner(reg, repo, nil)
+	scenario := core.Scenario{
+		Name: "wf-rate-release",
+		Tools: map[string]core.Tool{
+			"risky": {Name: "risky", Type: "builtin.static", Approval: core.ApprovalNever, RateCap: 1},
+		},
+		Orchestration: core.Orchestration{
+			Mode: core.OrchestrationFixedWorkflow,
+			Workflow: &core.Workflow{Nodes: []core.WorkflowNode{
+				{ID: "call", Kind: core.NodeTool, Ref: "risky", Retry: core.RetryPolicy{MaxAttempts: 2}},
+			}},
+		},
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-rate-release", ScenarioName: "wf-rate-release", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Attempt one reserves, fails, and releases; attempt two must be
+	// admitted again (cap=1 was not consumed by the failed attempt).
+	if err := runner.Run(context.Background(), scenario, "run-rate-release"); err != nil {
+		t.Fatalf("expected retry to succeed after release, got %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("executor ran %d times, want 2 (failed attempt must release the reservation)", got)
 	}
 }
 

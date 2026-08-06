@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	blobinmem "github.com/aijustin/agentflow-go/internal/adapter/blob/inmem"
@@ -226,5 +227,105 @@ func TestEngineEnsureRunActiveRejectsTerminalRun(t *testing.T) {
 	}
 	if err := engine.ensureRunActive(ctx, "run-done"); err == nil {
 		t.Fatal("expected terminal run error")
+	}
+}
+
+// conflictingRepository fails the first `failures` Save calls with a chosen
+// error, simulating a concurrent writer advancing the run version between
+// the engine's load and its compare-and-swap save.
+type conflictingRepository struct {
+	runstate.Repository
+	err      error
+	failures atomic.Int32
+	saves    atomic.Int32
+}
+
+func (r *conflictingRepository) Save(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
+	r.saves.Add(1)
+	if r.failures.Add(-1) >= 0 {
+		return r.err
+	}
+	return r.Repository.Save(ctx, snapshot, expectedVersion)
+}
+
+// DEFECT_REPORT D2: the failure/cancellation terminal transitions must ride
+// the same CAS retry as persistRunCompleted. A transient ErrStaleSnapshot
+// (concurrent snapshot advance) must not strand the run in Running.
+func TestEngineTerminalStatusSurvivesStaleSnapshotConflict(t *testing.T) {
+	cases := []struct {
+		name string
+		mark func(engine *Engine, ctx context.Context, runID string)
+		want runstate.RunStatus
+	}{
+		{
+			name: "failed",
+			mark: func(engine *Engine, ctx context.Context, runID string) {
+				engine.markRunFailed(ctx, runID, errors.New("boom"))
+			},
+			want: runstate.RunStatusFailed,
+		},
+		{
+			name: "cancelled",
+			mark: func(engine *Engine, ctx context.Context, runID string) { engine.markRunCancelled(ctx, runID) },
+			want: runstate.RunStatusCancelled,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := runstateinmem.NewRepository()
+			repo := &conflictingRepository{Repository: inner, err: runstate.ErrStaleSnapshot}
+			engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if err := inner.Save(ctx, &runstate.RunSnapshot{
+				RunID: "run-stale", ScenarioName: "scenario", Status: runstate.RunStatusRunning,
+			}, 0); err != nil {
+				t.Fatal(err)
+			}
+			repo.failures.Store(1)
+			tc.mark(engine, ctx, "run-stale")
+			loaded, err := inner.Load(ctx, "run-stale")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Status != tc.want {
+				t.Fatalf("status=%s want %s (terminal write must survive one stale conflict)", loaded.Status, tc.want)
+			}
+			if saves := repo.saves.Load(); saves < 2 {
+				t.Fatalf("expected the terminal write to be retried, saves=%d", saves)
+			}
+		})
+	}
+}
+
+// DEFECT_REPORT D2 constraint: ErrStaleFence (a superseded lease) must pass
+// through without retries — retrying can never succeed and must not race the
+// new lease holder's writes.
+func TestEngineTerminalStatusDoesNotRetryStaleFence(t *testing.T) {
+	inner := runstateinmem.NewRepository()
+	repo := &conflictingRepository{Repository: inner, err: runstate.ErrStaleFence}
+	repo.failures.Store(100)
+	engine, err := NewEngine(baseScenario(false), Dependencies{Runs: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := inner.Save(ctx, &runstate.RunSnapshot{
+		RunID: "run-fence", ScenarioName: "scenario", Status: runstate.RunStatusRunning,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	engine.markRunFailed(ctx, "run-fence", errors.New("boom"))
+	loaded, err := inner.Load(ctx, "run-fence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != runstate.RunStatusRunning {
+		t.Fatalf("status=%s want Running (stale fence must not be retried or forced)", loaded.Status)
+	}
+	if saves := repo.saves.Load(); saves != 1 {
+		t.Fatalf("expected exactly one save attempt (no retry on stale fence), got %d", saves)
 	}
 }

@@ -3,7 +3,10 @@ package orchestration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
@@ -115,29 +118,26 @@ func variableString(vars map[string]json.RawMessage, key string) string {
 	return value
 }
 
-// toolCallCount returns how many successful executions of toolRef have been
-// recorded for this run (used for RateCap). Counts persist across pauses so
-// resume cannot reset a per-run budget.
-func (r *WorkflowRunner) toolCallCount(ctx context.Context, runID, toolRef string) (int, error) {
-	if r.runs == nil {
-		return 0, nil
-	}
-	snapshot, err := runstate.LoadAuthorized(ctx, r.runs, runID)
-	if err != nil {
-		return 0, err
-	}
-	counts, err := decodeToolCallCounts(snapshot.Variables)
-	if err != nil {
-		return 0, err
-	}
-	return counts[toolRef], nil
-}
+// errWorkflowToolRateCapExceeded is the sentinel a reserve mutation returns
+// when the per-run budget is already spent; reserveWorkflowToolCall maps it
+// to the user-facing rate-cap error.
+var errWorkflowToolRateCapExceeded = errors.New("orchestration: workflow tool rate cap exceeded")
 
-func (r *WorkflowRunner) incrementToolCallCount(ctx context.Context, runID, toolRef string) error {
+// reserveWorkflowToolCall atomically checks the per-run RateCap for toolRef
+// and records the call in one compare-and-swap pass. The historical
+// implementation read the count, executed, then incremented: two parallel
+// sibling nodes could both observe count < RateCap and both execute,
+// overrunning the cap. Folding check and increment into a single
+// saveSnapshotWithRetry mutation closes that window; the reservation counts
+// against the cap immediately and is returned by releaseWorkflowToolCall
+// when the execution never completes successfully, preserving the
+// "successful executions only" semantics of the counter. Counts persist
+// across pauses so resume cannot reset a per-run budget.
+func (r *WorkflowRunner) reserveWorkflowToolCall(ctx context.Context, runID, toolRef string, rateCap int) error {
 	if r.runs == nil {
 		return nil
 	}
-	return r.saveSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
+	err := r.saveSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
 		if snapshot.Variables == nil {
 			snapshot.Variables = make(map[string]json.RawMessage)
 		}
@@ -148,6 +148,9 @@ func (r *WorkflowRunner) incrementToolCallCount(ctx context.Context, runID, tool
 		if counts == nil {
 			counts = map[string]int{}
 		}
+		if counts[toolRef] >= rateCap {
+			return errWorkflowToolRateCapExceeded
+		}
 		counts[toolRef]++
 		raw, err := json.Marshal(counts)
 		if err != nil {
@@ -156,6 +159,41 @@ func (r *WorkflowRunner) incrementToolCallCount(ctx context.Context, runID, tool
 		snapshot.Variables[workflowToolCallCountsVar] = raw
 		return nil
 	})
+	if errors.Is(err, errWorkflowToolRateCapExceeded) {
+		return fmt.Errorf("orchestration: tool %q rate cap exceeded: %d call(s) per run", toolRef, rateCap)
+	}
+	return err
+}
+
+// releaseWorkflowToolCall returns a reservation whose execution never
+// completed successfully. Best-effort: a failed release leaks one unit of
+// budget, which fails safe (fewer tool calls allowed, never more), so it
+// only logs. It detaches from the caller's context because the common
+// release path is an execution failure alongside a cancelled run context.
+func (r *WorkflowRunner) releaseWorkflowToolCall(ctx context.Context, runID, toolRef string) {
+	if r.runs == nil {
+		return
+	}
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := r.saveSnapshotWithRetry(persistCtx, runID, func(snapshot *runstate.RunSnapshot) error {
+		counts, err := decodeToolCallCounts(snapshot.Variables)
+		if err != nil {
+			return err
+		}
+		if counts[toolRef] <= 0 {
+			return nil
+		}
+		counts[toolRef]--
+		raw, err := json.Marshal(counts)
+		if err != nil {
+			return err
+		}
+		snapshot.Variables[workflowToolCallCountsVar] = raw
+		return nil
+	}); err != nil {
+		slog.WarnContext(persistCtx, "orchestration: failed to release workflow tool rate-cap reservation", "run_id", runID, "tool", toolRef, "error", err)
+	}
 }
 
 func decodeToolCallCounts(vars map[string]json.RawMessage) (map[string]int, error) {
