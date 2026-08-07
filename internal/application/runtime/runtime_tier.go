@@ -16,10 +16,10 @@ import (
 )
 
 func (e *Engine) tierManager(agent core.Agent) (tier.Manager, tier.Settings, bool) {
-	if agent.Memory == "" || e.tierMemory == nil {
+	if agent.Memory == "" || e.mem.tierMemory == nil {
 		return nil, tier.Settings{}, false
 	}
-	manager, ok := e.tierMemory[agent.Memory]
+	manager, ok := e.mem.tierMemory[agent.Memory]
 	if !ok || manager == nil {
 		return nil, tier.Settings{}, false
 	}
@@ -94,7 +94,7 @@ func (e *Engine) ReconcileTierMemory(ctx context.Context, runID, memoryName, age
 }
 
 func (e *Engine) enqueueTierReconcile(ctx context.Context, runID string, agent core.Agent) {
-	if e.enqueueMemoryReconcile == nil || agent.Memory == "" {
+	if e.mem.enqueueMemoryReconcile == nil || agent.Memory == "" {
 		return
 	}
 	payload := asyncpkg.MemoryReconcilePayload{
@@ -114,7 +114,7 @@ func (e *Engine) enqueueTierReconcile(ctx context.Context, runID string, agent c
 	// won't be scheduled; it must not fail the write itself. Log it so a
 	// stuck queue or broken enqueuer is visible instead of silently
 	// leaving tier memory unreconciled.
-	if err := e.enqueueMemoryReconcile(ctx, asyncpkg.Job{
+	if err := e.mem.enqueueMemoryReconcile(ctx, asyncpkg.Job{
 		ID:          generateRunID(),
 		Type:        asyncpkg.MemoryReconcileJobType,
 		RunID:       runID,

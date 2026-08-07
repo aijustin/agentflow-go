@@ -69,6 +69,11 @@ func assertDetachedSnapshotCancellationStopsBlockingLLM(t *testing.T, runID stri
 			Agents: map[string]core.Agent{
 				"assistant": {Name: "assistant", LLM: "default"},
 			},
+			// This test persists the cancellation straight into the repository
+			// (cross-process path, no in-process notification), so it depends
+			// on the poll fallback cadence — pin it instead of relying on the
+			// (now longer) default.
+			Runtime: core.RuntimePolicy{DetachedCancellationPollInterval: 50 * time.Millisecond},
 		},
 		agentflow.WithLLMGateway(gateway),
 	)

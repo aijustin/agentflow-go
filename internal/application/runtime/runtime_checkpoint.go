@@ -14,7 +14,7 @@ type checkpointPauseOptions struct {
 }
 
 func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, agent core.Agent, snapshot *runstate.RunSnapshot, opts checkpointPauseOptions) (RunResult, error) {
-	if e.gate == nil {
+	if e.coord.gate == nil {
 		return RunResult{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
 	}
 	if delegationDepthFromContext(ctx) > 0 {

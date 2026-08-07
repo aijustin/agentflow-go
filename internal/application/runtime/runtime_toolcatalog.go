@@ -39,12 +39,12 @@ func (s *loadedToolSet) contains(name string) bool {
 }
 
 func (e *Engine) catalogEnabled() bool {
-	return e.toolCatalog != nil
+	return e.tooling.toolCatalog != nil
 }
 
 func (e *Engine) loadedToolsForRun(runID string) *loadedToolSet {
 	set := newLoadedToolSet()
-	actual, _ := e.loadedTools.LoadOrStore(runID, set)
+	actual, _ := e.coord.loadedTools.LoadOrStore(runID, set)
 	return actual.(*loadedToolSet)
 }
 
@@ -72,11 +72,11 @@ func (e *Engine) dispatchCatalogMetaTool(ctx context.Context, runID string, agen
 		if err := json.Unmarshal(call.Input, &req); err != nil {
 			return core.ToolResult{Tool: call.Name, Error: "invalid search_tools input: " + err.Error()}, true, nil
 		}
-		results := e.toolCatalog.Search(req.Query, req.Limit)
+		results := e.tooling.toolCatalog.Search(req.Query, req.Limit)
 		payload, err := json.Marshal(map[string]any{
 			"results": results,
-			"version": e.toolCatalog.Version(),
-			"ttl_ms":  e.toolCatalog.TTL().Milliseconds(),
+			"version": e.tooling.toolCatalog.Version(),
+			"ttl_ms":  e.tooling.toolCatalog.TTL().Milliseconds(),
 		})
 		if err != nil {
 			return core.ToolResult{}, true, err
@@ -89,7 +89,7 @@ func (e *Engine) dispatchCatalogMetaTool(ctx context.Context, runID string, agen
 		if err := json.Unmarshal(call.Input, &req); err != nil {
 			return core.ToolResult{Tool: call.Name, Error: "invalid load_tool_schemas input: " + err.Error()}, true, nil
 		}
-		entries, err := e.toolCatalog.Load(req.Names)
+		entries, err := e.tooling.toolCatalog.Load(req.Names)
 		if err != nil {
 			return core.ToolResult{Tool: call.Name, Error: err.Error()}, true, nil
 		}
@@ -116,7 +116,7 @@ func (e *Engine) isCatalogPinnedTool(agent core.Agent, name string) bool {
 	if !agentAllowsTool(agent, name) {
 		return false
 	}
-	if entries, err := e.toolCatalog.Load([]string{name}); err == nil && len(entries) == 1 {
+	if entries, err := e.tooling.toolCatalog.Load([]string{name}); err == nil && len(entries) == 1 {
 		// Catalog membership is authoritative: Pin=false means deferred even
 		// when the scenario declaration uses a builtin.* executor type (hosts
 		// often register MCP tools as builtin.custom).
@@ -175,10 +175,10 @@ func (e *Engine) catalogToolSpecs(ctx context.Context, runID string, agent core.
 // catalogs (below MinTools, default 8) are advertised in full unless their
 // estimated schema overhead exceeds MaxOverheadTokens.
 func (e *Engine) catalogDeferralActive() bool {
-	if !e.deferredTools || e.toolCatalog == nil {
+	if !e.tooling.deferredTools || e.tooling.toolCatalog == nil {
 		return false
 	}
-	configured, ok := e.toolCatalog.(interface {
+	configured, ok := e.tooling.toolCatalog.(interface {
 		DeferralConfig() (toolcatalog.DeferralPolicy, bool)
 	})
 	if !ok {
@@ -188,13 +188,13 @@ func (e *Engine) catalogDeferralActive() bool {
 	if !ok {
 		return true
 	}
-	sizer, ok := e.toolCatalog.(interface{ Size() int })
+	sizer, ok := e.tooling.toolCatalog.(interface{ Size() int })
 	if !ok {
 		// Unknown catalog size: keep deferring (legacy behavior).
 		return true
 	}
 	overhead := 0
-	if estimator, ok := e.toolCatalog.(interface{ OverheadTokens() int }); ok {
+	if estimator, ok := e.tooling.toolCatalog.(interface{ OverheadTokens() int }); ok {
 		overhead = estimator.OverheadTokens()
 	}
 	return policy.ShouldDefer(sizer.Size(), overhead)
@@ -219,7 +219,7 @@ func (e *Engine) catalogToolApproval(name string) core.ApprovalPolicy {
 	if tool, ok := e.scenario.Tools[name]; ok && tool.Approval != "" {
 		return tool.Approval
 	}
-	if entries, err := e.toolCatalog.Load([]string{name}); err == nil && len(entries) == 1 {
+	if entries, err := e.tooling.toolCatalog.Load([]string{name}); err == nil && len(entries) == 1 {
 		return entries[0].Approval
 	}
 	return ""
@@ -241,7 +241,7 @@ func (e *Engine) shouldAdvertiseCatalogTool(agent core.Agent, name string, loade
 func (e *Engine) catalogAdvertisedSpec(name string) (llm.ToolSpec, bool) {
 	tool, ok := e.scenario.Tools[name]
 	if !ok {
-		if entries, err := e.toolCatalog.Load([]string{name}); err == nil && len(entries) == 1 {
+		if entries, err := e.tooling.toolCatalog.Load([]string{name}); err == nil && len(entries) == 1 {
 			entry := entries[0]
 			schema := entry.InputSchema
 			if len(schema) == 0 {

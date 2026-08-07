@@ -107,7 +107,7 @@ func (e *Engine) prepareContext(ctx context.Context, agent core.Agent, profile c
 		raw = append(raw, contextwindow.Message{Role: contextwindow.RoleUser, Content: req.Prompt})
 	}
 	prepared, stats := e.prepareRawMessages(ctx, req.RunID, agent, raw, profile)
-	if e.dualVisibility {
+	if e.mem.dualVisibility {
 		backfillVisibilityMarks(prepared, history)
 	}
 	paired, drops := enforceToolCallPairingWithStats(restorePreparedToolCalls(prepared, history))
@@ -130,7 +130,7 @@ func (e *Engine) prepareMessages(ctx context.Context, runID string, agent core.A
 		})
 	}
 	prepared, stats := e.prepareRawMessages(ctx, runID, agent, raw, profile)
-	if e.dualVisibility {
+	if e.mem.dualVisibility {
 		backfillVisibilityMarks(prepared, messages)
 	}
 	paired, drops := enforceToolCallPairingWithStats(restorePreparedToolCalls(prepared, messages))
@@ -241,7 +241,7 @@ func toolCallIDs(msg llm.Message) []string {
 }
 
 func (e *Engine) compactReminder(ctx context.Context, runID string) string {
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return ""
 	}

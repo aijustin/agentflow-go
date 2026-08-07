@@ -168,7 +168,7 @@ func TestCachedDenySoftDeniesTool(t *testing.T) {
 	if result.Error == "" || !strings.Contains(result.Error, "cached") {
 		t.Fatalf("expected cached deny, got %+v", result)
 	}
-	engine.emitter.Flush()
+	engine.obs.emitter.Flush()
 	if !events.has(core.EventToolDenied) {
 		t.Fatalf("expected ToolDenied, got %+v", events.types())
 	}
@@ -204,8 +204,8 @@ func TestDrainInterjectionsDeferUntilPostCompact(t *testing.T) {
 	if len(msgs) != 0 {
 		t.Fatalf("before_sample must skip while compacted, got %d msgs", len(msgs))
 	}
-	if engine.interjections.PendingCount("run-drain") != 1 {
-		t.Fatalf("expected pending interjection, got %d", engine.interjections.PendingCount("run-drain"))
+	if engine.mem.interjections.PendingCount("run-drain") != 1 {
+		t.Fatalf("expected pending interjection, got %d", engine.mem.interjections.PendingCount("run-drain"))
 	}
 	msgs, err = engine.drainInterjectionsIfAllowed(context.Background(), "run-drain", agent, nil, interjection.DrainPostCompact, true)
 	if err != nil {

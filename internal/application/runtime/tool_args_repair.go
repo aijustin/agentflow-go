@@ -57,7 +57,7 @@ func (e *Engine) recordToolArgsRepair(runID, callID, diagnostic string) {
 	if callID == "" {
 		return
 	}
-	set, _ := e.toolArgsRepairs.LoadOrStore(runID, &toolArgsRepairSet{byCall: map[string]string{}})
+	set, _ := e.coord.toolArgsRepairs.LoadOrStore(runID, &toolArgsRepairSet{byCall: map[string]string{}})
 	repairs := set.(*toolArgsRepairSet)
 	repairs.mu.Lock()
 	defer repairs.mu.Unlock()
@@ -65,7 +65,7 @@ func (e *Engine) recordToolArgsRepair(runID, callID, diagnostic string) {
 }
 
 func (e *Engine) toolArgsRepairFor(runID, callID string) string {
-	set, ok := e.toolArgsRepairs.Load(runID)
+	set, ok := e.coord.toolArgsRepairs.Load(runID)
 	if !ok {
 		return ""
 	}

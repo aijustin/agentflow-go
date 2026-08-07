@@ -48,7 +48,7 @@ func (e *Engine) persistPlan(ctx context.Context, runID string, rawPlan []byte, 
 
 func (e *Engine) donePlanStepToolCounts(ctx context.Context, runID string) map[string]int {
 	counts := make(map[string]int)
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return counts
 	}
@@ -119,7 +119,7 @@ func markPlanStepDoneInState(state *planExecutionState, toolName string) bool {
 }
 
 func (e *Engine) markPlanStepDone(ctx context.Context, runID, toolName string) error {
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func (e *Engine) markPlanStepDone(ctx context.Context, runID, toolName string) e
 		return err
 	}
 	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err = runstate.LoadAuthorized(ctx, e.runs, runID)
+		snapshot, err = runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 		if err != nil {
 			return err
 		}

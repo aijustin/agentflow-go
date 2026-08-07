@@ -210,7 +210,7 @@ func TestEngineAutonomousIterationCompactionFallsBackToFull(t *testing.T) {
 	}, 0); err != nil {
 		t.Fatal(err)
 	}
-	engine.iterationBases.Store("run-compact", 100) // stale baseline from before a compaction
+	engine.coord.iterationBases.Store("run-compact", 100) // stale baseline from before a compaction
 	messages := []llm.Message{
 		{Role: llm.RoleUser, Content: "go"},
 		{Role: llm.RoleAssistant, Content: "compacted answer"},

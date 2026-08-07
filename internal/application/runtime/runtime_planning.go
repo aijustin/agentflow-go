@@ -47,7 +47,7 @@ func planAllowedTools(ctx context.Context, e *Engine, runID string, agent core.A
 // the persisted plan, or "" if there is no persisted plan, it cannot be
 // read, or that step does not name a specific tool.
 func nextPlannedToolName(ctx context.Context, e *Engine, runID string) string {
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return ""
 	}
@@ -72,7 +72,7 @@ func (e *Engine) planningToolHint(ctx context.Context, runID string) string {
 	if !e.scenario.Orchestration.Planning.Enabled || !e.scenario.Orchestration.Planning.Execute {
 		return ""
 	}
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return ""
 	}
@@ -103,7 +103,7 @@ func (e *Engine) planningToolHint(ctx context.Context, runID string) string {
 // read, masking the real underlying problem behind a generic max-steps
 // error.
 func (e *Engine) planningComplete(ctx context.Context, runID string) (bool, error) {
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return false, err
 	}

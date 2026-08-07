@@ -98,6 +98,8 @@ func DisplayLabel(typ EventType) string {
 		return "Turn stop continued"
 	case EventToolArgsNormalized:
 		return "Tool arguments normalized"
+	case EventRunTerminalPersistFailed:
+		return "Run terminal persistence failed"
 	default:
 		return string(typ)
 	}

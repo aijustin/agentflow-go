@@ -37,10 +37,10 @@ import (
 // the per-run tracker; inspectors themselves are stateless.
 func (e *Engine) toolInspectorChain(runID string, tracker *toolCallTracker, approved bool) toolinspect.Chain {
 	builtins := e.builtinToolInspectors(runID, tracker, approved)
-	all := make([]toolinspect.Inspector, 0, len(e.toolInspectorPrepend)+len(builtins)+len(e.toolInspectorAppend))
-	all = append(all, e.toolInspectorPrepend...)
+	all := make([]toolinspect.Inspector, 0, len(e.tooling.toolInspectorPrepend)+len(builtins)+len(e.tooling.toolInspectorAppend))
+	all = append(all, e.tooling.toolInspectorPrepend...)
 	all = append(all, builtins...)
-	all = append(all, e.toolInspectorAppend...)
+	all = append(all, e.tooling.toolInspectorAppend...)
 	return toolinspect.NewChain(all...)
 }
 
@@ -103,10 +103,10 @@ func (e *Engine) inspectInputSchema(_ context.Context, req *toolinspect.Request)
 }
 
 func (e *Engine) inspectApprovalCache(ctx context.Context, runID string, approved bool, req *toolinspect.Request) (toolinspect.Finding, error) {
-	if approved || e.orchestrator == nil {
+	if approved || e.tooling.orchestrator == nil {
 		return toolinspect.AllowFinding, nil
 	}
-	decision, err := e.orchestrator.DecideApproval(ctx, toolorch.ApprovalRequest{
+	decision, err := e.tooling.orchestrator.DecideApproval(ctx, toolorch.ApprovalRequest{
 		RunID:         runID,
 		Tool:          req.Call.Name,
 		Input:         req.Call.Input,
@@ -127,7 +127,7 @@ func (e *Engine) inspectApprovalCache(ctx context.Context, runID string, approve
 }
 
 func (e *Engine) inspectApprovalGate(ctx context.Context, req *toolinspect.Request) (toolinspect.Finding, error) {
-	if reason := toolinvoke.DenialWithoutGate(req.Tool, e.gate != nil, req.Approved); reason != "" {
+	if reason := toolinvoke.DenialWithoutGate(req.Tool, e.coord.gate != nil, req.Approved); reason != "" {
 		return toolinspect.Finding{
 			Verdict:          toolinspect.VerdictDeny,
 			Reason:           reason,
@@ -138,7 +138,7 @@ func (e *Engine) inspectApprovalGate(ctx context.Context, req *toolinspect.Reque
 }
 
 func (e *Engine) inspectExecutorRegistry(_ context.Context, _ *toolinspect.Request) (toolinspect.Finding, error) {
-	if e.tools == nil {
+	if e.tooling.tools == nil {
 		return toolinspect.Deny("", "tool executor registry is not configured"), nil
 	}
 	return toolinspect.AllowFinding, nil
@@ -156,7 +156,7 @@ func (e *Engine) inspectSecurity(ctx context.Context, runID string, req *toolins
 }
 
 func (e *Engine) inspectExecutorResolve(ctx context.Context, req *toolinspect.Request) (toolinspect.Finding, error) {
-	executor, ok, err := e.tools.ResolveTool(ctx, req.Tool)
+	executor, ok, err := e.tooling.tools.ResolveTool(ctx, req.Tool)
 	if err != nil {
 		return toolinspect.Deny("", "resolve tool executor: "+err.Error()), nil
 	}

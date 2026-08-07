@@ -13,11 +13,11 @@
 | 级别 | 编号 | 问题 |
 |---|---|---|
 | 🔴 高 | D1 | 治理计数器 check-then-act 竞态，并行批处理可绕过 rate cap / doom loop / governance（**2026-08-06：主体已过时；governance 计数与 workflow 计数器两处残留已修复**） |
-| 🔴 高 | D2 | 失败/取消终态持久化无 CAS 重试，run 可能永久滞留 Running（**2026-08-06：经核实已修复，已补回归测试**） |
+| 🔴 高 | D2 | 失败/取消终态持久化无 CAS 重试，run 可能永久滞留 Running（**2026-08-06：经核实已修复，已补回归测试；2026-08-07 深化：重试耗尽后补 `terminal_persist_failed` 标记 + error 日志 + 诊断事件兜底**） |
 | 🟠 中 | D3 | 用 `fmt.Sprintf("%q")` 构造 JSON，可能产出非法 JSON（**2026-08-07：已修复，全部改 json.Marshal，见节内标注**） |
 | 🟠 中 | D4 | HITL 批准恢复路径未应用 `ToolOutputMaxBytes` 截断（**2026-08-07：经核实重构后截断语义已具备；本次统一为批路径 materialize 函数并补回归测试**） |
 | 🟠 中 | D5 | 审批暂停-恢复后，该轮 assistant + tool results 可能漏写 conversation memory（**2026-08-07：经核实已被重构修复，现有回归测试覆盖，复核通过**） |
-| 🟠 中 | D6 | detached stream 取消观察者每 100ms 全量 `LoadAuthorized`，DB 压力大 |
+| 🟠 中 | D6 | detached stream 取消观察者高频轮询 `LoadAuthorized`，DB 压力大（**2026-08-07：已修复——进程内定居通知 + 轮询降为跨进程兜底，默认间隔 250ms→2s**） |
 | 🟠 中 | D7 | checkpoint 写入与 `gate.Pause` 之间崩溃会留下 Running + 悬挂 checkpoint，且恢复不校验 gate token（**2026-08-07：已修复，pending_pause 标记 + fail-closed 守卫 + reaper 清理 + `ContinueRunWithToken`，见节内标注**） |
 | 🟡 低 | D8 | `EventRunCompleted` 在 final 输出外置后携带 nil payload（**2026-08-07：经核实已被重构修复，事件携带完整内容 + `output_ref` blob 引用，已补回归测试**） |
 | 🟡 低 | D9 | `ensureRunPaused` 单次 CAS 无重试，gate 已发 token 但状态仍可能 Running（**2026-08-07：已修复，改 CAS 重试，见节内标注**） |
@@ -58,6 +58,13 @@
 > - `markRunFailedMode`（`internal/application/runtime/runtime_helpers.go:807`）与 `markRunCancelled`（同文件 L865）**当前都走 `saveSnapshotWithRetry`**（5 次 jitter 退避的 CAS 重试），与 `persistRunCompleted`（L711）对称；报告所述"单次 `saveRunSnapshot` 撞 `ErrStaleSnapshot` 就放弃"已不存在。
 > - 语义约束逐项核实：①Paused / 带 tool_approval checkpoint 且非 force 仍跳过（mutate 内 `return nil`，L817 附近）；②已是 Cancelled 的补发 `EventRunCancelled` 逻辑保留（L852）；③`ErrStaleFence` 在 `saveSnapshotWithRetry`（L595 附近）只认 `ErrStaleSnapshot` 重试，fence 错误直接穿透；④重试耗尽的兜底选择了**不强制覆盖写、仅告警**：能连续赢 5 次 jitter CAS 的写者正在活跃推进该 run（step output / pause / cancel），盲目终态写可能覆盖合法的 Paused/Cancelled——比滞留 Running 更糟（滞留可被 reaper / `RetryFailedRun` 恢复，被覆盖的 Paused run 其审批 token 作废）。`markRunAbandoned` 位于 Framework 层且需要 fence token，不适合 engine 层直接复用。权衡已写入 `markRunFailedMode` 的注释。
 > - **回归测试**：`runtime_helpers_unit_test.go` `TestEngineTerminalStatusSurvivesStaleSnapshotConflict`（表驱动 failed/cancelled，注入一次 `ErrStaleSnapshot` 后断言终态落库且确实发生重试）与 `TestEngineTerminalStatusDoesNotRetryStaleFence`（注入 `ErrStaleFence` 断言恰好一次写尝试、不重试不强写）。均经 `-race -count=3` 验证。
+>
+> **深化（2026-08-07）：重试耗尽后的兜底。**
+>
+> - 此前重试耗尽仅 `logWarn`，run 滞留 Running 且本进程仍持有（并续期）lease，reaper 探测 lease 成功不会收。现 `markRunFailedMode` / `markRunCancelled` 的耗尽分支统一走 `handleTerminalPersistExhausted`（`runtime_helpers.go`）：error 级日志 + 新诊断事件 `RunTerminalPersistFailed`（`core.EventRunTerminalPersistFailed`，payload 仅 target_status 与 save_error，不含敏感数据）+ best-effort 打 `terminal_persist_failed` 快照变量（`runstate.VarTerminalPersistFailed`，值为目标终态），供 reaper/巡检区分"worker 已结束但定居失败"与真实存活 run。
+> - **仍不引入强制写**：标记写入本身也是乐观 CAS（撞冲突就不标），不覆盖活跃并发写者；`ErrStaleFence` 路径保持原语义（新 lease 持有者会定居，单次写尝试、warn 级、不打标记不发事件）。
+> - **未释放 lease 的原因**：lease handle（locker + fencing token）由 facade `holdRunLease`（根包 `lease.go`）的续期循环持有，engine 只能从 context 读到 owner/token，拿不到 locker/lease 句柄，无法安全 Release；故采用任务允许的最小替代（显式标记）。
+> - **回归测试**：`runtime_terminal_persist_test.go` `TestEngineTerminalPersistExhaustionStampsMarker`（表驱动 failed/cancelled，注入 5 次持续 CAS 冲突 → 断言 run 仍 Running、标记落库、error 日志与诊断事件、恰 6 次写尝试）、`TestEngineTerminalPersistExhaustionSkipsMarkerOnStaleFence`（fence 路径无标记/无 error 日志/恰 1 次写）、`TestEngineTerminalPersistSuccessLeavesNoMarker`（正常路径不受影响）。均经 `-race -count=3` 验证。
 
 - **位置**：`internal/application/runtime/runtime_helpers.go`
   - `persistRunCompleted`（L673/L679）→ `saveSnapshotWithRetry`（带 CAS 冲突重试）✅
@@ -113,10 +120,16 @@
 
 ### D6 detached stream 取消观察者高频轮询授权表
 
+> **状态（2026-08-07）：已修复（进程内通知快路径 + 轮询慢路径兜底）。**
+>
+> - **进程内通知**：新增 per-Engine `runStatusNotifier`（`internal/application/runtime/runtime_status_notify.go`，mutex + runID→wake channel 订阅表）。engine 的定居辅助函数（`markRunFailedMode`/`markRunCancelled`/`ensureRunPaused`/`persistRunCompleted`，集中在 `runtime_helpers.go`）在持久化尝试后广播 runID 唤醒提示；detached cancellation watcher（`runtime.go`）订阅该 runID，收到提示立即唤醒重判。注册/注销经 `subscribe` 返回的幂等 unsubscribe，watcher 退出即注销，无残留条目。
+> - **轮询降为跨进程兜底**：跨进程取消（其他节点直接写库）不产生进程内通知，正确性仍由轮询保证——通知只是提示，watcher 唤醒后仍重新 `LoadAuthorized` 确认状态（防误报/乱序）；无通知路径行为与修复前完全一致。默认轮询间隔 `defaultDetachedCancellationPollInterval` 250ms→**2s**（配置键 `detached_cancellation_poll_interval` 不变），单 detached run 的稳态读压力约降 8 倍。
+> - **回归测试**：`runtime_detached_notify_test.go` `TestEngineDetachedWatcherWakesOnInProcessSettle`（轮询设 10s，本进程 `MarkRunCancelled` 后 watcher 在 2s 内终止阻塞 LLM，证明走通知路径；并断言 run 结束后 notifier 无残留订阅）、`TestEngineDetachedWatcherPollFallbackDetectsExternalCancellation`（直接写 repository 模拟跨进程取消，50ms 轮询兜底生效）、`TestRunStatusNotifierSubscribeNotifyUnsubscribe`（唤醒合并/幂等注销/无泄漏）。框架层 `framework_stream_cancel_repro_test.go` 改为显式配置 50ms 轮询（原来隐式依赖旧默认值）。均经 `-race -count=3` 验证。
+
 - **位置**：detached stream 的 cancellation watcher（framework.go / runtime stream 相关）。
-- **现象**：每 100ms 全量 `LoadAuthorized` 一次，用于检测授权撤销。
+- **现象**：每 100ms 全量 `LoadAuthorized` 一次，用于检测授权撤销。（**注**：修复前实际默认间隔为 250ms，见 `defaultDetachedCancellationPollInterval`；问题本质——稳态高频轮询——不变。）
 - **后果**：长时运行的 streaming run 会在整个生命周期内对授权存储形成稳定高频读压力；多 run 并发时放大。
-- **修复方向**：延长间隔（如 5–10s）+ 指数退避；或改为事件/订阅式失效通知；至少把间隔提为可配置项。
+- **修复方向**：延长间隔（如 5–10s）+ 指数退避；或改为事件/订阅式失效通知；至少把间隔提为可配置项。（**已按"事件/订阅式失效通知 + 轮询兜底"实施，见上。**）
 
 ### D7 checkpoint 写入与 gate.Pause 之间崩溃 → 悬挂 checkpoint；恢复不校验 token
 

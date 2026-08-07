@@ -385,7 +385,7 @@ func (e *Engine) streamAnswer(ctx context.Context, req RunRequest) (<-chan llm.C
 		cancel()
 		return nil, core.Agent{}, nil, fmt.Errorf("runtime: llm profile %q does not support streaming", agent.LLM)
 	}
-	e.emitJSON(ctx, core.EventLLMCalled, req.RunID, llmCalledPayload(e.llmPayloadCapture, map[string]any{"profile": agent.LLM, "stream": true}, baseReq.Messages))
+	e.emitJSON(ctx, core.EventLLMCalled, req.RunID, llmCalledPayload(e.obs.llmPayloadCapture, map[string]any{"profile": agent.LLM, "stream": true}, baseReq.Messages))
 	streamStart := time.Now()
 	streamCtx, llmSpan := e.startLLMCallSpan(ctx, req.RunID, agent, profile,
 		observability.Attribute{Key: "stream", Value: "true"})
@@ -666,8 +666,8 @@ func (e *Engine) answerWithToolsFrom(
 				messages = continued
 				continue
 			}
-			if e.turnStopHook != nil {
-				decision, hookErr := e.turnStopHook(ctx, core.TurnStopInfo{
+			if e.hooks.turnStopHook != nil {
+				decision, hookErr := e.hooks.turnStopHook(ctx, core.TurnStopInfo{
 					RunID:  runID,
 					Agent:  agent.Name,
 					Answer: resp.Message.Content,
@@ -874,7 +874,7 @@ func (e *Engine) chatWithRetry(ctx context.Context, runID string, agent core.Age
 			return llm.ChatResponse{}, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.llmPayloadCapture, map[string]any{
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.obs.llmPayloadCapture, map[string]any{
 			"profile": agent.LLM,
 			"tools":   false,
 			"attempt": attempt,
@@ -925,7 +925,7 @@ func (e *Engine) chatWithToolsWithRetry(ctx context.Context, runID string, agent
 			return llm.ToolCallResponse{}, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.llmPayloadCapture, map[string]any{
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.obs.llmPayloadCapture, map[string]any{
 			"profile": agent.LLM,
 			"tools":   true,
 			"step":    step,
@@ -1077,7 +1077,7 @@ func (e *Engine) structuredWithRetry(ctx context.Context, runID string, agent co
 			return nil, err
 		}
 		callCtx, cancel := e.withTimeout(ctx, profile.Timeout)
-		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.llmPayloadCapture, map[string]any{
+		e.emitJSON(callCtx, core.EventLLMCalled, runID, llmCalledPayload(e.obs.llmPayloadCapture, map[string]any{
 			"profile":    agent.LLM,
 			"structured": true,
 			"attempt":    attempt,
@@ -1200,10 +1200,10 @@ func (e *Engine) startLLMCallSpan(ctx context.Context, runID string, agent core.
 // and counted, and the logical-call latency is observed either way.
 func (e *Engine) finishLLMCall(ctx context.Context, span observability.Span, profileName string, start time.Time, err error) {
 	attrs := []observability.Attribute{{Key: "profile", Value: profileName}}
-	e.recorder.ObserveHistogram(ctx, observability.MetricLLMDurationSeconds, time.Since(start).Seconds(), attrs...)
+	e.obs.recorder.ObserveHistogram(ctx, observability.MetricLLMDurationSeconds, time.Since(start).Seconds(), attrs...)
 	if err != nil {
 		span.RecordError(err)
-		e.recorder.IncCounter(ctx, observability.MetricLLMErrorsTotal, attrs...)
+		e.obs.recorder.IncCounter(ctx, observability.MetricLLMErrorsTotal, attrs...)
 	}
 	span.End()
 }
@@ -1227,7 +1227,7 @@ func (e *Engine) recordLLMUsage(ctx context.Context, runID string, profileName s
 		{"completion", usage.OutputTokens},
 	} {
 		if bucket.tokens > 0 {
-			e.recorder.AddCounter(ctx, observability.MetricLLMTokensTotal, float64(bucket.tokens),
+			e.obs.recorder.AddCounter(ctx, observability.MetricLLMTokensTotal, float64(bucket.tokens),
 				observability.Attribute{Key: "profile", Value: profileName},
 				observability.Attribute{Key: "kind", Value: bucket.kind})
 		}

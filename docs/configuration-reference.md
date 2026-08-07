@@ -464,7 +464,7 @@ go run ./examples/go/event-trigger/main.go
 | `hitl_deny_limit` | 整数 | 否 | 连续审批拒绝（soft deny / cached deny）达到该次数时失败结束 run；`0` 关闭。与 `doom_loop_limit` 正交。 |
 | `step_output_threshold` | 整数 | 否 | 单步输出超过该字节阈值时外置到已配置的 BlobStore；未配置 BlobStore 或未超过阈值时继续内联保存。 |
 | `secrets` | 字符串映射 | 否 | Secret 引用。敏感值建议优先使用环境变量。 |
-| `detached_cancellation_poll_interval` | duration | 否 | detached 流式运行的取消轮询间隔（watcher 周期性重载 run 快照以感知跨进程取消）；`0` 或负值回落默认 `250ms`。 |
+| `detached_cancellation_poll_interval` | duration | 否 | detached 流式运行的取消轮询间隔（watcher 周期性重载 run 快照以感知**跨进程**取消；本进程内的定居会经进程内通知立即唤醒 watcher，轮询仅为跨进程兜底）；`0` 或负值回落默认 `2s`。 |
 
 大输出外置适合 SQL/RAG/长文档生成等大载荷场景，用来控制 RunState 的数据库行大小和 Redis 内存占用。生产环境可以通过 `WithBlobStore` 接入文件、内存或 S3-compatible BlobStore；S3 兼容实现面向 MinIO、AWS S3 path-style endpoint，以及通过 path-style SigV4 `PUT`/`GET` 验证的腾讯云 COS/阿里云 OSS 兼容接口。原生 COS/OSS API 需要独立适配器实现同一个 `runstate.BlobStore` 契约。
 

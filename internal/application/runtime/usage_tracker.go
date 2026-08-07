@@ -127,7 +127,7 @@ func decodeUsageTracker(raw json.RawMessage) (*usageTracker, error) {
 // entry is dropped by clearRunScopedState once the run reaches a terminal
 // state, so a long-lived worker does not accumulate stale entries.
 func (e *Engine) usageTrackerFor(runID string) *usageTracker {
-	tracker, _ := e.usageTrackers.LoadOrStore(runID, newUsageTracker())
+	tracker, _ := e.coord.usageTrackers.LoadOrStore(runID, newUsageTracker())
 	return tracker.(*usageTracker)
 }
 
@@ -137,5 +137,5 @@ func (e *Engine) restoreUsageTracker(runID string, tracker *usageTracker) {
 	if tracker == nil {
 		tracker = newUsageTracker()
 	}
-	e.usageTrackers.Store(runID, tracker)
+	e.coord.usageTrackers.Store(runID, tracker)
 }

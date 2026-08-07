@@ -22,6 +22,13 @@ const (
 	// confirms an approval; a Running run still carrying it must not have its
 	// checkpoint executed.
 	VarCheckpointPendingPause = "checkpoint_pending_pause"
+	// VarTerminalPersistFailed marks a Running run whose worker finished
+	// executing but exhausted every retry persisting the terminal status
+	// (failed/cancelled). The value is the intended target status. The
+	// abandoned-run reaper and operator inspection use it to distinguish
+	// "worker done, settle lost to persistent CAS conflicts" from a genuinely
+	// live run.
+	VarTerminalPersistFailed = "terminal_persist_failed"
 )
 
 // Hybrid / checkpoint phase values stored under VarExecutionPhase.

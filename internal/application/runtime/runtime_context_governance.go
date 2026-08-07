@@ -24,7 +24,7 @@ const contextSummaryTimeout = 10 * time.Second
 func (e *Engine) contextManager(ctx context.Context, runID string, agent core.Agent, policy contextwindow.Policy) *contextwindow.Manager {
 	normalized := policy.Normalize()
 	var opts []contextwindow.ManagerOption
-	if e.dualVisibility {
+	if e.mem.dualVisibility {
 		opts = append(opts, contextwindow.WithMarkInsteadOfDrop(true))
 	}
 	if normalized.SummaryMode != "llm" || e.llm == nil {
@@ -71,7 +71,7 @@ func (e *Engine) contextManager(ctx context.Context, runID string, agent core.Ag
 }
 
 func (e *Engine) redactSummaryContent(ctx context.Context, runID string, msg contextwindow.Message) string {
-	if e.redactor == nil || msg.Content == "" {
+	if e.gov.redactor == nil || msg.Content == "" {
 		return msg.Content
 	}
 	raw, err := json.Marshal(struct {
@@ -80,7 +80,7 @@ func (e *Engine) redactSummaryContent(ctx context.Context, runID string, msg con
 	if err != nil {
 		return msg.Content
 	}
-	redacted, err := e.redactor.RedactOutput(ctx, governance.OutputRedaction{
+	redacted, err := e.gov.redactor.RedactOutput(ctx, governance.OutputRedaction{
 		RunID:  runID,
 		StepID: "context_summary",
 		Kind:   "context_summary." + string(msg.Role),

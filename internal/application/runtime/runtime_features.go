@@ -14,7 +14,7 @@ import (
 // tool-calling gateway. A wrapper that panics or returns nil is skipped
 // (logged) so one broken feature cannot take down the tool loop.
 func (e *Engine) wrapToolCaller(caller llm.ToolCaller) llm.ToolCaller {
-	for _, wrap := range e.llmToolCallerWrappers {
+	for _, wrap := range e.hooks.llmToolCallerWrappers {
 		wrapped, err := safecall.Invoke("runtime: feature llm middleware", func() (llm.ToolCaller, error) {
 			return wrap(caller), nil
 		})
@@ -35,7 +35,7 @@ func (e *Engine) wrapToolCaller(caller llm.ToolCaller) llm.ToolCaller {
 // step. Hook panics are recovered and logged (safecall isolation), matching
 // the feature collection error-isolation contract.
 func (e *Engine) runStepFinishHooks(ctx context.Context, info feature.StepInfo) {
-	for _, hooks := range e.loopHooks {
+	for _, hooks := range e.hooks.loopHooks {
 		if hooks.OnStepFinish == nil {
 			continue
 		}
@@ -76,7 +76,7 @@ func (e *featureStopError) TerminationReason() string {
 // step. A failing (panicking) condition is logged and skipped, like any other
 // isolated feature contribution.
 func (e *Engine) evaluateStopConditions(ctx context.Context, info feature.StepInfo) error {
-	for _, condition := range e.stopConditions {
+	for _, condition := range e.hooks.stopConditions {
 		if condition == nil {
 			continue
 		}

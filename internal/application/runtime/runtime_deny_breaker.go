@@ -9,19 +9,19 @@ import (
 )
 
 func (e *Engine) noteApprovalDeny(ctx context.Context, runID, tool string) error {
-	if e == nil || e.denyBreaker == nil {
+	if e == nil || e.tooling.denyBreaker == nil {
 		return nil
 	}
-	tripped, count := e.denyBreaker.RecordDeny(runID)
+	tripped, count := e.tooling.denyBreaker.RecordDeny(runID)
 	if !tripped {
 		return nil
 	}
 	e.emitJSON(ctx, core.EventHITLDenyBreakerTripped, runID, map[string]any{
 		"tool":  tool,
 		"count": count,
-		"limit": e.denyBreaker.Limit(),
+		"limit": e.tooling.denyBreaker.Limit(),
 	})
-	return toolorch.TripError(e.denyBreaker.Limit(), count)
+	return toolorch.TripError(e.tooling.denyBreaker.Limit(), count)
 }
 
 // RememberHITLReject records a human rejection against the approval cache and
@@ -30,7 +30,7 @@ func (e *Engine) RememberHITLReject(ctx context.Context, runID string) {
 	if e == nil || runID == "" {
 		return
 	}
-	snapshot, err := e.runs.Load(ctx, runID)
+	snapshot, err := e.persist.runs.Load(ctx, runID)
 	if err == nil {
 		var pending []struct {
 			Name  string          `json:"name"`
@@ -40,7 +40,7 @@ func (e *Engine) RememberHITLReject(ctx context.Context, runID string) {
 		if raw := snapshot.Variables[checkpointToolCallsVar]; len(raw) > 0 {
 			_ = json.Unmarshal(raw, &pending)
 			if len(pending) > 0 {
-				toolorch.RememberDeny(e.approvalStore, runID, pending[0].Name, pending[0].Input)
+				toolorch.RememberDeny(e.tooling.approvalStore, runID, pending[0].Name, pending[0].Input)
 				_ = e.noteApprovalDeny(ctx, runID, pending[0].Name)
 				return
 			}

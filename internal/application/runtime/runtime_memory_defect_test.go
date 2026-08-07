@@ -216,13 +216,13 @@ func TestEmitPairingIncompleteEmitsWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine.emitPairingIncomplete(ctx, "run-x", pairingDrops{orphanToolResults: 1, unansweredToolCalls: 2})
-	engine.emitter.Flush()
+	engine.obs.emitter.Flush()
 	if !events.has(core.EventContextIncomplete) {
 		t.Fatalf("expected ContextIncomplete event, got %+v", events.types())
 	}
 	before := events.count(core.EventContextIncomplete)
 	engine.emitPairingIncomplete(ctx, "run-x", pairingDrops{})
-	engine.emitter.Flush()
+	engine.obs.emitter.Flush()
 	if events.count(core.EventContextIncomplete) != before {
 		t.Fatal("expected no event when nothing was dropped")
 	}

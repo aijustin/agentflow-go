@@ -153,7 +153,7 @@ func (e *Engine) ContinueAfterCheckpointPhase(ctx context.Context, runID string)
 }
 
 func (e *Engine) continueAfterCheckpoint(ctx context.Context, runID string, completeRun bool) (RunResult, error) {
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -393,9 +393,9 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		if err != nil {
 			return "", err
 		}
-		toolorch.RememberAllow(e.approvalStore, runID, approved.Name, approved.Input)
-		if e.denyBreaker != nil {
-			e.denyBreaker.RecordAllow(runID)
+		toolorch.RememberAllow(e.tooling.approvalStore, runID, approved.Name, approved.Input)
+		if e.tooling.denyBreaker != nil {
+			e.tooling.denyBreaker.RecordAllow(runID)
 		}
 		// Materialize exactly like the normal batch path
 		// (materializeToolBatchItem): compaction, ToolOutputMaxBytes
@@ -548,15 +548,15 @@ func checkpointStepsConsumed(vars map[string]json.RawMessage) int {
 // toolorch.RunStateExporter stays process-local, as before.
 func (e *Engine) restoreApprovalCheckpointState(runID string, vars map[string]json.RawMessage) error {
 	if raw := vars[checkpointApprovalsVar]; len(raw) > 0 {
-		if exporter, ok := e.approvalStore.(toolorch.RunStateExporter); ok {
+		if exporter, ok := e.tooling.approvalStore.(toolorch.RunStateExporter); ok {
 			if err := exporter.ImportRun(runID, raw); err != nil {
 				return fmt.Errorf("runtime: decode checkpoint approvals: %w", err)
 			}
 		}
 	}
-	if e.denyBreaker != nil {
+	if e.tooling.denyBreaker != nil {
 		if count := checkpointIntVar(vars, checkpointDenyCountVar); count > 0 {
-			e.denyBreaker.ImportRun(runID, count)
+			e.tooling.denyBreaker.ImportRun(runID, count)
 		}
 	}
 	return nil
@@ -597,10 +597,10 @@ func variableString(vars map[string]json.RawMessage, key string) string {
 // step-output threshold, otherwise a StepOutputRef pointing at a blob.
 func (e *Engine) externalizeCheckpointVar(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	threshold := e.scenario.Runtime.StepOutputThreshold
-	if threshold <= 0 || int64(len(raw)) <= threshold || e.blobs == nil {
+	if threshold <= 0 || int64(len(raw)) <= threshold || e.persist.blobs == nil {
 		return raw, nil
 	}
-	ref, err := e.blobs.Put(ctx, raw)
+	ref, err := e.persist.blobs.Put(ctx, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -619,10 +619,10 @@ func (e *Engine) resolveCheckpointVar(ctx context.Context, raw json.RawMessage) 
 	if err := json.Unmarshal(trimmed, &ref); err != nil || ref.Blob == nil {
 		return raw, nil
 	}
-	if e.blobs == nil {
+	if e.persist.blobs == nil {
 		return nil, fmt.Errorf("runtime: blob store is required to resolve externalized checkpoint state")
 	}
-	return e.blobs.Get(ctx, *ref.Blob)
+	return e.persist.blobs.Get(ctx, *ref.Blob)
 }
 
 func (e *Engine) isBeforeFinalResumed(snapshot runstate.RunSnapshot) bool {
@@ -728,11 +728,11 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	var pauseRequired bool
 	var err error
 	if TrustModeFromContext(ctx) == TrustModeFullTrust {
-		if e.approvalEvaluator != nil {
-			pauseRequired, err = e.approvalEvaluator.PauseRequired(ctx, runID, tool, call)
+		if e.gov.approvalEvaluator != nil {
+			pauseRequired, err = e.gov.approvalEvaluator.PauseRequired(ctx, runID, tool, call)
 		}
 	} else {
-		pauseRequired, err = toolinvoke.EvaluatePauseRequired(ctx, tool, e.approvalEvaluator, runID, call)
+		pauseRequired, err = toolinvoke.EvaluatePauseRequired(ctx, tool, e.gov.approvalEvaluator, runID, call)
 	}
 	if err != nil {
 		return nil, err
@@ -740,8 +740,8 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	if !pauseRequired {
 		return nil, nil
 	}
-	if e.orchestrator != nil {
-		decision, orchErr := e.orchestrator.DecideApproval(ctx, toolorch.ApprovalRequest{
+	if e.tooling.orchestrator != nil {
+		decision, orchErr := e.tooling.orchestrator.DecideApproval(ctx, toolorch.ApprovalRequest{
 			RunID:         runID,
 			Tool:          call.Name,
 			Input:         call.Input,
@@ -758,7 +758,7 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 			return nil, nil
 		}
 	}
-	if e.gate == nil {
+	if e.coord.gate == nil {
 		return nil, nil
 	}
 	if delegationDepthFromContext(ctx) > 0 {
@@ -768,7 +768,7 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		// delegation returns a clear error and the parent loop continues.
 		return nil, fmt.Errorf("runtime: tool %q requires human approval, which is not supported for delegated sub-agent calls", call.Name)
 	}
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -827,13 +827,13 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 	// the checkpoint so a resume on another node restores them (see
 	// checkpointApprovalsVar). Stores without RunStateExporter support simply
 	// contribute nothing.
-	if exporter, ok := e.approvalStore.(toolorch.RunStateExporter); ok {
+	if exporter, ok := e.tooling.approvalStore.(toolorch.RunStateExporter); ok {
 		if approvalsRaw, ok := exporter.ExportRun(runID); ok {
 			vars[checkpointApprovalsVar] = approvalsRaw
 		}
 	}
-	if e.denyBreaker != nil {
-		if count := e.denyBreaker.ExportRun(runID); count > 0 {
+	if e.tooling.denyBreaker != nil {
+		if count := e.tooling.denyBreaker.ExportRun(runID); count > 0 {
 			vars[checkpointDenyCountVar] = json.RawMessage(strconv.Itoa(count))
 		}
 	}
@@ -906,11 +906,11 @@ func (e *Engine) toolPauseAttribution(ctx context.Context, tool core.Tool) (appr
 	} else {
 		approvalKind = "evaluator"
 	}
-	if e.approvalEvaluator != nil {
-		if named, ok := e.approvalEvaluator.(core.NamedToolApprovalEvaluator); ok {
+	if e.gov.approvalEvaluator != nil {
+		if named, ok := e.gov.approvalEvaluator.(core.NamedToolApprovalEvaluator); ok {
 			evaluatorName = named.Name()
 		} else if approvalKind == "evaluator" {
-			evaluatorName = fmt.Sprintf("%T", e.approvalEvaluator)
+			evaluatorName = fmt.Sprintf("%T", e.gov.approvalEvaluator)
 		}
 	}
 	return approvalKind, evaluatorName

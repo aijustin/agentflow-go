@@ -117,7 +117,7 @@ func (e *Engine) persistToolTurnFromStepOutputs(ctx context.Context, runID strin
 	if len(assistant.ToolCalls) == 0 {
 		return nil
 	}
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return err
 	}
@@ -158,10 +158,10 @@ func (e *Engine) stepOutputBytes(ctx context.Context, snapshot runstate.RunSnaps
 	if len(ref.Inline) > 0 {
 		return ref.Inline, true, nil
 	}
-	if ref.Blob == nil || e.blobs == nil {
+	if ref.Blob == nil || e.persist.blobs == nil {
 		return nil, false, nil
 	}
-	raw, err := e.blobs.Get(ctx, *ref.Blob)
+	raw, err := e.persist.blobs.Get(ctx, *ref.Blob)
 	if err != nil {
 		return nil, false, err
 	}
@@ -467,7 +467,7 @@ func (e *Engine) readTierMemory(ctx context.Context, runID string, agent core.Ag
 	payload := memoryReadPayload(agent, stored, len(stored), len(messages), recallLimit)
 	payload["tiered"] = true
 	e.emitJSON(ctx, core.EventMemoryRead, runID, payload)
-	e.recorder.ObserveHistogram(ctx, observability.MetricMemoryRecallLatencySeconds, time.Since(start).Seconds(),
+	e.obs.recorder.ObserveHistogram(ctx, observability.MetricMemoryRecallLatencySeconds, time.Since(start).Seconds(),
 		observability.Attribute{Key: "memory", Value: agent.Memory},
 	)
 	return messages, nil
@@ -535,7 +535,7 @@ func messageToTierRecord(msg memoryMessage, ns memory.Namespace) (tier.Record, e
 }
 
 func (e *Engine) rememberCognitive(ctx context.Context, runID string, agent core.Agent, msg memoryMessage) error {
-	repo, ok := e.cognitive[agent.Memory]
+	repo, ok := e.mem.cognitive[agent.Memory]
 	if !ok || repo == nil || strings.TrimSpace(msg.Content) == "" {
 		return nil
 	}
@@ -602,10 +602,10 @@ func (e *Engine) memoryNamespace(runID string, agent core.Agent) (memory.Namespa
 }
 
 func (e *Engine) memoryRepository(ctx context.Context, runID string, agent core.Agent) (memory.Repository, memory.Namespace, bool, error) {
-	if agent.Memory == "" || e.memory == nil {
+	if agent.Memory == "" || e.mem.memory == nil {
 		return nil, memory.Namespace{}, false, nil
 	}
-	repo, ok := e.memory[agent.Memory]
+	repo, ok := e.mem.memory[agent.Memory]
 	if !ok || repo == nil {
 		return nil, memory.Namespace{}, false, nil
 	}
@@ -617,14 +617,14 @@ func (e *Engine) memoryRepository(ctx context.Context, runID string, agent core.
 }
 
 func (e *Engine) redactMemoryMessage(ctx context.Context, runID string, msg memoryMessage) (string, error) {
-	if e.redactor == nil {
+	if e.gov.redactor == nil {
 		return msg.Content, nil
 	}
 	raw, err := json.Marshal(msg)
 	if err != nil {
 		return msg.Content, err
 	}
-	redacted, err := e.redactor.RedactOutput(ctx, governance.OutputRedaction{
+	redacted, err := e.gov.redactor.RedactOutput(ctx, governance.OutputRedaction{
 		RunID:  runID,
 		StepID: "memory",
 		Kind:   "memory." + msg.Role,
@@ -641,7 +641,7 @@ func (e *Engine) redactMemoryMessage(ctx context.Context, runID string, msg memo
 }
 
 func (e *Engine) authorizeMemory(ctx context.Context, runID string, agent core.Agent, action security.Action) error {
-	if e.policy == nil || agent.Memory == "" {
+	if e.gov.policy == nil || agent.Memory == "" {
 		return nil
 	}
 	principal, err := identity.RequirePrincipal(ctx)
@@ -656,7 +656,7 @@ func (e *Engine) authorizeMemory(ctx context.Context, runID string, agent core.A
 		TenantID: principal.Scope.TenantID,
 		Metadata: map[string]string{"agent": agent.Name},
 	}
-	if err := e.policy.Authorize(ctx, principal, action, resource); err != nil {
+	if err := e.gov.policy.Authorize(ctx, principal, action, resource); err != nil {
 		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principal, Action: action, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})
 		return err
 	}

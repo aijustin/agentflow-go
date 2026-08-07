@@ -182,16 +182,16 @@ func TestEngineDenyBreakerStateSurvivesNodeMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := engine2.denyBreaker.ExportRun("run-deny"); got != 0 {
+	if got := engine2.tooling.denyBreaker.ExportRun("run-deny"); got != 0 {
 		t.Fatalf("fresh node must start at 0, got %d", got)
 	}
 	if err := engine2.restoreApprovalCheckpointState("run-deny", snapshot.Variables); err != nil {
 		t.Fatal(err)
 	}
-	if got := engine2.denyBreaker.ExportRun("run-deny"); got != 1 {
+	if got := engine2.tooling.denyBreaker.ExportRun("run-deny"); got != 1 {
 		t.Fatalf("restored deny count = %d, want 1", got)
 	}
-	if decision, ok := engine2.approvalStore.Get("run-deny", toolorch.Key("risky", denyInput)); !ok || decision != toolorch.DecisionDeny {
+	if decision, ok := engine2.tooling.approvalStore.Get("run-deny", toolorch.Key("risky", denyInput)); !ok || decision != toolorch.DecisionDeny {
 		t.Fatalf("cached deny not restored: %q, %v", decision, ok)
 	}
 	// One more consecutive denial trips the breaker at limit 2.

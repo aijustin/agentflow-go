@@ -106,10 +106,10 @@ func (e *Engine) llmProfile(name string) (core.LLMProfileRef, error) {
 }
 
 func (e *Engine) ensureRunActive(ctx context.Context, runID string) error {
-	if runID == "" || e.runs == nil {
+	if runID == "" || e.persist.runs == nil {
 		return nil
 	}
-	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	loaded, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return err
 	}
@@ -136,11 +136,12 @@ func (e *Engine) ensureRunActive(ctx context.Context, runID string) error {
 // (ErrTokenSuperseded on resume).
 func (e *Engine) ensureRunPaused(ctx context.Context, runID string) error {
 	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 		if err != nil {
 			return err
 		}
 		if snapshot.Status != runstate.RunStatusRunning {
+			e.notifyRunStatusSettled(runID)
 			return nil
 		}
 		snapshot.Status = runstate.RunStatusPaused
@@ -156,6 +157,7 @@ func (e *Engine) ensureRunPaused(ctx context.Context, runID string) error {
 			}
 			return err
 		}
+		e.notifyRunStatusSettled(runID)
 		return nil
 	}
 	return fmt.Errorf("runtime: failed to persist paused status for run %q after stale retries", runID)
@@ -195,7 +197,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) error {
 	if req.RunID == "" {
 		req.RunID = generateRunID()
 	}
-	existing, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
+	existing, err := runstate.LoadAuthorized(ctx, e.persist.runs, req.RunID)
 	if err == nil {
 		wasCompleted := existing.Status == runstate.RunStatusCompleted
 		switch existing.Status {
@@ -323,7 +325,7 @@ func (e *Engine) markRunFailedOrCancelled(ctx context.Context, runID string, err
 }
 
 func (e *Engine) completeStreamRun(ctx context.Context, runID string, agent core.Agent, prompt string, output string) error {
-	loaded, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	loaded, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return err
 	}
@@ -387,7 +389,7 @@ func delegateToolName(agentName string) string {
 }
 
 func (e *Engine) saveStepOutput(ctx context.Context, runID, key string, value any) error {
-	if e.runs == nil {
+	if e.persist.runs == nil {
 		return fmt.Errorf("runtime: runstate repository is required to save step output")
 	}
 	raw, err := json.Marshal(value)
@@ -398,7 +400,7 @@ func (e *Engine) saveStepOutput(ctx context.Context, runID, key string, value an
 	// outputs, plan updates) do not lose this step output via optimistic
 	// concurrency conflicts, matching the orchestration saveStepOutput.
 	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 		if err != nil {
 			return err
 		}
@@ -432,7 +434,7 @@ func (e *Engine) saveStepOutputs(ctx context.Context, runID string, outputs map[
 	if len(outputs) == 0 {
 		return nil
 	}
-	if e.runs == nil {
+	if e.persist.runs == nil {
 		return fmt.Errorf("runtime: runstate repository is required to save step outputs")
 	}
 	raws := make(map[string]json.RawMessage, len(outputs))
@@ -444,7 +446,7 @@ func (e *Engine) saveStepOutputs(ctx context.Context, runID string, outputs map[
 		raws[key] = raw
 	}
 	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 		if err != nil {
 			return err
 		}
@@ -543,7 +545,7 @@ func episodeCorrelationFromSnapshot(snapshot runstate.RunSnapshot) core.EpisodeC
 func (e *Engine) withEpisodeCorrelation(ctx context.Context, req RunRequest) context.Context {
 	corr := episodeCorrelationFromRequest(req)
 	if corr.Empty() && req.RunID != "" {
-		if snapshot, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID); err == nil {
+		if snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, req.RunID); err == nil {
 			corr = episodeCorrelationFromSnapshot(snapshot)
 		}
 	}
@@ -594,7 +596,7 @@ func stampLeaseOwner(ctx context.Context, snapshot *runstate.RunSnapshot) {
 
 func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) error {
 	for attempt := 0; attempt < 5; attempt++ {
-		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 		if err != nil {
 			return err
 		}
@@ -629,7 +631,7 @@ func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate
 // Without a token it is exactly runs.Save. When the repository cannot fence
 // while a token is present, the save fails with runstate.ErrFenceRequired.
 func (e *Engine) saveRunSnapshot(ctx context.Context, snapshot *runstate.RunSnapshot, expectedVersion int64) error {
-	_, err := runstate.SaveWithFence(ctx, e.runs, snapshot, expectedVersion)
+	_, err := runstate.SaveWithFence(ctx, e.persist.runs, snapshot, expectedVersion)
 	return err
 }
 
@@ -644,11 +646,11 @@ func (e *Engine) pauseWithRetry(ctx context.Context, runID string, build func(ve
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 		if err != nil {
 			return "", err
 		}
-		token, err := e.gate.Pause(ctx, build(snapshot.Version))
+		token, err := e.coord.gate.Pause(ctx, build(snapshot.Version))
 		if err == nil {
 			return token, nil
 		}
@@ -699,10 +701,10 @@ func runDuration(snapshot runstate.RunSnapshot) time.Duration {
 // silently skipped them, leaving gaps in dashboards built on these metrics.
 func (e *Engine) recordRunCompleted(ctx context.Context, snapshot runstate.RunSnapshot) {
 	if d := runDuration(snapshot); d > 0 {
-		e.recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, d.Seconds(),
+		e.obs.recorder.ObserveHistogram(ctx, observability.MetricRunDurationSeconds, d.Seconds(),
 			observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 	}
-	e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
+	e.obs.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
 		observability.Attribute{Key: "event", Value: string(core.EventRunCompleted)},
 		observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 }
@@ -742,7 +744,7 @@ func (e *Engine) persistRunCompleted(ctx context.Context, runID string, finalRaw
 		return nil
 	}); err != nil {
 		if finalRef.Blob != nil {
-			if blobs, ok := e.blobs.(runstate.BlobAdmin); ok {
+			if blobs, ok := e.persist.blobs.(runstate.BlobAdmin); ok {
 				if deleteErr := blobs.Delete(ctx, *finalRef.Blob); deleteErr != nil {
 					e.logWarn(ctx, "runtime: failed to delete orphaned final output blob", "run_id", runID, "error", deleteErr)
 				}
@@ -751,6 +753,7 @@ func (e *Engine) persistRunCompleted(ctx context.Context, runID string, finalRaw
 		return runstate.RunSnapshot{}, err
 	}
 	e.clearRunScopedState(runID)
+	e.notifyRunStatusSettled(runID)
 	e.recordRunCompleted(ctx, saved)
 	var eventFields map[string]json.RawMessage
 	if err := json.Unmarshal(finalRaw, &eventFields); err != nil {
@@ -822,6 +825,10 @@ func (e *Engine) markRunFailedPermanent(ctx context.Context, runID string, cause
 func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause error, force bool) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
+	// Notify after the persistence attempt regardless of outcome: on success
+	// this process settled the run; on retry exhaustion the competing writer
+	// that won the CAS race may have settled it instead.
+	defer e.notifyRunStatusSettled(runID)
 	defer e.clearRunScopedState(runID)
 	var status runstate.RunStatus
 	if err := e.saveSnapshotWithRetry(persistCtx, runID, func(snapshot *runstate.RunSnapshot) error {
@@ -852,16 +859,24 @@ func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause erro
 		snapshot.Variables[runErrorMessageVar] = raw
 		return nil
 	}); err != nil {
-		// Retry exhaustion is logged, not force-overwritten: a writer that
+		// Retry exhaustion is never force-overwritten: a writer that
 		// keeps winning the CAS race for all jittered attempts is actively
 		// advancing this run (step outputs, pause, cancellation), and a blind
 		// terminal write could clobber a legitimate Paused/Cancelled state —
 		// a worse outcome than a Running run that a reaper (or, for leased
-		// runs, the fence) can still recover. ErrStaleFence already passed
-		// through unretried inside saveSnapshotWithRetry, so reaching this
-		// branch means either persistent storage failure or an unmanaged
-		// concurrent writer, never a superseded lease we should fight.
-		e.logWarn(persistCtx, "runtime: failed to persist run failure status", "run_id", runID, "save_error", err)
+		// runs, the fence) can still recover. ErrStaleFence passes through
+		// unretried inside saveSnapshotWithRetry and is handled separately
+		// (a superseded lease means a new owner will settle the run).
+		//
+		// The run is now stuck in Running while this worker is done with it.
+		// The engine cannot release the run lease itself — the lease handle
+		// (locker + fencing token) is owned by the facade's holdRunLease;
+		// the engine only sees owner/token as context values — so instead it
+		// stamps the terminal_persist_failed snapshot variable (best-effort,
+		// still optimistic CAS) for the reaper/operator inspection to
+		// recognize "worker finished but could not settle", and raises the
+		// signal to error level plus a diagnostic event.
+		e.handleTerminalPersistExhausted(persistCtx, runID, runstate.RunStatusFailed, err)
 		return
 	}
 	if status == runstate.RunStatusCancelled {
@@ -880,6 +895,7 @@ func (e *Engine) markRunFailedMode(ctx context.Context, runID string, cause erro
 func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
+	defer e.notifyRunStatusSettled(runID)
 	defer e.clearRunScopedState(runID)
 	var status runstate.RunStatus
 	if err := e.saveSnapshotWithRetry(persistCtx, runID, func(snapshot *runstate.RunSnapshot) error {
@@ -894,9 +910,10 @@ func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 		}
 		return nil
 	}); err != nil {
-		// Same trade-off as markRunFailedMode above: log, never force-write
-		// over an actively advancing concurrent writer.
-		e.logWarn(persistCtx, "runtime: failed to persist run cancellation status", "run_id", runID, "save_error", err)
+		// Same trade-off as markRunFailedMode above: never force-write over an
+		// actively advancing concurrent writer; stamp terminal_persist_failed
+		// and escalate the signal instead (see handleTerminalPersistExhausted).
+		e.handleTerminalPersistExhausted(persistCtx, runID, runstate.RunStatusCancelled, err)
 		return
 	}
 	if status != runstate.RunStatusCancelled {
@@ -908,23 +925,69 @@ func (e *Engine) markRunCancelled(ctx context.Context, runID string) {
 	e.emitJSON(persistCtx, core.EventRunCancelled, runID, map[string]string{"termination_reason": core.TerminationReasonCancelled})
 }
 
+// handleTerminalPersistExhausted is the fallback when settling a run to a
+// terminal status (failed/cancelled) exhausted every jittered CAS retry: the
+// run is left in Running while this worker is done executing it, and a reaper
+// will not reap it while this process still holds (and renews) the lease.
+//
+// Releasing the lease from here is not possible with the current structure:
+// the lease handle (locker + fencing token) is owned by the framework
+// facade's holdRunLease renewal loop — the engine only sees the owner and
+// token as context values, never the locker — so the minimal safe substitute
+// is used instead: an error-level log, a RunTerminalPersistFailed diagnostic
+// event, and a best-effort terminal_persist_failed snapshot variable so the
+// reaper / operator inspection can distinguish "worker finished but could
+// not settle" from a genuinely live run. The marker write is an ordinary
+// optimistic CAS save, never a force-write: if it collides again the run
+// simply stays unmarked.
+func (e *Engine) handleTerminalPersistExhausted(ctx context.Context, runID string, target runstate.RunStatus, saveErr error) {
+	if errors.Is(saveErr, runstate.ErrStaleFence) {
+		// A newer lease holder owns the run and settles it; nothing is stuck
+		// and any write from this worker (including the marker) is rejected
+		// by the fence anyway.
+		e.logWarn(ctx, "runtime: terminal status persistence rejected by a superseded lease fence", "run_id", runID, "target_status", string(target))
+		return
+	}
+	e.logError(ctx, "runtime: terminal status persistence retries exhausted; run left Running", "run_id", runID, "target_status", string(target), "save_error", saveErr)
+	e.emitJSON(ctx, core.EventRunTerminalPersistFailed, runID, map[string]string{
+		"target_status": string(target),
+		"save_error":    saveErr.Error(),
+	})
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
+	if err != nil {
+		e.logWarn(ctx, "runtime: failed to reload run for terminal-persist-failed marker", "run_id", runID, "error", err)
+		return
+	}
+	if snapshot.Status != runstate.RunStatusRunning {
+		// The competing writer settled the run after all; no marker needed.
+		return
+	}
+	if snapshot.Variables == nil {
+		snapshot.Variables = make(map[string]json.RawMessage)
+	}
+	snapshot.Variables[runstate.VarTerminalPersistFailed] = jsonStringValue(string(target))
+	if err := e.saveRunSnapshot(ctx, &snapshot, snapshot.Version); err != nil {
+		e.logWarn(ctx, "runtime: failed to stamp terminal-persist-failed marker", "run_id", runID, "error", err)
+	}
+}
+
 // clearRunScopedState drops every run-keyed in-memory bookkeeping entry
 // (cached approval decisions, deny-breaker counters, buffered interjections)
 // once a run reaches a terminal state, so a long-lived worker does not
 // accumulate stale entries for runs that will never execute again.
 func (e *Engine) clearRunScopedState(runID string) {
-	if e.approvalStore != nil {
-		e.approvalStore.Clear(runID)
+	if e.tooling.approvalStore != nil {
+		e.tooling.approvalStore.Clear(runID)
 	}
-	if e.denyBreaker != nil {
-		e.denyBreaker.Clear(runID)
+	if e.tooling.denyBreaker != nil {
+		e.tooling.denyBreaker.Clear(runID)
 	}
 	e.clearInterjections(runID)
-	e.loadedTools.Delete(runID)
-	e.pendingSelfCompact.Delete(runID)
-	e.usageTrackers.Delete(runID)
-	e.iterationBases.Delete(runID)
-	e.toolArgsRepairs.Delete(runID)
+	e.coord.loadedTools.Delete(runID)
+	e.coord.pendingSelfCompact.Delete(runID)
+	e.coord.usageTrackers.Delete(runID)
+	e.coord.iterationBases.Delete(runID)
+	e.coord.toolArgsRepairs.Delete(runID)
 }
 
 // ClearRunScopedState exposes clearRunScopedState for the framework facade,
@@ -942,18 +1005,18 @@ func (e *Engine) MarkRunCancelled(ctx context.Context, runID string) {
 }
 
 func (e *Engine) stepOutputRef(ctx context.Context, runID, key string, raw json.RawMessage) (runstate.StepOutputRef, error) {
-	if e.redactor != nil {
-		redacted, err := e.redactor.RedactOutput(ctx, governance.OutputRedaction{RunID: runID, StepID: key, Kind: "step_output", Data: raw})
+	if e.gov.redactor != nil {
+		redacted, err := e.gov.redactor.RedactOutput(ctx, governance.OutputRedaction{RunID: runID, StepID: key, Kind: "step_output", Data: raw})
 		if err != nil {
 			return runstate.StepOutputRef{}, err
 		}
 		raw = redacted
 	}
 	threshold := e.scenario.Runtime.StepOutputThreshold
-	if threshold <= 0 || int64(len(raw)) <= threshold || e.blobs == nil {
+	if threshold <= 0 || int64(len(raw)) <= threshold || e.persist.blobs == nil {
 		return runstate.StepOutputRef{Inline: raw}, nil
 	}
-	ref, err := e.blobs.Put(ctx, raw)
+	ref, err := e.persist.blobs.Put(ctx, raw)
 	if err != nil {
 		return runstate.StepOutputRef{}, err
 	}
@@ -1010,7 +1073,7 @@ func (e *Engine) hasBeforeFinalCheckpoint(agent core.Agent) bool {
 }
 
 func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {
-	e.emitter.Emit(ctx, e.scenario.Name, e.redactor, typ, runID, payload)
+	e.obs.emitter.Emit(ctx, e.scenario.Name, e.gov.redactor, typ, runID, payload)
 }
 
 // IsCriticalLifecycleEvent reports whether typ is a run-lifecycle event whose
@@ -1030,16 +1093,16 @@ func EmitWithLifecycleRetry(ctx context.Context, sink core.EventSink, event core
 // logWarn logs a warning message if a Logger is configured; otherwise it is
 // silently discarded.
 func (e *Engine) logWarn(ctx context.Context, msg string, keysAndValues ...any) {
-	if e.logger != nil {
-		e.logger.Warn(ctx, msg, keysAndValues...)
+	if e.obs.logger != nil {
+		e.obs.logger.Warn(ctx, msg, keysAndValues...)
 	}
 }
 
 // logError logs an error message if a Logger is configured; otherwise it is
 // silently discarded.
 func (e *Engine) logError(ctx context.Context, msg string, keysAndValues ...any) {
-	if e.logger != nil {
-		e.logger.Error(ctx, msg, keysAndValues...)
+	if e.obs.logger != nil {
+		e.obs.logger.Error(ctx, msg, keysAndValues...)
 	}
 }
 
@@ -1093,7 +1156,7 @@ func enrichEventPayload(ctx context.Context, payload any) any {
 }
 
 func (e *Engine) startSpan(ctx context.Context, name observability.SpanName, attrs ...observability.Attribute) (context.Context, observability.Span) {
-	return e.tracer.Start(ctx, name, attrs...)
+	return e.obs.tracer.Start(ctx, name, attrs...)
 }
 
 // generateRunID returns a cryptographically random run identifier with a

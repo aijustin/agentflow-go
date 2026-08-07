@@ -272,8 +272,10 @@ type RuntimePolicy struct {
 	MaxTotalTokens int               `json:"max_total_tokens,omitempty"`
 	Secrets        map[string]string `json:"secrets,omitempty"`
 	// DetachedCancellationPollInterval controls how often a detached
-	// stream's cancellation watcher reloads the run snapshot. Zero or
-	// negative falls back to the runtime default (250ms).
+	// stream's cancellation watcher reloads the run snapshot. Polling is
+	// only the cross-process fallback — same-process settles wake the
+	// watcher via an in-process notification. Zero or negative falls back
+	// to the runtime default (2s).
 	DetachedCancellationPollInterval time.Duration `json:"detached_cancellation_poll_interval,omitempty"`
 }
 

@@ -37,7 +37,7 @@ func TestTerminalCompletionClearsRunScopedState(t *testing.T) {
 	}
 	input := json.RawMessage(`{"q":"x"}`)
 	toolorch.RememberAllow(store, "run-clean", "echo", input)
-	engine.denyBreaker.RecordDeny("run-clean")
+	engine.tooling.denyBreaker.RecordDeny("run-clean")
 
 	if _, err := engine.Run(context.Background(), RunRequest{RunID: "run-clean", Agent: "assistant", Prompt: "hi"}); err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestTerminalCompletionClearsRunScopedState(t *testing.T) {
 	if _, ok := store.Get("run-clean", toolorch.Key("echo", input)); ok {
 		t.Fatal("approval cache entry must be cleared at terminal state")
 	}
-	if tripped, count := engine.denyBreaker.RecordDeny("run-clean"); count != 1 || tripped {
+	if tripped, count := engine.tooling.denyBreaker.RecordDeny("run-clean"); count != 1 || tripped {
 		t.Fatalf("deny breaker must restart from zero after terminal cleanup, got count=%d tripped=%v", count, tripped)
 	}
 }
@@ -76,19 +76,19 @@ func TestClearRunScopedStateDropsInterjections(t *testing.T) {
 	if err := engine.Interject("run-interject", "steer"); err != nil {
 		t.Fatal(err)
 	}
-	if got := engine.interjections.PendingCount("run-interject"); got != 1 {
+	if got := engine.mem.interjections.PendingCount("run-interject"); got != 1 {
 		t.Fatalf("expected buffered interjection, got %d", got)
 	}
 	engine.loadedToolsForRun("run-interject").add("deferred.tool")
 	engine.markSelfCompactPending("run-interject")
 	engine.clearRunScopedState("run-interject")
-	if got := engine.interjections.PendingCount("run-interject"); got != 0 {
+	if got := engine.mem.interjections.PendingCount("run-interject"); got != 0 {
 		t.Fatalf("interjection buffer must be cleared, got %d", got)
 	}
-	if _, ok := engine.loadedTools.Load("run-interject"); ok {
+	if _, ok := engine.coord.loadedTools.Load("run-interject"); ok {
 		t.Fatal("loaded tool state must be cleared")
 	}
-	if _, ok := engine.pendingSelfCompact.Load("run-interject"); ok {
+	if _, ok := engine.coord.pendingSelfCompact.Load("run-interject"); ok {
 		t.Fatal("pending self-compact state must be cleared")
 	}
 }
@@ -115,10 +115,10 @@ func TestInterjectRejectsUnknownOrInactiveRun(t *testing.T) {
 	if err := engine.Interject("run-done", "steer"); err == nil {
 		t.Fatal("expected error for completed run")
 	}
-	if got := engine.interjections.PendingCount("run-missing"); got != 0 {
+	if got := engine.mem.interjections.PendingCount("run-missing"); got != 0 {
 		t.Fatalf("rejected interjection must not be buffered, got %d", got)
 	}
-	if got := engine.interjections.PendingCount("run-done"); got != 0 {
+	if got := engine.mem.interjections.PendingCount("run-done"); got != 0 {
 		t.Fatalf("rejected interjection must not be buffered, got %d", got)
 	}
 }

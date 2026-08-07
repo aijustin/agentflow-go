@@ -43,6 +43,12 @@ const (
 	EventHITLDenyBreakerTripped    EventType = "HITLDenyBreakerTripped"
 	EventTurnStopContinued         EventType = "TurnStopContinued"
 	EventToolArgsNormalized        EventType = "ToolArgsNormalized"
+	// EventRunTerminalPersistFailed is a diagnostic event raised when settling
+	// a run to its terminal status (failed/cancelled) exhausted every
+	// persistence retry and the run was left Running; see
+	// runstate.VarTerminalPersistFailed. It is not a lifecycle event: the run
+	// never reached the terminal state it reports about.
+	EventRunTerminalPersistFailed EventType = "RunTerminalPersistFailed"
 )
 
 type Event struct {

@@ -32,56 +32,103 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/toolorch"
 )
 
+// Engine is decomposed into cohesive dependency groups instead of a flat
+// field list: persist (run-state storage), tooling (tool dispatch and
+// approval execution), gov (governance/security/audit), mem (context and
+// memory), obs (observability and event delivery), coord (run coordination
+// and per-run trackers), hooks (host hooks and wrappers).
 type Engine struct {
-	scenario               core.Scenario
-	llm                    llm.Gateway
-	tools                  ToolRegistry
+	scenario core.Scenario
+	llm      llm.Gateway
+
+	persist persistDeps
+	tooling toolDeps
+	gov     govDeps
+	mem     memoryDeps
+	obs     obsDeps
+	coord   coordDeps
+	hooks   hookDeps
+}
+
+// persistDeps groups the run-state persistence ports.
+type persistDeps struct {
+	runs  runstate.Repository
+	blobs runstate.BlobStore
+}
+
+// toolDeps groups tool dispatch, approval execution and catalog ports.
+type toolDeps struct {
+	tools                ToolRegistry
+	orchestrator         toolorch.ToolOrchestrator
+	approvalStore        toolorch.ApprovalStore
+	denyBreaker          *toolorch.DenyBreaker
+	toolCatalog          toolcatalog.Catalog
+	deferredTools        bool
+	toolInspectorPrepend []toolinspect.Inspector
+	toolInspectorAppend  []toolinspect.Inspector
+}
+
+// govDeps groups governance, security and audit ports.
+type govDeps struct {
+	policy            security.Policy
+	toolGov           governance.ToolPolicy
+	redactor          governance.OutputRedactor
+	approvalEvaluator core.ToolApprovalEvaluator
+	audit             audit.Sink
+}
+
+// memoryDeps groups context/memory ports and context-shaping config.
+type memoryDeps struct {
 	memory                 map[string]memory.Repository
 	tierMemory             map[string]tier.Manager
 	cognitive              map[string]memory.CognitiveMemory
-	runs                   runstate.Repository
-	blobs                  runstate.BlobStore
-	gate                   core.HumanGate
-	approvalEvaluator      core.ToolApprovalEvaluator
-	policy                 security.Policy
-	audit                  audit.Sink
-	toolGov                governance.ToolPolicy
-	redactor               governance.OutputRedactor
-	llmPayloadCapture      bool
-	recorder               observability.Recorder
-	tracer                 observability.Tracer
-	logger                 log.Logger
 	enqueueMemoryReconcile func(context.Context, async.Job) error
-	toolTransformMu        sync.RWMutex
-	toolTransforms         map[string]contextwindow.ToolOutputTransform
 	interjections          *interjection.Buffer
 	interjectDrain         atomic.Value // interjection.DrainPolicy
-	orchestrator           toolorch.ToolOrchestrator
-	approvalStore          toolorch.ApprovalStore
-	denyBreaker            *toolorch.DenyBreaker
-	turnStopHook           core.TurnStopHook
-	toolCatalog            toolcatalog.Catalog
-	deferredTools          bool
-	loadedTools            sync.Map // runID -> *loadedToolSet
-	pendingSelfCompact     sync.Map // runID -> struct{}
-	usageTrackers          sync.Map // runID -> *usageTracker
-	// iterationBases tracks the conversation length persisted at the last
-	// autonomous iteration boundary, so the next boundary writes only the
-	// delta (see persistAutonomousIteration).
-	iterationBases        sync.Map // runID -> int
-	toolArgsRepairs       sync.Map // runID -> *toolArgsRepairSet
-	toolInspectorPrepend  []toolinspect.Inspector
-	toolInspectorAppend   []toolinspect.Inspector
-	llmToolCallerWrappers []func(llm.ToolCaller) llm.ToolCaller
-	loopHooks             []feature.LoopHooks
-	stopConditions        []feature.StopCondition
-	dualVisibility        bool
+	toolTransformMu        sync.RWMutex
+	toolTransforms         map[string]contextwindow.ToolOutputTransform
+	dualVisibility         bool
+}
 
+// obsDeps groups observability and event delivery ports.
+type obsDeps struct {
 	// emitter is the shared event pipeline (async queue + lifecycle sync
 	// delivery). ownsEmitter reports whether Close must stop it; engines
 	// handed a host-owned pipeline (the framework facade's) never close it.
 	emitter     *emit.Pipeline
 	ownsEmitter bool
+
+	recorder          observability.Recorder
+	tracer            observability.Tracer
+	logger            log.Logger
+	llmPayloadCapture bool
+}
+
+// coordDeps groups run-coordination ports and per-run mutable trackers.
+type coordDeps struct {
+	gate core.HumanGate
+	// statusNotifier broadcasts in-process run-status transition hints (see
+	// runStatusNotifier); the detached-stream cancellation watcher subscribes
+	// so a same-process settle wakes it immediately instead of waiting for
+	// the next poll tick.
+	statusNotifier *runStatusNotifier
+
+	loadedTools        sync.Map // runID -> *loadedToolSet
+	pendingSelfCompact sync.Map // runID -> struct{}
+	usageTrackers      sync.Map // runID -> *usageTracker
+	// iterationBases tracks the conversation length persisted at the last
+	// autonomous iteration boundary, so the next boundary writes only the
+	// delta (see persistAutonomousIteration).
+	iterationBases  sync.Map // runID -> int
+	toolArgsRepairs sync.Map // runID -> *toolArgsRepairSet
+}
+
+// hookDeps groups host-provided hooks and gateway wrappers.
+type hookDeps struct {
+	turnStopHook          core.TurnStopHook
+	loopHooks             []feature.LoopHooks
+	stopConditions        []feature.StopCondition
+	llmToolCallerWrappers []func(llm.ToolCaller) llm.ToolCaller
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -208,43 +255,58 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		ownsEmitter = true
 	}
 	engine := &Engine{
-		scenario:               scenario,
-		llm:                    deps.LLM,
-		tools:                  deps.Tools,
-		memory:                 deps.Memory,
-		tierMemory:             deps.TierMemory,
-		cognitive:              deps.Cognitive,
-		runs:                   deps.Runs,
-		blobs:                  deps.Blobs,
-		gate:                   deps.HumanGate,
-		approvalEvaluator:      deps.ToolApprovalEvaluator,
-		policy:                 deps.Policy,
-		audit:                  deps.Audit,
-		toolGov:                deps.ToolPolicy,
-		redactor:               deps.OutputRedactor,
-		llmPayloadCapture:      deps.LLMPayloadCapture,
-		recorder:               recorder,
-		tracer:                 tracer,
-		logger:                 deps.Logger,
-		enqueueMemoryReconcile: deps.EnqueueMemoryReconcile,
-		toolTransforms:         deps.ToolOutputTransforms,
-		interjections:          interjection.NewBuffer(),
-		orchestrator:           orch,
-		approvalStore:          store,
-		denyBreaker:            breaker,
-		turnStopHook:           deps.TurnStopHook,
-		toolCatalog:            deps.ToolCatalog,
-		deferredTools:          deps.DeferredTools,
-		toolInspectorPrepend:   deps.ToolInspectorPrepend,
-		toolInspectorAppend:    deps.ToolInspectorAppend,
-		llmToolCallerWrappers:  deps.LLMToolCallerWrappers,
-		loopHooks:              deps.LoopHooks,
-		stopConditions:         deps.StopConditions,
-		dualVisibility:         deps.DualVisibilityMessages,
-		emitter:                emitter,
-		ownsEmitter:            ownsEmitter,
+		scenario: scenario,
+		llm:      deps.LLM,
+		persist: persistDeps{
+			runs:  deps.Runs,
+			blobs: deps.Blobs,
+		},
+		tooling: toolDeps{
+			tools:                deps.Tools,
+			orchestrator:         orch,
+			approvalStore:        store,
+			denyBreaker:          breaker,
+			toolCatalog:          deps.ToolCatalog,
+			deferredTools:        deps.DeferredTools,
+			toolInspectorPrepend: deps.ToolInspectorPrepend,
+			toolInspectorAppend:  deps.ToolInspectorAppend,
+		},
+		gov: govDeps{
+			policy:            deps.Policy,
+			toolGov:           deps.ToolPolicy,
+			redactor:          deps.OutputRedactor,
+			approvalEvaluator: deps.ToolApprovalEvaluator,
+			audit:             deps.Audit,
+		},
+		mem: memoryDeps{
+			memory:                 deps.Memory,
+			tierMemory:             deps.TierMemory,
+			cognitive:              deps.Cognitive,
+			enqueueMemoryReconcile: deps.EnqueueMemoryReconcile,
+			interjections:          interjection.NewBuffer(),
+			toolTransforms:         deps.ToolOutputTransforms,
+			dualVisibility:         deps.DualVisibilityMessages,
+		},
+		obs: obsDeps{
+			emitter:           emitter,
+			ownsEmitter:       ownsEmitter,
+			recorder:          recorder,
+			tracer:            tracer,
+			logger:            deps.Logger,
+			llmPayloadCapture: deps.LLMPayloadCapture,
+		},
+		coord: coordDeps{
+			gate:           deps.HumanGate,
+			statusNotifier: newRunStatusNotifier(),
+		},
+		hooks: hookDeps{
+			turnStopHook:          deps.TurnStopHook,
+			loopHooks:             deps.LoopHooks,
+			stopConditions:        deps.StopConditions,
+			llmToolCallerWrappers: deps.LLMToolCallerWrappers,
+		},
 	}
-	engine.interjectDrain.Store(deps.InterjectDrain.Normalize())
+	engine.mem.interjectDrain.Store(deps.InterjectDrain.Normalize())
 	return engine, nil
 }
 
@@ -253,19 +315,19 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 // — the host drains it. Close is idempotent and safe to call once runs have
 // quiesced; in-flight runs are not interrupted.
 func (e *Engine) Close() {
-	if e == nil || !e.ownsEmitter || e.emitter == nil {
+	if e == nil || !e.obs.ownsEmitter || e.obs.emitter == nil {
 		return
 	}
-	e.emitter.Close()
+	e.obs.emitter.Close()
 }
 
 // DroppedEvents reports how many queued non-lifecycle events were dropped
 // because the emission queue was full (see emit.Pipeline).
 func (e *Engine) DroppedEvents() int64 {
-	if e == nil || e.emitter == nil {
+	if e == nil || e.obs.emitter == nil {
 		return 0
 	}
-	return e.emitter.DroppedEvents()
+	return e.obs.emitter.DroppedEvents()
 }
 
 // TrustMode controls run-scoped tool approval overrides.
@@ -297,16 +359,16 @@ func (e *Engine) SetToolOutputTransform(tool string, fn contextwindow.ToolOutput
 	if e == nil {
 		return
 	}
-	e.toolTransformMu.Lock()
-	defer e.toolTransformMu.Unlock()
-	if e.toolTransforms == nil {
-		e.toolTransforms = map[string]contextwindow.ToolOutputTransform{}
+	e.mem.toolTransformMu.Lock()
+	defer e.mem.toolTransformMu.Unlock()
+	if e.mem.toolTransforms == nil {
+		e.mem.toolTransforms = map[string]contextwindow.ToolOutputTransform{}
 	}
 	if fn == nil {
-		delete(e.toolTransforms, tool)
+		delete(e.mem.toolTransforms, tool)
 		return
 	}
-	e.toolTransforms[tool] = fn
+	e.mem.toolTransforms[tool] = fn
 }
 
 // Scenario returns the scenario the engine was constructed with.
@@ -322,12 +384,12 @@ func (e *Engine) LateConfig() (map[string]contextwindow.ToolOutputTransform, int
 	if e == nil {
 		return nil, interjection.DrainPolicy{}.Normalize()
 	}
-	e.toolTransformMu.RLock()
-	transforms := make(map[string]contextwindow.ToolOutputTransform, len(e.toolTransforms))
-	for k, v := range e.toolTransforms {
+	e.mem.toolTransformMu.RLock()
+	transforms := make(map[string]contextwindow.ToolOutputTransform, len(e.mem.toolTransforms))
+	for k, v := range e.mem.toolTransforms {
 		transforms[k] = v
 	}
-	e.toolTransformMu.RUnlock()
+	e.mem.toolTransformMu.RUnlock()
 	return transforms, e.drainPolicy()
 }
 
@@ -335,13 +397,13 @@ func (e *Engine) toolTransformsCopy() map[string]contextwindow.ToolOutputTransfo
 	if e == nil {
 		return nil
 	}
-	e.toolTransformMu.RLock()
-	defer e.toolTransformMu.RUnlock()
-	if len(e.toolTransforms) == 0 {
+	e.mem.toolTransformMu.RLock()
+	defer e.mem.toolTransformMu.RUnlock()
+	if len(e.mem.toolTransforms) == 0 {
 		return nil
 	}
-	out := make(map[string]contextwindow.ToolOutputTransform, len(e.toolTransforms))
-	for k, v := range e.toolTransforms {
+	out := make(map[string]contextwindow.ToolOutputTransform, len(e.mem.toolTransforms))
+	for k, v := range e.mem.toolTransforms {
 		out[k] = v
 	}
 	return out
@@ -351,7 +413,7 @@ func (e *Engine) drainPolicy() interjection.DrainPolicy {
 	if e == nil {
 		return interjection.DrainPolicy{}.Normalize()
 	}
-	if v := e.interjectDrain.Load(); v != nil {
+	if v := e.mem.interjectDrain.Load(); v != nil {
 		return v.(interjection.DrainPolicy)
 	}
 	return interjection.DrainPolicy{}.Normalize()
@@ -400,12 +462,12 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		// the entry point that actually enforces the schema.
 		return failRun(fmt.Errorf("runtime: agent %q has an output_schema configured; use RunStructured instead of Run", agent.Name))
 	}
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, req.RunID)
 	if err != nil {
 		return failRun(err)
 	}
 	if e.hasBeforeFinalCheckpoint(agent) && !e.isBeforeFinalResumed(snapshot) {
-		if e.gate == nil {
+		if e.coord.gate == nil {
 			return failRun(fmt.Errorf("runtime: human gate required for configured checkpoint"))
 		}
 		result, err := e.pauseBeforeFinalAnswer(ctx, req, agent, &snapshot, checkpointPauseOptions{})
@@ -441,7 +503,7 @@ func (e *Engine) failRun(ctx context.Context, runSpan observability.Span, runID 
 		eventType = core.EventRunCancelled
 	}
 	e.markRunFailedOrCancelled(ctx, runID, err)
-	e.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
+	e.obs.recorder.IncCounter(ctx, observability.MetricRuntimeEventsTotal,
 		observability.Attribute{Key: "event", Value: string(eventType)},
 		observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 	return RunResult{}, err
@@ -476,12 +538,12 @@ func (e *Engine) RunStructured(ctx context.Context, req RunRequest) (RunResult, 
 		return RunResult{}, err
 	}
 	if e.hasBeforeFinalCheckpoint(agent) {
-		if e.gate == nil {
+		if e.coord.gate == nil {
 			err := fmt.Errorf("runtime: human gate required for configured checkpoint")
 			e.markRunFailed(ctx, req.RunID, err)
 			return RunResult{}, err
 		}
-		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
+		snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, req.RunID)
 		if err != nil {
 			e.markRunFailed(ctx, req.RunID, err)
 			return RunResult{}, err
@@ -526,14 +588,13 @@ type streamDetachedKey struct{}
 // defaultDetachedCancellationPollInterval is how often the detached-stream
 // cancellation watcher reloads the run snapshot when the scenario does not
 // override it (see core.RuntimePolicy.DetachedCancellationPollInterval).
-// Each detached run costs one ticker goroutine plus one snapshot load per
-// tick; detached runs are the exception (caller disconnected mid-stream), so
-// a sub-second cadence is affordable, while a multi-second cadence would
-// leave blocking LLM calls running long after an operator persisted a
-// cancellation. Polling (rather than in-process notification) is required
-// because the cancellation may be written by another process via the
-// repository.
-const defaultDetachedCancellationPollInterval = 250 * time.Millisecond
+// Polling is only the fallback for cancellations persisted by OTHER
+// processes: a same-process settle (cancel/fail/complete/pause through the
+// engine's helpers) wakes the watcher immediately via the run-status
+// notifier, so the poll cadence no longer needs to be sub-second — 2s keeps
+// cross-process cancellations responsive while cutting the steady-state
+// repository read pressure per detached run by ~8x.
+const defaultDetachedCancellationPollInterval = 2 * time.Second
 
 // detachedCancellationPollInterval returns the configured detached-stream
 // cancellation poll interval, falling back to the default when the scenario
@@ -632,25 +693,47 @@ func (e *Engine) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChu
 	if detached {
 		observerCtx := execCtx
 		safecall.GoSafe("runtime: detached cancellation watcher", nil, func() {
+			// Fast path: a same-process settle of this run (cancel/fail/
+			// complete/pause via the engine's helpers) broadcasts an
+			// in-process hint that wakes the watcher immediately. Slow path:
+			// the poll ticker remains the correctness fallback for
+			// cancellations persisted by other processes, which never
+			// produce a hint. Either way the watcher re-loads the snapshot
+			// and confirms the status before acting — hints only cut
+			// latency, they never decide.
+			wake := make(chan struct{}, 1)
+			unsubscribe := e.coord.statusNotifier.subscribe(req.RunID, wake)
+			defer unsubscribe()
 			ticker := time.NewTicker(e.detachedCancellationPollInterval())
 			defer ticker.Stop()
+			// check reports whether the watcher is done (run left Running,
+			// or the load failed and the run was aborted).
+			check := func() bool {
+				snapshot, loadErr := runstate.LoadAuthorized(observerCtx, e.persist.runs, req.RunID)
+				if loadErr != nil {
+					cancelDetached(fmt.Errorf("runtime: observe detached run %q cancellation: %w", req.RunID, loadErr))
+					return true
+				}
+				if snapshot.Status == runstate.RunStatusRunning {
+					return false
+				}
+				if snapshot.Status == runstate.RunStatusCancelled {
+					cancelDetached(ErrRunCancelled)
+				}
+				return true
+			}
 			for {
 				select {
 				case <-execCtx.Done():
 					return
-				case <-ticker.C:
-					snapshot, loadErr := runstate.LoadAuthorized(observerCtx, e.runs, req.RunID)
-					if loadErr != nil {
-						cancelDetached(fmt.Errorf("runtime: observe detached run %q cancellation: %w", req.RunID, loadErr))
+				case <-wake:
+					if check() {
 						return
 					}
-					if snapshot.Status == runstate.RunStatusRunning {
-						continue
+				case <-ticker.C:
+					if check() {
+						return
 					}
-					if snapshot.Status == runstate.RunStatusCancelled {
-						cancelDetached(ErrRunCancelled)
-					}
-					return
 				}
 			}
 		})
@@ -823,12 +906,12 @@ func (e *Engine) RunAgent(ctx context.Context, agentName string, input core.Agen
 	if err != nil {
 		return core.AgentOutput{}, err
 	}
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, input.RunID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, input.RunID)
 	if err != nil {
 		return core.AgentOutput{}, err
 	}
 	if e.hasBeforeFinalCheckpoint(agent) && !e.isBeforeFinalResumed(snapshot) {
-		if e.gate == nil {
+		if e.coord.gate == nil {
 			return core.AgentOutput{}, fmt.Errorf("runtime: human gate required for configured checkpoint")
 		}
 		req := RunRequest{
@@ -881,7 +964,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 	}
 	ctx = ContextWithTrustMode(ctx, req.TrustMode)
 	ctx = core.ContextWithEpisodeCorrelation(ctx, episodeCorrelationFromRequest(req))
-	loaded, err := runstate.LoadAuthorized(ctx, e.runs, req.RunID)
+	loaded, err := runstate.LoadAuthorized(ctx, e.persist.runs, req.RunID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -921,7 +1004,7 @@ func (e *Engine) RunHybrid(ctx context.Context, req RunRequest) (RunResult, erro
 		return e.failRun(ctx, runSpan, req.RunID, err)
 	}
 	if e.hasBeforeFinalCheckpoint(agent) && !e.isBeforeFinalResumed(loaded) {
-		if e.gate == nil {
+		if e.coord.gate == nil {
 			err := fmt.Errorf("runtime: human gate required for configured checkpoint")
 			return e.failRun(ctx, runSpan, req.RunID, err)
 		}

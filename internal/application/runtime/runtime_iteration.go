@@ -97,7 +97,7 @@ func (e *Engine) autonomousIterationPersistenceEnabled(ctx context.Context) bool
 
 // persistAutonomousIteration snapshots the conversation delta at an iteration
 // boundary into StepOutputs["auto:iter:<n>"]: only the messages appended since
-// the previous boundary (tracked per run in e.iterationBases), so the write
+// the previous boundary (tracked per run in e.coord.iterationBases), so the write
 // stays O(1) in the iteration count instead of rewriting the full transcript
 // every step. When the conversation shrank below the recorded baseline
 // (context compaction between boundaries), a full snapshot is written instead
@@ -110,7 +110,7 @@ func (e *Engine) autonomousIterationPersistenceEnabled(ctx context.Context) bool
 // updates) is retried rather than lost.
 func (e *Engine) persistAutonomousIteration(ctx context.Context, runID string, iteration int, messages []llm.Message) error {
 	base := 0
-	if v, ok := e.iterationBases.Load(runID); ok {
+	if v, ok := e.coord.iterationBases.Load(runID); ok {
 		base, _ = v.(int)
 	}
 	envelope := iterationEnvelope{Format: iterationEnvelopeFormatFull, Messages: messages}
@@ -138,7 +138,7 @@ func (e *Engine) persistAutonomousIteration(ctx context.Context, runID string, i
 	}
 	// Only advance the baseline after the boundary is durable: a failed save
 	// must not skip messages in the next delta.
-	e.iterationBases.Store(runID, len(messages))
+	e.coord.iterationBases.Store(runID, len(messages))
 	return nil
 }
 
@@ -156,7 +156,7 @@ func (e *Engine) loadAutonomousConversation(ctx context.Context, runID string, o
 		if !ok {
 			return nil, fmt.Errorf("runtime: run %q is missing persisted iteration %d (checkpoint chain has a gap)", runID, i)
 		}
-		raw, err := runstate.LoadStepOutput(ctx, e.blobs, ref)
+		raw, err := runstate.LoadStepOutput(ctx, e.persist.blobs, ref)
 		if err != nil {
 			return nil, fmt.Errorf("runtime: load persisted iteration %d for run %q: %w", i, runID, err)
 		}
@@ -194,7 +194,7 @@ func (e *Engine) loadAutonomousConversation(ctx context.Context, runID string, o
 // Tools with side effects should deduplicate on the run-scoped idempotency
 // key the runtime passes through the tool-call context.
 func (e *Engine) ResumeAutonomousFromIteration(ctx context.Context, runID string) (RunResult, error) {
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+	snapshot, err := runstate.LoadAuthorized(ctx, e.persist.runs, runID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -214,7 +214,7 @@ func (e *Engine) ResumeAutonomousFromIteration(ctx context.Context, runID string
 	}
 	// The resumed loop keeps appending to this conversation: seed the delta
 	// baseline so the next boundary persists only new messages.
-	e.iterationBases.Store(runID, len(messages))
+	e.coord.iterationBases.Store(runID, len(messages))
 	if mode := TrustMode(variableString(snapshot.Variables, resumeTrustModeVar)); mode != "" {
 		ctx = ContextWithTrustMode(ctx, mode)
 	}

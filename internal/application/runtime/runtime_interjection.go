@@ -34,10 +34,10 @@ func (e *Engine) Interject(runID, text string) error {
 	if err := e.ensureRunActive(ctx, runID); err != nil {
 		return err
 	}
-	if e.interjections == nil {
-		e.interjections = interjection.NewBuffer()
+	if e.mem.interjections == nil {
+		e.mem.interjections = interjection.NewBuffer()
 	}
-	e.interjections.Push(runID, text)
+	e.mem.interjections.Push(runID, text)
 	return nil
 }
 
@@ -47,7 +47,7 @@ func (e *Engine) SetInterjectDrainPolicy(policy interjection.DrainPolicy) {
 	if e == nil {
 		return
 	}
-	e.interjectDrain.Store(policy.Normalize())
+	e.mem.interjectDrain.Store(policy.Normalize())
 }
 
 func (e *Engine) drainInterjectionsIfAllowed(ctx context.Context, runID string, agent core.Agent, messages []llm.Message, phase interjection.DrainPhase, justCompacted bool) ([]llm.Message, error) {
@@ -63,17 +63,17 @@ func (e *Engine) drainInterjectionsIfAllowed(ctx context.Context, runID string, 
 
 // clearInterjections discards any buffered mid-turn messages for a terminal run.
 func (e *Engine) clearInterjections(runID string) {
-	if e == nil || e.interjections == nil {
+	if e == nil || e.mem.interjections == nil {
 		return
 	}
-	_ = e.interjections.Drain(runID)
+	_ = e.mem.interjections.Drain(runID)
 }
 
 func (e *Engine) drainInterjectionsInto(ctx context.Context, runID string, agent core.Agent, messages []llm.Message) ([]llm.Message, error) {
-	if e == nil || e.interjections == nil {
+	if e == nil || e.mem.interjections == nil {
 		return messages, nil
 	}
-	pending := e.interjections.Drain(runID)
+	pending := e.mem.interjections.Drain(runID)
 	if len(pending) == 0 {
 		return messages, nil
 	}

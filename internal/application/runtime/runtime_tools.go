@@ -196,8 +196,8 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 	result, err := e.executeToolWithRetry(ctx, runID, agent, tool, call, executor)
 	attemptReported := false
 	if err != nil {
-		if e.orchestrator != nil {
-			_ = e.orchestrator.AfterAttempt(ctx, runID, call.Name, call.Input, toolorch.AttemptResult{})
+		if e.tooling.orchestrator != nil {
+			_ = e.tooling.orchestrator.AfterAttempt(ctx, runID, call.Name, call.Input, toolorch.AttemptResult{})
 			attemptReported = true
 		}
 		// A context cancellation/deadline is a runtime-level condition, not
@@ -214,15 +214,15 @@ func (e *Engine) dispatchToolWithOptions(ctx context.Context, runID string, agen
 		}
 		result = core.ToolResult{Tool: call.Name, Error: err.Error()}
 	}
-	if e.orchestrator != nil && !attemptReported {
-		_ = e.orchestrator.AfterAttempt(ctx, runID, call.Name, call.Input, toolorch.AttemptResult{})
+	if e.tooling.orchestrator != nil && !attemptReported {
+		_ = e.tooling.orchestrator.AfterAttempt(ctx, runID, call.Name, call.Input, toolorch.AttemptResult{})
 	}
 	if result.Error == "" {
 		if req.Reservation != nil {
 			req.Reservation.CommitSuccess()
 		}
-		if e.denyBreaker != nil {
-			e.denyBreaker.RecordAllow(runID)
+		if e.tooling.denyBreaker != nil {
+			e.tooling.denyBreaker.RecordAllow(runID)
 		}
 	} else if req.Reservation != nil {
 		req.Reservation.CommitAttempt()
@@ -267,10 +267,10 @@ func delegationDepthFromContext(ctx context.Context) int {
 }
 
 func (e *Engine) authorizeGovernanceTool(ctx context.Context, runID string, agent core.Agent, tool core.Tool, call llm.ToolCall, callCount, sameInputCalls, totalCalls int) error {
-	if e.toolGov == nil {
+	if e.gov.toolGov == nil {
 		return nil
 	}
-	return e.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
+	return e.gov.toolGov.AuthorizeTool(ctx, governance.ToolInvocation{
 		RunID:          runID,
 		Agent:          agent.Name,
 		Tool:           call.Name,
@@ -293,7 +293,7 @@ func governanceBlockError(err error) string {
 }
 
 func (e *Engine) authorizeTool(ctx context.Context, runID string, resource security.Resource) error {
-	if e.policy == nil {
+	if e.gov.policy == nil {
 		return nil
 	}
 	principal, err := identity.RequirePrincipal(ctx)
@@ -301,7 +301,7 @@ func (e *Engine) authorizeTool(ctx context.Context, runID string, resource secur
 		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: identity.Principal{}, Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: "denied", Reason: security.ErrUnauthenticated.Error()})
 		return security.ErrUnauthenticated
 	}
-	if err := e.policy.Authorize(ctx, principal, security.ActionToolInvoke, resource); err != nil {
+	if err := e.gov.policy.Authorize(ctx, principal, security.ActionToolInvoke, resource); err != nil {
 		e.recordAudit(ctx, audit.Event{Type: audit.EventPolicyDenied, Principal: principal, Action: security.ActionToolInvoke, Resource: resource, RunID: runID, Outcome: "denied", Reason: err.Error()})
 		return err
 	}
@@ -309,10 +309,10 @@ func (e *Engine) authorizeTool(ctx context.Context, runID string, resource secur
 }
 
 func (e *Engine) recordAudit(ctx context.Context, event audit.Event) {
-	if e.audit == nil {
+	if e.gov.audit == nil {
 		return
 	}
-	if err := e.audit.Record(ctx, event.WithDefaults(time.Now().UTC())); err != nil {
+	if err := e.gov.audit.Record(ctx, event.WithDefaults(time.Now().UTC())); err != nil {
 		e.logWarn(ctx, "runtime: audit record failed", "event_type", event.Type, "run_id", event.RunID, "error", err)
 	}
 }
@@ -423,14 +423,14 @@ func (e *Engine) executeToolWithRetry(ctx context.Context, runID string, agent c
 		cancelTimeout()
 		if err == nil {
 			toolSpan.End()
-			e.recorder.ObserveHistogram(ctx, observability.MetricToolDurationSeconds, time.Since(start).Seconds(),
+			e.obs.recorder.ObserveHistogram(ctx, observability.MetricToolDurationSeconds, time.Since(start).Seconds(),
 				observability.Attribute{Key: "tool", Value: call.Name},
 				observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 			return result, nil
 		}
 		toolSpan.RecordError(err)
 		toolSpan.End()
-		e.recorder.IncCounter(ctx, observability.MetricToolErrorsTotal,
+		e.obs.recorder.IncCounter(ctx, observability.MetricToolErrorsTotal,
 			observability.Attribute{Key: "tool", Value: call.Name},
 			observability.Attribute{Key: "scenario", Value: e.scenario.Name})
 		lastErr = err

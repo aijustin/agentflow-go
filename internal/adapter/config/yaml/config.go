@@ -259,8 +259,10 @@ type Runtime struct {
 	MaxTotalTokens int               `yaml:"max_total_tokens"`
 	Secrets        map[string]string `yaml:"secrets"`
 	// DetachedCancellationPollInterval overrides how often a detached
-	// stream's cancellation watcher reloads the run snapshot. Zero or
-	// negative falls back to the runtime default (250ms).
+	// stream's cancellation watcher reloads the run snapshot. Polling is
+	// only the cross-process fallback — same-process settles wake the
+	// watcher via an in-process notification. Zero or negative falls back
+	// to the runtime default (2s).
 	DetachedCancellationPollInterval time.Duration `yaml:"detached_cancellation_poll_interval"`
 }
 

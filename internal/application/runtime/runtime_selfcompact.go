@@ -23,11 +23,11 @@ func (e *Engine) selfCompactEnabled(agent core.Agent) bool {
 }
 
 func (e *Engine) markSelfCompactPending(runID string) {
-	e.pendingSelfCompact.Store(runID, struct{}{})
+	e.coord.pendingSelfCompact.Store(runID, struct{}{})
 }
 
 func (e *Engine) consumeSelfCompactPending(runID string) bool {
-	_, ok := e.pendingSelfCompact.LoadAndDelete(runID)
+	_, ok := e.coord.pendingSelfCompact.LoadAndDelete(runID)
 	return ok
 }
 

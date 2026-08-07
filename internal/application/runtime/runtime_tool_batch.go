@@ -32,11 +32,11 @@ func (e *Engine) toolCallNeedsPause(ctx context.Context, runID string, call llm.
 	var pauseRequired bool
 	var err error
 	if TrustModeFromContext(ctx) == TrustModeFullTrust {
-		if e.approvalEvaluator != nil {
-			pauseRequired, err = e.approvalEvaluator.PauseRequired(ctx, runID, tool, call)
+		if e.gov.approvalEvaluator != nil {
+			pauseRequired, err = e.gov.approvalEvaluator.PauseRequired(ctx, runID, tool, call)
 		}
 	} else {
-		pauseRequired, err = toolinvoke.EvaluatePauseRequired(ctx, tool, e.approvalEvaluator, runID, call)
+		pauseRequired, err = toolinvoke.EvaluatePauseRequired(ctx, tool, e.gov.approvalEvaluator, runID, call)
 	}
 	if err != nil {
 		return false, err
@@ -46,7 +46,7 @@ func (e *Engine) toolCallNeedsPause(ctx context.Context, runID string, call llm.
 	}
 	// Matching maybePauseToolCall: without a gate there is nowhere to pause,
 	// so the call proceeds (and may be denied later by DenialWithoutGate).
-	if e.gate == nil {
+	if e.coord.gate == nil {
 		return false, nil
 	}
 	return true, nil
