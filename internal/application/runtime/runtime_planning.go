@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/aijustin/agentflow-go/pkg/core"
@@ -154,4 +155,145 @@ func appendPlanningHint(messages []llm.Message, hint string) []llm.Message {
 	out = append(out, llm.Message{Role: llm.RoleSystem, Content: hint})
 	out = append(out, messages...)
 	return out
+}
+
+func (e *Engine) injectAutonomousPlan(ctx context.Context, runID string, agent core.Agent, profile core.LLMProfileRef, req RunRequest, messages []llm.Message) ([]llm.Message, error) {
+	plannerAgent := agent
+	if planner := e.scenario.Orchestration.Planning.Agent; planner != "" {
+		resolved, err := e.resolveAgent(planner)
+		if err != nil {
+			return nil, err
+		}
+		plannerAgent = resolved
+		var profileErr error
+		profile, profileErr = e.llmProfile(plannerAgent.LLM)
+		if profileErr != nil {
+			return nil, profileErr
+		}
+	}
+	maxSteps := firstPositive(e.scenario.Orchestration.Planning.MaxSteps, agent.Policy.MaxSteps, e.scenario.Runtime.MaxSteps, 5)
+	planReq := llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: llm.RoleSystem, Content: fmt.Sprintf("Create a concise execution plan with at most %d steps. Return JSON with a steps array; each step has goal and optional tool.", maxSteps)},
+			{Role: llm.RoleUser, Content: plannerUserContent(req)},
+		},
+		Temperature:     profile.Temperature,
+		TopP:            profile.TopP,
+		MaxTokens:       profile.MaxOutputTokens,
+		Thinking:        profile.Thinking,
+		ReasoningEffort: profile.ReasoningEffort,
+		ExtraBody:       profile.ExtraBody,
+	}
+	var rawPlan []byte
+	if outputter, ok := e.llm.(llm.StructuredOutputter); ok && e.llm.Supports(plannerAgent.LLM, llm.CapStructuredOutput) {
+		raw, err := e.structuredWithRetry(ctx, runID, plannerAgent, profile, autonomousPlanSchema, planReq, outputter)
+		if err != nil {
+			return nil, err
+		}
+		rawPlan = raw
+	} else {
+		resp, err := e.chatWithRetry(ctx, runID, plannerAgent, profile, planReq)
+		if err != nil {
+			return nil, err
+		}
+		rawPlan = []byte(resp.Message.Content)
+	}
+	planText := formatAutonomousPlan(rawPlan, maxSteps)
+	if e.scenario.Orchestration.Planning.Execute {
+		if err := e.persistPlan(ctx, runID, rawPlan, maxSteps); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(planText) == "" {
+		return messages, nil
+	}
+	// A replan injects a fresh plan message; drop any earlier plan system
+	// message from history first so the model never sees two (possibly
+	// conflicting) "Autonomous execution plan" messages at once.
+	filtered := stripPriorPlanSystemMessages(messages)
+	planned := make([]llm.Message, 0, len(filtered)+1)
+	planned = append(planned, llm.Message{Role: llm.RoleSystem, Content: planSystemMessagePrefix + planText})
+	planned = append(planned, filtered...)
+	e.emitJSON(ctx, core.EventContextPrepared, runID, map[string]any{"planning": true, "steps": strings.Count(planText, "\n") + 1})
+	return planned, nil
+}
+
+const planSystemMessagePrefix = "Autonomous execution plan:\n"
+
+func stripPriorPlanSystemMessages(messages []llm.Message) []llm.Message {
+	filtered := make([]llm.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == llm.RoleSystem && strings.HasPrefix(msg.Content, planSystemMessagePrefix) {
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	return filtered
+}
+
+func (e *Engine) planningEnabled() bool {
+	planning := e.scenario.Orchestration.Planning
+	if !planning.Enabled {
+		return false
+	}
+	if e.scenario.Orchestration.Mode != core.OrchestrationHybrid {
+		return true
+	}
+	if e.scenario.Orchestration.Workflow == nil {
+		return true
+	}
+	return planning.AfterWorkflow
+}
+
+func plannerUserContent(req RunRequest) string {
+	prompt := strings.TrimSpace(req.Prompt)
+	if len(req.Context) == 0 {
+		return prompt
+	}
+	if prompt == "" {
+		return "Workflow context:\n" + string(req.Context)
+	}
+	return prompt + "\n\nWorkflow context:\n" + string(req.Context)
+}
+
+func formatAutonomousPlan(raw []byte, maxSteps int) string {
+	var plan autonomousPlan
+	if err := json.Unmarshal(raw, &plan); err != nil || len(plan.Steps) == 0 {
+		return strings.TrimSpace(string(raw))
+	}
+	limit := len(plan.Steps)
+	if maxSteps > 0 && limit > maxSteps {
+		limit = maxSteps
+	}
+	var b strings.Builder
+	for index := 0; index < limit; index++ {
+		step := plan.Steps[index]
+		goal := strings.TrimSpace(step.Goal)
+		if goal == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(strconv.Itoa(index + 1))
+		b.WriteString(". ")
+		b.WriteString(goal)
+		if step.Tool != "" {
+			b.WriteString(" (tool: ")
+			b.WriteString(step.Tool)
+			b.WriteByte(')')
+		}
+	}
+	return b.String()
+}
+
+var autonomousPlanSchema = json.RawMessage(`{"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"goal":{"type":"string"},"tool":{"type":"string"}},"required":["goal"]}}},"required":["steps"]}`)
+
+type autonomousPlan struct {
+	Steps []autonomousPlanStep `json:"steps"`
+}
+
+type autonomousPlanStep struct {
+	Goal string `json:"goal"`
+	Tool string `json:"tool,omitempty"`
 }
