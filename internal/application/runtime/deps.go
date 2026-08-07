@@ -93,9 +93,13 @@ type coordDeps struct {
 	usageTrackers      sync.Map // runID -> *usageTracker
 	// iterationBases tracks the conversation length persisted at the last
 	// autonomous iteration boundary, so the next boundary writes only the
-	// delta (see persistAutonomousIteration).
-	iterationBases  sync.Map // runID -> int
-	toolArgsRepairs sync.Map // runID -> *toolArgsRepairSet
+	// delta (see persistAutonomousIteration). iterationAnchors carries the
+	// matching content anchor (hash of the boundary's last message) so a
+	// compacted-then-regrown conversation is detected and degrades to a
+	// full snapshot instead of writing a misaligned delta.
+	iterationBases   sync.Map // runID -> int
+	iterationAnchors sync.Map // runID -> string
+	toolArgsRepairs  sync.Map // runID -> *toolArgsRepairSet
 }
 
 // hookDeps groups host-provided hooks and gateway wrappers.

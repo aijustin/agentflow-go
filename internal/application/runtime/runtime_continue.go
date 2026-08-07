@@ -295,9 +295,7 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: decode checkpoint usage: %w", err))
 	}
 	e.restoreUsageTracker(snapshot.RunID, usage)
-	if err := e.restoreApprovalCheckpointState(snapshot.RunID, snapshot.Variables); err != nil {
-		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, err)
-	}
+	e.restoreApprovalCheckpointState(ctx, snapshot.RunID, snapshot.Variables)
 	if len(messages) == 0 {
 		// A tool_approval checkpoint always persists the conversation up to
 		// and including the paused assistant turn. Missing messages mean the

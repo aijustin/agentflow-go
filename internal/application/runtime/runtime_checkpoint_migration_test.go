@@ -185,9 +185,7 @@ func TestEngineDenyBreakerStateSurvivesNodeMigration(t *testing.T) {
 	if got := engine2.tooling.denyBreaker.ExportRun("run-deny"); got != 0 {
 		t.Fatalf("fresh node must start at 0, got %d", got)
 	}
-	if err := engine2.restoreApprovalCheckpointState("run-deny", snapshot.Variables); err != nil {
-		t.Fatal(err)
-	}
+	engine2.restoreApprovalCheckpointState(ctx, "run-deny", snapshot.Variables)
 	if got := engine2.tooling.denyBreaker.ExportRun("run-deny"); got != 1 {
 		t.Fatalf("restored deny count = %d, want 1", got)
 	}

@@ -428,6 +428,7 @@ func (e *Engine) clearRunScopedState(runID string) {
 	e.coord.pendingSelfCompact.Delete(runID)
 	e.coord.usageTrackers.Delete(runID)
 	e.coord.iterationBases.Delete(runID)
+	e.coord.iterationAnchors.Delete(runID)
 	e.coord.toolArgsRepairs.Delete(runID)
 }
 

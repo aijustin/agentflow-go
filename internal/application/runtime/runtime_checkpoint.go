@@ -251,13 +251,16 @@ func checkpointStepsConsumed(vars map[string]json.RawMessage) int {
 // restoreApprovalCheckpointState imports the checkpointed approval-cache
 // decisions and deny-breaker count so a resume on a fresh node keeps
 // remembered allow/deny decisions (no repeated HITL prompts) and the
-// consecutive-deny budget. A store that does not implement
-// toolorch.RunStateExporter stays process-local, as before.
-func (e *Engine) restoreApprovalCheckpointState(runID string, vars map[string]json.RawMessage) error {
+// consecutive-deny budget. This is regenerable, cache-like state: an import
+// failure degrades to a warn log plus an empty cache (fail-open), matching
+// the "store without RunStateExporter" degradation, instead of failing the
+// run permanently. The worst case of an empty cache is a repeated HITL
+// prompt, never a lost approval guarantee.
+func (e *Engine) restoreApprovalCheckpointState(ctx context.Context, runID string, vars map[string]json.RawMessage) {
 	if raw := vars[checkpointApprovalsVar]; len(raw) > 0 {
 		if exporter, ok := e.tooling.approvalStore.(toolorch.RunStateExporter); ok {
 			if err := exporter.ImportRun(runID, raw); err != nil {
-				return fmt.Errorf("runtime: decode checkpoint approvals: %w", err)
+				e.logWarn(ctx, "runtime: failed to import checkpoint approvals; resuming with an empty approval cache", "run_id", runID, "error", err)
 			}
 		}
 	}
@@ -266,7 +269,6 @@ func (e *Engine) restoreApprovalCheckpointState(runID string, vars map[string]js
 			e.tooling.denyBreaker.ImportRun(runID, count)
 		}
 	}
-	return nil
 }
 
 func checkpointIntVar(vars map[string]json.RawMessage, key string) int {

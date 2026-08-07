@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/log"
@@ -114,7 +115,11 @@ func NewPipeline(cfg Config) *Pipeline {
 		stop:         make(chan struct{}),
 		dispatchDone: make(chan struct{}),
 	}
-	go p.dispatch()
+	safecall.GoSafe("emit: event dispatcher", func(err error) {
+		if p.logger != nil {
+			p.logger.Error(context.Background(), "emit: event dispatcher crashed", "error", err)
+		}
+	}, p.dispatch)
 	return p
 }
 
@@ -228,6 +233,14 @@ func (p *Pipeline) Close() {
 	}
 	// Sweep anything the dispatcher did not drain in time so the dropped
 	// counter reflects the loss, and release any pending flush waiters.
+	p.sweepUndelivered()
+}
+
+// sweepUndelivered drains whatever is stranded in the queue after the
+// dispatcher stopped, counting each event as dropped and releasing pending
+// flush barriers. Both Close (after its drain wait) and an enqueue that won
+// the send race against the dispatcher's exit funnel through here.
+func (p *Pipeline) sweepUndelivered() {
 	for {
 		select {
 		case item := <-p.queue:
@@ -249,6 +262,13 @@ func (p *Pipeline) enqueue(ctx context.Context, event core.Event) {
 	}
 	select {
 	case p.queue <- queueItem{ctx: context.WithoutCancel(ctx), event: event}:
+		// The dispatcher may have exited between the check above and the
+		// send (Close raced us past its own sweep): the item would sit in
+		// the queue forever — never delivered, never counted. Recheck and
+		// sweep it into the drop counter instead.
+		if p.stopped.Load() {
+			p.sweepUndelivered()
+		}
 	default:
 		p.noteDrop(ctx, event)
 	}
@@ -314,8 +334,22 @@ func (p *Pipeline) deliver(item queueItem) {
 		close(item.flush)
 		return
 	}
-	if err := p.sink.Emit(item.ctx, item.event); err != nil {
+	// A panicking host sink must not kill the dispatcher (and with it the
+	// process): recover per delivery, count the event as dropped and log it,
+	// mirroring the queue-full drop path. Ordinary delivery errors keep their
+	// historic warn-only treatment (the event was attempted, not dropped).
+	var err error
+	panicked := true
+	func() {
+		defer safecall.Recover("emit: sink delivery", &err)
+		err = p.sink.Emit(item.ctx, item.event)
+		panicked = false
+	}()
+	if err != nil {
 		WarnFailure(p.logger, item.ctx, item.event.RunID, err)
+	}
+	if panicked {
+		p.noteDrop(item.ctx, item.event)
 	}
 }
 
@@ -336,12 +370,18 @@ const lifecycleEmitAttempts = 3
 // sink outage (e.g. a DB blip) does not silently drop them; all other events
 // are delivered on a best-effort single attempt.
 func EmitWithLifecycleRetry(ctx context.Context, sink core.EventSink, event core.Event) error {
-	err := sink.Emit(ctx, event)
+	// A panicking sink converts to an error (and the retry policy below)
+	// instead of crashing the caller's goroutine.
+	deliver := func() (err error) {
+		defer safecall.Recover("emit: sink delivery", &err)
+		return sink.Emit(ctx, event)
+	}
+	err := deliver()
 	for attempt := 1; err != nil && IsCriticalLifecycleEvent(event.Type) && attempt < lifecycleEmitAttempts; attempt++ {
 		if delayErr := retry.Backoff(ctx, attempt); delayErr != nil {
 			break
 		}
-		err = sink.Emit(ctx, event)
+		err = deliver()
 	}
 	return err
 }

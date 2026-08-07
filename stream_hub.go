@@ -398,6 +398,39 @@ func (h *streamHub) sessionActive(runID string) bool {
 	return session != nil && !session.terminal
 }
 
+// reactivate reports whether runID has a stream session a re-execution entry
+// point (resume/continue/retry) may publish into, replacing a TERMINAL
+// session with a fresh one first. Without the replacement a re-run after a
+// terminal frame (e.g. ContinueRun after a failed continue settled the
+// session on an error frame) would execute with zero hub frames while
+// attaching subscribers replayed the stale terminal stream. A run with no
+// session at all keeps its historic no-hub behavior.
+func (h *streamHub) reactivate(runID string) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return false
+	}
+	old := h.sessions[runID]
+	if old == nil {
+		return false
+	}
+	if !old.terminal {
+		return true
+	}
+	if old.graceTimer != nil {
+		old.graceTimer.Stop()
+	}
+	for _, sub := range old.subs {
+		h.detachLocked(old, sub)
+	}
+	h.sessions[runID] = &streamSession{runID: runID, subs: make(map[int]*streamSubscriber)}
+	return true
+}
+
 func (h *streamHub) close() {
 	if h == nil {
 		return
@@ -526,6 +559,14 @@ func (f *Framework) replayRunStreamFromStore(ctx context.Context, runID string, 
 		}
 		snapshot, err := runstate.LoadAuthorized(ctx, f.runs, runID)
 		if err != nil {
+			return
+		}
+		if snapshot.Status == runstate.RunStatusRunning {
+			// A live run has no terminal truth to synthesize: a Done frame
+			// with Status=running would tell consumers the stream ended
+			// while the run is still producing. End the replay after the
+			// stored events instead; the consumer re-attaches once the run
+			// settles.
 			return
 		}
 		result := &RunResult{RunID: runID, Status: snapshot.Status}

@@ -184,3 +184,62 @@
 - Lease fencing（`WithRunLease`/`ErrRunLeaseLost`/`ErrStaleFence`）+ reaper 为多实例部署提供了较完整的僵尸防护。
 - `auto:iter:<n>` 迭代快照让 autonomous 循环具备崩溃恢复能力。
 - path lock 对同路径文件工具串行化，避免了并发写文件的常见坑。
+
+---
+
+## 第二轮猎查（2026-08）
+
+本轮 7 项（F1–F7）均已按"先复现测试（红）再修（绿）"修复；新测试全部经 `-race -count=3` 验证，`go build ./... && go vet ./...` 通过，`golangci-lint v2.12.2 run ./...` 0 issues，`go test ./ ./internal/application/runtime/ ./internal/application/emit/` 与 `go test ./pkg/... ./internal/...` 全绿。
+
+| 级别 | 编号 | 问题 | 状态 |
+|---|---|---|---|
+| 🔴 高 | F1 | StreamRun ctx 取消 → stream hub session 永久泄漏 | ✅ 已修复 |
+| 🟠 中 | F2 | 终态 session 上重试/续跑不重建 session | ✅ 已修复 |
+| 🟠 中 | F3 | emit pipeline dispatcher 无 panic 保护 | ✅ 已修复 |
+| 🟠 中 | F4 | 迭代 delta base 只按长度校验，压缩后再增长写出错位 delta | ✅ 已修复 |
+| 🟠 中 | F5 | pause 步不落迭代边界 → 编号洞 → 崩溃恢复 chain gap 且 run 永久卡死 | ✅ 已修复 |
+| 🟡 低 | F6 | pipeline Close 清扫后 enqueue 竞态，事件丢失且不计数 | ✅ 已修复 |
+| 🟡 低 | F7 | 缓存性状态（approvals/deny）导入失败升级为永久性 run 失败 | ✅ 已修复 |
+
+### F1 StreamRun ctx 取消 → hub session 永久泄漏（高）
+
+- **位置**：`framework_stream.go` merger 的 `send` 在 `ctx.Done` 返回 false 后直接 return；session 清理此前只有 Stream 启动失败、grace timer（需 terminal 帧）、hub close 三条路径。
+- **修复**：merger 增加 deferred 兜底——任何"未投递收尾帧（done，paused 也算，或 error）"的退出（非 detached 取消、panic 经 safecall 展开）都会向 hub publish 终态 `error` 帧（`errStreamCallerGone`），放行订阅者并启动 grace 回收。detached 场景 caller 取消后 merger 切换为 hub-only 投递：后续 token/event 与终态 done 帧继续流向 `AttachRunStream` 订阅者，不再随 `tee.done` 静默丢弃；终态快照加载改用 `context.WithoutCancel`，避免把正常完成的 detached run 误报为 error。"caller 取消但 run 继续（detached）"与"非 detached caller-gone 定居"两种语义保持区分。
+- **注意点**：首版实现用"terminal 帧是否已发"做兜底条件，误伤了 pause（paused Done 按设计非 terminal），被存量测试 `TestStreamHubPauseAttachResume` 抓出；改为跟踪"收尾帧是否投递成功"后正确。
+- **红证据**：`stream_hub_second_round_test.go` `TestStreamRunCallerCancelSettlesHubSession`（修复前订阅者挂死 15s 超时）、`TestStreamRunDetachedCallerCancelKeepsHubStreamAlive`（修复前同上）。绿：`./` 包全量 + `-race -count=3`。
+
+### F2 终态 session 上重试/续跑不重建 session（中）
+
+- **位置**：`stream_hub.go` `sessionActive` 对 terminal 返回 false；`framework_continue.go` 仅 active 才挂 hub tee；`replayRunStreamFromStore` 回放末尾无条件发 Done。
+- **修复**：新增 `streamHub.reactivate`——同 runID 存在 terminal session 时换新 session（旧订阅者 detach、grace timer 停止），无 session 时保持历史无 hub 行为。`continueRun` 与 `RetryFailedRun` 统一走新的 `driveWithStreamSession`：执行期间事件经 hub tee 发布，结局作为新 session 的 Done/Error 帧。store 回放对 `Running` 快照不再合成 `Done{Status:running}`（回放完事件即结束），消除"活 run 被误报终态"。
+- **红证据**：`TestStreamHubContinueRetryReplacesTerminalSession`（修复前 attach 重放陈旧终态流、末尾是旧 error 帧：`{Kind:error Err:provider temporarily down}`）、`TestAttachRunStreamStoreReplayOmitsDoneForRunningRun`（修复前合成 `Done{Status:running}`）。绿：同上。
+
+### F3 emit pipeline dispatcher 无 panic 保护（中）
+
+- **位置**：`internal/application/emit/pipeline.go` 裸 `go p.dispatch()`、`deliver` 直接调 `sink.Emit`。
+- **修复**：dispatcher 改走 `safecall.GoSafe`；`deliver` 用 `safecall.Recover` 按条 recover，panic 按投递失败处理（计入 dropped + warn 日志，对齐队列满丢弃路径），普通投递错误保持既有 warn-only 语义；同步生命周期路径 `EmitWithLifecycleRetry` 把 sink panic 转为 error 交回调用方（critical 事件仍按既有退避重试）。
+- **红证据**：`internal/application/emit/pipeline_defect_test.go` `TestPipelineDispatcherSurvivesSinkPanic`（修复前测试进程崩溃于 `pipeline.go:317` deliver）。绿：`internal/application/emit` 全量 + `-race -count=3`。
+
+### F4 迭代 delta base 只按长度校验（中）
+
+- **位置**：`internal/application/runtime/runtime_iteration.go` `persistAutonomousIteration`（`base > 0 && base <= len(messages)` 即判 delta 合法）。
+- **修复**：envelope 增加 `base_hash`（写入侧为 `messages[base-1]` 的 sha256，经与持久化相同的 NormalizeMessageToolInputs 归一化）。写入时锚点不匹配即降级 full；fold 侧对带 `base_hash` 的 delta 校验前缀内容锚点，不匹配报错而非恢复出错位对话。无该字段的旧 envelope 保持长度校验。`iterationAnchors` 与 `iterationBases` 同生命周期（resume 时按 fold 结果重新播种，终态清理同步删除）。
+- **红证据**：`runtime_iteration_anchor_test.go` `TestEngineAutonomousIterationAnchorMismatchFallsBackToFull`（修复前写出 `format="delta" base=3` 的错位 delta）。`TestEngineAutonomousIterationDeltaCarriesAndVerifiesAnchor` 锁定锚点携带与 fold 侧校验（含篡改锚点报错）。既有 `TestEngineAutonomousIterationDeltaWritesAreBounded` 的余量系数因固定 80B 锚点字段从 3x 调整为 2x（delta 仍是 O(1) 大小）。绿：`internal/application/runtime` 全量 + `-race -count=3`。
+
+### F5 pause 步不落迭代边界 → 编号洞 → chain gap 卡死（中）
+
+- **位置**：`runtime_llm.go` pause 在边界持久化之前 return；`runtime_iteration.go` fold 要求 1..through 键连续。
+- **修复（采用建议 (a) 的内容锚定变体）**：fold 容忍缺键（pause 洞），完整性由内容而非键连续性保证——full envelope 无论前面有无洞都重新起锚；跨越洞的 delta 由 base（及 base_hash）校验；下一个 delta 跨不过的洞（base 越过已重建前缀）依旧报错。(b)（pause 时补写边界）评估后放弃：pause 点的对话含未应答 tool_calls，违反边界"无孤儿 tool_call ID"不变量，正确剔除该轮的成本与风险高于收益。
+- **红证据**：`TestEngineLoadAutonomousConversationFoldsAcrossPauseHole`（修复前报 `missing persisted iteration 2 (checkpoint chain has a gap)`；三个子用例：洞后 full 起锚、delta 跨洞、跨不过的洞仍失败）。绿：同上。
+
+### F6 pipeline Close 清扫后 enqueue 竞态（低）
+
+- **位置**：`pipeline.go` enqueue（先检查后发送）vs Close 清扫。
+- **修复**：enqueue 发送成功后二次检查 `stopped`，命中则走与 Close 相同的 `sweepUndelivered` 兜底清扫（计数 + 释放 flush barrier）；Close 复用同一 sweep。
+- **证据**：`TestPipelineSweepUndeliveredCountsStrandedEvents`（白箱构造竞态终态：dispatcher 已退出而队列有滞留项，断言计数与 barrier 释放）；`TestPipelineEnqueueCloseRaceAccountsEveryEvent`（300 轮 emit-vs-Close 对抗，断言 delivered+dropped==sent 恰好一次）。竞态窗口本身（检查后、发送前被 Close 全程插入）无法确定性调度，白箱+压力网为等价覆盖。绿：`-race -count=3`。
+
+### F7 缓存性状态导入失败升级为永久 run 失败（低）
+
+- **位置**：`runtime_checkpoint.go` `restoreApprovalCheckpointState`、`runtime_iteration.go` `restoreIterationRunState`。
+- **修复**：approvals ImportRun 失败降级为 warn 日志 + 空缓存（fail-open），与"store 不实现 RunStateExporter 时静默降级"语义对齐——最坏结果是重复一次 HITL 提示，而非 run 卡死。函数改为无返回值（调用点 `continueToolApproval`、`restoreIterationRunState` 同步简化，后者补 ctx 参数用于日志）。deny 计数导入本就不返回错误，不变。
+- **红证据**：`TestEngineRestoreApprovalCheckpointStateFailsOpen`（修复前签名即返回 error，调用方 `failContinuePermanent`；修复后注入损坏 payload 断言 warn 且无错误）。绿：同上。

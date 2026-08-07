@@ -3,6 +3,7 @@ package agentflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -13,6 +14,12 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/llm"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
+
+// errStreamCallerGone settles a hub session whose StreamRun merger exited
+// without ever publishing a terminal frame (the caller of a non-detached
+// stream cancelled, or the merger panicked). It releases attached subscribers
+// and starts the session's grace-period reclamation.
+var errStreamCallerGone = errors.New("agentflow: stream caller went away before a terminal frame")
 
 // StreamRunOption configures StreamRun read-side behavior.
 type StreamRunOption func(*streamRunOptions)
@@ -172,17 +179,54 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 			pauseTok  string
 			output    strings.Builder
 			reported  int64
+			// callerGone marks the detached hub-only mode: the caller's ctx
+			// is done but the run keeps executing, so frames go straight to
+			// hub subscribers instead of the abandoned out channel.
+			callerGone bool
+			// streamEndDelivered tracks whether the merger's closing frame
+			// (done — paused counts — or error) was delivered; the deferred
+			// settle below covers every exit that never delivered one.
+			streamEndDelivered bool
 		)
+		publish := func(frame StreamFrame) {
+			f.streamHub.publish(req.RunID, frame)
+		}
+		// Every merger exit that never delivered its closing frame (caller
+		// cancelled a non-detached stream mid-flight, or a panic unwound
+		// through safecall) settles the hub session with a terminal error
+		// frame: attached subscribers are released and the grace timer
+		// reclaims the session, instead of the session leaking forever with
+		// subscribers hanging on it.
+		defer func() {
+			if !streamEndDelivered {
+				f.streamHub.publish(req.RunID, StreamFrame{Kind: StreamFrameError, Err: errStreamCallerGone})
+			}
+		}()
 		send := func(frame StreamFrame) bool {
+			if callerGone {
+				// Detached run, caller away: hub subscribers are the only
+				// remaining consumers.
+				publish(frame)
+				return true
+			}
 			select {
 			case out <- frame:
 				// Fan the frame out to hub subscribers only after the primary
 				// consumer received it, so attach/replay can never starve or
 				// reorder the historic stream.
-				f.streamHub.publish(req.RunID, frame)
+				publish(frame)
 				return true
 			case <-ctx.Done():
-				return false
+				if !options.detached {
+					return false
+				}
+				// Detached: the run keeps executing after the caller went
+				// away. Switch to hub-only delivery so attached subscribers
+				// keep following (and the session still terminates properly)
+				// instead of every later frame dying with the tee.
+				callerGone = true
+				publish(frame)
+				return true
 			}
 		}
 		flushEvents := func() {
@@ -232,7 +276,7 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 		flushEvents()
 
 		if streamErr != nil {
-			send(StreamFrame{Kind: StreamFrameError, Err: streamErr})
+			streamEndDelivered = send(StreamFrame{Kind: StreamFrameError, Err: streamErr})
 			return
 		}
 
@@ -241,29 +285,33 @@ func (f *Framework) StreamRun(ctx context.Context, req RunRequest, opts ...Strea
 			result.Status = runstate.RunStatusPaused
 			result.Token = pauseTok
 		} else {
-			snapshot, loadErr := runstate.LoadAuthorized(ctx, f.runs, req.RunID)
+			// WithoutCancel: a detached run whose caller went away still
+			// completes and must publish a truthful done frame to hub
+			// subscribers; the cancelled caller ctx would fail this load and
+			// misreport the outcome as an error.
+			snapshot, loadErr := runstate.LoadAuthorized(context.WithoutCancel(ctx), f.runs, req.RunID)
 			if loadErr != nil {
 				if f.logger != nil {
 					f.logger.Warn(ctx, "agentflow: StreamRun failed to load run snapshot for done frame", "run_id", req.RunID, "error", loadErr)
 				}
-				send(StreamFrame{Kind: StreamFrameError, Err: fmt.Errorf("agentflow: load run for stream done: %w", loadErr)})
+				streamEndDelivered = send(StreamFrame{Kind: StreamFrameError, Err: fmt.Errorf("agentflow: load run for stream done: %w", loadErr)})
 				return
 			}
 			result.Status = snapshot.Status
 			if final, ok := snapshot.StepOutputs["final"]; ok {
-				raw, finalErr := runstate.LoadStepOutput(ctx, f.blobs, final)
+				raw, finalErr := runstate.LoadStepOutput(context.WithoutCancel(ctx), f.blobs, final)
 				if finalErr != nil {
 					if f.logger != nil {
 						f.logger.Warn(ctx, "agentflow: StreamRun failed to load final output", "run_id", req.RunID, "error", finalErr)
 					}
-					send(StreamFrame{Kind: StreamFrameError, Err: fmt.Errorf("agentflow: load final for stream done: %w", finalErr)})
+					streamEndDelivered = send(StreamFrame{Kind: StreamFrameError, Err: fmt.Errorf("agentflow: load final for stream done: %w", finalErr)})
 					return
 				}
 				result.Output = string(raw)
 				result.StructuredOutput = append(json.RawMessage(nil), raw...)
 			}
 		}
-		send(StreamFrame{Kind: StreamFrameDone, Result: result})
+		streamEndDelivered = send(StreamFrame{Kind: StreamFrameDone, Result: result})
 	})
 	return out, nil
 }

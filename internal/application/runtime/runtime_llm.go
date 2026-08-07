@@ -514,7 +514,7 @@ func (e *Engine) answerWithToolsFrom(
 		// scratch. A persistence failure fails the run - the already-saved
 		// iterations keep it resumable.
 		if e.autonomousIterationPersistenceEnabled(ctx) {
-			if err := e.persistAutonomousIteration(ctx, runID, logicalStep, messages); err != nil {
+			if err := e.persistAutonomousIteration(ctx, runID, logicalStep, messages, tracker, replanAttempts); err != nil {
 				return "", err
 			}
 		}

@@ -398,24 +398,32 @@ func hasPendingCheckpointMetadata(snapshot runstate.RunSnapshot) bool {
 }
 
 func (f *Framework) continueRun(ctx context.Context, runID string) (RunResult, error) {
-	// A paused run is not the end of its stream: when a StreamRun session is
-	// live for this run, continue publishing into it so AttachRunStream
-	// subscribers observe the post-approval execution. Events emitted during
-	// the continue fan out through a hub tee on the context (the original
-	// StreamRun tee is gone by then), and the continue's outcome becomes the
-	// session's next Done/Error frame.
-	if f.streamHub.sessionActive(runID) {
-		ctx = appexec.ContextWithEventTee(ctx, streamHubTee{hub: f.streamHub, runID: runID})
-		result, err := f.continueRunInner(ctx, runID)
-		if err != nil {
-			f.streamHub.publish(runID, StreamFrame{Kind: StreamFrameError, Err: err})
-		} else {
-			result := result
-			f.streamHub.publish(runID, StreamFrame{Kind: StreamFrameDone, Result: &result})
-		}
-		return result, err
+	return f.driveWithStreamSession(ctx, runID, func(ctx context.Context) (RunResult, error) {
+		return f.continueRunInner(ctx, runID)
+	})
+}
+
+// driveWithStreamSession runs drive with the run's stream session attached
+// when one exists: a paused run is not the end of its stream, and a
+// re-execution after a terminal frame (a failed continue, a crashed run) gets
+// a fresh session, so AttachRunStream subscribers always observe the
+// post-approval/post-retry execution. Events emitted during the drive fan out
+// through a hub tee on the context (the original StreamRun tee is gone by
+// then), and the drive's outcome becomes the session's next Done/Error frame.
+// Runs that never had a session keep their historic no-hub behavior.
+func (f *Framework) driveWithStreamSession(ctx context.Context, runID string, drive func(context.Context) (RunResult, error)) (RunResult, error) {
+	if !f.streamHub.reactivate(runID) {
+		return drive(ctx)
 	}
-	return f.continueRunInner(ctx, runID)
+	ctx = appexec.ContextWithEventTee(ctx, streamHubTee{hub: f.streamHub, runID: runID})
+	result, err := drive(ctx)
+	if err != nil {
+		f.streamHub.publish(runID, StreamFrame{Kind: StreamFrameError, Err: err})
+	} else {
+		result := result
+		f.streamHub.publish(runID, StreamFrame{Kind: StreamFrameDone, Result: &result})
+	}
+	return result, err
 }
 
 func (f *Framework) continueRunInner(ctx context.Context, runID string) (RunResult, error) {
@@ -601,26 +609,31 @@ func (f *Framework) RetryFailedRun(ctx context.Context, runID string) (RunResult
 		retryPayload[key] = value
 	}
 	f.emitJSON(ctx, core.EventRunResumed, runID, retryPayload)
-	switch mode {
-	case core.OrchestrationFixedWorkflow:
-		return f.finishWorkflowRun(ctx, runID, true)
-	case core.OrchestrationHybrid:
-		snapshot, err = runstate.LoadAuthorized(ctx, f.runs, runID)
-		if err != nil {
-			return RunResult{}, err
+	// The retry re-executes the run: when a StreamRun session exists for it
+	// (a terminal one from the failed attempt is replaced), subscribers
+	// observe the retry's frames instead of the stale terminal stream.
+	return f.driveWithStreamSession(ctx, runID, func(ctx context.Context) (RunResult, error) {
+		switch mode {
+		case core.OrchestrationFixedWorkflow:
+			return f.finishWorkflowRun(ctx, runID, true)
+		case core.OrchestrationHybrid:
+			snapshot, err = runstate.LoadAuthorized(ctx, f.runs, runID)
+			if err != nil {
+				return RunResult{}, err
+			}
+			return f.continueHybridRun(ctx, runID, snapshot)
+		default:
+			// Autonomous runs retry from the checkpoint the failure left behind
+			// when one exists, re-entering the same continue path a HITL resume
+			// would take; otherwise they resume from the last persisted
+			// iteration boundary (gated above), skipping the iterations that
+			// already completed.
+			if hasPendingCheckpointMetadata(snapshot) {
+				return f.currentEngine().ContinueAfterCheckpoint(ctx, runID)
+			}
+			return f.currentEngine().ResumeAutonomousFromIteration(ctx, runID)
 		}
-		return f.continueHybridRun(ctx, runID, snapshot)
-	default:
-		// Autonomous runs retry from the checkpoint the failure left behind
-		// when one exists, re-entering the same continue path a HITL resume
-		// would take; otherwise they resume from the last persisted
-		// iteration boundary (gated above), skipping the iterations that
-		// already completed.
-		if hasPendingCheckpointMetadata(snapshot) {
-			return f.currentEngine().ContinueAfterCheckpoint(ctx, runID)
-		}
-		return f.currentEngine().ResumeAutonomousFromIteration(ctx, runID)
-	}
+	})
 }
 
 func (f *Framework) continueHybridRun(ctx context.Context, runID string, snapshot runstate.RunSnapshot) (RunResult, error) {
