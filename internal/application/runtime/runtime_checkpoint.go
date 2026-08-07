@@ -21,13 +21,16 @@ func (e *Engine) pauseBeforeFinalAnswer(ctx context.Context, req RunRequest, age
 		return RunResult{}, fmt.Errorf("runtime: before_final_answer checkpoint is not supported inside delegated sub-agent calls")
 	}
 	checkpointVars := map[string]json.RawMessage{
-		checkpointPromptVar:  json.RawMessage(fmt.Sprintf("%q", req.Prompt)),
-		checkpointAgentVar:   json.RawMessage(fmt.Sprintf("%q", agent.Name)),
+		checkpointPromptVar:  jsonStringValue(req.Prompt),
+		checkpointAgentVar:   jsonStringValue(agent.Name),
 		checkpointContextVar: req.Context,
 		checkpointKindVar:    json.RawMessage(`"before_final_answer"`),
+		// Same contract as the tool-approval pause: set until a confirmed
+		// approval resumes the run (see checkpointPendingPauseVar).
+		checkpointPendingPauseVar: json.RawMessage(`true`),
 	}
 	if opts.outputMode != "" {
-		checkpointVars[checkpointOutputModeVar] = json.RawMessage(fmt.Sprintf("%q", opts.outputMode))
+		checkpointVars[checkpointOutputModeVar] = jsonStringValue(opts.outputMode)
 	}
 	if err := e.saveCheckpointVariables(ctx, snapshot, checkpointVars); err != nil {
 		return RunResult{}, err
@@ -100,6 +103,7 @@ func checkpointVariableKeys() []string {
 		checkpointStepsConsumedVar,
 		checkpointReplanAttemptsVar,
 		checkpointWorkflowNodeVar,
+		checkpointPendingPauseVar,
 	}
 }
 
@@ -125,4 +129,44 @@ func (e *Engine) clearCheckpointState(ctx context.Context, snapshot *runstate.Ru
 		}
 		return nil
 	})
+}
+
+// clearPendingPauseMarker removes the pending-pause marker once the gate has
+// confirmed the pause (or, on the framework resume paths, once the gate has
+// confirmed the approval). It deliberately keeps every other checkpoint
+// variable intact.
+func (e *Engine) clearPendingPauseMarker(ctx context.Context, runID string) error {
+	return e.saveSnapshotWithRetry(ctx, runID, func(loaded *runstate.RunSnapshot) error {
+		if loaded.Variables == nil {
+			return nil
+		}
+		delete(loaded.Variables, checkpointPendingPauseVar)
+		return nil
+	})
+}
+
+// ClearPendingPauseMarker exposes the marker cleanup to the framework facade:
+// a gate.Resume approval is definitive proof the pause happened, so a marker
+// left behind by a failed post-pause cleanup must not block the approved
+// continue (the engine refuses unconfirmed checkpoints fail-closed).
+func (e *Engine) ClearPendingPauseMarker(ctx context.Context, runID string) error {
+	return e.clearPendingPauseMarker(ctx, runID)
+}
+
+// ClearUnconfirmedCheckpoint drops checkpoint metadata when the snapshot still
+// carries the pending-pause marker: the pause was never confirmed by the gate,
+// so no human approved anything and the checkpoint must not be resumable.
+// It reports whether it cleared the checkpoint. Used by the abandoned-run
+// reaper so a crashed-between-checkpoint-and-pause run cannot be "retried"
+// into executing unapproved tool calls.
+func ClearUnconfirmedCheckpoint(snapshot *runstate.RunSnapshot) bool {
+	if snapshot == nil || snapshot.Variables == nil {
+		return false
+	}
+	if !checkpointBoolVar(snapshot.Variables, checkpointPendingPauseVar) {
+		return false
+	}
+	clearHumanAmendment(snapshot)
+	clearCheckpointVariables(snapshot.Variables)
+	return true
 }

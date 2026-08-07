@@ -72,10 +72,10 @@ func (r *WorkflowRunner) pauseForWorkflowToolApproval(ctx context.Context, scena
 		if snapshot.Variables == nil {
 			snapshot.Variables = make(map[string]json.RawMessage)
 		}
-		snapshot.Variables[workflowCheckpointKindVar] = json.RawMessage(fmt.Sprintf("%q", workflowToolApprovalKind))
-		snapshot.Variables[workflowCheckpointNodeVar] = json.RawMessage(fmt.Sprintf("%q", storedID))
+		snapshot.Variables[workflowCheckpointKindVar] = jsonStringValue(workflowToolApprovalKind)
+		snapshot.Variables[workflowCheckpointNodeVar] = jsonStringValue(storedID)
 		snapshot.Variables[workflowCheckpointToolInputVar] = input
-		snapshot.Variables[workflowCheckpointToolRefVar] = json.RawMessage(fmt.Sprintf("%q", tool.Name))
+		snapshot.Variables[workflowCheckpointToolRefVar] = jsonStringValue(tool.Name)
 		snapshot.CurrentNodeID = storedID
 		payloadMap := map[string]any{
 			"node_id": node.ID,

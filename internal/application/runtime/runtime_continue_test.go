@@ -965,3 +965,283 @@ func TestEngineRunStructuredRejectsTools(t *testing.T) {
 		t.Fatalf("expected tools rejection, got %v", err)
 	}
 }
+
+// TestEngineContinueAfterApprovalAppliesToolOutputMaxBytes pins D4: the
+// approved-resume path materializes the tool result through the same
+// materializeToolBatchItem as the normal batch path, so ToolOutputMaxBytes
+// truncation (and the truncate metadata) apply there too, while the step
+// output keeps the full result.
+func TestEngineContinueAfterApprovalAppliesToolOutputMaxBytes(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat, llm.CapToolCall)
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "risky", Input: json.RawMessage(`{"query":"big"}`)}},
+	})
+	gateway.QueueToolCall("default", llm.ToolCallResponse{
+		ChatResponse: llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}},
+	})
+	scenario := toolScenario(core.ApprovalNever, core.SideEffectRead, 4)
+	scenario.Tools["risky"] = core.Tool{
+		Name:        "risky",
+		Type:        "builtin.echo",
+		Description: "Risky echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Approval:    core.ApprovalPause,
+		SideEffect:  core.SideEffectWrite,
+	}
+	profile := scenario.LLMs["default"]
+	profile.Context.ToolOutputMaxBytes = 64
+	scenario.LLMs["default"] = profile
+	agent := scenario.Agents["assistant"]
+	agent.Tools = []string{"risky"}
+	scenario.Agents["assistant"] = agent
+	engine, err := NewEngine(scenario, Dependencies{
+		Runs:      repo,
+		LLM:       gateway,
+		HumanGate: gate,
+		Tools:     mapToolRegistry{"risky": largeOutputTool{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-approved-truncate", Agent: "assistant", Prompt: "go"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-approved-truncate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "done" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+
+	// The LLM-facing tool message must be truncated like the batch path.
+	requests := gateway.ToolRequests("default")
+	if len(requests) == 0 {
+		t.Fatal("expected recorded tool requests")
+	}
+	var toolMsg *llm.Message
+	for i := range requests[len(requests)-1].Messages {
+		msg := &requests[len(requests)-1].Messages[i]
+		if msg.Role == llm.RoleTool && msg.ToolCallID == "call-1" {
+			toolMsg = msg
+		}
+	}
+	if toolMsg == nil {
+		t.Fatalf("expected tool message for call-1 in final request, got %+v", requests[len(requests)-1].Messages)
+	}
+	if len(toolMsg.Content) >= 512 {
+		t.Fatalf("approved tool result must be truncated for the LLM, got %d bytes", len(toolMsg.Content))
+	}
+	if toolMsg.Metadata["truncate_strategy"] == "" || toolMsg.Metadata["tool_result_class"] == "" {
+		t.Fatalf("resume path must carry the same truncation metadata as the batch path, got %+v", toolMsg.Metadata)
+	}
+
+	// The persisted step output keeps the full, untruncated result.
+	snapshot, err := repo.Load(context.Background(), "run-approved-truncate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, ok := snapshot.StepOutputs["tool.call-1"]
+	if !ok {
+		t.Fatalf("expected step output for call-1, got %+v", snapshot.StepOutputs)
+	}
+	var stored core.ToolResult
+	if err := json.Unmarshal(ref.Inline, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Output) < 1024 {
+		t.Fatalf("step output must retain the full tool result, got %d bytes", len(stored.Output))
+	}
+}
+
+// TestEngineCheckpointVariablesRoundTripUnsafeStrings pins D3: snapshot
+// variables holding arbitrary user strings (control characters, quotes,
+// backslashes, unicode) must be valid JSON and decode back to the exact
+// original. The former fmt.Sprintf("%q") construction emitted Go-only \xNN
+// escapes, which are invalid JSON.
+func TestEngineCheckpointVariablesRoundTripUnsafeStrings(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat)
+	gateway.QueueChat("default", llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "final"}})
+	scenario := core.Scenario{
+		Name: "hitl-unsafe",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode:        core.OrchestrationAutonomous,
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true, Checkpoints: []string{"before_final_answer"}},
+		},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway, HumanGate: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nasty := "quote\" backslash\\ ctrl\x01\x1f\nnewline unicode 中文 emoji 🌀"
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-unsafe-vars", Agent: "assistant", Prompt: nasty})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	snapshot, err := repo.Load(context.Background(), "run-unsafe-vars")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, raw := range snapshot.Variables {
+		if len(raw) == 0 {
+			continue // nil optional payloads (e.g. checkpoint_context) store empty
+		}
+		if !json.Valid(raw) {
+			t.Fatalf("snapshot variable %q is not valid JSON: %q", key, raw)
+		}
+	}
+	for _, key := range []string{checkpointPromptVar, resumePromptVar} {
+		if got := variableString(snapshot.Variables, key); got != nasty {
+			t.Fatalf("variable %q round-trip mismatch: got %q want %q", key, got, nasty)
+		}
+	}
+	// The resume path must decode the same values and complete.
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-unsafe-vars")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "final" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+}
+
+// TestEnginePauseCarriesPendingPauseMarkerUntilResume pins the D7 lifecycle:
+// the pending-pause marker is written with the checkpoint, survives the pause
+// (clearing it earlier would invalidate the pause token), and is removed by
+// the gate resume that confirms the approval.
+func TestEnginePauseCarriesPendingPauseMarkerUntilResume(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	signer, err := runstate.NewTokenSigner([]byte("test-secret-012345"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := humancli.NewGate(repo, signer, nil)
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat)
+	gateway.QueueChat("default", llm.ChatResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "final"}})
+	scenario := core.Scenario{
+		Name: "hitl-marker",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{
+			Mode:        core.OrchestrationAutonomous,
+			HumanInLoop: core.HumanInLoopPolicy{Enabled: true, Checkpoints: []string{"before_final_answer"}},
+		},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway, HumanGate: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := engine.Run(context.Background(), RunRequest{RunID: "run-marker", Agent: "assistant", Prompt: "hello"})
+	if err != nil || paused.Status != runstate.RunStatusPaused {
+		t.Fatalf("expected pause, got %+v err=%v", paused, err)
+	}
+	snapshot, err := repo.Load(context.Background(), "run-marker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !checkpointBoolVar(snapshot.Variables, checkpointPendingPauseVar) {
+		t.Fatal("pending-pause marker must be set while the run awaits approval")
+	}
+	if err := gate.Resume(context.Background(), paused.Token, core.DecisionApprove, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = repo.Load(context.Background(), "run-marker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpointBoolVar(snapshot.Variables, checkpointPendingPauseVar) {
+		t.Fatal("gate resume must clear the pending-pause marker")
+	}
+	result, err := engine.ContinueAfterCheckpoint(context.Background(), "run-marker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "final" || result.Status != runstate.RunStatusCompleted {
+		t.Fatalf("unexpected continue result: %+v", result)
+	}
+}
+
+// TestEngineContinueRefusesUnconfirmedPauseCheckpoint pins the D7 fail-closed
+// guard: a Running run whose checkpoint still carries the pending-pause
+// marker crashed between the checkpoint write and gate.Pause — no human
+// approved anything, so the checkpoint must not execute.
+func TestEngineContinueRefusesUnconfirmedPauseCheckpoint(t *testing.T) {
+	repo := runstateinmem.NewRepository()
+	gateway := mock.NewGateway()
+	gateway.SetCapabilities("default", llm.CapChat)
+	scenario := core.Scenario{
+		Name: "hitl-unconfirmed",
+		LLMs: map[string]core.LLMProfileRef{"default": {Provider: "mock", Model: "test"}},
+		Agents: map[string]core.Agent{
+			"assistant": {Name: "assistant", LLM: "default"},
+		},
+		Orchestration: core.Orchestration{Mode: core.OrchestrationAutonomous},
+	}
+	engine, err := NewEngine(scenario, Dependencies{Runs: repo, LLM: gateway})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), &runstate.RunSnapshot{
+		RunID: "run-unconfirmed", ScenarioName: "hitl-unconfirmed", Status: runstate.RunStatusRunning,
+		Variables: map[string]json.RawMessage{
+			checkpointKindVar:         json.RawMessage(`"before_final_answer"`),
+			checkpointPromptVar:       json.RawMessage(`"hi"`),
+			checkpointAgentVar:        json.RawMessage(`"assistant"`),
+			checkpointPendingPauseVar: json.RawMessage(`true`),
+		},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.ContinueAfterCheckpoint(context.Background(), "run-unconfirmed")
+	if err == nil || !strings.Contains(err.Error(), "unconfirmed pause") {
+		t.Fatalf("expected unconfirmed-pause refusal, got %v", err)
+	}
+	snapshot, err := repo.Load(context.Background(), "run-unconfirmed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != runstate.RunStatusRunning {
+		t.Fatalf("refused continue must not change run status, got %s", snapshot.Status)
+	}
+	// Once an operator discards the unconfirmed checkpoint the guard lifts:
+	// with no checkpoint metadata left the continue reports the unknown kind
+	// instead of executing anything.
+	if err := engine.ClearCheckpointState(context.Background(), "run-unconfirmed"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = repo.Load(context.Background(), "run-unconfirmed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpointBoolVar(snapshot.Variables, checkpointPendingPauseVar) || variableString(snapshot.Variables, checkpointKindVar) != "" {
+		t.Fatalf("ClearCheckpointState must remove the marker and kind, got %+v", snapshot.Variables)
+	}
+}

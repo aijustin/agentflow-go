@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
@@ -104,6 +105,12 @@ func (f *Framework) resumeAndContinueLocked(ctx context.Context, token, runID st
 	}
 	if err := f.gate.Resume(ctx, token, decision, amendment); err != nil {
 		return RunResult{}, err
+	}
+	// gate.Resume is definitive proof the pause happened, so a pending-pause
+	// marker left behind by a failed post-pause cleanup must not block the
+	// approved continue (the engine refuses unconfirmed checkpoints).
+	if err := f.currentEngine().ClearPendingPauseMarker(ctx, runID); err != nil && f.logger != nil {
+		f.logger.Warn(ctx, "agentflow: failed to clear pending-pause marker after gate resume", "run_id", runID, "error", err)
 	}
 	if snapshot, loadErr := runstate.LoadAuthorized(ctx, f.runs, runID); loadErr == nil {
 		// load failure skips RunResumed; continue still runs from persisted state
@@ -282,6 +289,14 @@ func (f *Framework) runIDFromToken(ctx context.Context, token string) (string, e
 //
 // A concurrent ContinueRun/ResumeAndContinue on the same run fails fast with
 // ErrResumeInProgress.
+//
+// SECURITY: ContinueRun authenticates nothing — knowing the run ID is enough.
+// It exists as an operator recovery hook for trusted callers; anything
+// reachable by less-trusted callers should use ContinueRunWithToken, which
+// requires the HITL pause token. Either way, a checkpoint whose pause was
+// never confirmed by the gate (pending-pause marker still set, e.g. a crash
+// between the checkpoint write and gate.Pause) is refused fail-closed by the
+// engine.
 func (f *Framework) ContinueRun(ctx context.Context, runID string) (*RunResult, error) {
 	if f.runs == nil {
 		return nil, fmt.Errorf("agentflow: run-state repository is not configured")
@@ -325,6 +340,51 @@ func (f *Framework) ContinueRun(ctx context.Context, runID string) (*RunResult, 
 		return nil, mapLeaseLostError(ctx, err)
 	}
 	return &result, nil
+}
+
+// ContinueRunWithToken is ContinueRun plus a credential check: the caller must
+// present the HITL pause token issued for this run (HMAC signature, run-ID
+// binding, and TTL are all verified through the configured TokenSigner; gates
+// without an HMAC signer are consulted via core.PauseTokenDecoder). This is
+// the entry point to expose wherever the caller is not already trusted, so
+// knowing a run ID alone is not enough to drive an approved-but-not-continued
+// run forward.
+//
+// The token is verified as a credential only: its bound snapshot version is
+// intentionally NOT compared against the current version, because gate.Resume
+// legitimately advances the version when it flips the run back to Running.
+func (f *Framework) ContinueRunWithToken(ctx context.Context, runID, token string) (*RunResult, error) {
+	if err := f.verifyContinueToken(runID, token); err != nil {
+		return nil, err
+	}
+	return f.ContinueRun(ctx, runID)
+}
+
+func (f *Framework) verifyContinueToken(runID, token string) error {
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("agentflow: continue token is required: %w", runstate.ErrInvalidToken)
+	}
+	if f.tokenSigner != nil {
+		payload, err := f.tokenSigner.Verify(token)
+		if err != nil {
+			return err
+		}
+		if payload.RunID != runID {
+			return fmt.Errorf("agentflow: continue token was issued for run %q, not %q: %w", payload.RunID, runID, runstate.ErrInvalidToken)
+		}
+		return nil
+	}
+	if decoder, ok := f.gate.(core.PauseTokenDecoder); ok {
+		resolved, err := decoder.RunIDFromPauseToken(token)
+		if err != nil {
+			return err
+		}
+		if resolved != runID {
+			return fmt.Errorf("agentflow: continue token was issued for run %q, not %q: %w", resolved, runID, runstate.ErrInvalidToken)
+		}
+		return nil
+	}
+	return fmt.Errorf("agentflow: cannot verify continue token; configure a TokenSigner (WithHITLTokenSecret) or a gate implementing core.PauseTokenDecoder")
 }
 
 // hasPendingCheckpointMetadata reports whether the snapshot carries unconsumed

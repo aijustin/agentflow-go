@@ -1296,7 +1296,21 @@ func (f *Framework) Resume(ctx context.Context, token string, decision core.Deci
 	if f.gate == nil {
 		return fmt.Errorf("agentflow: human gate is not configured")
 	}
-	return f.gate.Resume(ctx, token, decision, amendment)
+	if err := f.gate.Resume(ctx, token, decision, amendment); err != nil {
+		return err
+	}
+	if decision == core.DecisionApprove || decision == core.DecisionAmend {
+		// The approval is definitive proof the pause happened; a pending-pause
+		// marker left behind (custom gates do not clear it themselves) must not
+		// block a later ContinueRun — the engine refuses unconfirmed
+		// checkpoints fail-closed.
+		if runID, err := f.runIDFromToken(ctx, token); err == nil {
+			if clearErr := f.currentEngine().ClearPendingPauseMarker(ctx, runID); clearErr != nil && f.logger != nil {
+				f.logger.Warn(ctx, "agentflow: failed to clear pending-pause marker after gate resume", "run_id", runID, "error", clearErr)
+			}
+		}
+	}
+	return nil
 }
 
 // Interject queues a mid-turn user message for an in-flight run. The autonomous
@@ -1378,7 +1392,7 @@ func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, 
 func (f *Framework) emitJSON(ctx context.Context, typ core.EventType, runID string, payload any) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		raw = []byte(fmt.Sprintf(`{"error":%q}`, err.Error()))
+		raw = quoteJSONErrorPayload(err)
 	}
 	f.emit(ctx, typ, runID, raw)
 }

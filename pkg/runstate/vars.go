@@ -16,6 +16,12 @@ const (
 	// this marker, so runs executed by workers without lease coordination are
 	// never mistaken for zombies.
 	VarRunLeaseOwner = "run_lease_owner"
+	// VarCheckpointPendingPause marks pause-checkpoint metadata whose approval
+	// was never confirmed by the gate (the process crashed between the
+	// checkpoint write and gate.Pause). Resume paths clear it once the gate
+	// confirms an approval; a Running run still carrying it must not have its
+	// checkpoint executed.
+	VarCheckpointPendingPause = "checkpoint_pending_pause"
 )
 
 // Hybrid / checkpoint phase values stored under VarExecutionPhase.

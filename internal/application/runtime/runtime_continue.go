@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/aijustin/agentflow-go/internal/toolinvoke"
@@ -22,6 +23,16 @@ const (
 	checkpointAgentVar         = "checkpoint_agent"
 	checkpointContextVar       = "checkpoint_context"
 	beforeFinalResumedVar      = "before_final_resumed"
+	// checkpointPendingPauseVar marks a checkpoint whose approval has not been
+	// confirmed yet: the variables are persisted but the run never completed a
+	// gate.Pause + resume cycle, so nobody could have approved anything. The
+	// marker survives the pause itself (clearing it between gate.Pause and
+	// gate.Resume would bump the snapshot version and invalidate the pause
+	// token) and is removed by the resume paths once the gate confirms the
+	// approval. A run still carrying it in Running state crashed between the
+	// checkpoint write and the gate call, and its checkpoint must never be
+	// executed.
+	checkpointPendingPauseVar = runstate.VarCheckpointPendingPause
 	// checkpointResumedVar is deprecated; reads accept it for backward compatibility.
 	checkpointResumedVar    = "checkpoint_resumed"
 	checkpointToolCallsVar  = "checkpoint_tool_calls"
@@ -120,7 +131,7 @@ func (e *Engine) persistResumeTriggerKind(ctx context.Context, runID, triggerKin
 		if snapshot.Variables == nil {
 			snapshot.Variables = make(map[string]json.RawMessage)
 		}
-		snapshot.Variables[resumeTriggerKindVar] = json.RawMessage(fmt.Sprintf("%q", triggerKind))
+		snapshot.Variables[resumeTriggerKindVar] = jsonStringValue(triggerKind)
 		return nil
 	})
 }
@@ -148,6 +159,14 @@ func (e *Engine) continueAfterCheckpoint(ctx context.Context, runID string, comp
 	corr.TriggerKind = core.TriggerKindHITLResume
 	ctx = core.ContextWithEpisodeCorrelation(ctx, corr)
 	kind := variableString(snapshot.Variables, checkpointKindVar)
+	if checkpointBoolVar(snapshot.Variables, checkpointPendingPauseVar) {
+		// The checkpoint variables were persisted but gate.Pause never
+		// confirmed the pause (the process crashed in between, or the pause
+		// marker cleanup failed): no human approved anything, so executing
+		// the pending state would bypass the approval gate. Fail closed; an
+		// operator can discard the checkpoint via ClearCheckpointState.
+		return RunResult{}, fmt.Errorf("runtime: run %q carries an unconfirmed pause checkpoint (pending_pause); refusing to resume an unapproved checkpoint", runID)
+	}
 	if !runResumedAlreadyEmitted(ctx) {
 		e.emitRunResumed(ctx, snapshot, kind)
 	}
@@ -367,17 +386,15 @@ func (e *Engine) continueToolLoopFrom(ctx context.Context, runID string, agent c
 		if e.denyBreaker != nil {
 			e.denyBreaker.RecordAllow(runID)
 		}
-		contextResult, _ := e.materializeToolResultForContext(approved.Name, result, profile)
-		raw, err := json.Marshal(contextResult)
-		if err != nil {
+		// Materialize exactly like the normal batch path
+		// (materializeToolBatchItem): compaction, ToolOutputMaxBytes
+		// truncation, and the tool_result_class/truncate_strategy metadata
+		// must not diverge just because the call went through approval.
+		approvedItem := toolBatchItem{call: approved, result: result}
+		if err := e.materializeToolBatchItem(&approvedItem, profile); err != nil {
 			return "", err
 		}
-		messages = append(messages, llm.Message{
-			Role:       llm.RoleTool,
-			Content:    string(raw),
-			Name:       approved.Name,
-			ToolCallID: approved.ID,
-		})
+		messages = append(messages, approvedItem.message)
 		if e.scenario.Orchestration.Planning.Enabled && e.scenario.Orchestration.Planning.Execute && result.Error == "" {
 			// See the identical comment in dispatchToolCalls: this is plan
 			// bookkeeping, not the tool result itself, so a failure here
@@ -756,18 +773,23 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		return nil, err
 	}
 	vars := map[string]json.RawMessage{
-		checkpointKindVar:           json.RawMessage(fmt.Sprintf("%q", checkpointKindToolApproval)),
-		checkpointAgentVar:          json.RawMessage(fmt.Sprintf("%q", agent.Name)),
-		checkpointPromptVar:         json.RawMessage(fmt.Sprintf("%q", prompt)),
+		checkpointKindVar:           jsonStringValue(checkpointKindToolApproval),
+		checkpointAgentVar:          jsonStringValue(agent.Name),
+		checkpointPromptVar:         jsonStringValue(prompt),
 		checkpointToolCallsVar:      toolCallsRaw,
 		checkpointMessagesVar:       messagesRaw,
 		checkpointToolCountsVar:     countsRaw,
 		checkpointUsageVar:          usageRaw,
-		checkpointStepsConsumedVar:  json.RawMessage(fmt.Sprintf("%d", stepsConsumed)),
-		checkpointReplanAttemptsVar: json.RawMessage(fmt.Sprintf("%d", replanAttempts)),
+		checkpointStepsConsumedVar:  json.RawMessage(strconv.Itoa(stepsConsumed)),
+		checkpointReplanAttemptsVar: json.RawMessage(strconv.Itoa(replanAttempts)),
+		// Set until a confirmed approval resumes the run; a survivor in Running
+		// state means the process crashed between the checkpoint write and
+		// gate.Pause and the checkpoint was never approved (see
+		// checkpointPendingPauseVar).
+		checkpointPendingPauseVar: json.RawMessage(`true`),
 	}
 	if nodeID := core.WorkflowNodeFromContext(ctx); nodeID != "" {
-		vars[checkpointWorkflowNodeVar] = json.RawMessage(fmt.Sprintf("%q", nodeID))
+		vars[checkpointWorkflowNodeVar] = jsonStringValue(nodeID)
 	}
 	if err := e.saveCheckpointVariables(ctx, &snapshot, vars); err != nil {
 		return nil, err

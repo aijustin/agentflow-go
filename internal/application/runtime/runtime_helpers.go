@@ -219,7 +219,7 @@ func (e *Engine) beginRun(ctx context.Context, req *RunRequest) error {
 		Status:       runstate.RunStatusRunning,
 		Variables: map[string]json.RawMessage{
 			"input":         req.Context,
-			runStartedAtVar: json.RawMessage(fmt.Sprintf("%q", time.Now().UTC().Format(time.RFC3339Nano))),
+			runStartedAtVar: jsonStringValue(time.Now().UTC().Format(time.RFC3339Nano)),
 		},
 		StepOutputs: make(map[string]runstate.StepOutputRef),
 	}
@@ -490,22 +490,22 @@ func saveResumeMetadata(snapshot *runstate.RunSnapshot, req RunRequest) {
 		snapshot.Variables = make(map[string]json.RawMessage)
 	}
 	if req.Prompt != "" {
-		snapshot.Variables[resumePromptVar] = json.RawMessage(fmt.Sprintf("%q", req.Prompt))
+		snapshot.Variables[resumePromptVar] = jsonStringValue(req.Prompt)
 	}
 	if req.Agent != "" {
-		snapshot.Variables[resumeAgentVar] = json.RawMessage(fmt.Sprintf("%q", req.Agent))
+		snapshot.Variables[resumeAgentVar] = jsonStringValue(req.Agent)
 	}
 	if req.TrustMode != "" {
-		snapshot.Variables[resumeTrustModeVar] = json.RawMessage(fmt.Sprintf("%q", req.TrustMode))
+		snapshot.Variables[resumeTrustModeVar] = jsonStringValue(string(req.TrustMode))
 	}
 	if req.EpisodeID != "" {
-		snapshot.Variables[resumeEpisodeIDVar] = json.RawMessage(fmt.Sprintf("%q", req.EpisodeID))
+		snapshot.Variables[resumeEpisodeIDVar] = jsonStringValue(req.EpisodeID)
 	}
 	if req.TriggerKind != "" {
-		snapshot.Variables[resumeTriggerKindVar] = json.RawMessage(fmt.Sprintf("%q", req.TriggerKind))
+		snapshot.Variables[resumeTriggerKindVar] = jsonStringValue(req.TriggerKind)
 	}
 	if req.SessionID != "" {
-		snapshot.Variables[resumeSessionIDVar] = json.RawMessage(fmt.Sprintf("%q", req.SessionID))
+		snapshot.Variables[resumeSessionIDVar] = jsonStringValue(req.SessionID)
 	}
 }
 
@@ -574,7 +574,7 @@ func stampLeaseOwner(ctx context.Context, snapshot *runstate.RunSnapshot) {
 	if snapshot.Variables == nil {
 		snapshot.Variables = make(map[string]json.RawMessage)
 	}
-	snapshot.Variables[runstate.VarRunLeaseOwner] = json.RawMessage(fmt.Sprintf("%q", owner))
+	snapshot.Variables[runstate.VarRunLeaseOwner] = jsonStringValue(owner)
 }
 
 func (e *Engine) saveSnapshotWithRetry(ctx context.Context, runID string, mutate func(*runstate.RunSnapshot) error) error {
@@ -977,6 +977,14 @@ func mustMarshal(value any) json.RawMessage {
 	return raw
 }
 
+// jsonStringValue encodes s as a JSON string value. It replaces the former
+// fmt.Sprintf("%q", s) sites: %q produces Go string literals whose \xNN
+// escapes are invalid JSON, silently corrupting any snapshot variable or
+// event payload built from a string containing control characters.
+func jsonStringValue(s string) json.RawMessage {
+	return mustMarshal(s)
+}
+
 func (e *Engine) hasBeforeFinalCheckpoint(agent core.Agent) bool {
 	hitl := e.scenario.Orchestration.HumanInLoop
 	if hitl.Enabled && core.HasHumanCheckpoint(hitl.Checkpoints, core.CheckpointBeforeFinalAnswer) {
@@ -1080,7 +1088,7 @@ func (e *Engine) emitJSON(ctx context.Context, typ core.EventType, runID string,
 	payload = enrichEventPayload(ctx, payload)
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		raw = []byte(fmt.Sprintf(`{"error":%q}`, err.Error()))
+		raw = mustMarshal(map[string]string{"error": err.Error()})
 	}
 	e.emit(ctx, typ, runID, raw)
 }

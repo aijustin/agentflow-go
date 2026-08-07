@@ -471,6 +471,7 @@ func (f *Framework) MarkAbandonedRuns(ctx context.Context) ([]string, error) {
 }
 
 func (f *Framework) markRunAbandoned(ctx context.Context, runID string) (bool, error) {
+	unconfirmedCheckpoint := false
 	_, err := f.saveRunSnapshotWithRetry(ctx, runID, func(snapshot *runstate.RunSnapshot) error {
 		if snapshot.Status != runstate.RunStatusRunning {
 			return runNotRunningError{runID: runID, status: snapshot.Status}
@@ -479,7 +480,15 @@ func (f *Framework) markRunAbandoned(ctx context.Context, runID string) (bool, e
 		if snapshot.Variables == nil {
 			snapshot.Variables = make(map[string]json.RawMessage)
 		}
-		snapshot.Variables[runstate.VarRunErrorMessage] = json.RawMessage(`"worker lost"`)
+		// A run that crashed between writing the pause checkpoint and
+		// gate.Pause carries checkpoint metadata nobody ever approved; drop
+		// it so a later RetryFailedRun cannot execute the unapproved state.
+		if appexec.ClearUnconfirmedCheckpoint(snapshot) {
+			unconfirmedCheckpoint = true
+			snapshot.Variables[runstate.VarRunErrorMessage] = json.RawMessage(`"worker lost (unconfirmed pause checkpoint discarded)"`)
+		} else {
+			snapshot.Variables[runstate.VarRunErrorMessage] = json.RawMessage(`"worker lost"`)
+		}
 		return nil
 	})
 	if err != nil {
@@ -490,6 +499,13 @@ func (f *Framework) markRunAbandoned(ctx context.Context, runID string) (bool, e
 			return false, nil
 		}
 		return false, err
+	}
+	if unconfirmedCheckpoint {
+		f.emit(ctx, core.EventRunFailed, runID, []byte(`{"error":"worker lost","unconfirmed_checkpoint_discarded":true}`))
+		if f.logger != nil {
+			f.logger.Warn(ctx, "agentflow: reaped run with unconfirmed pause checkpoint; checkpoint discarded", "run_id", runID)
+		}
+		return true, nil
 	}
 	f.emit(ctx, core.EventRunFailed, runID, []byte(`{"error":"worker lost"}`))
 	return true, nil

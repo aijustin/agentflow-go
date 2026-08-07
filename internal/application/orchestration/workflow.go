@@ -1152,10 +1152,24 @@ func nodeByID(workflow core.Workflow, id string) (core.WorkflowNode, bool) {
 	return core.WorkflowNode{}, false
 }
 
+// jsonStringValue encodes s as a JSON string value; unlike fmt.Sprintf("%q")
+// it never emits Go-only escapes (\xNN) that are invalid JSON.
+func jsonStringValue(s string) json.RawMessage {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return raw
+}
+
 func (r *WorkflowRunner) emitJSON(ctx context.Context, typ core.EventType, scenarioName, runID string, payload any) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		raw = []byte(fmt.Sprintf(`{"error":%q}`, err.Error()))
+		fallback, fallbackErr := json.Marshal(map[string]string{"error": err.Error()})
+		if fallbackErr != nil {
+			fallback = []byte(`{"error":"marshal failed"}`)
+		}
+		raw = fallback
 	}
 	r.emit(ctx, typ, scenarioName, runID, raw)
 }

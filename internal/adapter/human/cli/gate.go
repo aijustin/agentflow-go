@@ -91,6 +91,11 @@ func (g *Gate) Resume(ctx context.Context, token string, decision core.Decision,
 	switch decision {
 	case core.DecisionApprove, core.DecisionAmend:
 		snapshot.Status = runstate.RunStatusRunning
+		// The approval is definitive proof the pause happened, so the
+		// pending-pause marker (set when the checkpoint was written, before
+		// gate.Pause confirmed) is cleared atomically with the resume; the
+		// engine refuses to continue checkpoints that still carry it.
+		delete(snapshot.Variables, runstate.VarCheckpointPendingPause)
 	case core.DecisionReject:
 		snapshot.Status = runstate.RunStatusCancelled
 	}

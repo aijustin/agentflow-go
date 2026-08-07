@@ -306,9 +306,13 @@ func (f *Framework) markWorkflowFailed(ctx context.Context, runID string, cause 
 			if f.logger != nil {
 				f.logger.Warn(persistCtx, "agentflow: failed to persist workflow failure status", "run_id", runID, "save_error", saveErr)
 			}
-			f.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q,"save_error":%q}`, cause.Error(), saveErr.Error())))
+			payload, marshalErr := json.Marshal(map[string]string{"error": cause.Error(), "save_error": saveErr.Error()})
+			if marshalErr != nil {
+				payload = []byte(`{"error":"marshal failed"}`)
+			}
+			f.emit(persistCtx, core.EventRunFailed, runID, payload)
 			return
 		}
 	}
-	f.emit(persistCtx, core.EventRunFailed, runID, []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())))
+	f.emit(persistCtx, core.EventRunFailed, runID, quoteJSONErrorPayload(cause))
 }
