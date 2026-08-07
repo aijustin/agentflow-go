@@ -30,12 +30,17 @@ func WithDatabase(db *sql.DB) Option {
 }
 
 // Close releases resources registered through WithCloser or WithDatabase and
-// detaches every AttachRunStream subscriber of the stream hub.
+// detaches every AttachRunStream subscriber of the stream hub. The event
+// emission queue is drained first (bounded wait) so queued events reach the
+// sink before any closer tears down the resources the sink depends on.
 func (f *Framework) Close(ctx context.Context) error {
 	if f == nil {
 		return nil
 	}
 	f.streamHub.close()
+	if emitter := f.currentEmitter(); emitter != nil {
+		emitter.Close()
+	}
 	var errs []error
 	for i := len(f.closers) - 1; i >= 0; i-- {
 		closerCtx := ctx

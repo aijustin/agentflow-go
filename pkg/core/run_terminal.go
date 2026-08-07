@@ -18,6 +18,7 @@ const (
 	TerminationReasonCancelled        = "cancelled"
 	TerminationReasonLeaseLost        = "lease_lost"
 	TerminationReasonLLMError         = "llm_error"
+	TerminationReasonBudgetExceeded   = "budget_exceeded"
 	TerminationReasonError            = "error"
 )
 

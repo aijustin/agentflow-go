@@ -14,7 +14,6 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/log"
 	obspkg "github.com/aijustin/agentflow-go/pkg/observability"
-	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/studio"
 )
 
@@ -195,10 +194,7 @@ func NewHandler(config Config) (*Handler, error) {
 	handler.routes()
 	handler.handler = handler.mux
 	if config.AuthMiddleware != nil {
-		strict := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-			handler.mux.ServeHTTP(w, r.WithContext(runstate.ContextWithTenantStrictMode(r.Context())))
-		})
-		handler.handler = config.AuthMiddleware(strict)
+		handler.handler = config.AuthMiddleware(handler.mux)
 	}
 	return handler, nil
 }

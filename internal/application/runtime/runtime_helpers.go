@@ -7,33 +7,18 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode"
 
+	"github.com/aijustin/agentflow-go/internal/application/emit"
 	"github.com/aijustin/agentflow-go/pkg/coordination"
 	"github.com/aijustin/agentflow-go/pkg/core"
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/llm"
-	"github.com/aijustin/agentflow-go/pkg/log"
 	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/retry"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 )
-
-// emitWarnGate prevents recursive Warn if the logger itself emits events.
-var emitWarnGate atomic.Bool
-
-func warnEmitFailure(logger log.Logger, ctx context.Context, runID string, err error) {
-	if logger == nil || err == nil {
-		return
-	}
-	if !emitWarnGate.CompareAndSwap(false, true) {
-		return
-	}
-	defer emitWarnGate.Store(false)
-	logger.Warn(ctx, "runtime: event emit failed", "run_id", runID, "error", err)
-}
 
 var (
 	ErrRunAlreadyCompleted = errors.New("runtime: run already completed")
@@ -52,6 +37,10 @@ var (
 	// handling can attribute the failure (termination_reason
 	// max_steps_exceeded) instead of re-parsing the error text.
 	ErrMaxStepsExceeded = errors.New("runtime: autonomous tool loop exceeded max_steps")
+	// ErrTokenBudgetExceeded marks exhaustion of the run's accumulated token
+	// budget (scenario runtime max_total_tokens). Sentinel so terminal
+	// handling attributes the failure as termination_reason budget_exceeded.
+	ErrTokenBudgetExceeded = errors.New("runtime: run exceeded max_total_tokens budget")
 )
 
 // terminationReasonForError classifies a terminal failure cause into the
@@ -63,6 +52,8 @@ func terminationReasonForError(err error) string {
 	switch {
 	case errors.Is(err, ErrMaxStepsExceeded):
 		return core.TerminationReasonMaxStepsExceeded
+	case errors.Is(err, ErrTokenBudgetExceeded):
+		return core.TerminationReasonBudgetExceeded
 	case errors.Is(err, context.DeadlineExceeded):
 		return core.TerminationReasonTimeout
 	case errors.Is(err, runstate.ErrStaleFence), errors.Is(err, coordination.ErrRunLeaseLost):
@@ -932,6 +923,7 @@ func (e *Engine) clearRunScopedState(runID string) {
 	e.loadedTools.Delete(runID)
 	e.pendingSelfCompact.Delete(runID)
 	e.usageTrackers.Delete(runID)
+	e.iterationBases.Delete(runID)
 	e.toolArgsRepairs.Delete(runID)
 }
 
@@ -1018,78 +1010,21 @@ func (e *Engine) hasBeforeFinalCheckpoint(agent core.Agent) bool {
 }
 
 func (e *Engine) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {
-	corr := core.EpisodeCorrelationFromContext(ctx)
-	if core.IsLifecycleEvent(typ) {
-		payload = core.BuildLifecyclePayload(typ, payload, corr)
-	}
-	payload = governance.RedactEventPayload(ctx, e.redactor, runID, typ, payload)
-	event := core.Event{
-		Type:         typ,
-		RunID:        runID,
-		ScenarioName: e.scenario.Name,
-		EpisodeID:    corr.EpisodeID,
-		SessionID:    corr.SessionID,
-		TriggerKind:  corr.TriggerKind,
-		Timestamp:    time.Now().UTC(),
-		Category:     core.EventCategory(typ),
-		DisplayLabel: core.DisplayLabel(typ),
-		Payload:      payload,
-	}
-	observability.StampEventTenant(ctx, &event)
-	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
-		event.TraceID = traceID
-		event.SpanID = spanID
-	}
-	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
-		event.ParentSpanID = parentSpanID
-	}
-	if err := EmitWithLifecycleRetry(ctx, e.events, event); err != nil {
-		if IsCriticalLifecycleEvent(typ) {
-			e.logError(ctx, "runtime: lifecycle event emit failed after retries", "event_type", string(typ), "run_id", runID, "error", err)
-		} else {
-			warnEmitFailure(e.logger, ctx, runID, err)
-		}
-	}
-	// The context-scoped tee carries the event into a StreamRun frame stream.
-	// It runs even when the durable emit failed: a live consumer should still
-	// observe the transition.
-	if tee := EventTeeFromContext(ctx); tee != nil {
-		if err := tee.Emit(ctx, event); err != nil {
-			warnEmitFailure(e.logger, ctx, runID, err)
-		}
-	}
+	e.emitter.Emit(ctx, e.scenario.Name, e.redactor, typ, runID, payload)
 }
-
-// lifecycleEmitAttempts bounds how many times a critical lifecycle event is
-// delivered before giving up (first try plus backoff-spaced retries).
-const lifecycleEmitAttempts = 3
 
 // IsCriticalLifecycleEvent reports whether typ is a run-lifecycle event whose
-// silent loss would corrupt downstream state tracking (RunCompleted /
-// RunPaused / RunFailed / RunCancelled). Delivery of these events is retried
-// with backoff before being given up.
+// silent loss would corrupt downstream state tracking. Delivery of these
+// events is synchronous and retried with backoff before being given up.
+// Deprecated alias for emit.IsCriticalLifecycleEvent.
 func IsCriticalLifecycleEvent(typ core.EventType) bool {
-	switch typ {
-	case core.EventRunCompleted, core.EventRunPaused, core.EventRunFailed, core.EventRunCancelled:
-		return true
-	default:
-		return false
-	}
+	return emit.IsCriticalLifecycleEvent(typ)
 }
 
-// EmitWithLifecycleRetry delivers one event via sink. Critical lifecycle
-// events are retried a limited number of times with backoff so a transient
-// sink outage (e.g. a DB blip) does not silently drop them; all other events
-// are delivered on a best-effort single attempt.
+// EmitWithLifecycleRetry delivers one event via sink with lifecycle retry
+// semantics. Deprecated alias for emit.EmitWithLifecycleRetry.
 func EmitWithLifecycleRetry(ctx context.Context, sink core.EventSink, event core.Event) error {
-	err := sink.Emit(ctx, event)
-	for attempt := 1; err != nil && IsCriticalLifecycleEvent(event.Type) && attempt < lifecycleEmitAttempts; attempt++ {
-		if delayErr := retryDelay(ctx, attempt); delayErr != nil {
-			break
-		}
-		err = sink.Emit(ctx, event)
-	}
-	return err
+	return emit.EmitWithLifecycleRetry(ctx, sink, event)
 }
 
 // logWarn logs a warning message if a Logger is configured; otherwise it is

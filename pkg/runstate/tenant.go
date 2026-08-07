@@ -14,23 +14,27 @@ var (
 	ErrTenantRequired = errors.New("runstate: tenant identity required")
 )
 
-type tenantStrictKey struct{}
+type tenantPermissiveKey struct{}
 
-// ContextWithTenantStrictMode marks the context so AuthorizeTenant (and thus
-// LoadAuthorized) rejects access when the caller has no tenant principal, or
-// when the snapshot predates tenant stamping (empty TenantID). It is off by
-// default for backward compatibility: without it, principal-less contexts
-// and legacy unowned snapshots are accessible to anyone. Multi-tenant
-// deployments should wrap every request context with this (e.g. in the auth
-// middleware) so an unauthenticated or unstamped access path fails closed.
-func ContextWithTenantStrictMode(ctx context.Context) context.Context {
-	return context.WithValue(ctx, tenantStrictKey{}, true)
+// ContextWithTenantPermissive marks the context as tenant-permissive, opting
+// out of the default tenant-strict behavior: a principal-less caller may then
+// access tenant-stamped snapshots and request explicit tenant-scoped list
+// filters. It exists for trusted internal maintenance paths (retention
+// sweeps, migration tooling, local/CLI diagnostics) that legitimately run
+// without an authenticated principal. It never weakens checks when a
+// principal IS present — cross-tenant access is still rejected.
+//
+// Strict mode is the default: every context is tenant-strict unless wrapped
+// with this function.
+func ContextWithTenantPermissive(ctx context.Context) context.Context {
+	return context.WithValue(ctx, tenantPermissiveKey{}, true)
 }
 
-// TenantStrictModeFromContext reports whether ctx is tenant-strict.
+// TenantStrictModeFromContext reports whether ctx is tenant-strict. Strict is
+// the default; ContextWithTenantPermissive opts out.
 func TenantStrictModeFromContext(ctx context.Context) bool {
-	strict, _ := ctx.Value(tenantStrictKey{}).(bool)
-	return strict
+	permissive, _ := ctx.Value(tenantPermissiveKey{}).(bool)
+	return !permissive
 }
 
 // StampTenant assigns the principal tenant to new snapshots when present in ctx.
@@ -48,14 +52,17 @@ func StampTenant(ctx context.Context, snapshot *RunSnapshot) {
 }
 
 // AuthorizeTenant ensures an authenticated principal can access the snapshot tenant.
-// Legacy snapshots without tenant_id remain accessible when no principal is present.
-// In tenant-strict mode (ContextWithTenantStrictMode) both cases fail closed:
-// a missing principal yields ErrTenantRequired, an unstamped snapshot
-// ErrTenantMismatch.
+// Snapshots carry a tenant stamp only when created under an authenticated
+// principal, so tenant-strict mode (the default) fails closed exactly where
+// data is protected: a principal-less caller touching a tenant-stamped
+// snapshot yields ErrTenantRequired. Legacy unstamped snapshots remain
+// accessible to anyone (single-tenant and internal paths keep working);
+// ContextWithTenantPermissive restores full fail-open access for trusted
+// maintenance callers.
 func AuthorizeTenant(ctx context.Context, snapshot RunSnapshot) error {
 	principal, ok := identity.PrincipalFromContext(ctx)
 	if !ok {
-		if TenantStrictModeFromContext(ctx) {
+		if snapshot.TenantID != "" && TenantStrictModeFromContext(ctx) {
 			return ErrTenantRequired
 		}
 		return nil
@@ -64,9 +71,6 @@ func AuthorizeTenant(ctx context.Context, snapshot RunSnapshot) error {
 		return ErrTenantRequired
 	}
 	if snapshot.TenantID == "" {
-		if TenantStrictModeFromContext(ctx) {
-			return ErrTenantMismatch
-		}
 		return nil
 	}
 	if snapshot.TenantID != principal.Scope.TenantID {
@@ -76,13 +80,15 @@ func AuthorizeTenant(ctx context.Context, snapshot RunSnapshot) error {
 }
 
 // ScopeListFilter binds a repository list operation to the authenticated
-// tenant. Authenticated callers cannot select a different tenant; internal
-// maintenance callers without a principal retain the explicitly requested
-// scope unless tenant-strict mode is enabled.
+// tenant. Authenticated callers cannot select a different tenant. A
+// principal-less caller requesting an explicit tenant scope (protected data)
+// is rejected in tenant-strict mode; a principal-less caller with an empty
+// scope keeps the global maintenance view, and ContextWithTenantPermissive
+// restores the legacy fail-open behavior for explicit scopes.
 func ScopeListFilter(ctx context.Context, filter ListFilter) (ListFilter, error) {
 	principal, ok := identity.PrincipalFromContext(ctx)
 	if !ok {
-		if TenantStrictModeFromContext(ctx) {
+		if filter.TenantID != "" && TenantStrictModeFromContext(ctx) {
 			return ListFilter{}, ErrTenantRequired
 		}
 		return filter, nil

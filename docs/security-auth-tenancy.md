@@ -119,7 +119,7 @@ HTTP 授权会在 principal 存在且 resource 未显式设置租户时，自动
 
 `PurgeExpired` / `PurgeWithPolicy` 在 principal 存在时会按租户过滤，避免清理其他租户的历史 run。
 
-未设置 `tenant_id` 的历史快照仍可在无 principal 的本地/CLI 路径访问；生产 API 应始终携带 tenant 上下文。tenant-strict 模式拒绝历史未分区 Blob，迁移后写入的 Blob 使用租户作用域 ID。
+未设置 `tenant_id` 的历史快照仍可在无 principal 的本地/CLI 路径访问；生产 API 应始终携带 tenant 上下文。tenant-strict 是默认行为：无 principal 的调用访问已按租户分区的数据（带 `tenant_id` 的快照/任务、租户作用域 Blob）会被拒绝（`ErrTenantRequired`）；可信的内部维护路径可通过 `runstate.ContextWithTenantPermissive` 显式 opt-out。历史未分区 Blob 保持公开可读，迁移后写入的 Blob 使用租户作用域 ID。
 
 ## 密钥处理
 

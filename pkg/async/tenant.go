@@ -24,15 +24,15 @@ func TenantIDFromContext(ctx context.Context) string {
 
 // StampTenant assigns the authenticated principal tenant to a newly enqueued
 // job. A caller cannot overwrite an explicitly supplied, different tenant.
+// Principal-less callers enqueue unscoped (unprotected) jobs — tenant-strict
+// mode fails closed on access to stamped jobs, never on creating new unowned
+// ones.
 func StampTenant(ctx context.Context, job *Job) error {
 	if job == nil {
 		return nil
 	}
 	tenantID := TenantIDFromContext(ctx)
 	if tenantID == "" {
-		if runstate.TenantStrictModeFromContext(ctx) {
-			return ErrTenantRequired
-		}
 		return nil
 	}
 	if job.TenantID != "" && job.TenantID != tenantID {
@@ -42,13 +42,16 @@ func StampTenant(ctx context.Context, job *Job) error {
 	return nil
 }
 
-// AuthorizeTenant enforces ownership for tenant-scoped queue access. Worker
-// and maintenance contexts without a principal remain global unless strict
-// mode is explicitly enabled.
+// AuthorizeTenant enforces ownership for tenant-scoped queue access.
+// Tenant-strict mode is the default (see runstate.TenantStrictModeFromContext):
+// a principal-less caller touching a tenant-stamped job fails closed with
+// ErrTenantRequired, while unscoped jobs stay accessible to worker and
+// maintenance contexts. runstate.ContextWithTenantPermissive restores
+// fail-open access for trusted internal callers.
 func AuthorizeTenant(ctx context.Context, job Job) error {
 	tenantID := TenantIDFromContext(ctx)
 	if tenantID == "" {
-		if runstate.TenantStrictModeFromContext(ctx) {
+		if job.TenantID != "" && runstate.TenantStrictModeFromContext(ctx) {
 			return ErrTenantRequired
 		}
 		return nil
@@ -59,13 +62,13 @@ func AuthorizeTenant(ctx context.Context, job Job) error {
 	return nil
 }
 
-// ScopeJobFilter binds an admin listing to the authenticated tenant. Internal
-// maintenance callers without a principal may still request an explicit
-// tenant or leave it empty for a global view.
+// ScopeJobFilter binds an admin listing to the authenticated tenant. A
+// principal-less caller requesting an explicit tenant scope is rejected in
+// tenant-strict mode; an empty scope keeps the global maintenance view.
 func ScopeJobFilter(ctx context.Context, filter JobFilter) (JobFilter, error) {
 	tenantID := TenantIDFromContext(ctx)
 	if tenantID == "" {
-		if runstate.TenantStrictModeFromContext(ctx) {
+		if filter.TenantID != "" && runstate.TenantStrictModeFromContext(ctx) {
 			return JobFilter{}, ErrTenantRequired
 		}
 		return filter, nil

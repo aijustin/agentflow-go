@@ -264,8 +264,13 @@ type RuntimePolicy struct {
 	DoomLoopLimit int `json:"doom_loop_limit,omitempty"`
 	// HITLDenyLimit, when > 0, fails the run after this many consecutive
 	// approval denials (soft deny or cached deny). Orthogonal to DoomLoopLimit.
-	HITLDenyLimit int               `json:"hitl_deny_limit,omitempty"`
-	Secrets       map[string]string `json:"secrets,omitempty"`
+	HITLDenyLimit int `json:"hitl_deny_limit,omitempty"`
+	// MaxTotalTokens, when > 0, fails the run once the accumulated
+	// provider-reported token usage (input+output, checkpointed across
+	// pause/resume via checkpoint_usage) exceeds this budget. Zero disables
+	// the check. Providers that never report usage never trip it.
+	MaxTotalTokens int               `json:"max_total_tokens,omitempty"`
+	Secrets        map[string]string `json:"secrets,omitempty"`
 	// DetachedCancellationPollInterval controls how often a detached
 	// stream's cancellation watcher reloads the run snapshot. Zero or
 	// negative falls back to the runtime default (250ms).

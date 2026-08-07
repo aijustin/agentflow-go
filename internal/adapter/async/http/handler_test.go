@@ -96,7 +96,9 @@ func TestHandlerSubmitsReadsAndCancelsRunJobs(t *testing.T) {
 	if cancel.Code != nethttp.StatusOK {
 		t.Fatalf("unexpected cancel response: %d %s", cancel.Code, cancel.Body.String())
 	}
-	loaded, err := queue.Load(context.Background(), "run-1")
+	// The job is tenant-stamped, so the verification load needs the tenant
+	// principal (tenant-strict is the default).
+	loaded, err := queue.Load(ctx, "run-1")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -244,16 +244,20 @@ type RetryPolicy struct {
 }
 
 type Runtime struct {
-	Timeout                    time.Duration     `yaml:"timeout"`
-	MaxSteps                   int               `yaml:"max_steps"`
-	MaxRetries                 int               `yaml:"max_retries"`
-	MaxParallel                int               `yaml:"max_parallel"`
-	StepOutputThreshold        int64             `yaml:"step_output_threshold"`
-	ValidateToolInput          bool              `yaml:"validate_tool_input"`
-	DisableToolInputValidation bool              `yaml:"disable_tool_input_validation"`
-	DoomLoopLimit              int               `yaml:"doom_loop_limit"`
-	HITLDenyLimit              int               `yaml:"hitl_deny_limit"`
-	Secrets                    map[string]string `yaml:"secrets"`
+	Timeout                    time.Duration `yaml:"timeout"`
+	MaxSteps                   int           `yaml:"max_steps"`
+	MaxRetries                 int           `yaml:"max_retries"`
+	MaxParallel                int           `yaml:"max_parallel"`
+	StepOutputThreshold        int64         `yaml:"step_output_threshold"`
+	ValidateToolInput          bool          `yaml:"validate_tool_input"`
+	DisableToolInputValidation bool          `yaml:"disable_tool_input_validation"`
+	DoomLoopLimit              int           `yaml:"doom_loop_limit"`
+	HITLDenyLimit              int           `yaml:"hitl_deny_limit"`
+	// MaxTotalTokens caps the run's accumulated provider-reported token usage;
+	// exceeding it fails the run with termination_reason budget_exceeded.
+	// Zero disables the check.
+	MaxTotalTokens int               `yaml:"max_total_tokens"`
+	Secrets        map[string]string `yaml:"secrets"`
 	// DetachedCancellationPollInterval overrides how often a detached
 	// stream's cancellation watcher reloads the run snapshot. Zero or
 	// negative falls back to the runtime default (250ms).
@@ -317,6 +321,7 @@ func (d Document) ToCore() (core.Scenario, error) {
 			DisableToolInputValidation:       d.Scenario.Runtime.DisableToolInputValidation,
 			DoomLoopLimit:                    d.Scenario.Runtime.DoomLoopLimit,
 			HITLDenyLimit:                    d.Scenario.Runtime.HITLDenyLimit,
+			MaxTotalTokens:                   d.Scenario.Runtime.MaxTotalTokens,
 			Secrets:                          d.Scenario.Runtime.Secrets,
 			DetachedCancellationPollInterval: d.Scenario.Runtime.DetachedCancellationPollInterval,
 		},

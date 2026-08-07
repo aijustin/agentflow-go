@@ -59,7 +59,7 @@ runtime:
 /{bucket}/{prefix}/{sha256(tenant-id)}{sha256(content)}.blob
 ```
 
-租户作用域对象 ID 为 128 个十六进制字符；历史全局对象仍使用 64 字符内容摘要。返回的 `runstate.BlobRef` 包含对象 ID、字节大小和内容 SHA-256 校验和。读取时会校验租户归属、校验和和大小；tenant-strict 请求拒绝历史未分区对象。
+租户作用域对象 ID 为 128 个十六进制字符；历史全局对象仍使用 64 字符内容摘要。返回的 `runstate.BlobRef` 包含对象 ID、字节大小和内容 SHA-256 校验和。读取时会校验租户归属、校验和和大小；tenant-strict 为默认开启——无 principal 的请求不能读取租户作用域对象（`ErrTenantRequired`），历史未分区对象保持公开，可用 `runstate.ContextWithTenantPermissive` 为维护路径显式放开。
 
 ## 安全注意事项
 

@@ -42,6 +42,7 @@ func TestTerminationReasonForError(t *testing.T) {
 		want string
 	}{
 		{name: "max steps sentinel", err: fmt.Errorf("%w=9", ErrMaxStepsExceeded), want: core.TerminationReasonMaxStepsExceeded},
+		{name: "token budget sentinel", err: fmt.Errorf("%w: used=120 budget=100", ErrTokenBudgetExceeded), want: core.TerminationReasonBudgetExceeded},
 		{name: "deadline", err: context.DeadlineExceeded, want: core.TerminationReasonTimeout},
 		{name: "stale fence", err: runstate.ErrStaleFence, want: core.TerminationReasonLeaseLost},
 		{name: "lease lost", err: coordination.ErrRunLeaseLost, want: core.TerminationReasonLeaseLost},

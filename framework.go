@@ -9,7 +9,6 @@ import (
 	"io"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	blobinmem "github.com/aijustin/agentflow-go/internal/adapter/blob/inmem"
@@ -18,6 +17,7 @@ import (
 	tierllmsummary "github.com/aijustin/agentflow-go/internal/adapter/memory/tier/llmsummary"
 	runstateinmem "github.com/aijustin/agentflow-go/internal/adapter/runstate/inmem"
 	runstaterecording "github.com/aijustin/agentflow-go/internal/adapter/runstate/recording"
+	"github.com/aijustin/agentflow-go/internal/application/emit"
 	"github.com/aijustin/agentflow-go/internal/application/orchestration"
 	appexec "github.com/aijustin/agentflow-go/internal/application/runtime"
 	appscenario "github.com/aijustin/agentflow-go/internal/application/scenario"
@@ -145,12 +145,20 @@ type Framework struct {
 	// WithEventStore; used by the retention cascade and the outbox relay.
 	eventStore observability.EventStore
 
-	// streamCallerGoneTimeout mirrors options.streamCallerGoneTimeout.
+	// streamCallerGoneTimeout mirrors options.streamCallerGoneTimeout after
+	// applying DefaultStreamCallerGoneTimeout when the option was not set.
 	streamCallerGoneTimeout time.Duration
 
 	// streamHub fans StreamRun frames out to AttachRunStream subscribers and
 	// keeps a per-run replay ring (see stream_hub.go).
 	streamHub *streamHub
+
+	// emitter is the shared event pipeline: non-lifecycle events are queued
+	// for a single dispatcher goroutine (dropped+counted when full), while
+	// critical lifecycle events are delivered synchronously with retries.
+	// Shared with every engine built from this framework so Close drains
+	// exactly one queue.
+	emitter *emit.Pipeline
 }
 
 type options struct {
@@ -212,8 +220,15 @@ type options struct {
 	// streamCallerGoneTimeout bounds how long a Framework.Stream chunk may
 	// stay undeliverable to a caller that neither drains nor cancels before
 	// the stream is cancelled as a fallback (non-detached streams only).
-	// Zero disables the fallback (see WithStreamCallerGoneTimeout).
+	// Defaults to DefaultStreamCallerGoneTimeout; an explicit
+	// WithStreamCallerGoneTimeout(d <= 0) disables it (streamCallerGoneSet
+	// distinguishes "explicitly disabled" from "not configured").
 	streamCallerGoneTimeout time.Duration
+	streamCallerGoneSet     bool
+
+	// eventQueueCapacity bounds the async event emission queue (see
+	// WithEventQueueCapacity). <= 0 selects emit.DefaultQueueCapacity.
+	eventQueueCapacity int
 }
 
 type toolRegistry struct {
@@ -493,14 +508,24 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 		runLeaseTTL:            cfg.runLeaseTTL,
 		closers:                append([]func(context.Context) error(nil), cfg.closers...),
 	}
+	fw.scenario = scenario
+	fw.emitter = emit.NewPipeline(emit.Config{
+		Sink:          cfg.events,
+		Logger:        cfg.logger,
+		Recorder:      cfg.recorder,
+		QueueCapacity: cfg.eventQueueCapacity,
+	})
 	engine, err := appexec.NewEngine(scenario, fw.engineDependencies(cfg.toolTransforms, cfg.interjectDrain))
 	if err != nil {
+		fw.emitter.Close()
 		return nil, err
 	}
-	fw.scenario = scenario
 	fw.engine = engine
 	fw.eventStore = cfg.eventStore
 	fw.streamCallerGoneTimeout = cfg.streamCallerGoneTimeout
+	if !cfg.streamCallerGoneSet {
+		fw.streamCallerGoneTimeout = DefaultStreamCallerGoneTimeout
+	}
 	fw.streamHub = newStreamHub()
 	if cfg.outboxRelay {
 		store, ok := cfg.eventStore.(observability.SequencedEventStore)
@@ -1113,6 +1138,21 @@ func WithHITLTokenTTL(ttl time.Duration) Option {
 	}
 }
 
+// WithEventQueueCapacity bounds the asynchronous event emission queue shared
+// by this framework and its engines. Non-lifecycle events are enqueued for a
+// single dispatcher goroutine; when the queue is full they are dropped and
+// counted (agentflow_runtime_events_dropped_total + rate-limited warnings)
+// instead of blocking the run — the same drop semantics as the stream tee.
+// Critical lifecycle events never enter the queue: they are delivered
+// synchronously with retries. Values <= 0 select the default
+// (emit.DefaultQueueCapacity, 1024).
+func WithEventQueueCapacity(capacity int) Option {
+	return func(o *options) error {
+		o.eventQueueCapacity = capacity
+		return nil
+	}
+}
+
 // WithStreamCallerGoneTimeout sets a fallback deadline for Framework.Stream
 // callers that stop consuming the returned channel without cancelling ctx:
 // once a chunk stays undeliverable for d, the framework cancels the stream's
@@ -1121,19 +1161,23 @@ func WithHITLTokenTTL(ttl time.Duration) Option {
 // goroutine and the lease renewer forever. The timer only runs while a chunk
 // is blocked on delivery — a slow-but-reading consumer never triggers it,
 // and a quiet engine that simply has not produced a chunk yet is unaffected.
-// Zero (the default) preserves the previous behavior: such streams block
-// until the caller drains or cancels. Detached streams (StreamDetached /
-// WithStreamDetached) are exempt: their contract is to keep executing after
-// the caller goes away.
+// The fallback defaults to DefaultStreamCallerGoneTimeout (10 minutes);
+// passing d <= 0 explicitly disables it, restoring the previous behavior of
+// blocking until the caller drains or cancels. Detached streams
+// (StreamDetached / WithStreamDetached) are exempt: their contract is to
+// keep executing after the caller goes away.
 func WithStreamCallerGoneTimeout(d time.Duration) Option {
 	return func(o *options) error {
-		if d < 0 {
-			return fmt.Errorf("agentflow: stream caller-gone timeout must be >= 0")
-		}
 		o.streamCallerGoneTimeout = d
+		o.streamCallerGoneSet = true
 		return nil
 	}
 }
+
+// DefaultStreamCallerGoneTimeout is the fallback deadline applied to
+// non-detached Framework.Stream callers that stop consuming without
+// cancelling. WithStreamCallerGoneTimeout overrides it; d <= 0 disables.
+const DefaultStreamCallerGoneTimeout = 10 * time.Minute
 
 // Run executes the framework scenario.
 func (f *Framework) Run(ctx context.Context, req RunRequest) (RunResult, error) {
@@ -1203,8 +1247,9 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 // Stream executes an agent using a gateway that implements llm.Streamer.
 // Callers must drain the returned channel to completion or cancel ctx;
 // otherwise the engine goroutine (and any run lease renewer) may remain
-// blocked indefinitely. WithStreamCallerGoneTimeout adds a fallback for
-// non-detached streams whose callers do neither.
+// blocked until the caller-gone fallback (default
+// DefaultStreamCallerGoneTimeout, see WithStreamCallerGoneTimeout) cancels a
+// non-detached stream whose chunks stay undeliverable.
 func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
 	ctx, release, err := f.acquireRunLease(ctx, &req)
 	if err != nil {
@@ -1280,9 +1325,10 @@ func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan 
 //
 // Callers must drain the returned channel or cancel ctx; otherwise this
 // forwarder and the lease renewer stay alive. For non-detached streams the
-// optional caller-gone timeout (WithStreamCallerGoneTimeout) bounds how long
-// a single chunk may stay undeliverable before the stream is cancelled as a
-// fallback; detached streams are exempt (see above).
+// caller-gone timeout (default DefaultStreamCallerGoneTimeout; explicitly
+// disabled via WithStreamCallerGoneTimeout(0)) bounds how long a single chunk
+// may stay undeliverable before the stream is cancelled as a fallback;
+// detached streams are exempt (see above).
 func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan llm.ChatChunk, cancel context.CancelFunc, release func()) <-chan llm.ChatChunk {
 	out := make(chan llm.ChatChunk)
 	idle := f.streamCallerGoneTimeout
@@ -1418,47 +1464,21 @@ func (f *Framework) BlobStore() runstate.BlobStore {
 }
 
 func (f *Framework) emit(ctx context.Context, typ core.EventType, runID string, payload json.RawMessage) {
-	corr := core.EpisodeCorrelationFromContext(ctx)
-	if core.IsLifecycleEvent(typ) {
-		payload = core.BuildLifecyclePayload(typ, payload, corr)
+	scenarioName := f.currentScenario().Name
+	if emitter := f.currentEmitter(); emitter != nil {
+		emitter.Emit(ctx, scenarioName, f.redactor, typ, runID, payload)
+		return
 	}
-	payload = governance.RedactEventPayload(ctx, f.redactor, runID, typ, payload)
-	event := core.Event{
-		Type:         typ,
-		RunID:        runID,
-		ScenarioName: f.currentScenario().Name,
-		EpisodeID:    corr.EpisodeID,
-		SessionID:    corr.SessionID,
-		TriggerKind:  corr.TriggerKind,
-		Timestamp:    time.Now().UTC(),
-		Category:     core.EventCategory(typ),
-		DisplayLabel: core.DisplayLabel(typ),
-		Payload:      payload,
-	}
-	observability.StampEventTenant(ctx, &event)
-	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
-		event.TraceID = traceID
-		event.SpanID = spanID
-	}
-	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
-		event.ParentSpanID = parentSpanID
-	}
-	if err := appexec.EmitWithLifecycleRetry(ctx, f.events, event); err != nil {
-		if appexec.IsCriticalLifecycleEvent(typ) {
-			// A lost lifecycle event corrupts downstream state tracking, so
-			// after the bounded retries this is an error, not a warning. The
-			// tee below still runs: a live stream consumer should see the
-			// transition even when the durable sink is down.
-			errorEmitFailure(f.logger, ctx, runID, typ, err)
-		} else {
-			warnEmitFailure(f.logger, ctx, runID, err)
-		}
-	}
-	if tee := appexec.EventTeeFromContext(ctx); tee != nil {
-		if err := tee.Emit(ctx, event); err != nil {
-			warnEmitFailure(f.logger, ctx, runID, err)
-		}
-	}
+	// Framework values constructed without New (tests, zero-value facades)
+	// have no pipeline; deliver synchronously.
+	emit.DeliverSync(ctx, f.logger, f.events, scenarioName, f.redactor, typ, runID, payload)
+}
+
+// currentEmitter returns the shared event pipeline under read lock.
+func (f *Framework) currentEmitter() *emit.Pipeline {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.emitter
 }
 
 func (f *Framework) emitJSON(ctx context.Context, typ core.EventType, runID string, payload any) {
@@ -1496,37 +1516,6 @@ func withScenarioTimeout(ctx context.Context, timeout time.Duration) (context.Co
 // 128-bit generator instead of carrying private 64-bit copies.
 func generateRunID() string {
 	return runstate.GenerateRunID()
-}
-
-// --- Emit Failure Logging ---
-
-// emitWarnGate prevents recursive Warn if the logger itself emits events.
-var emitWarnGate atomic.Bool
-
-func warnEmitFailure(logger log.Logger, ctx context.Context, runID string, err error) {
-	if logger == nil || err == nil {
-		return
-	}
-	if !emitWarnGate.CompareAndSwap(false, true) {
-		return
-	}
-	defer emitWarnGate.Store(false)
-	logger.Warn(ctx, "agentflow: event emit failed", "run_id", runID, "error", err)
-}
-
-// errorEmitFailure reports a lifecycle event that could not be delivered even
-// after the bounded retries. Unlike warnEmitFailure it logs at error level:
-// losing RunCompleted/RunPaused/RunFailed/RunCancelled corrupts downstream
-// state tracking and must page an operator.
-func errorEmitFailure(logger log.Logger, ctx context.Context, runID string, typ core.EventType, err error) {
-	if logger == nil || err == nil {
-		return
-	}
-	if !emitWarnGate.CompareAndSwap(false, true) {
-		return
-	}
-	defer emitWarnGate.Store(false)
-	logger.Error(ctx, "agentflow: lifecycle event emit failed after retries", "run_id", runID, "event_type", string(typ), "error", err)
 }
 
 // --- Async Job Handler ---

@@ -68,6 +68,7 @@ func DocumentFromCore(scenario core.Scenario) (Document, error) {
 			DisableToolInputValidation: scenario.Runtime.DisableToolInputValidation,
 			DoomLoopLimit:              scenario.Runtime.DoomLoopLimit,
 			HITLDenyLimit:              scenario.Runtime.HITLDenyLimit,
+			MaxTotalTokens:             scenario.Runtime.MaxTotalTokens,
 			Secrets:                    scenario.Runtime.Secrets,
 		},
 	}}

@@ -12,15 +12,14 @@ import (
 const blobDigestHexLength = sha256.Size * 2
 
 // NewBlobRefForContext creates a content-addressed reference scoped to the
-// authenticated tenant. Principal-less non-strict callers retain the legacy
-// global digest ID for backward compatibility and administrative workflows.
+// authenticated tenant. Principal-less callers create legacy global digest
+// IDs — writing unscoped data is always allowed; tenant-strict mode (the
+// default) only fails closed when reading tenant-scoped data, never when
+// creating new unowned content.
 func NewBlobRefForContext(ctx context.Context, data []byte) (BlobRef, error) {
 	ref := NewBlobRef("", data)
 	tenantID := tenantIDFromContext(ctx)
 	if tenantID == "" {
-		if TenantStrictModeFromContext(ctx) {
-			return BlobRef{}, ErrTenantRequired
-		}
 		ref.ID = ref.Sha256
 		return ref, nil
 	}
@@ -28,23 +27,24 @@ func NewBlobRefForContext(ctx context.Context, data []byte) (BlobRef, error) {
 	return ref, nil
 }
 
-// AuthorizeBlobAccess rejects scoped references owned by another tenant and
-// rejects legacy unscoped references in tenant-strict mode.
+// AuthorizeBlobAccess rejects scoped references owned by another tenant.
+// Legacy unscoped references are unprotected data and stay readable by
+// anyone. Tenant-strict mode (the default) additionally rejects
+// principal-less reads of tenant-scoped references;
+// ContextWithTenantPermissive restores fail-open access for trusted
+// maintenance callers.
 func AuthorizeBlobAccess(ctx context.Context, ref BlobRef) error {
 	tenantHash, _, legacy, err := ParseBlobID(ref.ID)
 	if err != nil {
 		return err
 	}
+	if legacy {
+		return nil
+	}
 	tenantID := tenantIDFromContext(ctx)
 	if tenantID == "" {
 		if TenantStrictModeFromContext(ctx) {
 			return ErrTenantRequired
-		}
-		return nil
-	}
-	if legacy {
-		if TenantStrictModeFromContext(ctx) {
-			return ErrTenantMismatch
 		}
 		return nil
 	}
@@ -92,17 +92,13 @@ func FilterBlobRefsForTenant(refs []BlobRef, tenantID string) []BlobRef {
 }
 
 // FilterBlobRefsForContext applies the same access boundary to BlobAdmin.List
-// as Get/Delete. Principal-less non-strict callers retain the global admin view.
+// as Get/Delete. A principal-less caller in tenant-strict mode (the default)
+// sees only legacy unscoped references; ContextWithTenantPermissive restores
+// the global admin view. Authenticated callers see their own tenant-scoped
+// references plus legacy ones.
 func FilterBlobRefsForContext(ctx context.Context, refs []BlobRef) ([]BlobRef, error) {
-	tenantID := tenantIDFromContext(ctx)
-	if tenantID == "" {
-		if TenantStrictModeFromContext(ctx) {
-			return nil, ErrTenantRequired
-		}
+	if tenantIDFromContext(ctx) == "" && !TenantStrictModeFromContext(ctx) {
 		return refs, nil
-	}
-	if TenantStrictModeFromContext(ctx) {
-		return FilterBlobRefsForTenant(refs, tenantID), nil
 	}
 	out := make([]BlobRef, 0, len(refs))
 	for _, ref := range refs {

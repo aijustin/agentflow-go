@@ -164,7 +164,10 @@ func TestFlatMemoryIsIsolatedByTenant(t *testing.T) {
 	}
 }
 
-func TestFlatMemoryRequiresTenantInStrictMode(t *testing.T) {
+// TestFlatMemoryTenantScopingWithDefaultStrict: with tenant-strict as the
+// default, a principal-less write falls back to the unscoped (unprotected)
+// namespace, while an invalid principal is rejected fail-closed.
+func TestFlatMemoryTenantScopingWithDefaultStrict(t *testing.T) {
 	memRepo := memoryinmem.NewRepository()
 	scenario := baseScenario(false)
 	scenario.Memories = map[string]core.MemoryRef{
@@ -181,20 +184,21 @@ func TestFlatMemoryRequiresTenantInStrictMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contexts := []context.Context{
-		runstate.ContextWithTenantStrictMode(context.Background()),
-		runstate.ContextWithTenantStrictMode(identity.WithPrincipal(context.Background(), identity.Principal{
-			ID: "svc-invalid", Type: identity.PrincipalService,
-			Scope: identity.Scope{TenantID: " "}, Roles: []identity.Role{identity.RoleService},
-		})),
+	// No principal: allowed, lands in the unscoped namespace.
+	if err := engine.writeMemory(context.Background(), "run-unscoped", agent, []memoryMessage{
+		runTurnMemoryMessage(string(llm.RoleUser), "unscoped-write"),
+	}); err != nil {
+		t.Fatalf("principal-less write must use the unscoped namespace, got %v", err)
 	}
-	for _, ctx := range contexts {
-		err = engine.writeMemory(ctx, "run-strict", agent, []memoryMessage{
-			runTurnMemoryMessage(string(llm.RoleUser), "must-not-write"),
-		})
-		if !errors.Is(err, runstate.ErrTenantRequired) {
-			t.Fatalf("expected tenant required, got %v", err)
-		}
+	// Invalid principal (blank tenant): rejected fail-closed.
+	invalid := identity.WithPrincipal(context.Background(), identity.Principal{
+		ID: "svc-invalid", Type: identity.PrincipalService,
+		Scope: identity.Scope{TenantID: " "}, Roles: []identity.Role{identity.RoleService},
+	})
+	if err := engine.writeMemory(invalid, "run-strict", agent, []memoryMessage{
+		runTurnMemoryMessage(string(llm.RoleUser), "must-not-write"),
+	}); !errors.Is(err, runstate.ErrTenantRequired) {
+		t.Fatalf("expected tenant required for invalid principal, got %v", err)
 	}
 }
 
@@ -212,11 +216,13 @@ func TestEmitPairingIncompleteEmitsWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine.emitPairingIncomplete(ctx, "run-x", pairingDrops{orphanToolResults: 1, unansweredToolCalls: 2})
+	engine.emitter.Flush()
 	if !events.has(core.EventContextIncomplete) {
 		t.Fatalf("expected ContextIncomplete event, got %+v", events.types())
 	}
 	before := events.count(core.EventContextIncomplete)
 	engine.emitPairingIncomplete(ctx, "run-x", pairingDrops{})
+	engine.emitter.Flush()
 	if events.count(core.EventContextIncomplete) != before {
 		t.Fatal("expected no event when nothing was dropped")
 	}

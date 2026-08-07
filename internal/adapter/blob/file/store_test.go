@@ -119,5 +119,6 @@ func fileBlobTenantContext(tenantID string) context.Context {
 		Type:  identity.PrincipalUser,
 		Scope: identity.Scope{TenantID: tenantID},
 	})
-	return runstate.ContextWithTenantStrictMode(ctx)
+	// Tenant-strict is the default; no wrapper needed.
+	return ctx
 }

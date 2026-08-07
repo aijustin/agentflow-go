@@ -56,6 +56,16 @@ func (t *usageTracker) lastCallTokens() int {
 	return t.LastCallInputTokens + t.LastCallOutputTokens
 }
 
+// totalTokens returns the run's accumulated provider-reported total.
+func (t *usageTracker) totalTokens() int {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.TotalTokens
+}
+
 func (t *usageTracker) contextRecoveryAttempts() int {
 	if t == nil {
 		return 0

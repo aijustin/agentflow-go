@@ -43,7 +43,15 @@ const (
 	// accumulated token totals and the context-length recovery budget.
 	// Snapshots written before this variable existed decode to a zero
 	// tracker.
-	checkpointUsageVar          = "checkpoint_usage"
+	checkpointUsageVar = "checkpoint_usage"
+	// checkpointApprovalsVar / checkpointDenyCountVar persist the run-scoped
+	// approval cache decisions and the HITL deny-breaker count next to
+	// checkpoint_tool_counts, so a run that migrates to another node (or is
+	// recovered by the reaper) keeps its remembered approvals and consecutive
+	// deny budget across the pause. Snapshots written before these variables
+	// existed simply restore nothing (process-local behavior, as before).
+	checkpointApprovalsVar      = "checkpoint_approvals"
+	checkpointDenyCountVar      = "checkpoint_deny_count"
 	checkpointOutputModeVar     = "checkpoint_output_mode"
 	checkpointStepsConsumedVar  = "checkpoint_steps_consumed"
 	checkpointReplanAttemptsVar = "checkpoint_replan_attempts"
@@ -288,6 +296,9 @@ func (e *Engine) continueToolApproval(ctx context.Context, snapshot runstate.Run
 		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, fmt.Errorf("runtime: decode checkpoint usage: %w", err))
 	}
 	e.restoreUsageTracker(snapshot.RunID, usage)
+	if err := e.restoreApprovalCheckpointState(snapshot.RunID, snapshot.Variables); err != nil {
+		return RunResult{}, e.failContinuePermanent(ctx, snapshot.RunID, err)
+	}
 	if len(messages) == 0 {
 		// A tool_approval checkpoint always persists the conversation up to
 		// and including the paused assistant turn. Missing messages mean the
@@ -530,6 +541,27 @@ func checkpointStepsConsumed(vars map[string]json.RawMessage) int {
 	return checkpointIntVar(vars, checkpointStepsConsumedVar)
 }
 
+// restoreApprovalCheckpointState imports the checkpointed approval-cache
+// decisions and deny-breaker count so a resume on a fresh node keeps
+// remembered allow/deny decisions (no repeated HITL prompts) and the
+// consecutive-deny budget. A store that does not implement
+// toolorch.RunStateExporter stays process-local, as before.
+func (e *Engine) restoreApprovalCheckpointState(runID string, vars map[string]json.RawMessage) error {
+	if raw := vars[checkpointApprovalsVar]; len(raw) > 0 {
+		if exporter, ok := e.approvalStore.(toolorch.RunStateExporter); ok {
+			if err := exporter.ImportRun(runID, raw); err != nil {
+				return fmt.Errorf("runtime: decode checkpoint approvals: %w", err)
+			}
+		}
+	}
+	if e.denyBreaker != nil {
+		if count := checkpointIntVar(vars, checkpointDenyCountVar); count > 0 {
+			e.denyBreaker.ImportRun(runID, count)
+		}
+	}
+	return nil
+}
+
 func checkpointIntVar(vars map[string]json.RawMessage, key string) int {
 	if vars == nil {
 		return 0
@@ -659,7 +691,10 @@ func errorsAsRunPaused(err error, target *RunPausedError) bool {
 // errors are permanent; unknown errors stay transient, preserving the
 // Running + checkpoint state for a later ContinueRun.
 func isPermanentContinueError(err error) bool {
-	return errors.Is(err, ErrLLMGatewayRequired)
+	// The token budget is scenario configuration: a blind retry of the same
+	// checkpoint burns the same accumulated usage and fails again, so the run
+	// settles as Failed (checkpoint kept) until an operator raises the budget.
+	return errors.Is(err, ErrLLMGatewayRequired) || errors.Is(err, ErrTokenBudgetExceeded)
 }
 
 // failContinuePermanent persists the run as Failed with the error as its
@@ -787,6 +822,20 @@ func (e *Engine) maybePauseToolCall(ctx context.Context, runID string, agent cor
 		// gate.Pause and the checkpoint was never approved (see
 		// checkpointPendingPauseVar).
 		checkpointPendingPauseVar: json.RawMessage(`true`),
+	}
+	// Externalize the run-scoped approval cache and deny-breaker state into
+	// the checkpoint so a resume on another node restores them (see
+	// checkpointApprovalsVar). Stores without RunStateExporter support simply
+	// contribute nothing.
+	if exporter, ok := e.approvalStore.(toolorch.RunStateExporter); ok {
+		if approvalsRaw, ok := exporter.ExportRun(runID); ok {
+			vars[checkpointApprovalsVar] = approvalsRaw
+		}
+	}
+	if e.denyBreaker != nil {
+		if count := e.denyBreaker.ExportRun(runID); count > 0 {
+			vars[checkpointDenyCountVar] = json.RawMessage(strconv.Itoa(count))
+		}
 	}
 	if nodeID := core.WorkflowNodeFromContext(ctx); nodeID != "" {
 		vars[checkpointWorkflowNodeVar] = jsonStringValue(nodeID)

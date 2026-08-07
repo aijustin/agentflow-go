@@ -5,7 +5,10 @@ import "context"
 type MetricName string
 
 const (
-	MetricRuntimeEventsTotal         MetricName = "agentflow_runtime_events_total"
+	MetricRuntimeEventsTotal MetricName = "agentflow_runtime_events_total"
+	// MetricRuntimeEventsDroppedTotal counts non-lifecycle events dropped by
+	// the async emission queue because the sink fell behind (queue full).
+	MetricRuntimeEventsDroppedTotal  MetricName = "agentflow_runtime_events_dropped_total"
 	MetricRunDurationSeconds         MetricName = "agentflow_run_duration_seconds"
 	MetricToolDurationSeconds        MetricName = "agentflow_tool_duration_seconds"
 	MetricQueueJobsTotal             MetricName = "agentflow_queue_jobs_total"

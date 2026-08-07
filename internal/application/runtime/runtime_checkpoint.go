@@ -99,6 +99,8 @@ func checkpointVariableKeys() []string {
 		checkpointMessagesVar,
 		checkpointToolCountsVar,
 		checkpointUsageVar,
+		checkpointApprovalsVar,
+		checkpointDenyCountVar,
 		checkpointOutputModeVar,
 		checkpointStepsConsumedVar,
 		checkpointReplanAttemptsVar,

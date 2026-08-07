@@ -53,9 +53,9 @@ func (e *Engine) scopedMemoryNamespace(ctx context.Context, runID string, agent 
 	}
 	principal, hasPrincipal := identity.PrincipalFromContext(ctx)
 	if !hasPrincipal {
-		if runstate.TenantStrictModeFromContext(ctx) {
-			return memory.Namespace{}, false, runstate.ErrTenantRequired
-		}
+		// Principal-less callers use the unscoped (unprotected) namespace.
+		// Tenant-scoped namespaces are only reachable with a principal, so
+		// tenant-strict mode has nothing to fail closed on here.
 		return ns, true, nil
 	}
 	if err := principal.Validate(); err != nil {

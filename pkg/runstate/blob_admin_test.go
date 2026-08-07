@@ -50,11 +50,11 @@ func TestPurgeOrphanBlobs(t *testing.T) {
 }
 
 func TestPurgeOrphanBlobsFiltersStoredBlobsByTenant(t *testing.T) {
-	refA, err := NewBlobRefForContext(blobTenantContext("tenant-a", false), []byte("a"))
+	refA, err := NewBlobRefForContext(blobTenantContext("tenant-a"), []byte("a"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	refB, err := NewBlobRefForContext(blobTenantContext("tenant-b", false), []byte("b"))
+	refB, err := NewBlobRefForContext(blobTenantContext("tenant-b"), []byte("b"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aijustin/agentflow-go/internal/application/emit"
 	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/internal/toolinvoke"
 	"github.com/aijustin/agentflow-go/pkg/audit"
@@ -20,7 +21,6 @@ import (
 	"github.com/aijustin/agentflow-go/pkg/governance"
 	"github.com/aijustin/agentflow-go/pkg/identity"
 	"github.com/aijustin/agentflow-go/pkg/llm"
-	"github.com/aijustin/agentflow-go/pkg/observability"
 	"github.com/aijustin/agentflow-go/pkg/retry"
 	"github.com/aijustin/agentflow-go/pkg/runstate"
 	"github.com/aijustin/agentflow-go/pkg/security"
@@ -1175,31 +1175,7 @@ func (r *WorkflowRunner) emitJSON(ctx context.Context, typ core.EventType, scena
 }
 
 func (r *WorkflowRunner) emit(ctx context.Context, typ core.EventType, scenarioName, runID string, payload json.RawMessage) {
-	corr := core.EpisodeCorrelationFromContext(ctx)
-	if core.IsLifecycleEvent(typ) {
-		payload = core.BuildLifecyclePayload(typ, payload, corr)
-	}
-	payload = governance.RedactEventPayload(ctx, r.redactor, runID, typ, payload)
-	event := core.Event{
-		Type:         typ,
-		RunID:        runID,
-		ScenarioName: scenarioName,
-		EpisodeID:    corr.EpisodeID,
-		SessionID:    corr.SessionID,
-		TriggerKind:  corr.TriggerKind,
-		Timestamp:    time.Now().UTC(),
-		Category:     core.EventCategory(typ),
-		DisplayLabel: core.DisplayLabel(typ),
-		Payload:      payload,
-	}
-	observability.StampEventTenant(ctx, &event)
-	if traceID, spanID := observability.TraceFromContext(ctx); traceID != "" {
-		event.TraceID = traceID
-		event.SpanID = spanID
-	}
-	if parentSpanID := observability.ParentSpanFromContext(ctx); parentSpanID != "" {
-		event.ParentSpanID = parentSpanID
-	}
+	event := emit.BuildEvent(ctx, scenarioName, r.redactor, typ, runID, payload)
 	if err := r.events.Emit(ctx, event); err != nil {
 		// WorkflowRunner has no logger; avoid silent total loss by recording
 		// once via the standard library when emit fails.

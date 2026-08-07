@@ -61,10 +61,19 @@ func TestScopeListFilterRejectsCrossTenantSelection(t *testing.T) {
 	}
 }
 
-func TestScopeListFilterRequiresTenantInStrictMode(t *testing.T) {
-	ctx := ContextWithTenantStrictMode(context.Background())
-	if _, err := ScopeListFilter(ctx, ListFilter{}); !errors.Is(err, ErrTenantRequired) {
+func TestScopeListFilterScopesPrincipallessCallers(t *testing.T) {
+	// Strict is the default: an explicit tenant scope without a principal is
+	// rejected (protected data), while the empty global maintenance view and
+	// the permissive opt-out stay open.
+	if _, err := ScopeListFilter(context.Background(), ListFilter{TenantID: "tenant-a"}); !errors.Is(err, ErrTenantRequired) {
 		t.Fatalf("expected tenant required, got %v", err)
+	}
+	if _, err := ScopeListFilter(context.Background(), ListFilter{}); err != nil {
+		t.Fatalf("empty scope must stay open for maintenance callers, got %v", err)
+	}
+	filter, err := ScopeListFilter(ContextWithTenantPermissive(context.Background()), ListFilter{TenantID: "tenant-a"})
+	if err != nil || filter.TenantID != "tenant-a" {
+		t.Fatalf("permissive mode must allow explicit scopes, got %+v, %v", filter, err)
 	}
 }
 

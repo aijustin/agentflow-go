@@ -473,6 +473,9 @@ go run ./examples/go/event-trigger/main.go
 以下行为由运行时自动提供，无需配置：
 
 - **终止原因可归因**：`RunCompleted` / `RunFailed` / `RunCancelled` 事件的终态 payload 带 `termination_reason` 字段，取值为 `completed` / `max_steps_exceeded` / `timeout` / `cancelled` / `lease_lost` / `llm_error` / `error`（`core.TerminationReason*` 常量），调用方无需解析错误文案即可归类。
+- **事件发射异步化与背压**：非生命周期事件经有界队列由单 dispatcher goroutine 保序投递（默认容量 1024，`WithEventQueueCapacity` 可调），慢 sink 不会拖慢工具循环；队列满时丢弃并累计 `agentflow_runtime_events_dropped_total` 指标与限频告警（与 stream tee 的丢弃语义一致）。`RunStarted` / `RunCompleted` / `RunFailed` / `RunCancelled` / `RunPaused` / `RunResumed` 等关键生命周期事件不走队列，保持同步投递 + 有界重试。`Framework.Close` 会有界等待（2s）排空队列后再回收资源。
+- **tenant-strict 默认开启**：无 principal 的调用访问已按租户分区的数据（带 `tenant_id` 的 RunSnapshot / Job、租户作用域 Blob）默认失败关闭（`ErrTenantRequired`）；未分区（历史/单租户）数据保持开放。可信的内部维护路径用 `runstate.ContextWithTenantPermissive` 显式 opt-out。
+- **Stream caller-gone 兜底默认开启**：`Framework.Stream` 的调用方既不消费返回通道也不取消 ctx 时，非 detached 流在单个 chunk 无法投递超过 `DefaultStreamCallerGoneTimeout`（10 分钟）后自动取消执行并释放租约；`WithStreamCallerGoneTimeout(d <= 0)` 显式关闭。
 - **真实 token 用量驱动压缩**：上下文压缩触发判断优先使用上一轮 LLM 调用的 provider 实测 token 数（经 `checkpoint_usage` 检查点变量跨 pause/resume 保留），实测缺失时回退到内置启发式估算；裁剪预算仍按启发式逐条估算。
 - **上下文溢出恢复**：provider 返回 context_length_exceeded（或等价错误）时，运行时自动做一次恢复性压缩（观测遮蔽 + 强制滑窗摘要）并重试，每个 run 最多一次；第二次溢出直接失败。
 - **会话格式不变量**：空响应（无内容、无工具调用且非 max-tokens 截断）会重采样至多 3 次，仍为空则报错而非静默返回空答案；非法 JSON 工具参数被规整为 `{}` 时会打 `tool_args_normalized` 消息标记、发 `ToolArgsNormalized` 诊断事件，后续参数校验失败的反馈文案会带上原始解析错误。

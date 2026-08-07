@@ -168,6 +168,7 @@ func TestCachedDenySoftDeniesTool(t *testing.T) {
 	if result.Error == "" || !strings.Contains(result.Error, "cached") {
 		t.Fatalf("expected cached deny, got %+v", result)
 	}
+	engine.emitter.Flush()
 	if !events.has(core.EventToolDenied) {
 		t.Fatalf("expected ToolDenied, got %+v", events.types())
 	}

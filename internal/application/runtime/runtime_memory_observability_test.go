@@ -87,6 +87,7 @@ func TestEmitContextPreparedEmitsIncompleteWarning(t *testing.T) {
 
 	disablePin := false
 	engine.emitContextPrepared(ctx, "run-incomplete", contextwindowStats(t, disablePin))
+	engine.emitter.Flush()
 	if !events.has(core.EventContextIncomplete) {
 		t.Fatalf("expected ContextIncomplete event, got %+v", events.types())
 	}

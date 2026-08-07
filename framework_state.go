@@ -117,6 +117,7 @@ func (f *Framework) engineDependencies(transforms map[string]contextwindow.ToolO
 		LoopHooks:              contributions.Hooks,
 		StopConditions:         contributions.StopConditions,
 		DualVisibilityMessages: f.dualVisibilityMessages,
+		EmitPipeline:           f.emitter,
 	}
 }
 

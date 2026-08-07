@@ -615,6 +615,14 @@ func (e *Engine) answerWithToolsFrom(
 			e.emitJSON(ctx, core.EventLLMTokenUsage, runID, *emitUsage)
 			e.recordLLMUsage(ctx, runID, agent.LLM, emitUsage)
 		}
+		// Token-budget circuit breaker: the tracker totals accumulate across
+		// pause/resume (checkpoint_usage), so a resumed run cannot spend its
+		// budget twice. Providers that report no usage never trip this.
+		if budget := e.scenario.Runtime.MaxTotalTokens; budget > 0 {
+			if used := e.usageTrackerFor(runID).totalTokens(); used > budget {
+				return "", fmt.Errorf("%w: run %s consumed %d total tokens (budget %d)", ErrTokenBudgetExceeded, runID, used, budget)
+			}
+		}
 		assistant := resp.Message
 		assistant.Role = llm.RoleAssistant
 		logicalStep := stepsConsumedBase + step + 1

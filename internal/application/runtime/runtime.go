@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aijustin/agentflow-go/internal/application/emit"
 	"github.com/aijustin/agentflow-go/internal/safecall"
 	"github.com/aijustin/agentflow-go/pkg/async"
 	"github.com/aijustin/agentflow-go/pkg/audit"
@@ -40,7 +41,6 @@ type Engine struct {
 	cognitive              map[string]memory.CognitiveMemory
 	runs                   runstate.Repository
 	blobs                  runstate.BlobStore
-	events                 core.EventSink
 	gate                   core.HumanGate
 	approvalEvaluator      core.ToolApprovalEvaluator
 	policy                 security.Policy
@@ -65,13 +65,23 @@ type Engine struct {
 	loadedTools            sync.Map // runID -> *loadedToolSet
 	pendingSelfCompact     sync.Map // runID -> struct{}
 	usageTrackers          sync.Map // runID -> *usageTracker
-	toolArgsRepairs        sync.Map // runID -> *toolArgsRepairSet
-	toolInspectorPrepend   []toolinspect.Inspector
-	toolInspectorAppend    []toolinspect.Inspector
-	llmToolCallerWrappers  []func(llm.ToolCaller) llm.ToolCaller
-	loopHooks              []feature.LoopHooks
-	stopConditions         []feature.StopCondition
-	dualVisibility         bool
+	// iterationBases tracks the conversation length persisted at the last
+	// autonomous iteration boundary, so the next boundary writes only the
+	// delta (see persistAutonomousIteration).
+	iterationBases        sync.Map // runID -> int
+	toolArgsRepairs       sync.Map // runID -> *toolArgsRepairSet
+	toolInspectorPrepend  []toolinspect.Inspector
+	toolInspectorAppend   []toolinspect.Inspector
+	llmToolCallerWrappers []func(llm.ToolCaller) llm.ToolCaller
+	loopHooks             []feature.LoopHooks
+	stopConditions        []feature.StopCondition
+	dualVisibility        bool
+
+	// emitter is the shared event pipeline (async queue + lifecycle sync
+	// delivery). ownsEmitter reports whether Close must stop it; engines
+	// handed a host-owned pipeline (the framework facade's) never close it.
+	emitter     *emit.Pipeline
+	ownsEmitter bool
 }
 
 // Logger is the runtime logging port. Prefer pkg/log.Logger in new code.
@@ -141,6 +151,14 @@ type Dependencies struct {
 	// events/memory/checkpoints keep the full transcript while provider
 	// gateways send only the model-visible projection. Default false.
 	DualVisibilityMessages bool
+	// EmitPipeline, when set, routes durable event delivery through this
+	// host-owned pipeline (shared ordering, shared queue, host-managed
+	// lifetime) instead of a per-engine one. The engine never closes a
+	// pipeline it does not own.
+	EmitPipeline *emit.Pipeline
+	// EventQueueCapacity bounds the per-engine async event queue created when
+	// EmitPipeline is nil. <= 0 selects emit.DefaultQueueCapacity.
+	EventQueueCapacity int
 }
 
 func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
@@ -178,6 +196,17 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 	if scenario.Runtime.HITLDenyLimit > 0 {
 		breaker = toolorch.NewDenyBreaker(scenario.Runtime.HITLDenyLimit)
 	}
+	emitter := deps.EmitPipeline
+	ownsEmitter := false
+	if emitter == nil {
+		emitter = emit.NewPipeline(emit.Config{
+			Sink:          deps.Events,
+			Logger:        deps.Logger,
+			Recorder:      recorder,
+			QueueCapacity: deps.EventQueueCapacity,
+		})
+		ownsEmitter = true
+	}
 	engine := &Engine{
 		scenario:               scenario,
 		llm:                    deps.LLM,
@@ -187,7 +216,6 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		cognitive:              deps.Cognitive,
 		runs:                   deps.Runs,
 		blobs:                  deps.Blobs,
-		events:                 deps.Events,
 		gate:                   deps.HumanGate,
 		approvalEvaluator:      deps.ToolApprovalEvaluator,
 		policy:                 deps.Policy,
@@ -213,9 +241,31 @@ func NewEngine(scenario core.Scenario, deps Dependencies) (*Engine, error) {
 		loopHooks:              deps.LoopHooks,
 		stopConditions:         deps.StopConditions,
 		dualVisibility:         deps.DualVisibilityMessages,
+		emitter:                emitter,
+		ownsEmitter:            ownsEmitter,
 	}
 	engine.interjectDrain.Store(deps.InterjectDrain.Normalize())
 	return engine, nil
+}
+
+// Close drains and stops the engine-owned event pipeline (bounded wait). It
+// is a no-op for engines sharing a host-owned pipeline (Dependencies.EmitPipeline)
+// — the host drains it. Close is idempotent and safe to call once runs have
+// quiesced; in-flight runs are not interrupted.
+func (e *Engine) Close() {
+	if e == nil || !e.ownsEmitter || e.emitter == nil {
+		return
+	}
+	e.emitter.Close()
+}
+
+// DroppedEvents reports how many queued non-lifecycle events were dropped
+// because the emission queue was full (see emit.Pipeline).
+func (e *Engine) DroppedEvents() int64 {
+	if e == nil || e.emitter == nil {
+		return 0
+	}
+	return e.emitter.DroppedEvents()
 }
 
 // TrustMode controls run-scoped tool approval overrides.

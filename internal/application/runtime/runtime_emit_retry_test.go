@@ -46,8 +46,11 @@ func TestEmitWithLifecycleRetryGivesUpAfterBoundedAttempts(t *testing.T) {
 	if err := EmitWithLifecycleRetry(context.Background(), sink, lifecycleEvent()); err == nil {
 		t.Fatal("expected error after bounded retries")
 	}
-	if sink.calls != lifecycleEmitAttempts {
-		t.Fatalf("expected %d attempts, got %d", lifecycleEmitAttempts, sink.calls)
+	// The pipeline bounds lifecycle delivery at 3 attempts (first try plus
+	// two backoff-spaced retries).
+	const wantAttempts = 3
+	if sink.calls != wantAttempts {
+		t.Fatalf("expected %d attempts, got %d", wantAttempts, sink.calls)
 	}
 }
 

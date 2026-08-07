@@ -51,6 +51,21 @@ type ApprovalStore interface {
 	Clear(runID string)
 }
 
+// RunStateExporter is an optional ApprovalStore capability: the runtime
+// persists the run's cached decisions into pause checkpoints so a resume on
+// another node (pause/resume to a different worker, crash recovery by the
+// reaper) keeps the "remembered" approvals instead of re-prompting. Stores
+// that do not implement it degrade to the previous behavior: decisions stay
+// process-local and are lost when the run migrates.
+type RunStateExporter interface {
+	// ExportRun serializes every cached decision of runID. The boolean is
+	// false when the run has no decisions worth persisting.
+	ExportRun(runID string) (json.RawMessage, bool)
+	// ImportRun replaces the run's cached decisions with checkpointed state
+	// produced by ExportRun (the checkpoint is the durable truth).
+	ImportRun(runID string, data json.RawMessage) error
+}
+
 // MemoryApprovalStore is an in-process ApprovalStore.
 type MemoryApprovalStore struct {
 	mu    sync.Mutex
@@ -106,4 +121,49 @@ func (s *MemoryApprovalStore) Clear(runID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.byRun, runID)
+}
+
+// ExportRun implements RunStateExporter: the run's decisions as a JSON object
+// keyed by ApprovalKey.
+func (s *MemoryApprovalStore) ExportRun(runID string) (json.RawMessage, bool) {
+	if s == nil || runID == "" {
+		return nil, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.byRun[runID]
+	if len(m) == 0 {
+		return nil, false
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
+}
+
+// ImportRun implements RunStateExporter. Entries that are neither allow nor
+// deny are dropped, matching Put's durability contract.
+func (s *MemoryApprovalStore) ImportRun(runID string, data json.RawMessage) error {
+	if s == nil || runID == "" {
+		return nil
+	}
+	var decoded map[ApprovalKey]Decision
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.byRun == nil {
+		s.byRun = make(map[string]map[ApprovalKey]Decision)
+	}
+	m := make(map[ApprovalKey]Decision, len(decoded))
+	for key, decision := range decoded {
+		if decision != DecisionAllow && decision != DecisionDeny {
+			continue
+		}
+		m[key] = decision
+	}
+	s.byRun[runID] = m
+	return nil
 }

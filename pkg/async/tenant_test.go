@@ -28,13 +28,23 @@ func TestStampAndAuthorizeJobTenant(t *testing.T) {
 	}
 }
 
-func TestJobTenantStrictModeRequiresStampedIdentity(t *testing.T) {
-	strict := runstate.ContextWithTenantStrictMode(context.Background())
-	if err := StampTenant(strict, &Job{}); !errors.Is(err, ErrTenantRequired) {
-		t.Fatalf("expected tenant required while stamping, got %v", err)
+// TestJobTenantStrictByDefault: tenant-strict is the default. Principal-less
+// stamping creates an unscoped job (allowed); principal-less access to a
+// tenant-stamped job fails closed unless the context opts into permissive
+// mode.
+func TestJobTenantStrictByDefault(t *testing.T) {
+	if err := StampTenant(context.Background(), &Job{}); err != nil {
+		t.Fatalf("principal-less stamping must stay open, got %v", err)
 	}
-	if err := AuthorizeTenant(strict, Job{TenantID: "tenant-a"}); !errors.Is(err, ErrTenantRequired) {
-		t.Fatalf("expected tenant required while authorizing, got %v", err)
+	stamped := Job{TenantID: "tenant-a"}
+	if err := AuthorizeTenant(context.Background(), stamped); !errors.Is(err, ErrTenantRequired) {
+		t.Fatalf("expected tenant required for principal-less access to stamped job, got %v", err)
+	}
+	if err := AuthorizeTenant(runstate.ContextWithTenantPermissive(context.Background()), stamped); err != nil {
+		t.Fatalf("permissive mode must allow principal-less access, got %v", err)
+	}
+	if err := AuthorizeTenant(context.Background(), Job{}); err != nil {
+		t.Fatalf("unscoped job must stay accessible, got %v", err)
 	}
 	if err := AuthorizeTenant(jobTenantContext("tenant-a"), Job{}); !errors.Is(err, ErrTenantMismatch) {
 		t.Fatalf("expected unstamped job mismatch, got %v", err)

@@ -58,8 +58,8 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	runs := nethttp.Handler(&RunsMux{Checkpoint: config.CheckpointHandler, Async: jobHandler})
 	jobs := jobHandler
 	if config.AuthMiddleware != nil {
-		runs = config.AuthMiddleware(withTenantStrictMode(runs))
-		jobs = config.AuthMiddleware(withTenantStrictMode(jobs))
+		runs = config.AuthMiddleware(runs)
+		jobs = config.AuthMiddleware(jobs)
 	}
 	handler := &Handler{mux: nethttp.NewServeMux(), version: config.Version}
 	handler.mux.HandleFunc("/healthz", handler.handleHealth)
@@ -71,28 +71,28 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	if config.EventsHandler != nil {
 		events := config.EventsHandler
 		if config.AuthMiddleware != nil {
-			events = config.AuthMiddleware(withTenantStrictMode(events))
+			events = config.AuthMiddleware(events)
 		}
 		handler.mux.Handle("/v1/events", events)
 	}
 	if config.HITLHandler != nil {
 		hitl := config.HITLHandler
 		if config.AuthMiddleware != nil {
-			hitl = config.AuthMiddleware(withTenantStrictMode(hitl))
+			hitl = config.AuthMiddleware(hitl)
 		}
 		handler.mux.Handle("/v1/hitl/resume", hitl)
 	}
 	if config.StudioHandler != nil {
 		studio := config.StudioHandler
 		if config.AuthMiddleware != nil {
-			studio = config.AuthMiddleware(withTenantStrictMode(studio))
+			studio = config.AuthMiddleware(studio)
 		}
 		handler.mux.Handle("/v1/studio/", studio)
 	}
 	if config.RetentionHandler != nil {
 		retention := config.RetentionHandler
 		if config.AuthMiddleware != nil {
-			retention = config.AuthMiddleware(withTenantStrictMode(retention))
+			retention = config.AuthMiddleware(retention)
 		}
 		handler.mux.Handle("/v1/admin/retention/", retention)
 	}
@@ -100,12 +100,6 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		handler.mux.Handle("/metrics", config.MetricsHandler)
 	}
 	return handler, nil
-}
-
-func withTenantStrictMode(next nethttp.Handler) nethttp.Handler {
-	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		next.ServeHTTP(w, r.WithContext(runstate.ContextWithTenantStrictMode(r.Context())))
-	})
 }
 
 func (handler *Handler) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {

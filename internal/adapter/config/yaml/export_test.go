@@ -35,6 +35,7 @@ scenario:
   runtime:
     validate_tool_input: true
     hitl_deny_limit: 4
+    max_total_tokens: 12345
   orchestration:
     mode: fixed_workflow
     workflow:
@@ -68,6 +69,9 @@ scenario:
 	}
 	if !loaded.Runtime.ValidateToolInput || loaded.Runtime.DisableToolInputValidation || loaded.Runtime.HITLDenyLimit != 4 {
 		t.Fatalf("runtime fields did not round-trip: %+v", loaded.Runtime)
+	}
+	if loaded.Runtime.MaxTotalTokens != 12345 {
+		t.Fatalf("max_total_tokens did not round-trip: %+v", loaded.Runtime)
 	}
 }
 

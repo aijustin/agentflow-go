@@ -56,6 +56,37 @@ func (b *DenyBreaker) Clear(runID string) {
 	b.RecordAllow(runID)
 }
 
+// ExportRun returns the run's current consecutive-deny count (0 when none).
+// The runtime persists it into pause checkpoints so the breaker survives a
+// run migrating to another node.
+func (b *DenyBreaker) ExportRun(runID string) int {
+	if b == nil || runID == "" {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.count[runID]
+}
+
+// ImportRun restores a checkpointed consecutive-deny count for runID,
+// replacing any in-process value (the checkpoint is the durable truth). A
+// count <= 0 clears the run's state.
+func (b *DenyBreaker) ImportRun(runID string, count int) {
+	if b == nil || runID == "" {
+		return
+	}
+	if count <= 0 {
+		b.RecordAllow(runID)
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.count == nil {
+		b.count = make(map[string]int)
+	}
+	b.count[runID] = count
+}
+
 // TripError formats the fail-closed error when the breaker trips.
 func TripError(limit, count int) error {
 	return fmt.Errorf("runtime: HITL deny breaker tripped after %d consecutive denials (limit=%d)", count, limit)
