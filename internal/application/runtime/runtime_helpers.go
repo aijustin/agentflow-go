@@ -134,16 +134,40 @@ func (e *Engine) ensureRunActive(ctx context.Context, runID string) error {
 	}
 }
 
+// ensureRunPaused persists the Paused status after gate.Pause issued a
+// token, retrying stale-version conflicts the same way saveSnapshotWithRetry
+// does: a concurrent snapshot advance between the load and the CAS save must
+// not strand the run in Running while a pause token is already out. A gate
+// that persisted the transition itself (the built-in gates do) makes this a
+// no-op — the reload observes the run is no longer Running and returns
+// without writing, because rewriting an already-Paused snapshot would
+// advance the version and supersede the pause token the gate just issued
+// (ErrTokenSuperseded on resume).
 func (e *Engine) ensureRunPaused(ctx context.Context, runID string) error {
-	snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
-	if err != nil {
-		return err
-	}
-	if snapshot.Status != runstate.RunStatusRunning {
+	for attempt := 0; attempt < 5; attempt++ {
+		snapshot, err := runstate.LoadAuthorized(ctx, e.runs, runID)
+		if err != nil {
+			return err
+		}
+		if snapshot.Status != runstate.RunStatusRunning {
+			return nil
+		}
+		snapshot.Status = runstate.RunStatusPaused
+		if err := e.saveRunSnapshot(ctx, &snapshot, snapshot.Version); err != nil {
+			// ErrStaleFence passes straight through: a newer lease holder owns
+			// the run, so retrying can never succeed (see
+			// saveSnapshotWithRetry).
+			if errors.Is(err, runstate.ErrStaleSnapshot) {
+				if delayErr := retryDelay(ctx, attempt); delayErr != nil {
+					return delayErr
+				}
+				continue
+			}
+			return err
+		}
 		return nil
 	}
-	snapshot.Status = runstate.RunStatusPaused
-	return e.saveRunSnapshot(ctx, &snapshot, snapshot.Version)
+	return fmt.Errorf("runtime: failed to persist paused status for run %q after stale retries", runID)
 }
 
 func (e *Engine) resolveAgent(name string) (core.Agent, error) {

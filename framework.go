@@ -145,6 +145,9 @@ type Framework struct {
 	// WithEventStore; used by the retention cascade and the outbox relay.
 	eventStore observability.EventStore
 
+	// streamCallerGoneTimeout mirrors options.streamCallerGoneTimeout.
+	streamCallerGoneTimeout time.Duration
+
 	// streamHub fans StreamRun frames out to AttachRunStream subscribers and
 	// keeps a per-run replay ring (see stream_hub.go).
 	streamHub *streamHub
@@ -205,6 +208,12 @@ type options struct {
 	eventStore             observability.EventStore
 	outboxRelay            bool
 	outboxRelayInterval    time.Duration
+
+	// streamCallerGoneTimeout bounds how long a Framework.Stream chunk may
+	// stay undeliverable to a caller that neither drains nor cancels before
+	// the stream is cancelled as a fallback (non-detached streams only).
+	// Zero disables the fallback (see WithStreamCallerGoneTimeout).
+	streamCallerGoneTimeout time.Duration
 }
 
 type toolRegistry struct {
@@ -491,6 +500,7 @@ func New(scenario core.Scenario, opts ...Option) (*Framework, error) {
 	fw.scenario = scenario
 	fw.engine = engine
 	fw.eventStore = cfg.eventStore
+	fw.streamCallerGoneTimeout = cfg.streamCallerGoneTimeout
 	fw.streamHub = newStreamHub()
 	if cfg.outboxRelay {
 		store, ok := cfg.eventStore.(observability.SequencedEventStore)
@@ -1103,6 +1113,28 @@ func WithHITLTokenTTL(ttl time.Duration) Option {
 	}
 }
 
+// WithStreamCallerGoneTimeout sets a fallback deadline for Framework.Stream
+// callers that stop consuming the returned channel without cancelling ctx:
+// once a chunk stays undeliverable for d, the framework cancels the stream's
+// execution context, letting a non-detached engine settle the run (cancelled)
+// and release the run lease instead of blocking the forwarder, the engine
+// goroutine and the lease renewer forever. The timer only runs while a chunk
+// is blocked on delivery — a slow-but-reading consumer never triggers it,
+// and a quiet engine that simply has not produced a chunk yet is unaffected.
+// Zero (the default) preserves the previous behavior: such streams block
+// until the caller drains or cancels. Detached streams (StreamDetached /
+// WithStreamDetached) are exempt: their contract is to keep executing after
+// the caller goes away.
+func WithStreamCallerGoneTimeout(d time.Duration) Option {
+	return func(o *options) error {
+		if d < 0 {
+			return fmt.Errorf("agentflow: stream caller-gone timeout must be >= 0")
+		}
+		o.streamCallerGoneTimeout = d
+		return nil
+	}
+}
+
 // Run executes the framework scenario.
 func (f *Framework) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	ctx, release, err := f.acquireRunLease(ctx, &req)
@@ -1171,18 +1203,24 @@ func (f *Framework) RunStructured(ctx context.Context, req RunRequest) (RunResul
 // Stream executes an agent using a gateway that implements llm.Streamer.
 // Callers must drain the returned channel to completion or cancel ctx;
 // otherwise the engine goroutine (and any run lease renewer) may remain
-// blocked indefinitely.
+// blocked indefinitely. WithStreamCallerGoneTimeout adds a fallback for
+// non-detached streams whose callers do neither.
 func (f *Framework) Stream(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
 	ctx, release, err := f.acquireRunLease(ctx, &req)
 	if err != nil {
 		return nil, err
 	}
-	source, err := f.streamScenario(ctx, req)
+	// streamCtx lets the stream forwarder cancel execution when it detects a
+	// caller that neither drains nor cancels (WithStreamCallerGoneTimeout);
+	// detached streams are exempt and keep their existing semantics.
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	source, err := f.streamScenario(streamCtx, req)
 	if err != nil {
+		streamCancel()
 		release()
 		return nil, mapLeaseLostError(ctx, err)
 	}
-	return f.releaseLeaseOnStreamClose(ctx, source, release), nil
+	return f.releaseLeaseOnStreamClose(streamCtx, source, streamCancel, release), nil
 }
 
 func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan llm.ChatChunk, error) {
@@ -1241,9 +1279,16 @@ func (f *Framework) streamScenario(ctx context.Context, req RunRequest) (<-chan 
 // worker.
 //
 // Callers must drain the returned channel or cancel ctx; otherwise this
-// forwarder and the lease renewer stay alive.
-func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan llm.ChatChunk, release func()) <-chan llm.ChatChunk {
+// forwarder and the lease renewer stay alive. For non-detached streams the
+// optional caller-gone timeout (WithStreamCallerGoneTimeout) bounds how long
+// a single chunk may stay undeliverable before the stream is cancelled as a
+// fallback; detached streams are exempt (see above).
+func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan llm.ChatChunk, cancel context.CancelFunc, release func()) <-chan llm.ChatChunk {
 	out := make(chan llm.ChatChunk)
+	idle := f.streamCallerGoneTimeout
+	if appexec.StreamDetachedFromContext(ctx) {
+		idle = 0
+	}
 	safecall.GoSafe("agentflow: stream lease forwarder", func(err error) {
 		// The deferred close(out) and release() above have already run; the
 		// run may still be executing detached, which is exactly the abandoned
@@ -1254,18 +1299,45 @@ func (f *Framework) releaseLeaseOnStreamClose(ctx context.Context, source <-chan
 	}, func() {
 		defer close(out)
 		defer release()
+		defer cancel()
+		// drainSource consumes the rest of the stream without forwarding. The
+		// caller went away: a non-detached run lets the engine finish its
+		// cancellation bookkeeping first, and a detached run keeps executing
+		// to a terminal state in the background — only source closing means
+		// the run actually ended, so only then may the deferred release()
+		// above drop the lease.
+		drainSource := func() {
+			for range source {
+			}
+		}
 		for chunk := range source {
+			if idle <= 0 {
+				select {
+				case out <- chunk:
+				case <-ctx.Done():
+					drainSource()
+					return
+				}
+				continue
+			}
+			timer := time.NewTimer(idle)
 			select {
 			case out <- chunk:
+				timer.Stop()
 			case <-ctx.Done():
-				// The caller went away. Keep holding the lease and drain
-				// source until it closes: a non-detached run lets the engine
-				// finish its cancellation bookkeeping first, and a detached
-				// run keeps executing to a terminal state in the background —
-				// only source closing means the run actually ended, so only
-				// then may the deferred release() above drop the lease.
-				for range source {
+				timer.Stop()
+				drainSource()
+				return
+			case <-timer.C:
+				// The caller neither consumed nor cancelled for a full idle
+				// window. Cancel the stream so the non-detached engine
+				// settles the run (cancelled) instead of leaking the engine
+				// goroutine, this forwarder and the lease renewer forever.
+				if f.logger != nil {
+					f.logger.Warn(context.WithoutCancel(ctx), "agentflow: stream caller stopped consuming without cancelling; cancelling stream", "idle_timeout", idle)
 				}
+				cancel()
+				drainSource()
 				return
 			}
 		}

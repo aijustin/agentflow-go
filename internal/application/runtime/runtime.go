@@ -507,6 +507,14 @@ func streamDetachedFromContext(ctx context.Context) bool {
 	return v
 }
 
+// StreamDetachedFromContext reports whether ctx carries the detached
+// streaming marker (see ContextWithStreamDetached). The framework facade
+// needs it to exempt detached streams from caller-gone fallbacks: a detached
+// run explicitly keeps executing after the caller goes away.
+func StreamDetachedFromContext(ctx context.Context) bool {
+	return streamDetachedFromContext(ctx)
+}
+
 // chunkError returns the structured provider error a failed chunk carries
 // when present, falling back to the wire-safe string form, so retry
 // classification and persisted failure reasons keep the original error type.

@@ -19,12 +19,12 @@
 | 🟠 中 | D5 | 审批暂停-恢复后，该轮 assistant + tool results 可能漏写 conversation memory（**2026-08-07：经核实已被重构修复，现有回归测试覆盖，复核通过**） |
 | 🟠 中 | D6 | detached stream 取消观察者每 100ms 全量 `LoadAuthorized`，DB 压力大 |
 | 🟠 中 | D7 | checkpoint 写入与 `gate.Pause` 之间崩溃会留下 Running + 悬挂 checkpoint，且恢复不校验 gate token（**2026-08-07：已修复，pending_pause 标记 + fail-closed 守卫 + reaper 清理 + `ContinueRunWithToken`，见节内标注**） |
-| 🟡 低 | D8 | `EventRunCompleted` 在 final 输出外置后携带 nil payload |
-| 🟡 低 | D9 | `ensureRunPaused` 单次 CAS 无重试，gate 已发 token 但状态仍可能 Running |
-| 🟡 低 | D10 | `toolSpecs :=` 循环内遮蔽外层参数，replan 可能用旧 specs |
-| 🟡 低 | D11 | `Framework.Stream` 返回的流不消费也不 cancel 时，goroutine/lease 永久挂起 |
-| 🟡 低 | D12 | ctx 取消早退时 `orchestrator.AfterAttempt` 可能被跳过 |
-| 🟡 低 | D13 | `persistRunCompleted` 重试全失败时留下孤儿 blob |
+| 🟡 低 | D8 | `EventRunCompleted` 在 final 输出外置后携带 nil payload（**2026-08-07：经核实已被重构修复，事件携带完整内容 + `output_ref` blob 引用，已补回归测试**） |
+| 🟡 低 | D9 | `ensureRunPaused` 单次 CAS 无重试，gate 已发 token 但状态仍可能 Running（**2026-08-07：已修复，改 CAS 重试，见节内标注**） |
+| 🟡 低 | D10 | `toolSpecs :=` 循环内遮蔽外层参数，replan 可能用旧 specs（**2026-08-07：经核实已过时，循环内为 `=` 赋值，replan 恒取最新 specs**） |
+| 🟡 低 | D11 | `Framework.Stream` 返回的流不消费也不 cancel 时，goroutine/lease 永久挂起（**2026-08-07：已修复，新增 `WithStreamCallerGoneTimeout` 兜底，见节内标注**） |
+| 🟡 低 | D12 | ctx 取消早退时 `orchestrator.AfterAttempt` 可能被跳过（**2026-08-07：经核实已被重构修复，AfterAttempt 先于早退记录，已补回归测试**） |
+| 🟡 低 | D13 | `persistRunCompleted` 重试全失败时留下孤儿 blob（**2026-08-07：经核实已缓解，best-effort 删除 + `PurgeOrphanBlobs` GC 双保险，已补定向测试**） |
 
 **修复优先级建议**：先修 D1、D2（正确性/一致性核心），再做 D3 的全局 `json.Marshal` 替换，随后按 D4→D5→D7→D9 的顺序补齐 checkpoint 相关路径，其余按排期处理。
 
@@ -137,6 +137,15 @@
 ---
 
 ## 🟡 低危
+
+> **状态（2026-08-07 复核）：六项逐项核实完毕——D8/D10/D12 论断已被近期重构修复（复核证据如下，均补了回归测试锁定），D13 已被 best-effort 删除 + blob GC 双重覆盖，D9/D11 本次修复。**
+>
+> - **D8（已过时，补回归测试）**：`persistRunCompleted`（`internal/application/runtime/runtime_helpers.go:735`）当前用原始 `finalRaw` 解码出事件字段再叠加 `output_ref`（marshal 后的 `runstate.StepOutputRef`，含 blob id/size）作为 payload（L764-781），不再使用 `finalRef.Inline`；经 `core.BuildLifecyclePayload` 包装后，`RunTerminalPayload.FinalText`/`Output` 均含完整内容与 blob 引用。回归测试：`runtime_low_defects_test.go` `TestEngineRunCompletedEventCarriesContentAndBlobRef`（外置 blob 场景断言 `final_text`、`output.output_ref.blob` 的 id/size 及与持久化 `StepOutputs["final"]` 引用一致）。
+> - **D9（本次修复）**：`ensureRunPaused`（`runtime_helpers.go:146`）原为单次 CAS，撞 `ErrStaleSnapshot` 直接放弃。已改为与 `saveSnapshotWithRetry` 同构的 load→CAS→jitter 退避重试循环（`ErrStaleFence` 穿透不重试）。与 D7 token 版本机制的交互已按指引处理：**重载发现状态已非 Running（内置 gate 的 `Pause` 自身已持久化 Paused）时不写直接返回**——重写已 Paused 快照会推进版本、使 gate 刚签发的 token 在 resume 时撞 `ErrTokenSuperseded`，语义与 `pauseWithRetry` 对齐，未引入新窗口。回归测试：`TestEngineEnsureRunPausedSurvivesStaleSnapshotConflict`（注入一次 stale 冲突断言重试后落库 Paused，修复前红）与 `TestEngineEnsureRunPausedDoesNotRewriteAlreadyPausedRun`（已 Paused 时零写入、版本不变）。
+> - **D10（已过时）**：`answerWithToolsFrom` 循环内当前是 `toolSpecs = e.toolSpecs(...)`（`runtime_llm.go:556`，`=` 赋值而非 `:=` 遮蔽，就地刷新参数本身，注释已说明每轮重算的动机），循环结束后 `replanOrFail`（L725）拿到的恒为最新 specs；全文件唯一的 `toolSpecs :=` 在 L500 的循环外初始赋值。无需改代码。
+> - **D11（本次修复）**：新增 `WithStreamCallerGoneTimeout`（`framework.go:1128`，默认 0=关闭，不改变现有行为）。`Framework.Stream` 现在派生可取消的 `streamCtx` 传给 engine 与 forwarder；`releaseLeaseOnStreamClose`（`framework.go:1286`）对**非 detached** 流在单个 chunk 无法投递给调用方时启动 idle 计时，超时即 cancel 执行上下文——engine 按既有 caller-gone 路径将 run 落为 Cancelled、source 关闭，forwarder 排空后释放 lease，不再永久阻塞。计时器只在"有 chunk 投递不出去"时运行：慢但持续消费的调用方永不触发，engine 暂时无产出也不受影响；detached 流（`StreamDetached`/`WithStreamDetached`）豁免，语义不变。回归测试：`framework_stream_caller_gone_test.go` `TestFrameworkStreamCallerGoneTimeoutSettlesAbandonedStream`（不消费不取消 → run 落 Cancelled、lease 释放、返回通道关闭，修复前红）与 `TestFrameworkStreamCallerGoneTimeoutLeavesDetachedStreamAlone`（detached 流不受影响，迟到读者仍收到 Done chunk）。
+> - **D12（已过时，补回归测试）**：`dispatchToolWithOptions`（`runtime_tools.go:196-219`）当前在 `executeToolWithRetry` 返回错误后**先**调 `orchestrator.AfterAttempt`（置 `attemptReported`），**再**进入 ctx 取消/超时的早退分支，取消路径不会跳过记录；非错误路径由 `!attemptReported` 兜底恰好记录一次。回归测试：`TestEngineAfterAttemptRecordedOnCancelledToolExecution`（工具执行中 run ctx 被取消并返回 `context.Canceled`，断言 AfterAttempt 恰好记录一次）。
+> - **D13（已缓解，补定向测试）**：两层覆盖均已存在——①`persistRunCompleted` 保存快照失败的分支（`runtime_helpers.go:752-760`）对实现了 `runstate.BlobAdmin` 的 blob store 做 best-effort `Delete`；②框架层 GC `Framework.PurgeOrphanBlobs`（`retention.go:251`）删除无任何快照引用的 blob（内置 inmem/file/S3 store 均实现 `BlobAdmin`，见 `docs/data-lifecycle.md`），根包 `blob_gc_test.go` 已覆盖孤儿回收。定向测试：`TestEnginePersistRunCompletedDeletesOrphanedBlobOnSaveFailure`（完成保存撞并发 Paused 冲突失败后，断言已外置的 final blob 被 best-effort 删除）。
 
 | 编号 | 位置 | 问题 | 修复方向 |
 |---|---|---|---|
