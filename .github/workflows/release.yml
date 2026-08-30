@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Verify tag matches library version
         run: make verify-release-version RELEASE_TAG="${GITHUB_REF_NAME}"
